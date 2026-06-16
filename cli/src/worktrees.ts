@@ -8,7 +8,7 @@ import path from 'node:path'
 import { getDataDir } from './config.js'
 import { execAsync } from './exec-async.js'
 import { createLogger, LogPrefix } from './logger.js'
-import { deleteThreadWorktree, getThreadWorktree } from './database.js'
+import { deleteThreadWorktree, getThreadWorktree, setWorktreeReady } from './database.js'
 
 export { execAsync } from './exec-async.js'
 
@@ -671,37 +671,6 @@ export type RecoverWorktreeResult =
   | { recovered: true; worktreeDirectory: string; worktreeName: string }
 
 /**
- * Recover a worktree by looking up the stored info from the database.
- * This is the public API called by session runtime and commands.
- */
-export async function recoverWorktreeDirectory({
-  threadId,
-}: {
-  threadId: string
-}): Promise<RecoverWorktreeResult> {
-  const { getThreadWorktree, setWorktreeReady, setWorktreeError } = await import('./database.js')
-
-  const worktreeInfo = await getThreadWorktree(threadId)
-  if (!worktreeInfo || worktreeInfo.status !== 'ready' || !worktreeInfo.worktree_directory) {
-    return { recovered: false, reason: 'no-worktree-entry' }
-  }
-
-  const result = await recoverWorktreeFromInfo({
-    projectDirectory: worktreeInfo.project_directory,
-    worktreeName: worktreeInfo.worktree_name,
-    worktreeDirectory: worktreeInfo.worktree_directory,
-  })
-
-  if (result.recovered) {
-    await setWorktreeReady({ threadId, worktreeDirectory: result.worktreeDirectory })
-  } else if (result.reason === 'creation-failed' && result.error) {
-    await setWorktreeError({ threadId, errorMessage: result.error.message })
-  }
-
-  return result
-}
-
-/**
  * Attempt to recreate a missing worktree directory from git.
  * Takes worktree info directly (no DB dependency) — testable in unit tests.
  */
@@ -714,8 +683,11 @@ export async function recoverWorktreeFromInfo({
   worktreeName: string
   worktreeDirectory: string
 }): Promise<RecoverWorktreeResult> {
-  // If directory already exists, no recovery needed
-  if (fs.existsSync(worktreeDirectory)) {
+  // Detect old path format and treat as missing
+  const isOldPathFormat = worktreeDirectory.includes('/.local/share/opencode/worktree/')
+
+  // If directory exists at NEW path format, no recovery needed
+  if (!isOldPathFormat && fs.existsSync(worktreeDirectory)) {
     return { recovered: false, reason: 'dir-exists' }
   }
 
@@ -1209,14 +1181,14 @@ export async function validateWorktreeDirectory({
 
 /**
  * Recovers a worktree directory that has an old path format or is missing.
- * Detects old paths like ~/.local/share/opencode/worktree/... and recreates
- * the worktree with the new path format.
+ * Detects old paths like ~/.local/share/opencode/worktree/... and migrates
+ * the worktree to the new path format instead of recreating.
  */
 export async function recoverWorktreeDirectory({
   threadId,
 }: {
   threadId: string
-}): Promise<{ recovered: boolean; reason?: string } | Error> {
+}): Promise<{ recovered: boolean; reason?: string; worktreeDirectory?: string } | Error> {
   const worktreeInfo = await getThreadWorktree(threadId)
   if (!worktreeInfo || worktreeInfo.status !== 'ready' || !worktreeInfo.worktree_directory) {
     return { recovered: false, reason: 'no-worktree' }
@@ -1238,16 +1210,62 @@ export async function recoverWorktreeDirectory({
     `[RECOVER WORKTREE] Worktree directory needs recovery: ${worktreeDirectory} (oldFormat=${isOldPathFormat}, exists=${fs.existsSync(worktreeDirectory)})`,
   )
 
-  // Delete the stale worktree entry from DB
-  await deleteThreadWorktree(threadId)
-
-  // Recreate the worktree using the worktree name from DB
   const worktreeName = worktreeInfo.worktree_name
   if (!worktreeName) {
     return new Error('Cannot recover worktree: missing worktree_name in database')
   }
 
-  // Create a new worktree with the correct path
+  // Calculate the new path
+  const newWorktreeDirectory = getManagedWorktreeDirectory({
+    directory: projectDirectory,
+    name: worktreeName,
+  })
+
+  // If old path exists, try to migrate it
+  if (isOldPathFormat && fs.existsSync(worktreeDirectory)) {
+    logger.log(
+      `[RECOVER WORKTREE] Migrating from old path to new path: ${worktreeDirectory} -> ${newWorktreeDirectory}`,
+    )
+
+    try {
+      // Ensure parent directory exists
+      await fs.promises.mkdir(path.dirname(newWorktreeDirectory), { recursive: true })
+
+      // Try git worktree move first (preserves git metadata)
+      const moveResult = await git(
+        projectDirectory,
+        `worktree move ${JSON.stringify(worktreeDirectory)} ${JSON.stringify(newWorktreeDirectory)}`,
+      )
+
+      if (moveResult instanceof Error) {
+        // If move fails, fall back to rename
+        logger.warn(
+          `[RECOVER WORKTREE] git worktree move failed: ${moveResult.message}, falling back to fs.rename`,
+        )
+        await fs.promises.rename(worktreeDirectory, newWorktreeDirectory)
+      }
+
+      logger.log(`[RECOVER WORKTREE] Successfully migrated to: ${newWorktreeDirectory}`)
+
+      // Update DB with new path
+      await setWorktreeReady({ threadId, worktreeDirectory: newWorktreeDirectory })
+
+      return { recovered: true, reason: 'migrated', worktreeDirectory: newWorktreeDirectory }
+    } catch (error) {
+      logger.error(
+        `[RECOVER WORKTREE] Migration failed: ${error instanceof Error ? error.message : error}`,
+      )
+      // Fall through to recreation logic
+    }
+  }
+
+  // Directory doesn't exist or migration failed - recreate
+  logger.log(`[RECOVER WORKTREE] Recreating worktree at: ${newWorktreeDirectory}`)
+
+  // Delete the stale worktree entry from DB
+  await deleteThreadWorktree(threadId)
+
+  // Create a new worktree
   const createResult = await createWorktreeWithSubmodules({
     directory: projectDirectory,
     name: worktreeName,
@@ -1258,8 +1276,11 @@ export async function recoverWorktreeDirectory({
     return createResult
   }
 
+  // Update DB with the new path
+  await setWorktreeReady({ threadId, worktreeDirectory: createResult.directory })
+
   logger.log(`[RECOVER WORKTREE] Successfully recovered worktree: ${createResult.directory}`)
-  return { recovered: true, reason: 'recreated' }
+  return { recovered: true, reason: 'recreated', worktreeDirectory: createResult.directory }
 }
 
 export type SessionWorkingDirectory = {
