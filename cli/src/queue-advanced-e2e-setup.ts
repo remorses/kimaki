@@ -764,7 +764,6 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     permissionTypingFollowupMatcher,
     channelReferencePermissionMatcher,
     channelReferencePermissionFollowupMatcher,
-
     multiToolMatcher,
     multiToolFollowupMatcher,
     undoFileMatcher,
@@ -794,10 +793,6 @@ export const TEST_USER_ID = '200000000000000991'
  * Sets up a full queue-advanced e2e environment: digital-twin Discord server,
  * opencode deterministic provider, database, bot client.
  * Each caller should use a unique channelId and dirName to avoid collisions
- * when vitest runs files in parallel.
- */
-export function setupQueueAdvancedSuite({
-  channelId,
   channelName,
   extraChannels = [],
   dirName,
@@ -874,14 +869,6 @@ export function setupQueueAdvancedSuite({
     const hranaResult = await startHranaServer({ dbPath })
     if (hranaResult instanceof Error) {
       throw hranaResult
-    }
-    process.env['KIMAKI_DB_URL'] = hranaResult
-    await initDatabase()
-    await setBotToken(ctx.discord.botUserId, ctx.discord.botToken)
-
-    await setChannelDirectory({
-      channelId,
-      directory: ctx.directories.projectDirectory,
       channelType: 'text',
     })
     await setChannelVerbosity(channelId, 'tools_and_text')

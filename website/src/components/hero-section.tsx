@@ -33,7 +33,7 @@ export function HeroSection() {
         src='/assets/hero-bg.mp4'
         className='absolute inset-0 w-full h-full'
         canvasClassName=''
-        dotColor='#8da4ff'
+        dotColor='#8da4ffb3'
         dotSize={6}
         minDotSize={1}
         dotMargin={1}

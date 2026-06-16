@@ -228,11 +228,15 @@ prisma version in package.json MUST be pinned. no ^. this makes sure the generat
 after every publish, once the `gh release create` step is done:
 
 1. write the gh release body content to `/tmp/kimaki-release.md` so it can be reused quickly without regenerating it
-2. send a notification to the **#updates** channel (`1514563453493313548`) with a markdown summary of the release:
+2. send a notification to the **#changelog** channel (`1514563453493313548`) in the Kimaki Discord Server with a markdown summary of the release.
+
+the #changelog channel is in a different guild than the local bot's authorized guild, so you must use the demo bot's gateway token via sigillo. the kimaki sigillo project (org: npm) has a `KIMAKI_BOT_TOKEN` secret in the `dev` environment containing the demo bot's `clientId:clientSecret`.
 
 ```bash
-kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md)" --notify-only --user '535922349652836367'
+sigillo run -c dev -- kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md)" --notify-only --user '535922349652836367'
 ```
+
+run this from the kimakivoice repo root (where sigillo is set up). the `KIMAKI_BOT_TOKEN` env var takes priority over local DB credentials when set, so the send command will authenticate as the demo bot through the gateway proxy.
 
 the notification message should use the version as a heading 1 title (e.g. `# v1.2.3`), followed by the same rich content as the gh release: descriptions, code examples, migration steps, before/after comparisons, etc. keep it detailed and user-facing, identical quality to a gh release body.
 

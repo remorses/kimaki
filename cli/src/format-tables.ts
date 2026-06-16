@@ -58,7 +58,182 @@ type CalloutDescriptor = {
 // Max 40 components per message (nested components count toward the limit).
 // Row cost is dynamic now because a table row can render as a plain TextDisplay
 // or as a TextDisplay plus an Action Row holding one or more buttons.
-const MAX_COMPONENTS = 40
+export const MAX_COMPONENTS = 40
+
+// Discord caps total displayable text across all components at 4000 chars.
+export const MAX_TEXT_SIZE = 4000
+
+// Count cost of a single child inside a Container.
+// ActionRow with N buttons = 1 + N, everything else = 1.
+function childComponentCost(
+  child: APIComponentInContainer,
+): number {
+  if ('components' in child && Array.isArray(child.components)) {
+    return 1 + child.components.length
+  }
+  return 1
+}
+
+// Count displayable text size of a component tree.
+// Discord counts all text content (TextDisplay, button labels) toward a 4000-char limit.
+function componentTextSize(component: { type: number; [key: string]: unknown }): number {
+  let size = 0
+  if ('content' in component && typeof component.content === 'string') {
+    size += component.content.length
+  }
+  if ('label' in component && typeof component.label === 'string') {
+    size += component.label.length
+  }
+  if ('components' in component && Array.isArray(component.components)) {
+    for (const child of component.components) {
+      size += componentTextSize(child as { type: number })
+    }
+  }
+  return size
+}
+
+// Count total component cost of a top-level component including nested children.
+// Discord counts every component toward the 40-component budget:
+// Container(3 children) = 4, ActionRow(2 buttons) = 3, TextDisplay = 1.
+export function countComponentCost(
+  component: APIMessageTopLevelComponent,
+): number {
+  if (component.type === ComponentType.Container) {
+    let cost = 1
+    for (const child of component.components) {
+      cost += childComponentCost(child)
+    }
+    return cost
+  }
+  if ('components' in component && Array.isArray(component.components)) {
+    return 1 + component.components.length
+  }
+  return 1
+}
+
+// Truncate an array of top-level components to stay within Discord limits:
+// - 40 total components (nested children count)
+// - 4000 chars total displayable text
+// When a Container alone exceeds the budget, its children are truncated instead
+// of dropping the entire Container (which would show nothing).
+// reserveCost / reserveTextSize hold back budget for caller-appended components.
+// maxComponents / maxTextSize override defaults (useful for testing).
+export function truncateComponents(
+  components: APIMessageTopLevelComponent[],
+  {
+    reserveCost = 0,
+    reserveTextSize = 0,
+    maxComponents = MAX_COMPONENTS,
+    maxTextSize = MAX_TEXT_SIZE,
+  }: { reserveCost?: number; reserveTextSize?: number; maxComponents?: number; maxTextSize?: number } = {},
+): { components: APIMessageTopLevelComponent[]; truncated: boolean } {
+  const componentBudget = maxComponents - reserveCost
+  const textBudget = maxTextSize - reserveTextSize
+  let totalCost = 0
+  let totalText = 0
+  const result: APIMessageTopLevelComponent[] = []
+
+  for (const component of components) {
+    const cost = countComponentCost(component)
+    const text = componentTextSize(component as { type: number })
+
+    if (totalCost + cost <= componentBudget && totalText + text <= textBudget) {
+      result.push(component)
+      totalCost += cost
+      totalText += text
+      continue
+    }
+
+    // The component doesn't fit. If it's a Container, truncate its children
+    // to fill the remaining budget instead of dropping the whole thing.
+    if (component.type === ComponentType.Container) {
+      const remainingComponentBudget = componentBudget - totalCost - 1
+      const remainingTextBudget = textBudget - totalText
+      if (remainingComponentBudget > 0 && remainingTextBudget > 0) {
+        const truncatedChildren = truncateContainerChildren(
+          component.components,
+          remainingComponentBudget,
+          remainingTextBudget,
+        )
+        if (truncatedChildren.length > 0) {
+          result.push({
+            ...component,
+            components: truncatedChildren,
+          })
+        }
+      }
+    }
+
+    return { components: result, truncated: true }
+  }
+
+  return { components: result, truncated: false }
+}
+
+// Truncate a Container's children by separator-delimited row groups.
+// A row group is everything between separators (e.g. [TextDisplay, ActionRow]).
+// Either the full group fits or it's excluded — no trailing separators or
+// partial rows (like a TextDisplay without its ActionRow button).
+// Enforces both component count and text size budgets.
+function truncateContainerChildren(
+  children: APIComponentInContainer[],
+  componentBudget: number,
+  textBudget: number,
+): APIComponentInContainer[] {
+  const groups = groupBySeparator(children)
+  let cost = 0
+  let text = 0
+  const result: APIComponentInContainer[] = []
+
+  for (const group of groups) {
+    const groupCost = group.reduce((sum, child) => sum + childComponentCost(child), 0)
+    const groupText = group.reduce((sum, child) => sum + componentTextSize(child as { type: number }), 0)
+    if (cost + groupCost > componentBudget || text + groupText > textBudget) {
+      break
+    }
+    result.push(...group)
+    cost += groupCost
+    text += groupText
+  }
+  return result
+}
+
+// Split children into groups delimited by Separator components.
+// Separators are prepended to the following group (they sit between rows).
+// First group has no leading separator.
+// Drops separator-only groups and strips leading separators from the first group
+// to handle edge cases (children starting/ending with separators, consecutive separators).
+function groupBySeparator(
+  children: APIComponentInContainer[],
+): APIComponentInContainer[][] {
+  const rawGroups: APIComponentInContainer[][] = []
+  let current: APIComponentInContainer[] = []
+
+  for (const child of children) {
+    if (child.type === ComponentType.Separator && current.length > 0) {
+      rawGroups.push(current)
+      current = [child]
+      continue
+    }
+    current.push(child)
+  }
+
+  if (current.length > 0) {
+    rawGroups.push(current)
+  }
+
+  // Clean up: strip leading separators from first group, drop separator-only groups
+  return rawGroups
+    .map((group, index) => {
+      if (index === 0) {
+        return group.filter((child) => child.type !== ComponentType.Separator)
+      }
+      return group
+    })
+    .filter((group) => {
+      return group.some((child) => child.type !== ComponentType.Separator)
+    })
+}
 
 /**
  * Split markdown into text and table component segments.

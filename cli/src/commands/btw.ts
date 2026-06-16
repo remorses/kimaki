@@ -19,6 +19,7 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
+import { copyCurrentSessionModel } from './model.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
@@ -62,6 +63,16 @@ export async function forkSessionToBtwThread({
     return new Error('Failed to fork session')
   }
   const forkedSession = forkResponse.data
+  const channelId = sourceThread.parentId || sourceThread.id
+
+  await copyCurrentSessionModel({
+    sourceSessionId: sessionId,
+    targetSessionId: forkedSession.id,
+    channelId,
+    appId,
+    getClient: getClientResult,
+    directory: projectDirectory,
+  })
 
   const thread = await textChannel.threads.create({
     name: `btw: ${prompt}`.slice(0, 100),
@@ -83,7 +94,6 @@ export async function forkSessionToBtwThread({
   ])
 
   logger.log(
-    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId})`,
   )
 
   const wrappedPrompt = [
@@ -92,8 +102,7 @@ export async function forkSessionToBtwThread({
     `Do NOT continue, resume, or reference the previous task. Only answer the question below.`,
     ``,
     `Parent session: ${sessionId} (thread <#${sourceThread.id}>)`,
-    `If the user asks you to send a message or follow-up to the parent session, use:`,
-    `  kimaki send --session ${sessionId} --prompt 'your message here'`,
+    `Do NOT send messages to the parent session unless the user explicitly asks you to.`,
     ``,
     prompt,
   ].join('\n')
@@ -103,7 +112,7 @@ export async function forkSessionToBtwThread({
     thread,
     projectDirectory,
     sdkDirectory: projectDirectory,
-    channelId: sourceThread.parentId || sourceThread.id,
+    channelId,
     appId,
   })
   await runtime.enqueueIncoming({

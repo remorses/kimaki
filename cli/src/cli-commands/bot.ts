@@ -284,6 +284,40 @@ cli
   )
 
 cli
+  .command('bot token', 'Print the bot token for use in CI and automation (KIMAKI_BOT_TOKEN)')
+  .option(
+    '--data-dir <path>',
+    'Data directory for config and database (default: ~/.kimaki)',
+  )
+  .action(async (options) => {
+    try {
+      if (options.dataDir) {
+        setDataDir(options.dataDir)
+      }
+      initLogFile(getDataDir())
+      await initDatabase()
+
+      const botRow = await getBotTokenWithMode()
+      if (!botRow) {
+        cliLogger.error('No bot configured. Run `kimaki` first.')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      // Print the token to stdout so it can be captured by scripts.
+      // Use process.stdout.write to avoid extra newline from console.log
+      // when piping to other commands.
+      process.stdout.write(botRow.token + '\n')
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.stack : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
   .command('bot status clear', 'Clear the bot presence/status')
   .option(
     '--data-dir <path>',

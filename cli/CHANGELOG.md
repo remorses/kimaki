@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.17.1
+
+1. **Fix gateway onboarding flow silently failing** — the CLI would get stuck on "Still waiting..." after the user authorized the bot. Discord doesn't always include `guild_id` in the OAuth callback URL (e.g. when previously authorized). Now the `guild_id` is cached in KV before the callback, `prompt` is set to `consent` so the authorization screen always shows, and specific onboarding errors are surfaced to the CLI instead of a generic timeout.
+
+2. **Fix `/worktrees` and `/last-sessions` exceeding Discord limits** — these commands could exceed Discord's 40-component limit or 4000-char text limit for large worktree/session lists. Components are now truncated intelligently (removing rows from containers instead of dropping entire containers) with a notice showing how many items were hidden.
+
+3. **Stop adopting another instance's default channel in shared guilds** — when two kimaki installations (different `client_id`) connected to the same Discord guild via the gateway proxy, the second instance would claim the first instance's "kimaki" channel. Each instance now only manages channels it created itself.
+
+4. **Skip joining voice channels without an API key** — the bot no longer joins Discord voice channels when no Gemini API key is configured. Previously it would join and immediately fail. Now it logs a message telling the user to set an API key via `/audio-api-key`.
+
+5. **Fix silent interaction errors** — interaction handler now properly distinguishes `deferReply` vs `deferUpdate` when following up, preventing "Unknown Webhook" errors on component interactions.
+
+## 0.17.0
+
+1. **xAI Grok Composer 2.5 Fast model available by default** — the `grok-composer-2.5-fast` model from xAI is now registered in Kimaki's default opencode config, so all users can select it via `/model` without manual configuration. 256k context, 256k output, supports attachments and tool calls.
+
+2. **Forked sessions preserve the source model** — when `/btw` forks a side-question thread or `/new-worktree` creates a worktree from an existing thread, the new session now uses the same model as the source session instead of falling back to the default.
+
+3. **Clear worktree marker on empty merge** — `/merge-worktree` now removes the worktree marker from a thread title when there are no commits to merge (branch is already up to date), instead of leaving it marked as unmerged.
+
+4. **Improved `/btw` fork behavior** — forked sessions no longer proactively suggest sending messages back to the parent session. The agent only does so when the user explicitly asks.
+
 ## 0.16.0
 
 1. **Gateway mode re-enabled in onboarding wizard** — the "Gateway (pre-built Kimaki bot)" option is available again when running `kimaki` for the first time. Discord raised the privileged intent threshold from 100 servers to 10,000 users on June 10, 2026, so the shared bot no longer needs verification.

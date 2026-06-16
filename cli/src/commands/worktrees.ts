@@ -22,7 +22,7 @@ import {
   type ThreadWorktree,
 } from '../database.js'
 import { getDb } from '../db.js'
-import { splitTablesFromMarkdown } from '../format-tables.js'
+import { splitTablesFromMarkdown, truncateComponents } from '../format-tables.js'
 import {
   buildHtmlActionCustomId,
   cancelHtmlActionsForOwner,
@@ -214,7 +214,9 @@ function buildWorktreeTable({
       return parts.join(', ')
     })()
     const created = row.createdAt ? formatTimeAgo(row.createdAt) : '-'
-    const folder = row.directory
+    // Show only the last 2 path segments to keep text size under Discord's
+    // 4000-char displayable text limit. Full paths are too long.
+    const folder = `…/${path.basename(path.dirname(row.directory))}/${path.basename(row.directory)}`
     const action = buildActionCell({ row, gitStatus: gs })
     return `| ${sourceCell} | ${name} | ${status} | ${created} | ${folder} | ${action} |`
   })
@@ -514,7 +516,7 @@ async function renderWorktreesReply({
     },
   })
 
-  const components: APIMessageTopLevelComponent[] = segments.flatMap((segment) => {
+  const allComponents: APIMessageTopLevelComponent[] = segments.flatMap((segment) => {
     if (segment.type === 'components') {
       return segment.components
     }
@@ -525,6 +527,21 @@ async function renderWorktreesReply({
     }
     return [textDisplay]
   })
+
+  // Reserve budget for a truncation notice (1 component + its text length)
+  // so appending the notice doesn't push us over either Discord limit.
+  const truncatedNoticeContent = `*Some worktrees were not shown due to Discord's component limit. Use \`git worktree list\` for the full list.*`
+  const { components, truncated } = truncateComponents(allComponents, {
+    reserveCost: 1,
+    reserveTextSize: truncatedNoticeContent.length,
+  })
+  if (truncated) {
+    const truncatedNotice: APITextDisplayComponent = {
+      type: ComponentType.TextDisplay,
+      content: truncatedNoticeContent,
+    }
+    components.push(truncatedNotice)
+  }
 
   await editReply({
     components,

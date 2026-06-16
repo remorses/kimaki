@@ -34,6 +34,7 @@ import { buildSessionPermissions, initializeOpencodeForDirectory } from '../open
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
+import { copyCurrentSessionModel } from './model.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 const DEFAULT_WORKTREE_BASE_REF = 'HEAD'
@@ -213,37 +214,6 @@ export async function createWorktreeInBackground({
       `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
     )
 
-    // Check if a worktree with this name already exists in git worktree list.
-    const existingDir = await findExistingWorktreePath({
-      projectDirectory,
-      worktreeName,
-    })
-    if (existingDir) {
-      const errorMsg = `Worktree \`${worktreeName}\` already exists at \`${existingDir}\``
-      logger.error(`[WORKTREE] ${errorMsg}`)
-      await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
-      starterMessage?.edit(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`).catch(() => {})
-      return new Error(errorMsg)
-    }
-
-    // Serialize status message edits so onProgress can't overwrite the
-    // final success/error edit even if Discord's API is slow.
-    let editChain: Promise<void> = Promise.resolve()
-    const editStatus = (content: string) => {
-      editChain = editChain
-        .then(async () => {
-          await starterMessage?.edit(content)
-        })
-        .catch(() => {})
-    }
-
-    // DB pending entry must complete before git creation so error paths
-    // (setWorktreeError) can find the row reliably
-    await createPendingWorktree({
-      threadId: thread.id,
-      worktreeName,
-      projectDirectory,
-    })
 
     const worktreeResult = await createWorktreeWithSubmodules({
       directory: projectDirectory,
@@ -254,12 +224,36 @@ export async function createWorktreeInBackground({
       },
     })
 
-    if (worktreeResult instanceof Error) {
+if (worktreeResult instanceof Error) {
       const errorMsg = worktreeResult.message
       logger.error('[WORKTREE] Creation failed:', worktreeResult)
       await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
       editStatus(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
-      await editChain
+    await editChain
+    return worktreeResult
+    }
+
+      // DB ready update is critical; reaction is best-effort
+      await setWorktreeReady({
+        threadId: thread.id,
+        worktreeDirectory: worktreeResult.directory,
+      })
+
+      void reactToThread({
+        rest,
+        threadId: thread.id,
+        channelId: thread.parentId || undefined,
+        emoji: '🌳',
+      }).catch(() => {})
+
+      editStatus(
+        `🌳 **Worktree: ${worktreeName}**\n` +
+          `📁 \`${worktreeResult.directory}\`\n` +
+          `🌿 Branch: \`${worktreeResult.branch}\``,
+      )
+
+    await editChain
+    return worktreeResult.directory      await editChain
       return worktreeResult
     }
 
@@ -294,32 +288,6 @@ export async function createWorktreeInBackground({
 async function findExistingWorktreePath({
   projectDirectory,
   worktreeName,
-}: {
-  projectDirectory: string
-  worktreeName: string
-}): Promise<string | undefined | Error> {
-  const listResult = await execAsync('git worktree list --porcelain', {
-    cwd: projectDirectory,
-  }).catch((e) => new WorktreeError('Failed to list worktrees', { cause: e }))
-  if (listResult instanceof Error) return listResult
-
-  const lines = listResult.stdout.split('\n')
-  let currentPath = ''
-  const branchRef = `refs/heads/${worktreeName}`
-
-  for (const line of lines) {
-    if (line.startsWith('worktree ')) {
-      currentPath = line.slice('worktree '.length)
-      continue
-    }
-    if (line.startsWith('branch ') && line.slice('branch '.length) === branchRef) {
-      return currentPath || undefined
-    }
-  }
-
-  return undefined
-}
-
 export async function handleNewWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
   await command.deferReply()
 
@@ -581,9 +549,6 @@ async function handleWorktreeInThread({
         return
       }
 
-      const permissionResponse = await getClient()
-        .session.update({
-          sessionID: forkedSession.id,
           directory: result,
           permission: buildSessionPermissions({
             directory: result,

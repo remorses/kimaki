@@ -12,9 +12,13 @@ import {
   appendSessionEventsSinceLastTimestamp,
   createPendingWorktree,
   getSessionEventSnapshot,
+  getSessionModel,
+  setSessionModel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { chooseLockPort } from './test-utils.js'
+import { copyCurrentSessionModel } from './commands/model.js'
+import type { initializeOpencodeForDirectory } from './opencode.js'
 
 afterAll(async () => {
   await closeDb()
@@ -116,6 +120,36 @@ describe('getDb', () => {
 
     await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
+  })
+
+  test('copyCurrentSessionModel snapshots source session model to forked session', async () => {
+    const db = await getDb()
+    const sourceSessionId = `test-source-session-${crypto.randomUUID()}`
+    const targetSessionId = `test-target-session-${crypto.randomUUID()}`
+    const getClient = (() => {
+      throw new Error('provider lookup should not run for explicit session models')
+    }) satisfies Exclude<Awaited<ReturnType<typeof initializeOpencodeForDirectory>>, Error>
+
+    await setSessionModel({
+      sessionId: sourceSessionId,
+      modelId: 'anthropic/claude-opus-4-6',
+      variant: 'thinking',
+    })
+
+    await copyCurrentSessionModel({
+      sourceSessionId,
+      targetSessionId,
+      getClient,
+    })
+
+    await expect(getSessionModel(targetSessionId)).resolves.toMatchInlineSnapshot(`
+      {
+        "modelId": "anthropic/claude-opus-4-6",
+        "variant": "thinking",
+      }
+    `)
+
+    await db.delete(schema.session_models).where(orm.inArray(schema.session_models.session_id, [sourceSessionId, targetSessionId]))
   })
 
   test('session event persistence uses (timestamp, event_index) ordering for deterministic same-ms replay', async () => {

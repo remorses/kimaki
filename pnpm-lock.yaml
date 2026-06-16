@@ -1805,6 +1805,20 @@ packages:
       '@opentui/solid':
         optional: true
 
+  '@opencode-ai/plugin@1.16.2':
+    resolution: {integrity: sha512-FaZhVXrbz93xsdGLCtarRDTeqFt8AkLfh8B34tFBj6G4HXVmKSgBwVXmtELKKC+08xMtawBC9hshiMbXryv6cg==}
+    peerDependencies:
+      '@opentui/core': '>=0.3.2'
+      '@opentui/keymap': '>=0.3.2'
+      '@opentui/solid': '>=0.3.2'
+    peerDependenciesMeta:
+      '@opentui/core':
+        optional: true
+      '@opentui/keymap':
+        optional: true
+      '@opentui/solid':
+        optional: true
+
   '@opencode-ai/sdk@1.15.11':
     resolution: {integrity: sha512-IyYyDVsO8SKbKbkSadHpDuYnYC+2vmEeLU+rW+rH2M54Sigq6l3gDHno16+U6SRut+lowbph7v/ry3WbV67V3w==}
 
@@ -4065,6 +4079,10 @@ packages:
     resolution: {integrity: sha512-ifK0CgjALofS5bkrcTy4RaQ9Vx2Knf/eLeIO+NaswQEpH1UblrtTSCIvN71qQDMq0PeQ/SSPojvEJp9vvvfr+w==}
     engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0}
 
+  ini@7.0.0:
+    resolution: {integrity: sha512-ifK0CgjALofS5bkrcTy4RaQ9Vx2Knf/eLeIO+NaswQEpH1UblrtTSCIvN71qQDMq0PeQ/SSPojvEJp9vvvfr+w==}
+    engines: {node: ^22.22.2 || ^24.15.0 || >=26.0.0}
+
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
 
@@ -4683,6 +4701,9 @@ packages:
   msgpackr-extract@3.0.4:
     resolution: {integrity: sha512-4kmO/MdyUIkLIvTPr8VHLil4AtoKIoniWPIEk5+CDy0xnWC84azhSFmuJ7PxZdsYtiP5kEeQsORAVIeMgxT+Hw==}
     hasBin: true
+
+  msgpackr@2.0.2:
+    resolution: {integrity: sha512-c5hYOXFbP79Slh6Dzd2wzk+jnV7mX1UxfMYtilnY1NmalXPqG8DGb5cYCMBrW4AsH3zekBBZd4QrKz9NhtvYLQ==}
 
   msgpackr@2.0.2:
     resolution: {integrity: sha512-c5hYOXFbP79Slh6Dzd2wzk+jnV7mX1UxfMYtilnY1NmalXPqG8DGb5cYCMBrW4AsH3zekBBZd4QrKz9NhtvYLQ==}
@@ -6934,6 +6955,12 @@ snapshots:
       effect: 4.0.0-beta.74
       zod: 4.1.8
 
+  '@opencode-ai/plugin@1.16.2':
+    dependencies:
+      '@opencode-ai/sdk': 1.16.2
+      effect: 4.0.0-beta.74
+      zod: 4.1.8
+
   '@opencode-ai/sdk@1.15.11':
     dependencies:
       cross-spawn: 7.0.6
@@ -9121,6 +9148,8 @@ snapshots:
 
   ini@7.0.0: {}
 
+  ini@7.0.0: {}
+
   inline-style-parser@0.2.7: {}
 
   internmap@1.0.1: {}
@@ -9955,6 +9984,10 @@ snapshots:
       '@msgpackr-extract/msgpackr-extract-linux-x64': 3.0.4
       '@msgpackr-extract/msgpackr-extract-win32-x64': 3.0.4
     optional: true
+
+  msgpackr@2.0.2:
+    optionalDependencies:
+      msgpackr-extract: 3.0.4
 
   msgpackr@2.0.2:
     optionalDependencies:

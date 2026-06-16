@@ -13,7 +13,7 @@ import {
 import path from 'node:path'
 import { getDb } from '../db.js'
 import { getChannelDirectory } from '../database.js'
-import { splitTablesFromMarkdown } from '../format-tables.js'
+import { splitTablesFromMarkdown, truncateComponents } from '../format-tables.js'
 import { formatTimeAgo } from './worktrees.js'
 
 const MAX_ROWS = 20
@@ -148,7 +148,7 @@ export async function handleLastSessionsCommand({
   const tableMarkdown = buildSessionTable({ rows })
   const segments = splitTablesFromMarkdown(tableMarkdown)
 
-  const components: APIMessageTopLevelComponent[] = segments.flatMap(
+  const allComponents: APIMessageTopLevelComponent[] = segments.flatMap(
     (segment) => {
       if (segment.type === 'components') {
         return segment.components
@@ -160,6 +160,8 @@ export async function handleLastSessionsCommand({
       return [textDisplay]
     },
   )
+
+  const { components } = truncateComponents(allComponents)
 
   await command.editReply({
     components,

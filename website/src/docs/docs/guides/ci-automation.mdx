@@ -4,6 +4,28 @@ description: Start Kimaki sessions from CI pipelines, cron jobs, or any automati
 icon: workflow
 ---
 
+## Getting Your Bot Token
+
+The `send` command authenticates with Discord using the `KIMAKI_BOT_TOKEN` environment variable. The value depends on which mode you're using.
+
+Print your token with:
+
+```bash
+kimaki bot token
+```
+
+This prints the token to stdout so you can copy it or pipe it into a secret manager.
+
+### Self-hosted mode
+
+If you created your own Discord bot, the token is your **Discord bot token** (starts with a base64 app ID, like `MTIz...`). You can also find it in the [Discord Developer Portal](https://discord.com/developers/applications) under Bot > Token.
+
+### Gateway mode
+
+If you're using the shared Kimaki gateway bot (`kimaki --gateway`), the token is a **`clientId:clientSecret`** pair generated during onboarding. It looks like `a1b2c3d4-...:7f8e9d...`. This credential authenticates your kimaki instance against the gateway proxy; it is not a Discord bot token.
+
+`kimaki bot token` prints the correct value in both modes. Store it as a repository secret and pass it as `KIMAKI_BOT_TOKEN` in CI.
+
 ## Programmatically Start Sessions
 
 The `send` command creates a Discord thread with your prompt, and the running bot on your machine picks it up automatically.
@@ -12,7 +34,7 @@ The `send` command creates a Discord thread with your prompt, and the running bo
 
 | Variable | Required | Description |
 |---|---|---|
-| `KIMAKI_BOT_TOKEN` | Yes (in CI) | Discord bot token |
+| `KIMAKI_BOT_TOKEN` | Yes (in CI) | Bot token or gateway `clientId:clientSecret` (see above) |
 
 ### CLI Options
 

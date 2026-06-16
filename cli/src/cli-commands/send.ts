@@ -671,6 +671,7 @@ cli
             cliLogger.warn(`Could not resolve session ID: ${e instanceof Error ? e.message : String(e)}`)
             return undefined
           })
+          }).catch(() => undefined)
         }
 
         const worktreeNote = worktreeName

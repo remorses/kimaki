@@ -39,8 +39,10 @@ import {
   setChannelAgent,
   setChannelModel,
   getThreadSession,
+  getSessionModel,
   getSessionAgent,
   getChannelAgent,
+  setSessionModel,
   type VerbosityLevel,
 } from './database.js'
 import { getDb } from './db.js'
@@ -281,8 +283,9 @@ describe('agent model resolution', () => {
     })
 
     // Add extra models to the provider so opencode accepts them
-    const providerConfig = opencodeConfig.provider[PROVIDER_NAME] as {
-      models: Record<string, { name: string }>
+    const providerConfig = opencodeConfig.provider[PROVIDER_NAME]
+    if (!providerConfig) {
+      throw new Error(`Missing deterministic provider config for ${PROVIDER_NAME}`)
     }
     providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
     providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
@@ -698,6 +701,91 @@ describe('agent model resolution', () => {
       expect(footerMessage.content).not.toContain(DEFAULT_MODEL)
     },
     15_000,
+  )
+
+  test(
+    '/btw fork keeps source session model when channel model differs',
+    async () => {
+      const db = await getDb()
+      await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
+      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: btw-source-msg',
+      })
+
+      const sourceThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: btw-source-msg'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: sourceThread.id,
+        timeout: 6_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const sourceSessionId = await getThreadSession(sourceThread.id)
+      expect(sourceSessionId).toBeDefined()
+      if (!sourceSessionId) throw new Error('Expected source session')
+
+      await setSessionModel({
+        sessionId: sourceSessionId,
+        modelId: `${PROVIDER_NAME}/${PLAN_AGENT_MODEL}`,
+      })
+      await setChannelModel({
+        channelId: TEXT_CHANNEL_ID,
+        modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      })
+
+      await discord.thread(sourceThread.id).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: btw-model-check. btw',
+      })
+
+      const forkedThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'btw: Reply with exactly: btw-model-check'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: forkedThread.id,
+        timeout: 6_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const forkedSessionId = await getThreadSession(forkedThread.id)
+      expect(forkedSessionId).toBeDefined()
+      const forkedSessionModel = forkedSessionId
+        ? await getSessionModel(forkedSessionId)
+        : undefined
+
+      const forkedThreadText = (await discord.thread(forkedThread.id).text())
+        .replace(`<#${sourceThread.id}>`, '<#SOURCE_THREAD>')
+
+      expect(forkedThreadText).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        Reusing context from <#SOURCE_THREAD> to answer prompt...
+        Reply with exactly: btw-model-check
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2*"
+      `)
+      expect(forkedSessionModel).toMatchInlineSnapshot(`
+        {
+          "modelId": "deterministic-provider/plan-model-v2",
+          "variant": null,
+        }
+      `)
+      expect(forkedSessionModel?.modelId).not.toBe(`${PROVIDER_NAME}/${CHANNEL_MODEL}`)
+    },
+    20_000,
   )
 
   test(

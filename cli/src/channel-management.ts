@@ -250,7 +250,11 @@ export async function createDefaultKimakiChannel({
     return null
   }
 
-  // 2. Fallback: detect existing channel by name+category
+  // 2. Fallback: detect existing channel by name+category.
+  // If a "kimaki" channel already exists in the guild but is NOT in our local
+  // DB, it was likely created by another kimaki instance (different machine).
+  // Do NOT adopt it — just skip channel creation entirely to avoid both
+  // instances fighting over the same channel.
   const kimakiCategory = await ensureKimakiCategory(guild, botName)
   const existingByName = guild.channels.cache.find((ch): ch is TextChannel => {
     if (ch.type !== ChannelType.GuildText) {
@@ -263,14 +267,8 @@ export async function createDefaultKimakiChannel({
   })
   if (existingByName) {
     logger.log(
-      `Found existing default kimaki channel by name: ${existingByName.id}, restoring DB mapping`,
+      `Found existing default kimaki channel by name: ${existingByName.id}, but it is not in our DB — skipping (likely owned by another kimaki instance)`,
     )
-    await setChannelDirectory({
-      channelId: existingByName.id,
-      directory: projectDirectory,
-      channelType: 'text',
-      skipIfExists: true,
-    })
     return null
   }
 

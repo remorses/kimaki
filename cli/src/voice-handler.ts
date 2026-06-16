@@ -835,6 +835,16 @@ export function registerVoiceStateHandler({
           return
         }
 
+        // Check for Gemini API key before joining — voice requires it for live audio
+        const geminiApiKey =
+          (await getGeminiApiKey(appId)) || process.env.GEMINI_API_KEY
+        if (!geminiApiKey) {
+          voiceLogger.log(
+            `No Gemini API key available, skipping voice channel join. Use /audio-api-key in Discord to set one.`,
+          )
+          return
+        }
+
         try {
           voiceLogger.log(
             `Attempting to join voice channel: ${voiceChannel.name} (${voiceChannel.id})`,

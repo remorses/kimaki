@@ -248,6 +248,45 @@ export async function ensureSessionPreferencesSnapshot({
   )
 }
 
+export async function copyCurrentSessionModel({
+  sourceSessionId,
+  targetSessionId,
+  channelId,
+  appId,
+  getClient,
+  directory,
+}: {
+  sourceSessionId: string
+  targetSessionId: string
+  channelId?: string
+  appId?: string
+  getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+  directory?: string
+}) {
+  const modelInfo = await getCurrentModelInfo({
+    sessionId: sourceSessionId,
+    channelId,
+    appId,
+    getClient,
+    directory,
+  })
+  if (modelInfo.type === 'none') return
+
+  const variant = await getVariantCascade({
+    sessionId: sourceSessionId,
+    channelId,
+    appId,
+  })
+  await setSessionModel({
+    sessionId: targetSessionId,
+    modelId: modelInfo.model,
+    variant: variant ?? null,
+  })
+  modelLogger.log(
+    `[MODEL] Copied session model ${modelInfo.model} from ${sourceSessionId} to ${targetSessionId}`,
+  )
+}
+
 /**
  * Get the current model info for a channel/session, including where it comes from.
  * Priority: session > agent > channel > global > opencode default
@@ -372,18 +411,13 @@ export async function handleModelCommand({
   }
 
   // Determine if we're in a thread or text channel
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const thread = channel.isThread() ? channel : undefined
 
   let projectDirectory: string | undefined
   let targetChannelId: string
   let sessionId: string | undefined
 
-  if (isThread) {
-    const thread = channel as ThreadChannel
+  if (thread) {
     // Parallelize: resolve metadata and session ID at the same time
     const [textChannel, threadSessionId] = await Promise.all([
       resolveTextChannel(thread),
@@ -420,7 +454,7 @@ export async function handleModelCommand({
 
     const effectiveAppId = appId
 
-    if (isThread && sessionId) {
+    if (thread && sessionId) {
       await ensureSessionPreferencesSnapshot({
         sessionId,
         channelId: targetChannelId,
@@ -503,8 +537,8 @@ export async function handleModelCommand({
       dir: projectDirectory,
       channelId: targetChannelId,
       sessionId: sessionId,
-      isThread: isThread,
-      thread: isThread ? (channel as ThreadChannel) : undefined,
+      isThread: Boolean(thread),
+      thread,
       appId,
       providerSelectHeader,
     }
