@@ -1200,9 +1200,19 @@ export async function recoverWorktreeDirectory({
 
   // Detect old path format (~/.local/share/opencode/worktree/...) and treat as missing
   const isOldPathFormat = worktreeDirectory.includes('/.local/share/opencode/worktree/')
+  const worktreeName = worktreeInfo.worktree_name
 
   // If directory already exists and is NOT old format, no recovery needed
   if (!isOldPathFormat && fs.existsSync(worktreeDirectory)) {
+    // Create backwards-compat symlink for any existing sessions that still
+    // reference the old path format (~/.local/share/opencode/worktree/...)
+    if (worktreeName) {
+      createOldPathSymlink({
+        projectDirectory,
+        worktreeName,
+        newWorktreeDirectory: worktreeDirectory,
+      })
+    }
     return { recovered: false, reason: 'dir-exists' }
   }
 
@@ -1210,8 +1220,6 @@ export async function recoverWorktreeDirectory({
   logger.log(
     `[RECOVER WORKTREE] Worktree directory needs recovery: ${worktreeDirectory} (oldFormat=${isOldPathFormat}, exists=${fs.existsSync(worktreeDirectory)})`,
   )
-
-  const worktreeName = worktreeInfo.worktree_name
   if (!worktreeName) {
     return new Error('Cannot recover worktree: missing worktree_name in database')
   }
