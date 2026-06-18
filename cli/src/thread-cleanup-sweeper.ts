@@ -40,6 +40,11 @@ const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
 const CLEANUP_ACTION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const REPROMPT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000
 const NEVER_REPROMPT_AT = new Date('9999-12-31T00:00:00Z')
+const DISCORD_EPOCH = 1420070400000n
+
+function snowflakeTimestamp(snowflake: string): number {
+  return Number((BigInt(snowflake) >> 22n) + DISCORD_EPOCH)
+}
 
 export function startThreadCleanupSweeper({
   discordClient,
@@ -121,9 +126,24 @@ export async function evaluateThreadForCleanup({
   const lastPrompted = await getCleanupPromptedAt(threadId)
   if (lastPrompted && Date.now() - lastPrompted.getTime() < REPROMPT_COOLDOWN_MS) return
 
-  if (await isThreadArchived({ rest, threadId })) {
-    await setCleanupPromptedAt(threadId, NEVER_REPROMPT_AT).catch(() => undefined)
-    return
+  // Fetch thread info: archived status and last message timestamp
+  try {
+    const channel = (await rest.get(Routes.channel(threadId))) as {
+      archived?: boolean
+      last_message_id?: string | null
+    } | null
+    if (channel?.archived) {
+      await setCleanupPromptedAt(threadId, NEVER_REPROMPT_AT).catch(() => undefined)
+      return
+    }
+    if (channel?.last_message_id) {
+      const lastMsgTs = snowflakeTimestamp(channel.last_message_id)
+      if (Date.now() - lastMsgTs < TWO_DAYS_MS) {
+        return // recent activity, skip
+      }
+    }
+  } catch {
+    // if we can't fetch, proceed anyway
   }
 
   const worktree = await getThreadWorktree(threadId)
@@ -132,21 +152,6 @@ export async function evaluateThreadForCleanup({
     await evaluateWorktreeThread({ threadId, worktree, rest })
   } else {
     await evaluateNormalThread({ threadId, rest })
-  }
-}
-
-async function isThreadArchived({
-  rest,
-  threadId,
-}: {
-  rest: REST
-  threadId: string
-}): Promise<boolean> {
-  try {
-    const channel = (await rest.get(Routes.channel(threadId))) as { archived?: boolean } | null
-    return Boolean(channel?.archived)
-  } catch {
-    return false
   }
 }
 
