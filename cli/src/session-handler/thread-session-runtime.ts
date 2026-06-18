@@ -17,7 +17,6 @@ import type {
   Message as OpenCodeMessage,
 } from '@opencode-ai/sdk/v2'
 import path from 'node:path'
-import fs from 'node:fs'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
@@ -2428,7 +2427,7 @@ export class ThreadSessionRuntime {
         }
         await showAskUserQuestionDropdowns({
           thread: this.thread,
-          sessionId,
+          sessionId: effectiveSessionId,
           directory: this.sdkDirectory,
           requestId: questionRequest.id,
           input: { questions: questionRequest.questions },
@@ -3883,9 +3882,11 @@ export class ThreadSessionRuntime {
     if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
       const { recoverWorktreeDirectory } = await import('../worktrees.js')
       const recovery = await recoverWorktreeDirectory({ threadId: this.thread.id })
-      if (!recovery.recovered) {
+      if (recovery instanceof Error) {
+        logger.warn(`[WORKTREE] Worktree directory recovery error: ${recovery.message}`)
+      } else if (!recovery.recovered) {
         logger.warn(
-          `[WORKTREE] Worktree directory recovery failed: ${recovery.reason}${recovery.error ? ' - ' + recovery.error.message : ''}`,
+          `[WORKTREE] Worktree directory recovery failed: ${recovery.reason ?? 'unknown'}`,
         )
       }
     }
@@ -3930,27 +3931,6 @@ export class ThreadSessionRuntime {
         logger.warn(
           `[ENSURE SESSION] session.get returned no data for ${sessionId}, response=${JSON.stringify(sessionResponse)}`,
         )
-      }
-    }
-
-    // Check if existing session has a stale worktree path
-    if (session && worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
-      const isOldPathFormat = worktreeInfo.worktree_directory.includes('/.local/share/opencode/worktree/')
-      const dirExists = fs.existsSync(worktreeInfo.worktree_directory)
-      
-      if (isOldPathFormat || !dirExists) {
-        logger.log(
-          `[ENSURE SESSION] Existing session ${session.id} has stale worktree path: ${worktreeInfo.worktree_directory}`,
-        )
-        
-        await getClient()
-          .session.abort({ sessionID: session.id, directory: this.sdkDirectory })
-          .catch((e) => new OpenCodeSdkError({ operation: 'session.abort', cause: e }))
-        
-        const { recoverWorktreeDirectory } = await import('../worktrees.js')
-        await recoverWorktreeDirectory({ threadId: this.thread.id })
-        
-        session = undefined
       }
     }
 

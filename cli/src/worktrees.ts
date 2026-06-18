@@ -4,6 +4,7 @@
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { getDataDir } from './config.js'
 import { execAsync } from './exec-async.js'
@@ -1250,6 +1251,9 @@ export async function recoverWorktreeDirectory({
       // Update DB with new path
       await setWorktreeReady({ threadId, worktreeDirectory: newWorktreeDirectory })
 
+      // Create backwards-compat symlink from old path format to new path
+      createOldPathSymlink({ projectDirectory, worktreeName, newWorktreeDirectory })
+
       return { recovered: true, reason: 'migrated', worktreeDirectory: newWorktreeDirectory }
     } catch (error) {
       logger.error(
@@ -1279,8 +1283,52 @@ export async function recoverWorktreeDirectory({
   // Update DB with the new path
   await setWorktreeReady({ threadId, worktreeDirectory: createResult.directory })
 
+  // Create backwards-compat symlink from old path format to new path
+  createOldPathSymlink({
+    projectDirectory,
+    worktreeName,
+    newWorktreeDirectory: createResult.directory,
+  })
+
   logger.log(`[RECOVER WORKTREE] Successfully recovered worktree: ${createResult.directory}`)
   return { recovered: true, reason: 'recreated', worktreeDirectory: createResult.directory }
+}
+
+/**
+ * Create a symlink from the old worktree path format (~/.local/share/opencode/worktree/...)
+ * to the new path (~/.kimaki/worktrees/...) for backwards compatibility.
+ * This allows existing opencode sessions that were created with old path references
+ * to continue working without aborting the session.
+ */
+function createOldPathSymlink({
+  projectDirectory,
+  worktreeName,
+  newWorktreeDirectory,
+}: {
+  projectDirectory: string
+  worktreeName: string
+  newWorktreeDirectory: string
+}): void {
+  const fullHash = crypto.createHash('sha1').update(projectDirectory).digest('hex')
+  const oldName = worktreeName.replaceAll('/', '-')
+  const oldPath = path.join(
+    os.homedir(),
+    '.local',
+    'share',
+    'opencode',
+    'worktree',
+    fullHash,
+    oldName,
+  )
+
+  if (fs.existsSync(oldPath)) {
+    // Already exists — either real dir or symlink from a prior recovery
+    return
+  }
+
+  fs.mkdirSync(path.dirname(oldPath), { recursive: true })
+  fs.symlinkSync(newWorktreeDirectory, oldPath, 'dir')
+  logger.log(`[WORKTREE] Created backwards-compat symlink: ${oldPath} -> ${newWorktreeDirectory}`)
 }
 
 export type SessionWorkingDirectory = {

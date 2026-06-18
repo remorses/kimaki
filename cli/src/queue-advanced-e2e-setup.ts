@@ -27,10 +27,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
-import {
-  cleanupTestSessions,
-} from './test-utils.js'
-
+import { cleanupTestSessions } from './test-utils.js'
 
 export function createRunDirectories({ name }: { name: string }) {
   const root = path.resolve(process.cwd(), 'tmp', name)
@@ -69,12 +66,7 @@ export function createDiscordJsClient({ restUrl }: { restUrl: string }) {
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates,
     ],
-    partials: [
-      Partials.Channel,
-      Partials.Message,
-      Partials.User,
-      Partials.ThreadMember,
-    ],
+    partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
     rest: {
       api: restUrl,
       version: '10',
@@ -336,8 +328,6 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-
-
   const actionButtonClickFollowupMatcher: DeterministicMatcher = {
     id: 'action-button-click-followup',
     priority: 109,
@@ -380,14 +370,16 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           toolCallId: 'question-text-answer-call',
           toolName: 'question',
           input: JSON.stringify({
-            questions: [{
-              question: 'Which option do you prefer?',
-              header: 'Pick one',
-              options: [
-                { label: 'Alpha', description: 'Alpha option' },
-                { label: 'Beta', description: 'Beta option' },
-              ],
-            }],
+            questions: [
+              {
+                question: 'Which option do you prefer?',
+                header: 'Pick one',
+                options: [
+                  { label: 'Alpha', description: 'Alpha option' },
+                  { label: 'Beta', description: 'Beta option' },
+                ],
+              },
+            ],
           }),
         },
         {
@@ -416,14 +408,16 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           toolCallId: 'question-select-queue-call',
           toolName: 'question',
           input: JSON.stringify({
-            questions: [{
-              question: 'How to proceed?',
-              header: 'Select action',
-              options: [
-                { label: 'Alpha', description: 'Alpha option' },
-                { label: 'Beta', description: 'Beta option' },
-              ],
-            }],
+            questions: [
+              {
+                question: 'How to proceed?',
+                header: 'Select action',
+                options: [
+                  { label: 'Alpha', description: 'Alpha option' },
+                  { label: 'Beta', description: 'Beta option' },
+                ],
+              },
+            ],
           }),
         },
         {
@@ -793,6 +787,9 @@ export const TEST_USER_ID = '200000000000000991'
  * Sets up a full queue-advanced e2e environment: digital-twin Discord server,
  * opencode deterministic provider, database, bot client.
  * Each caller should use a unique channelId and dirName to avoid collisions
+ */
+export function setupQueueAdvancedSuite({
+  channelId,
   channelName,
   extraChannels = [],
   dirName,
@@ -828,10 +825,7 @@ export const TEST_USER_ID = '200000000000000991'
     previousDefaultVerbosity = store.getState().defaultVerbosity
     store.setState({ defaultVerbosity: 'tools_and_text' })
 
-    const digitalDiscordDbPath = path.join(
-      ctx.directories.dataDir,
-      'digital-discord.db',
-    )
+    const digitalDiscordDbPath = path.join(ctx.directories.dataDir, 'digital-discord.db')
 
     ctx.discord = new DigitalDiscord({
       guild: { name: `${dirName} Guild`, ownerId: TEST_USER_ID },
@@ -869,6 +863,10 @@ export const TEST_USER_ID = '200000000000000991'
     const hranaResult = await startHranaServer({ dbPath })
     if (hranaResult instanceof Error) {
       throw hranaResult
+    }
+    await setChannelDirectory({
+      channelId,
+      directory: ctx.directories.projectDirectory,
       channelType: 'text',
     })
     await setChannelVerbosity(channelId, 'tools_and_text')

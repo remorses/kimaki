@@ -732,8 +732,11 @@ export async function resolveWorkingDirectory({
     if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
       // Auto-recover missing worktree directory
       const recovery = await recoverWorktreeDirectory({ threadId: channel.id })
-      if (recovery.recovered) {
-        workingDirectory = recovery.worktreeDirectory
+      if (recovery instanceof Error) {
+        // Use the stored directory - will fail if missing, but that's the existing behavior
+        workingDirectory = worktreeInfo.worktree_directory
+      } else if (recovery.recovered) {
+        workingDirectory = recovery.worktreeDirectory ?? metadata.projectDirectory
       } else {
         // Use the stored directory - will fail if missing, but that's the existing behavior
         workingDirectory = worktreeInfo.worktree_directory
