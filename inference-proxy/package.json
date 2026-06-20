@@ -1,0 +1,22 @@
+{
+  "name": "inference-proxy",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "OpenAI-compatible inference proxy for Kimaki Pro, deployed at openai.kimaki.dev",
+  "scripts": {
+    "dev": "doppler run -p website -c dev -- wrangler dev",
+    "deploy": "doppler run -p website -c dev -- sh -c 'CLOUDFLARE_ENV=preview wrangler deploy --env preview'",
+    "deploy:prod": "doppler run -p website -c production -- wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "eventsource-parser": "^3.1.0",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "wrangler": "^4.22.0"
+  }
+}

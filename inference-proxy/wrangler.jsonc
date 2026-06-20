@@ -1,0 +1,52 @@
+{
+  "name": "kimaki-inference-proxy",
+  "main": "./src/server.ts",
+  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_date": "2026-05-20",
+
+  "secrets": {
+    "required": ["FIREWORKS_API_KEY"]
+  },
+
+  // Same Hyperdrive instance as the website (shared Postgres)
+  "hyperdrive": [
+    { "binding": "HYPERDRIVE", "id": "fc242a96a2d5472bb5d6a84eabaab910" }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "USAGE_COUNTER", "class_name": "UsageCounter" }
+    ]
+  },
+
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["UsageCounter"] }
+  ],
+
+  "routes": [
+    { "pattern": "openai.kimaki.dev", "custom_domain": true }
+  ],
+
+  "env": {
+    "preview": {
+      "name": "kimaki-inference-proxy-preview",
+      "secrets": {
+        "required": ["FIREWORKS_API_KEY"]
+      },
+      "hyperdrive": [
+        { "binding": "HYPERDRIVE", "id": "fc242a96a2d5472bb5d6a84eabaab910" }
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "USAGE_COUNTER", "class_name": "UsageCounter" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["UsageCounter"] }
+      ],
+      "routes": [
+        { "pattern": "openai.preview.kimaki.dev", "custom_domain": true, "zone_name": "kimaki.dev" }
+      ]
+    }
+  }
+}
