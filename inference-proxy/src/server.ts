@@ -90,12 +90,18 @@ async function handleChatCompletions(
   }
 
   // Pre-flight usage check: reject if already over limit.
-  // If the DO is unreachable, let the request through and log.
+  // Fail closed if the DO is unreachable to prevent unbounded spend.
   const usageStub = getUsageStub(env, orgId)
   const currentUsage = await usageStub.getMonthlyUsage().catch((err) => {
-    console.error('[usage] pre-flight check failed, allowing request', err)
-    return null
+    console.error('[usage] pre-flight check failed, rejecting request', err)
+    return 'failed' as const
   })
+  if (currentUsage === 'failed') {
+    return Response.json(
+      { error: { message: 'Usage check unavailable, try again later', type: 'rate_limit_error' } },
+      { status: 503 },
+    )
+  }
   if (currentUsage && currentUsage.totalCostUsd >= MONTHLY_COST_LIMIT_USD) {
     return Response.json(
       {
@@ -108,11 +114,18 @@ async function handleChatCompletions(
     )
   }
 
-  const body = (await request.json()) as {
+  let body: {
     model?: string
     stream?: boolean
-    stream_options?: Record<string, unknown>
     [key: string]: unknown
+  }
+  try {
+    body = await request.json()
+  } catch {
+    return Response.json(
+      { error: { message: 'Invalid JSON body', type: 'invalid_request_error' } },
+      { status: 400 },
+    )
   }
   const requestedModel = body.model ?? 'kimaki'
   const fireworksModel = MODEL_MAP[requestedModel]
@@ -136,11 +149,6 @@ async function handleChatCompletions(
     kimaki_org: orgId,
   }
   const isStreaming = body.stream === true
-
-  // Inject include_usage so the final SSE chunk has token counts
-  if (isStreaming) {
-    body.stream_options = { ...body.stream_options, include_usage: true }
-  }
 
   const fireworksResponse = await fetch(`${FIREWORKS_BASE_URL}/chat/completions`, {
     method: 'POST',

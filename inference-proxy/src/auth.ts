@@ -2,7 +2,8 @@
 // Keys are stored as SHA-256 hashes. The presented key is hashed and
 // looked up in the api_key table. Returns the org_id for usage tracking.
 //
-// Results are memoized at the edge via the Cache API (5 min fresh, 10 min SWR).
+// Results are memoized at the edge via the Cache API (5 min TTL, no SWR).
+// No stale-while-revalidate for auth: revoked keys must stop working within 5 min.
 // This avoids a Postgres round-trip on every request for the same key.
 // Invalid keys return null (not cached). Valid keys cache the AuthResult.
 
@@ -61,7 +62,7 @@ const memoizedLookup = memoize({
   namespace: 'api-key-auth',
   fn: lookupApiKey,
   ttl: 300, // 5 min fresh
-  swr: 600, // 10 min stale-while-revalidate
+  swr: 0,   // no stale-while-revalidate for auth decisions
 })
 
 export async function validateApiKey(
