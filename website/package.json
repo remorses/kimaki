@@ -13,9 +13,12 @@
     "verify:slack-bridge": "tsx scripts/verify-slack-bridge.ts"
   },
   "dependencies": {
+    "@fly.io/sdk": "^0.1.2",
     "@holocron.so/vite": "^0.21.0",
     "@slack/web-api": "^7.14.1",
     "better-auth": "^1.5.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "db": "workspace:^",
     "discord-api-types": "^0.38.40",
     "discord-slack-bridge": "workspace:^",
@@ -23,16 +26,17 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "spiceflow": "1.26.0-rsc.4",
+    "tailwind-merge": "^3.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.35.0",
+    "@cloudflare/vite-plugin": "1.42.0",
     "@cloudflare/workers-types": "^4.20260317.1",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "tsx": "^4.21.0",
     "vite": "^8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "4.102.0"
   }
 }

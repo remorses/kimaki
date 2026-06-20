@@ -91,6 +91,7 @@ cli
     'Disable background sync of external OpenCode sessions into Discord',
   )
   .option('--no-sentry', 'Disable Sentry error reporting')
+  .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
     '--gateway',
     'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
@@ -143,6 +144,7 @@ cli
       disableSync?: boolean
       autoRestart?: boolean
       noSentry?: boolean
+      noAutoUpgrade?: boolean
       gateway?: boolean
       gatewayCallbackUrl?: string
       allowMention?: Array<'users' | 'roles' | 'everyone'>
@@ -268,6 +270,7 @@ cli
           ...(options.noCritique && { critiqueEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
+          ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
@@ -305,6 +308,11 @@ cli
         if (options.noCritique) {
           cliLogger.log(
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
+          )
+        }
+        if (options.noAutoUpgrade) {
+          cliLogger.log(
+            'Auto-upgrade disabled: kimaki will not check for updates on startup',
           )
         }
         if (options.disableSync) {

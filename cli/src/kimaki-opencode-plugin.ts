@@ -18,5 +18,6 @@ export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plug
 export { anthropicAuthPlugin } from './anthropic-auth-plugin.js'
 export { imageOptimizerPlugin } from './image-optimizer-plugin.js'
 export { subagentRateLimitPlugin } from './subagent-rate-limit-plugin.js'
+export { cacheDriftPlugin } from './cache-drift-plugin.js'
 export { kittyGraphicsPlugin } from 'kitty-graphics-agent'
 export { injectionGuardInternal as injectionGuard } from 'opencode-injection-guard'

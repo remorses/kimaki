@@ -12,7 +12,7 @@
     "prettier": "^3.6.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
-    "vite": "^7.1.4",
+    "vite": "^8.0.13",
     "vite-node": "^3.2.4",
     "vitest": "^3.2.4"
   },
@@ -29,7 +29,10 @@
       "@discordjs/opus"
     ],
     "overrides": {
-      "spiceflow": "1.26.0-rsc.3"
+      "spiceflow": "1.26.0-rsc.5",
+      "react": "^19.2.7",
+      "react-dom": "^19.2.7",
+      "@types/node": "^25.5.0"
     }
   }
 }

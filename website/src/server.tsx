@@ -22,6 +22,14 @@ import {
 import { createAuth, GUILD_ID_HEADER, onboardingErrorKvKey, parseAllowedCallbackUrl } from './auth.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
+import {
+  DashboardLayout,
+  MachineListPage,
+  CreateMachinePage,
+  MachineDetailPage,
+} from './dashboard-page.js'
+import { constructInstallUrl } from './cloud-service.js'
+import { createCloudActions } from './cloud-actions.js'
 import type { Env } from './env.js'
 
 export { SlackBridgeDO }
@@ -41,8 +49,27 @@ const SLACK_INSTALL_SCOPES = [
   'files:write',
 ]
 
+type AuthSession = {
+  session: { id: string; userId: string; expiresAt: Date; token: string }
+  user: { id: string; name: string; email: string; emailVerified: boolean; image?: string | null }
+} | null
+
 export const app = new Spiceflow()
   .state('env', {} as Env)
+  .state('session', null as AuthSession)
+
+  // Resolve session for every request so pages can check auth status.
+  // Cookie caching keeps this fast (no DB hit on most requests).
+  .use(async ({ request, state }) => {
+    const baseURL = new URL(request.url).origin
+    const auth = createAuth({ env: state.env, baseURL })
+    state.session = await auth.api.getSession({ headers: request.headers }).catch(() => null)
+  })
+
+  // Session loader — available to all pages and client components via useLoaderData('/*')
+  .loader('/*', ({ state }) => {
+    return { session: state.session }
+  })
 
   // Redirect kimaki.xyz → kimaki.dev, preserving path and subdomains
   .use(async ({ request }) => {
@@ -889,12 +916,215 @@ export const app = new Spiceflow()
     },
   })
 
+  // ── Dashboard routes ──────────────────────────────────────────────
+  // Requires a better-auth session with Discord OAuth.
+  // Pages use RSC + server actions for all mutations.
+
+  .route({
+    method: 'POST',
+    path: '/dashboard/sign-out',
+    async handler({ request, state }) {
+      const baseURL = new URL(request.url).origin
+      const auth = createAuth({ env: state.env, baseURL })
+      const { headers } = await auth.api.signOut({
+        headers: request.headers,
+        returnHeaders: true,
+      })
+      const response = new Response(null, { status: 302, headers: { Location: '/dashboard' } })
+      for (const cookie of headers.getSetCookie()) {
+        response.headers.append('Set-Cookie', cookie)
+      }
+      return response
+    },
+  })
+
+  .layout('/dashboard/*', async ({ children, request, state }) => {
+    const baseURL = new URL(request.url).origin
+    const auth = createAuth({ env: state.env, baseURL })
+    const session = await auth.api.getSession({ headers: request.headers })
+    if (!session) {
+      // Dashboard login only needs identify+email scopes (no bot install).
+      // Use signInSocial with scopes override so Discord shows a simple
+      // "Authorize" prompt instead of the server picker + bot permissions flow.
+      const requestedPath = new URL(request.url).pathname
+      const { response: result, headers } = await auth.api.signInSocial({
+        body: {
+          provider: 'discord',
+          callbackURL: requestedPath,
+          scopes: ['identify', 'email'],
+        },
+        headers: request.headers,
+        returnHeaders: true,
+      })
+      if (!result?.url) {
+        throw new Response('Failed to initiate Discord sign-in', { status: 500 })
+      }
+      // Strip bot-specific params from the URL since we only want identity
+      const oauthUrl = new URL(result.url)
+      oauthUrl.searchParams.delete('permissions')
+      // Override scope to just identify+email (signInSocial may merge with provider defaults)
+      oauthUrl.searchParams.set('scope', 'identify email')
+      const redirectResponse = new Response(null, {
+        status: 302,
+        headers: { Location: oauthUrl.toString() },
+      })
+      for (const cookie of headers.getSetCookie()) {
+        redirectResponse.headers.append('Set-Cookie', cookie)
+      }
+      throw redirectResponse
+    }
+    return <DashboardLayout userName={session.user.name}>{children}</DashboardLayout>
+  })
+
+  .loader('/dashboard', async ({ state, request }) => {
+    const baseURL = new URL(request.url).origin
+    const auth = createAuth({ env: state.env, baseURL })
+    const session = await auth.api.getSession({ headers: request.headers })
+    if (!session) return { machines: [] }
+    const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
+    const machines = await prisma.cloud_machines.findMany({
+      where: { user_id: session.user.id },
+      orderBy: { created_at: 'desc' },
+    })
+    return { machines }
+  })
+  .page('/dashboard', async ({ loaderData }) => {
+    return <MachineListPage machines={loaderData.machines} />
+  })
+
+  .page('/dashboard/create', async ({ state, redirect }) => {
+    const actions = createCloudActions(state.env)
+    async function handleCreate(formData: FormData) {
+      'use server'
+      await actions.createMachine(formData)
+      throw redirect('/dashboard')
+    }
+    return <CreateMachinePage createAction={handleCreate} />
+  })
+
+  .page('/dashboard/machines/:id', async ({ params, state, request, response, redirect }) => {
+    const baseURL = new URL(request.url).origin
+    const auth = createAuth({ env: state.env, baseURL })
+    const session = await auth.api.getSession({ headers: request.headers })
+    if (!session) {
+      response.status = 404
+      return <p className="text-sm text-muted-foreground">Machine not found</p>
+    }
+    const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
+    const machine = await prisma.cloud_machines.findFirst({
+      where: { id: params.id, user_id: session.user.id },
+    })
+    if (!machine) {
+      response.status = 404
+      return <p className="text-sm text-muted-foreground">Machine not found</p>
+    }
+
+    let installUrl: string | null = null
+    if (machine.status === 'awaiting_authorization') {
+      const callbackUrl = new URL(`/dashboard/machines/${machine.id}/callback`, baseURL).toString()
+      installUrl = constructInstallUrl({
+        clientId: machine.client_id,
+        clientSecret: machine.client_secret,
+        callbackUrl,
+        reachableUrl: `https://${machine.fly_app_name}.fly.dev`,
+        websiteOrigin: baseURL,
+      })
+    }
+
+    const cloudActions = createCloudActions(state.env)
+
+    async function handleDelete(formData: FormData) {
+      'use server'
+      await cloudActions.deleteMachine(formData)
+      throw redirect('/dashboard')
+    }
+
+    return (
+      <MachineDetailPage
+        machine={machine}
+        installUrl={installUrl}
+        actions={{
+          startMachine: cloudActions.startMachine,
+          stopMachine: cloudActions.stopMachine,
+          deleteMachine: handleDelete,
+        }}
+      />
+    )
+  })
+
+  // OAuth callback after Discord authorization for a cloud machine.
+  // Validates that the gateway_clients row was created by the OAuth flow
+  // before marking the machine as running, preventing spoofed callbacks.
+  .route({
+    method: 'GET',
+    path: '/dashboard/machines/:id/callback',
+    async handler({ params, request, state }) {
+      const url = new URL(request.url)
+      const guildId = url.searchParams.get('guild_id')
+      const callbackClientId = url.searchParams.get('client_id')
+
+      if (!guildId) {
+        return new Response('Missing guild_id', { status: 400 })
+      }
+
+      const baseURL = url.origin
+      const auth = createAuth({ env: state.env, baseURL })
+      const session = await auth.api.getSession({ headers: request.headers })
+      if (!session) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: '/dashboard' },
+        })
+      }
+
+      const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
+
+      // Verify the machine belongs to this user and the client_id matches
+      const machine = await prisma.cloud_machines.findFirst({
+        where: { id: params.id, user_id: session.user.id },
+      })
+      if (!machine) {
+        return new Response('Machine not found', { status: 404 })
+      }
+      if (callbackClientId && callbackClientId !== machine.client_id) {
+        return new Response('Client ID mismatch', { status: 403 })
+      }
+
+      // Verify that the gateway_clients row exists (proving Discord auth happened)
+      const gatewayClient = await prisma.gateway_clients.findFirst({
+        where: {
+          client_id: machine.client_id,
+          guild_id: guildId,
+          secret: machine.client_secret,
+        },
+      })
+      if (!gatewayClient) {
+        return new Response('Authorization not completed. Please try authorizing again.', {
+          status: 409,
+        })
+      }
+
+      await prisma.cloud_machines.updateMany({
+        where: { id: params.id, user_id: session.user.id },
+        data: {
+          guild_id: guildId,
+          status: 'running',
+        },
+      })
+
+      return new Response(null, {
+        status: 302,
+        headers: { Location: `/dashboard/machines/${params.id}` },
+      })
+    },
+  })
+
   // Holocron docs mounted last so explicit routes above take priority.
   .use(holocronApp)
 
 export default {
   fetch(request: Request, env: Env) {
-    return app.handle(request, { state: { env } })
+    return app.handle(request, { state: { env, session: null } })
   },
   // Re-exported here so Vite's tree-shaker keeps the class in the bundle.
   // Cloudflare Workers requires DO classes to be exported from the entry.
