@@ -124,6 +124,14 @@ import { getChannelDirectory } from './database.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
+/** Commands that should work in channels not yet owned by any machine.
+ * These are used to initially configure a channel on a machine. */
+const SETUP_COMMANDS = new Set([
+  'add-project',
+  'create-new-project',
+  'upgrade-and-restart',
+])
+
 /**
  * Check if the interaction's channel is owned by this machine (has a project
  * directory configured in the local sqlite db). For threads, checks the parent
@@ -188,15 +196,19 @@ export function registerInteractionHandler({
         // Multi-machine routing: only handle interactions for channels owned
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
-        const owned = await isInteractionOwnedByThisMachine(interaction)
+        // Setup commands (add-project, create-new-project, upgrade-and-restart)
+        // are exempt because they run in channels not yet owned by any machine.
+        const isSetupCommand =
+          (interaction.isChatInputCommand() || interaction.isAutocomplete()) &&
+          SETUP_COMMANDS.has(interaction.commandName)
+        const owned =
+          isSetupCommand || (await isInteractionOwnedByThisMachine(interaction))
         if (!owned) {
           interactionLogger.log(
             `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
           )
-          // For autocomplete, return empty results so Discord doesn't hang
-          if (interaction.isAutocomplete()) {
-            await interaction.respond([])
-          }
+          // Do not respond at all — consuming the interaction token would
+          // prevent the owning machine from responding (tokens are single-use).
           return
         }
 

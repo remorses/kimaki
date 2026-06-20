@@ -532,6 +532,36 @@ export async function startDiscordBot({
         }
       }
 
+      // Multi-machine routing: check channel ownership before permission
+      // checks so we don't send permission-denial replies in channels owned
+      // by another machine. Resolve the "owning" channel: for threads, check
+      // the parent channel; for text channels, check the channel itself.
+      if (!isCliInjectedPrompt && message.guild) {
+        const channel = message.channel
+        let owningChannelId: string | undefined
+        if (
+          [
+            ChannelType.PublicThread,
+            ChannelType.PrivateThread,
+            ChannelType.AnnouncementThread,
+          ].includes(channel.type)
+        ) {
+          const thread = channel as ThreadChannel
+          owningChannelId = thread.parent?.id || thread.parentId || undefined
+        } else {
+          owningChannelId = channel.id
+        }
+        if (owningChannelId) {
+          const channelConfig = await getChannelDirectory(owningChannelId)
+          if (!channelConfig) {
+            voiceLogger.log(
+              `[IGNORED] Channel ${owningChannelId} has no project directory configured`,
+            )
+            return
+          }
+        }
+      }
+
       if (!isCliInjectedPrompt && message.guild) {
         const member = await resolveGuildMessageMember(message)
         if (!member) {
