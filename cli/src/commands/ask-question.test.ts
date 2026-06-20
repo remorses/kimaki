@@ -1,6 +1,7 @@
 // Tests AskUserQuestion request deduplication and cleanup helpers.
 
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { ThreadChannel } from 'discord.js'
 import {
   areAllQuestionsAnswered,
   deletePendingQuestionContextsForRequest,
@@ -8,7 +9,7 @@ import {
   showAskUserQuestionDropdowns,
 } from './ask-question.js'
 
-function createFakeThread(): Parameters<typeof showAskUserQuestionDropdowns>[0]['thread'] {
+function createFakeThread(): ThreadChannel {
   const send = vi.fn(async () => {
     return { id: 'msg-1' }
   })
@@ -16,7 +17,7 @@ function createFakeThread(): Parameters<typeof showAskUserQuestionDropdowns>[0][
   return {
     id: 'thread-1',
     send,
-  }
+  } as unknown as ThreadChannel
 }
 
 afterEach(() => {

@@ -10,7 +10,7 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -34,18 +34,13 @@ export type CancelQuestionResult = 'no-pending' | 'replied' | 'reply-failed'
 type PendingQuestionContext = {
   sessionId: string
   directory: string
-  thread: QuestionThread
+  thread: ThreadChannel
   requestId: string // OpenCode question request ID for replying
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
   totalQuestions: number
   contextHash: string
 
-}
-
-type QuestionThread = {
-  id: string
-  send(options: Parameters<ThreadChannel['send']>[0]): Promise<{ id: string }>
 }
 
 // Store pending question contexts by hash.
@@ -128,7 +123,7 @@ export async function showAskUserQuestionDropdowns({
   input,
   silent,
 }: {
-  thread: QuestionThread
+  thread: ThreadChannel
   sessionId: string
   directory: string
   requestId: string // OpenCode question request ID
@@ -308,10 +303,10 @@ export async function handleAskQuestionSelectMenu(
   })
 
   const username = interaction.user.globalName || interaction.user.username
-  await context.thread.send({
-    content: `» **${username}:** ${answeredText}`,
-    flags: SILENT_MESSAGE_FLAGS,
-  })
+  await sendThreadMessage(
+    context.thread,
+    `» **${username}:** ${answeredText}`,
+  )
 
   // Check if all questions are answered
   if (areAllQuestionsAnswered(context)) {
@@ -353,10 +348,10 @@ async function submitQuestionAnswers(
     )
   } catch (error) {
     logger.error('Failed to submit answers:', error)
-    await context.thread.send({
-      content: `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
+    await sendThreadMessage(
+      context.thread,
+      `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    )
   }
 }
 
