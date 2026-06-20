@@ -10,7 +10,7 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -34,20 +34,39 @@ export type CancelQuestionResult = 'no-pending' | 'replied' | 'reply-failed'
 type PendingQuestionContext = {
   sessionId: string
   directory: string
-  thread: ThreadChannel
+  thread: QuestionThread
   requestId: string // OpenCode question request ID for replying
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
   totalQuestions: number
-  answeredCount: number
   contextHash: string
 
+}
+
+type QuestionThread = {
+  id: string
+  send(options: Parameters<ThreadChannel['send']>[0]): Promise<{ id: string }>
 }
 
 // Store pending question contexts by hash.
 // TTL prevents unbounded growth if user never answers a question.
 const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
+
+export function areAllQuestionsAnswered({
+  totalQuestions,
+  answers,
+}: {
+  totalQuestions: number
+  answers: Record<number, string[]>
+}): boolean {
+  for (let i = 0; i < totalQuestions; i++) {
+    if (!answers[i]) {
+      return false
+    }
+  }
+  return true
+}
 
 export function findPendingQuestionContextForRequest({
   threadId,
@@ -109,7 +128,7 @@ export async function showAskUserQuestionDropdowns({
   input,
   silent,
 }: {
-  thread: ThreadChannel
+  thread: QuestionThread
   sessionId: string
   directory: string
   requestId: string // OpenCode question request ID
@@ -138,7 +157,6 @@ export async function showAskUserQuestionDropdowns({
     questions: input.questions,
     answers: {},
     totalQuestions: input.questions.length,
-    answeredCount: 0,
     contextHash,
 
   }
@@ -262,6 +280,13 @@ export async function handleAskQuestionSelectMenu(
     return
   }
 
+  if (context.answers[questionIndex]) {
+    logger.log(
+      `Ignored duplicate answer for question ${context.requestId} index ${questionIndex}`,
+    )
+    return
+  }
+
   // Check if "other" was selected
   if (selectedValues.includes('other')) {
     // User wants to provide custom answer
@@ -275,8 +300,6 @@ export async function handleAskQuestionSelectMenu(
     })
   }
 
-  context.answeredCount++
-
   // Update this question's message: show answer and remove dropdown
   const answeredText = context.answers[questionIndex]!.join(', ')
   await interaction.editReply({
@@ -285,13 +308,13 @@ export async function handleAskQuestionSelectMenu(
   })
 
   const username = interaction.user.globalName || interaction.user.username
-  await sendThreadMessage(
-    context.thread,
-    `» **${username}:** ${answeredText}`,
-  )
+  await context.thread.send({
+    content: `» **${username}:** ${answeredText}`,
+    flags: SILENT_MESSAGE_FLAGS,
+  })
 
   // Check if all questions are answered
-  if (context.answeredCount >= context.totalQuestions) {
+  if (areAllQuestionsAnswered(context)) {
     // All questions answered - send result back to session
     await submitQuestionAnswers(context)
     deletePendingQuestionContextsForRequest({
@@ -330,10 +353,10 @@ async function submitQuestionAnswers(
     )
   } catch (error) {
     logger.error('Failed to submit answers:', error)
-    await sendThreadMessage(
-      context.thread,
-      `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    )
+    await context.thread.send({
+      content: `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
   }
 }
 
@@ -344,7 +367,7 @@ async function submitQuestionAnswers(
 export function parseAskUserQuestionTool(part: {
   type: string
   tool?: string
-  state?: { input?: unknown }
+  state?: { input?: AskUserQuestionInput }
 }): AskUserQuestionInput | null {
   if (part.type !== 'tool') {
     return null
@@ -356,7 +379,7 @@ export function parseAskUserQuestionTool(part: {
     return null
   }
 
-  const input = part.state?.input as AskUserQuestionInput | undefined
+  const input = part.state?.input
 
   if (
     !input?.questions ||

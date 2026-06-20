@@ -1,14 +1,14 @@
 // Tests AskUserQuestion request deduplication and cleanup helpers.
 
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { ThreadChannel } from 'discord.js'
 import {
+  areAllQuestionsAnswered,
   deletePendingQuestionContextsForRequest,
   pendingQuestionContexts,
   showAskUserQuestionDropdowns,
 } from './ask-question.js'
 
-function createFakeThread(): ThreadChannel {
+function createFakeThread(): Parameters<typeof showAskUserQuestionDropdowns>[0]['thread'] {
   const send = vi.fn(async () => {
     return { id: 'msg-1' }
   })
@@ -16,7 +16,7 @@ function createFakeThread(): ThreadChannel {
   return {
     id: 'thread-1',
     send,
-  } as unknown as ThreadChannel
+  }
 }
 
 afterEach(() => {
@@ -85,7 +85,6 @@ describe('ask-question', () => {
       }],
       answers: {},
       totalQuestions: 1,
-      answeredCount: 0,
       contextHash: 'ctx-1',
     }
 
@@ -107,5 +106,24 @@ describe('ask-question', () => {
 
     expect(removed).toBe(2)
     expect([...pendingQuestionContexts.keys()]).toEqual(['ctx-3'])
+  })
+
+  test('requires every question to have an answer', () => {
+    expect(areAllQuestionsAnswered({
+      totalQuestions: 3,
+      answers: {
+        0: ['Alpha'],
+        2: ['Gamma'],
+      },
+    })).toBe(false)
+
+    expect(areAllQuestionsAnswered({
+      totalQuestions: 3,
+      answers: {
+        0: ['Alpha'],
+        1: ['Beta'],
+        2: ['Gamma'],
+      },
+    })).toBe(true)
   })
 })
