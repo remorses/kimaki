@@ -36,9 +36,10 @@ model User {
   image         String?
   createdAt     DateTime
   updatedAt     DateTime
-  accounts      Account[]
-  sessions      Session[]
+  accounts       Account[]
+  sessions       Session[]
   gatewayClients gateway_clients[]
+  cloudMachines  cloud_machines[]
 
   @@map("user")
 }
@@ -117,4 +118,45 @@ model gateway_clients {
 enum gateway_client_platform {
   discord
   slack
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Kimaki Cloud tables
+// ──────────────────────────────────────────────────────────────────
+
+// Tracks Fly.io machines provisioned via the kimaki.dev dashboard.
+// Each row represents one machine in a user's Fly app.
+// The machine runs kimaki in gateway mode, connecting through the
+// shared gateway-proxy with the stored client_id:client_secret.
+model cloud_machines {
+  id             String               @id @default(uuid())
+  user_id        String
+  fly_app_name   String               @unique
+  fly_machine_id String?              @unique
+  fly_volume_id  String?
+  region         String
+  cpu_kind       String               @default("shared")
+  cpus           Int                  @default(1)
+  memory_mb      Int                  @default(512)
+  disk_size_gb   Int                  @default(5)
+  status         cloud_machine_status @default(creating)
+  client_id      String
+  client_secret  String
+  guild_id       String?
+  error_message  String?
+  created_at     DateTime             @default(now()) @db.Timestamptz
+  updated_at     DateTime             @updatedAt     @db.Timestamptz
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("cloud_machines")
+}
+
+enum cloud_machine_status {
+  creating
+  awaiting_authorization
+  running
+  stopped
+  error
 }

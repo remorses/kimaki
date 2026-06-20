@@ -15,5 +15,11 @@ export default defineConfig({
   resolve: {
     dedupe: ['spiceflow', 'spiceflow/react', 'react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
   },
-
+  environments: {
+    rsc: {
+      optimizeDeps: {
+        include: ['@holocron.so/vite/src/config'],
+      },
+    },
+  },
 })

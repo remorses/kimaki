@@ -17,10 +17,6 @@
       {
         "type": "github",
         "href": "https://github.com/remorses/kimaki"
-      },
-      {
-        "type": "discord",
-        "href": "https://discord.gg/qz3hapKcMM"
       }
     ]
   },
@@ -147,7 +143,9 @@
     "/health",
     "/slack-install",
     "/slack-install/*",
-    "/slack/*"
+    "/slack/*",
+    "/dashboard/*",
+    "/login"
   ],
   "decorativeLines": "none"
 }
