@@ -87,6 +87,40 @@ export const KIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
   gatewayUrl: KIMAKI_GATEWAY_PROXY_URL,
 })
 
+export type OpenUrlCommand = {
+  command: string
+  args: string[]
+}
+
+export function getOpenUrlCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): OpenUrlCommand {
+  if (platform === 'darwin') {
+    return { command: 'open', args: [url] }
+  }
+  if (platform === 'win32') {
+    return { command: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] }
+  }
+  return { command: 'xdg-open', args: [url] }
+}
+
+function openUrlInDefaultBrowser(url: string): void {
+  const { command, args } = getOpenUrlCommand(url)
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  child.on('error', (error) => {
+    cliLogger.warn(
+      'Failed to open install URL:',
+      error instanceof Error ? error.message : String(error),
+    )
+  })
+  child.unref()
+}
+
 // Strip bracketed paste escape sequences from terminal input.
 // iTerm2 and other terminals wrap pasted content with \x1b[200~ and \x1b[201~
 // which can cause validation to fail on macOS. See: https://github.com/remorses/kimaki/issues/18
@@ -1197,14 +1231,7 @@ export async function resolveCredentials({
       )
 
       // Open URL in default browser
-      const { exec } = await import('node:child_process')
-      const openCmd =
-        process.platform === 'darwin'
-          ? 'open'
-          : process.platform === 'win32'
-            ? 'start'
-            : 'xdg-open'
-      exec(`${openCmd} "${oauthUrl}"`)
+      openUrlInDefaultBrowser(oauthUrl)
     } else {
       // Non-TTY: emit structured JSON so the host process can show the URL to the user.
       emitJsonEvent({ type: 'install_url', url: oauthUrl })
