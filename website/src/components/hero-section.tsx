@@ -11,7 +11,7 @@
  */
 'use client'
 
-import { ArrowDown, MessageSquare } from 'lucide-react'
+import { ArrowDown, Zap } from 'lucide-react'
 
 function GithubIcon({ size = 14 }: { size?: number }) {
   return (
@@ -24,7 +24,7 @@ import { InstallCommand } from './install-command.tsx'
 import { VideoBackgroundShader } from '@holocron.so/vite/mdx'
 
 const GITHUB_URL = 'https://github.com/remorses/kimaki'
-const DISCORD_URL = 'https://discord.gg/qz3hapKcMM'
+const CREATE_MACHINE_URL = '/dashboard/create'
 
 export function HeroSection() {
   return (
@@ -68,24 +68,22 @@ export function HeroSection() {
             </span>
           </h1>
           <InstallCommand />
-          <div className='flex items-center gap-5 mt-4'>
+          <div className='flex items-center gap-3 mt-5'>
             <a
-              target='_blank'
-              rel='noopener noreferrer'
-              className='flex items-center gap-1.5 text-[13px] font-mono text-foreground/70 hover:text-foreground transition-colors'
-              href={GITHUB_URL}
+              href={CREATE_MACHINE_URL}
+              className='flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors'
             >
-              <GithubIcon size={14} />
-              GitHub
+              <Zap size={15} />
+              Create Kimaki Cloud Machine
             </a>
             <a
               target='_blank'
               rel='noopener noreferrer'
-              className='flex items-center gap-1.5 text-[13px] font-mono text-foreground/70 hover:text-foreground transition-colors'
-              href={DISCORD_URL}
+              className='flex items-center gap-2 px-4 py-2 rounded-lg border border-foreground/20 text-foreground/80 text-sm font-medium hover:bg-foreground/5 transition-colors'
+              href={GITHUB_URL}
             >
-              <MessageSquare size={14} />
-              Discord
+              <GithubIcon size={15} />
+              GitHub
             </a>
           </div>
           <a

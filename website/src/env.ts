@@ -18,4 +18,5 @@ export type Env = {
   SLACK_SIGNING_SECRET: string
   SLACK_WORKSPACE_ID: string
   SLACK_GATEWAY: DurableObjectNamespace<SlackBridgeDO>
+  FLY_API_TOKEN?: string
 }
