@@ -120,41 +120,16 @@ import {
 import { hasKimakiAdminPermission, hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
-import { getChannelDirectory, listTrackedTextChannels } from './database.js'
+import { getChannelDirectory } from './database.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
-/** Commands that work in channels not yet owned, but only when this
- * machine has at least one other channel configured in the same guild. */
+/** Setup commands that should reply with guidance when used in
+ * non-project channels, instead of silently ignoring. */
 const SETUP_COMMANDS = new Set([
   'add-project',
   'create-new-project',
-  'upgrade-and-restart',
 ])
-
-/**
- * Check if this machine has any channel configured in the given guild.
- * Used for setup commands that run in unconfigured channels — they should
- * only be handled by a machine already active in that guild.
- */
-async function hasAnyChannelInGuild(
-  interaction: Interaction,
-): Promise<boolean> {
-  const guildId = interaction.guildId
-  if (!guildId) return false
-
-  const trackedChannels = await listTrackedTextChannels()
-  for (const { channel_id } of trackedChannels) {
-    // Check Discord client cache for guild membership.
-    // In gateway-proxy mode, the cache only contains channels from
-    // authorized guilds, so a cache hit is sufficient.
-    const cached = interaction.client.channels.cache.get(channel_id)
-    if (cached && 'guildId' in cached && cached.guildId === guildId) {
-      return true
-    }
-  }
-  return false
-}
 
 /**
  * Check if the interaction's channel is owned by this machine (has a project
@@ -220,17 +195,26 @@ export function registerInteractionHandler({
         // Multi-machine routing: only handle interactions for channels owned
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
-        // Setup commands (add-project, create-new-project, upgrade-and-restart)
-        // run in unconfigured channels but are still routed to the machine that
-        // has other channels in the same guild, preventing both machines from
-        // racing to respond.
-        const isSetupCommand =
-          (interaction.isChatInputCommand() || interaction.isAutocomplete()) &&
-          SETUP_COMMANDS.has(interaction.commandName)
-        const owned = isSetupCommand
-          ? await hasAnyChannelInGuild(interaction)
-          : await isInteractionOwnedByThisMachine(interaction)
+        const owned = await isInteractionOwnedByThisMachine(interaction)
         if (!owned) {
+          // Setup commands get a helpful reply instead of silent ignore.
+          // Both machines may race to reply; one wins, the other silently
+          // fails (interaction tokens are single-use). The message is the
+          // same from either machine so the race is harmless.
+          if (
+            interaction.isChatInputCommand() &&
+            SETUP_COMMANDS.has(interaction.commandName)
+          ) {
+            await interaction.reply({
+              content:
+                'Run this command in an existing Kimaki project channel.\nTo add a new project channel from the terminal, run:\n```\nkimaki project add /path/to/folder\n```',
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {
+              // Another machine already responded, safe to ignore
+            })
+            return
+          }
+
           interactionLogger.log(
             `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
           )
