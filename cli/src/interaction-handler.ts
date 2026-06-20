@@ -120,8 +120,47 @@ import {
 import { hasKimakiAdminPermission, hasKimakiBotPermission } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
+import { getChannelDirectory } from './database.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
+
+/**
+ * Check if the interaction's channel is owned by this machine (has a project
+ * directory configured in the local sqlite db). For threads, checks the parent
+ * channel. Returns true if owned, false if not (another machine should handle it).
+ */
+async function isInteractionOwnedByThisMachine(
+  interaction: Interaction,
+): Promise<boolean> {
+  const channelId = interaction.channelId
+  if (!channelId) return false
+
+  // Direct channel lookup
+  const channelConfig = await getChannelDirectory(channelId)
+  if (channelConfig) return true
+
+  // If in a thread, check the parent channel
+  const cachedParentId = interaction.channel?.isThread()
+    ? interaction.channel.parentId
+    : null
+  if (cachedParentId) {
+    const parentConfig = await getChannelDirectory(cachedParentId)
+    if (parentConfig) return true
+  }
+
+  // When channel isn't cached (common with gateway-proxy), fetch it to get parentId
+  if (!cachedParentId) {
+    const fetched = await interaction.client.channels
+      .fetch(channelId)
+      .catch(() => null)
+    if (fetched?.isThread() && fetched.parentId) {
+      const parentConfig = await getChannelDirectory(fetched.parentId)
+      if (parentConfig) return true
+    }
+  }
+
+  return false
+}
 
 export function registerInteractionHandler({
   discordClient,
@@ -145,6 +184,21 @@ export function registerInteractionHandler({
                 : 'other'
           }`,
         )
+
+        // Multi-machine routing: only handle interactions for channels owned
+        // by this machine (have a project directory configured in local db).
+        // If not owned, silently return so the other machine handles it.
+        const owned = await isInteractionOwnedByThisMachine(interaction)
+        if (!owned) {
+          interactionLogger.log(
+            `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
+          )
+          // For autocomplete, return empty results so Discord doesn't hang
+          if (interaction.isAutocomplete()) {
+            await interaction.respond([])
+          }
+          return
+        }
 
         if (interaction.isAutocomplete()) {
           if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
