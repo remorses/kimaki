@@ -40,6 +40,36 @@ async handler({ state }) {
 }
 ```
 
+# local dev database
+
+Local development uses a **Prisma Dev** instance (PGlite-based local Postgres)
+instead of hitting the production PlanetScale database. Data persists across
+restarts; only `prisma dev rm kimaki` deletes it.
+
+The `pnpm dev` script in website automatically starts the local database before
+starting vite. You can also manage it manually from the `db/` package.
+
+```bash
+# start the local database (idempotent, returns immediately if already running)
+cd db && pnpm dev
+
+# push schema changes to local database (run db dev first)
+cd db && pnpm push:dev
+
+# push schema changes to production (only humans should run this)
+cd db && pnpm push:prod
+
+# browse local database with Prisma Studio
+cd db && pnpm studio
+
+# start the website dev server (starts local db automatically)
+cd website && pnpm dev
+```
+
+The Doppler `dev` config for the `website` project has `DATABASE_URL` pointing
+at the local Prisma Dev instance (`localhost:51218`). The Doppler `production`
+config still points at PlanetScale.
+
 # secrets: doppler is the source of truth
 
 **Doppler is the single source of truth for all secrets.** Never add secrets

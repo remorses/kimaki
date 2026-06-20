@@ -29,7 +29,14 @@
       "@discordjs/opus"
     ],
     "overrides": {
-      "spiceflow": "1.26.0-rsc.3"
+      "spiceflow": "1.26.0-rsc.5"
+    },
+    "packageExtensions": {
+      "@holocron.so/vite": {
+        "peerDependencies": {
+          "spiceflow": "*"
+        }
+      }
     }
   }
 }
