@@ -754,6 +754,26 @@ async function startSingleServer({
           },
         },
       },
+      kimaki: {
+        npm: '@ai-sdk/openai-compatible',
+        api: 'https://openai.kimaki.dev/v1',
+        models: {
+          kimaki: {
+            name: 'Kimaki',
+            tool_call: true,
+            attachment: true,
+            limit: {
+              context: 1_000_000,
+              output: 65_536,
+            },
+            cost: {
+              input: 1.40,
+              output: 4.40,
+              cache_read: 0.26,
+            },
+          },
+        },
+      },
     },
     skills: {
       paths: [path.resolve(__dirname, '..', 'skills')],
