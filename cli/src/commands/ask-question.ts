@@ -39,7 +39,6 @@ type PendingQuestionContext = {
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
   totalQuestions: number
-  answeredCount: number
   contextHash: string
 
 }
@@ -48,6 +47,21 @@ type PendingQuestionContext = {
 // TTL prevents unbounded growth if user never answers a question.
 const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
+
+export function areAllQuestionsAnswered({
+  totalQuestions,
+  answers,
+}: {
+  totalQuestions: number
+  answers: Record<number, string[]>
+}): boolean {
+  for (let i = 0; i < totalQuestions; i++) {
+    if (!answers[i]) {
+      return false
+    }
+  }
+  return true
+}
 
 export function findPendingQuestionContextForRequest({
   threadId,
@@ -138,7 +152,6 @@ export async function showAskUserQuestionDropdowns({
     questions: input.questions,
     answers: {},
     totalQuestions: input.questions.length,
-    answeredCount: 0,
     contextHash,
 
   }
@@ -262,6 +275,13 @@ export async function handleAskQuestionSelectMenu(
     return
   }
 
+  if (context.answers[questionIndex]) {
+    logger.log(
+      `Ignored duplicate answer for question ${context.requestId} index ${questionIndex}`,
+    )
+    return
+  }
+
   // Check if "other" was selected
   if (selectedValues.includes('other')) {
     // User wants to provide custom answer
@@ -274,8 +294,6 @@ export async function handleAskQuestionSelectMenu(
       return question.options[optIdx]?.label || `Option ${optIdx + 1}`
     })
   }
-
-  context.answeredCount++
 
   // Update this question's message: show answer and remove dropdown
   const answeredText = context.answers[questionIndex]!.join(', ')
@@ -291,7 +309,7 @@ export async function handleAskQuestionSelectMenu(
   )
 
   // Check if all questions are answered
-  if (context.answeredCount >= context.totalQuestions) {
+  if (areAllQuestionsAnswered(context)) {
     // All questions answered - send result back to session
     await submitQuestionAnswers(context)
     deletePendingQuestionContextsForRequest({
@@ -344,7 +362,7 @@ async function submitQuestionAnswers(
 export function parseAskUserQuestionTool(part: {
   type: string
   tool?: string
-  state?: { input?: unknown }
+  state?: { input?: AskUserQuestionInput }
 }): AskUserQuestionInput | null {
   if (part.type !== 'tool') {
     return null
@@ -356,7 +374,7 @@ export function parseAskUserQuestionTool(part: {
     return null
   }
 
-  const input = part.state?.input as AskUserQuestionInput | undefined
+  const input = part.state?.input
 
   if (
     !input?.questions ||

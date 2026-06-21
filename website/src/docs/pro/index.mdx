@@ -1,0 +1,132 @@
+---
+title: Kimaki Pro
+description: The best coding model, always. Frontier inference at a fraction of the cost, with premium skills included.
+icon: lucide:zap
+---
+
+**Kimaki Pro** is a $49/mo subscription that gives you the best available coding model, updated automatically as the frontier moves. You never choose a model; we choose for you and keep it current.
+
+The model is exposed as an **OpenAI-compatible API** at `openai.kimaki.dev`, so it works with Kimaki, OpenCode, Cursor, or any tool that speaks the OpenAI protocol.
+
+## What you get
+
+- **The best coding model, always.** Currently GLM 5.2 (1M context, MIT license) via Fireworks AI. When something better ships, we swap it in transparently.
+- **Massive token budget.** At current pricing, Kimaki Pro delivers roughly 10x the tokens of a $100 Codex plan and 20x an Anthropic Max plan.
+- **100% uptime via failover.** Multiple inference providers behind one endpoint. If one goes down, requests route to the next.
+- **Premium skills bundle.** Browser automation (Playwriter), video generation (Egaki), X articles, and more. All kept up to date.
+
+```diagram
+  You (OpenCode / Cursor / curl / any agent)
+    │
+    │  POST openai.kimaki.dev/v1/chat/completions
+    │  Authorization: Bearer kimaki_xxxxx
+    ▼
+  ┌──────────────────────────────────────────────────────┐
+  │  Kimaki Pro Proxy                                    │
+  │  Validates key ► maps model ► streams response       │
+  │  Failover across providers for 100% uptime           │
+  └──────────────────────┬───────────────────────────────┘
+                         │
+                         ▼
+  ┌──────────────────────────────────────────────────────┐
+  │  Fireworks AI (current backing provider)             │
+  │  GLM 5.2 — $1.40/M input, $4.40/M output            │
+  │  1M token context window                             │
+  └──────────────────────────────────────────────────────┘
+```
+
+## Pricing comparison
+
+| | Codex ($100/mo) | Anthropic Max ($200/mo) | Kimaki Pro ($49/mo) |
+|---|---|---|---|
+| **Token budget** | ~1x baseline | ~0.5x baseline | **10x baseline** |
+| **Context window** | 200K | 200K | **1M tokens** |
+| **Model selection** | Manual | Manual | **Auto-updated** |
+| **Uptime** | Single provider | Single provider | **Failover** |
+| **Skills bundle** | No | No | **Yes** |
+| **Works anywhere** | OpenAI only | Anthropic only | **Any agent** |
+
+## Quick start
+
+### With Kimaki (automatic)
+
+If you use the Kimaki Discord bot, the provider is already configured. Just run `/login`, select **Kimaki**, and paste your API key.
+
+### With OpenCode (standalone)
+
+Install the provider plugin:
+
+```bash
+npm i -g @kimaki/opencode-kimaki-provider
+```
+
+Add to your `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "plugin": ["@kimaki/opencode-kimaki-provider"],
+  "provider": {
+    "kimaki": {
+      "npm": "@ai-sdk/openai-compatible",
+      "api": "https://openai.kimaki.dev/v1",
+      "models": {
+        "kimaki": {
+          "name": "Kimaki",
+          "tool_call": true,
+          "attachment": true,
+          "limit": { "context": 1000000, "output": 65536 },
+          "cost": { "input": 1.40, "output": 4.40, "cache_read": 0.26 }
+        }
+      }
+    }
+  }
+}
+```
+
+Then run `/connect` in OpenCode, select **Kimaki**, and paste your API key.
+
+### Raw API (curl, Python, any SDK)
+
+The endpoint is fully OpenAI-compatible:
+
+```bash
+curl https://openai.kimaki.dev/v1/chat/completions \
+  -H "Authorization: Bearer kimaki_xxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "kimaki",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+Or with the OpenAI Python SDK:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://openai.kimaki.dev/v1",
+    api_key="kimaki_xxxxx",
+)
+
+response = client.chat.completions.create(
+    model="kimaki",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+```
+
+## Skills bundle
+
+Kimaki Pro includes a curated set of premium skills that teach your coding agent new capabilities:
+
+- **Playwriter** — control your browser with Playwright from the agent
+- **Egaki** — generate images and videos with AI
+- **X Articles** — create and publish long-form articles on X
+- **Jitter** — export and modify Jitter animations programmatically
+- **usecomputer** — desktop automation (screenshot, click, type)
+
+Skills are synced from their source repositories on every Kimaki release, so you always have the latest version.
+
+## Get your API key
+
+Subscribe at [kimaki.dev/dashboard](/dashboard) to get your API key. Log in with Discord, subscribe, and your key appears on the dashboard.

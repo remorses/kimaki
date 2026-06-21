@@ -347,6 +347,18 @@ describe('system-message', () => {
 
       When the user uses \`#project-name\` syntax, they usually mean a Kimaki project channel. Use \`kimaki project list --json\` to resolve the \`channel_name\` to its repo working directory. Try the lookup yourself before acting, for example filter by \`channel_name\` with jq: \`kimaki project list --json | jq -r '.[] | select(.channel_name == "project-name") | .directory'\`.
 
+      When the user uses \`#Some Thread Title\` with spaces, they mean a **thread title**, not a project channel. Find the session by searching across projects, then read the session markdown:
+
+      \`\`\`bash
+      # 1. Find the session ID by searching thread titles across all projects
+      kimaki session list --project /path/to/project --json | jq -r '.[] | select(.title | test("Thread Title"; "i")) | .id + " | " + .title'
+
+      # 2. Read the full session conversation as markdown
+      kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
+      \`\`\`
+
+      If you don't know which project the thread belongs to, try each project from \`kimaki project list --json\`.
+
       \`\`\`bash
       # List all registered projects with their channel IDs
       kimaki project list

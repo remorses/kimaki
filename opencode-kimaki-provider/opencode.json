@@ -1,0 +1,30 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "kimaki": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Kimaki",
+      "options": {
+        "baseURL": "http://localhost:8787/v1",
+        "apiKey": "test-key"
+      },
+      "models": {
+        "kimaki": {
+          "name": "Kimaki (GLM 5.2)",
+          "tool_call": true,
+          "attachment": true,
+          "limit": {
+            "context": 1000000,
+            "output": 131072
+          },
+          "cost": {
+            "input": 1.40,
+            "output": 4.40,
+            "cache_read": 0.26
+          }
+        }
+      }
+    }
+  },
+  "model": "kimaki/kimaki"
+}

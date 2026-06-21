@@ -25,93 +25,112 @@
     ]
   },
   "navigation": {
-    "groups": [
+    "tabs": [
       {
-        "group": "Getting Started",
-        "icon": "lucide:rocket",
-        "pages": [
-          "index",
-          "docs/getting-started/subscriptions",
-          "docs/getting-started/model-switching",
-          "docs/getting-started/background-sync"
-        ]
-      },
-      {
-        "group": "Core Concepts",
-        "icon": "lucide:compass",
-        "pages": [
-          "docs/core-concepts/channels-threads",
-          "docs/core-concepts/message-handling",
-          "docs/core-concepts/sessions"
-        ]
-      },
-      {
-        "group": "Features",
-        "icon": "lucide:sparkles",
-        "pages": [
-          "docs/features/queue",
-          "docs/features/btw",
-          "docs/features/worktrees",
-          "docs/features/diff-viewer",
-          "docs/features/scheduled-tasks",
-          "docs/features/voice",
-          "docs/features/images",
-          "docs/features/opencode-commands",
-          "docs/features/shell-commands"
-        ]
-      },
-      {
-        "group": "Remote Access",
-        "icon": "lucide:monitor-smartphone",
-        "pages": [
-          "docs/remote-access/vscode",
-          "docs/remote-access/tunnels",
-          "docs/remote-access/screen-sharing"
-        ]
-      },
-      {
-        "group": "Configuration",
-        "icon": "lucide:settings",
-        "pages": [
-          "docs/configuration/access-control",
-          "docs/configuration/permissions",
-          "docs/configuration/verbosity",
-          "docs/configuration/memory",
-          "docs/configuration/mcp",
-          "docs/configuration/projects"
-        ]
-      },
-      {
-        "group": "Guides",
+        "tab": "Documentation",
         "icon": "lucide:book-open",
-        "pages": [
-          "docs/guides/troubleshooting",
-          "docs/guides/ci-automation",
-          "docs/guides/advanced-setup",
-          "docs/guides/programmatic-gateway"
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "lucide:rocket",
+            "pages": [
+              "index",
+              "docs/getting-started/subscriptions",
+              "docs/getting-started/model-switching",
+              "docs/getting-started/background-sync"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "icon": "lucide:compass",
+            "pages": [
+              "docs/core-concepts/channels-threads",
+              "docs/core-concepts/message-handling",
+              "docs/core-concepts/sessions"
+            ]
+          },
+          {
+            "group": "Features",
+            "icon": "lucide:sparkles",
+            "pages": [
+              "docs/features/queue",
+              "docs/features/btw",
+              "docs/features/worktrees",
+              "docs/features/diff-viewer",
+              "docs/features/scheduled-tasks",
+              "docs/features/voice",
+              "docs/features/images",
+              "docs/features/opencode-commands",
+              "docs/features/shell-commands"
+            ]
+          },
+          {
+            "group": "Remote Access",
+            "icon": "lucide:monitor-smartphone",
+            "pages": [
+              "docs/remote-access/vscode",
+              "docs/remote-access/tunnels",
+              "docs/remote-access/screen-sharing"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "icon": "lucide:settings",
+            "pages": [
+              "docs/configuration/access-control",
+              "docs/configuration/permissions",
+              "docs/configuration/verbosity",
+              "docs/configuration/memory",
+              "docs/configuration/mcp",
+              "docs/configuration/projects"
+            ]
+          },
+          {
+            "group": "Guides",
+            "icon": "lucide:book-open",
+            "pages": [
+              "docs/guides/troubleshooting",
+              "docs/guides/ci-automation",
+              "docs/guides/advanced-setup",
+              "docs/guides/programmatic-gateway"
+            ]
+          },
+          {
+            "group": "Plugins",
+            "icon": "lucide:plug",
+            "pages": [
+              "docs/plugins/abort-on-x"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "lucide:database",
+            "pages": [
+              "docs/reference/commands",
+              "docs/reference/internals"
+            ]
+          },
+          {
+            "group": "Legal",
+            "icon": "lucide:scale",
+            "pages": [
+              "docs/legal/privacy",
+              "docs/legal/terms"
+            ]
+          }
         ]
       },
       {
-        "group": "Plugins",
-        "icon": "lucide:plug",
-        "pages": [
-          "docs/plugins/abort-on-x"
-        ]
-      },
-      {
-        "group": "Reference",
-        "icon": "lucide:database",
-        "pages": [
-          "docs/reference/commands",
-          "docs/reference/internals"
-        ]
-      },
-      {
-        "group": "Legal",
-        "icon": "lucide:scale",
-        "pages": [
-          "docs/legal/privacy",
-          "docs/legal/terms"
+        "tab": "Kimaki Pro",
+        "icon": "lucide:zap",
+        "groups": [
+          {
+            "group": "Kimaki Pro",
+            "icon": "lucide:zap",
+            "pages": [
+              "pro/index"
+            ]
+          }
         ]
       }
     ],

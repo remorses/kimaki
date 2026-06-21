@@ -45,7 +45,7 @@ async function tryLoadHeicConvert(): Promise<HeicConvertFn | null> {
   }
   try {
     const mod = await import('heic-convert')
-    heicConvertModule = mod.default as HeicConvertFn
+    heicConvertModule = mod.default as unknown as HeicConvertFn
     logger.log('heic-convert loaded successfully')
     return heicConvertModule
   } catch {

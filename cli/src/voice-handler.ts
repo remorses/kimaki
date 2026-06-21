@@ -809,6 +809,17 @@ export function registerVoiceStateHandler({
         const voiceChannel = newState.channel as VoiceChannel
         if (!voiceChannel) return
 
+        // Multi-machine routing: only join voice channels owned by this machine
+        // (have a voice channel directory configured in local db). Without this,
+        // all machines in the same guild would race to join the same voice channel.
+        const voiceDir = await getVoiceChannelDirectory(voiceChannel.id)
+        if (!voiceDir) {
+          voiceLogger.log(
+            `[IGNORED] Voice channel ${voiceChannel.name} (${voiceChannel.id}) has no directory configured, skipping`,
+          )
+          return
+        }
+
         const existingVoiceData = voiceConnections.get(newState.guild.id)
         if (
           existingVoiceData &&

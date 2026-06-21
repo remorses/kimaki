@@ -36,9 +36,10 @@ model User {
   image         String?
   createdAt     DateTime
   updatedAt     DateTime
-  accounts      Account[]
-  sessions      Session[]
+  accounts       Account[]
+  sessions       Session[]
   gatewayClients gateway_clients[]
+  orgMemberships org_member[]
 
   @@map("user")
 }
@@ -112,9 +113,94 @@ model gateway_clients {
   user    User? @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@id([client_id, guild_id])
+  @@index([user_id])
 }
 
 enum gateway_client_platform {
   discord
   slack
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Kimaki Pro: orgs, subscriptions, and API keys
+// IDs are ULIDs generated in application code before insert.
+// ──────────────────────────────────────────────────────────────────
+
+model org {
+  org_id             String   @id
+  name               String
+  stripe_customer_id String?  @unique
+  created_at         DateTime @default(now()) @db.Timestamptz
+  updated_at         DateTime @default(now()) @db.Timestamptz
+
+  members       org_member[]
+  subscriptions subscription[]
+  api_keys      api_key[]
+}
+
+model org_member {
+  org_id  String
+  user_id String
+  role    org_member_role @default(owner)
+
+  org  org  @relation(fields: [org_id], references: [org_id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([org_id, user_id])
+  @@index([user_id])
+}
+
+enum org_member_role {
+  owner
+  admin
+  member
+}
+
+model subscription {
+  subscription_id      String              @id // Stripe subscription id
+  org_id               String
+  product_id           String // Stripe product id
+  price_id             String // Stripe price id
+  price_name           String?
+  customer_id          String? // Stripe customer id (denormalized)
+  status               subscription_status
+  interval             String? // month, year
+  current_period_end   DateTime?           @db.Timestamptz
+  cancel_at_period_end Boolean             @default(false)
+  created_at           DateTime            @default(now()) @db.Timestamptz
+  updated_at           DateTime            @default(now()) @db.Timestamptz
+
+  org org @relation(fields: [org_id], references: [org_id], onDelete: Cascade)
+
+  @@index([org_id])
+}
+
+enum subscription_status {
+  active
+  trialing
+  canceled
+  past_due
+  incomplete
+  incomplete_expired
+  unpaid
+  paused
+}
+
+model api_key {
+  api_key_id String         @id
+  key        String         @unique // SHA-256 hash for lookup
+  key_prefix String // first 8 chars for display (kimaki_ab...)
+  org_id     String
+  name       String?
+  status     api_key_status @default(active)
+  created_at DateTime       @default(now()) @db.Timestamptz
+
+  org org @relation(fields: [org_id], references: [org_id], onDelete: Cascade)
+
+  @@index([org_id])
+}
+
+enum api_key_status {
+  active
+  revoked
 }

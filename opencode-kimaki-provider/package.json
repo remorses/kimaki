@@ -1,0 +1,54 @@
+{
+  "name": "@kimaki/opencode-kimaki-provider",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Kimaki Pro provider plugin for OpenCode. The best coding model, always.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "rimraf dist \"*.tsbuildinfo\" && pnpm build",
+    "typecheck": "tsc"
+  },
+  "keywords": [
+    "opencode",
+    "kimaki",
+    "provider",
+    "plugin",
+    "ai",
+    "inference",
+    "glm",
+    "coding"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/kimaki",
+    "directory": "opencode-kimaki-provider"
+  },
+  "homepage": "https://kimaki.dev/docs/pro",
+  "bugs": "https://github.com/remorses/kimaki/issues",
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.15.11",
+    "@types/node": "^22.15.30",
+    "rimraf": "^6.0.1"
+  }
+}
