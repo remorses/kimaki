@@ -862,7 +862,7 @@ async function startSingleServer({
     // - SIGINT propagated from Ctrl+C (parent process group signal)
     // - any exit during bot shutdown (shuttingDown flag)
     // Only unexpected crashes (non-zero exit without signal) get retried.
-    if (signal === 'SIGTERM' || signal === 'SIGINT' || (global as any).shuttingDown) {
+    if (signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
       serverRetryCount = 0
       return
     }

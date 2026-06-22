@@ -440,6 +440,27 @@ function readErrorField(error: object | null, key: string): unknown {
   return undefined
 }
 
+/** Transient network errors that may resolve on retry (DNS down, gateway unreachable). */
+const TRANSIENT_ERROR_CODES = new Set([
+  'ENOTFOUND',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'EAI_AGAIN',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+])
+
+export function isTransientNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const code = (error as NodeJS.ErrnoException).code
+  if (code && TRANSIENT_ERROR_CODES.has(code)) return true
+  // discord.js wraps errors in cause chains
+  if (error.cause instanceof Error) return isTransientNetworkError(error.cause)
+  return false
+}
+
 export function isDiscordMemberLookupUnavailable(error: Error): boolean {
   const status = readErrorField(error, 'status')
   if (status === 403) {
@@ -1624,6 +1645,13 @@ export async function run({
     cliLogger.error(
       'Error: ' + (error instanceof Error ? error.stack : String(error)),
     )
+    // Transient network errors (DNS down, gateway unreachable) should allow
+    // the bin.ts wrapper to restart us after a delay. Only truly fatal errors
+    // (bad token, invalid intent, etc.) should use EXIT_NO_RESTART.
+    if (isTransientNetworkError(error)) {
+      cliLogger.error('Transient network error, exiting for wrapper restart...')
+      process.exit(1)
+    }
     process.exit(EXIT_NO_RESTART)
   }
   await setBotToken(appId, token)

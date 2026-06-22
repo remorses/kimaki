@@ -1,6 +1,17 @@
 // Core Discord bot module that handles message events and bot lifecycle.
 // Bridges Discord messages to OpenCode sessions, manages voice connections,
 // and orchestrates the main event loop for the Kimaki bot.
+//
+// Shutdown resilience: during self-restart (gateway reconnect limit, SIGUSR2),
+// discord.js can still fire errors from pending async operations (DNS lookups,
+// WebSocket frames) after the client is destroyed. The uncaughtException handler
+// suppresses these when shuttingDown is already set, and we removeAllListeners()
+// before destroying the client to prevent late events from becoming uncaught.
+
+declare global {
+  // eslint-disable-next-line no-var
+  var shuttingDown: boolean | undefined
+}
 
 import { DiscordOperationError } from './errors.js'
 import {
@@ -1395,11 +1406,11 @@ export async function startDiscordBot({
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
 
-    if ((global as any).shuttingDown) {
+    if (global.shuttingDown) {
       discordLogger.log('Already shutting down, ignoring duplicate signal')
       return
     }
-    ;(global as any).shuttingDown = true
+    global.shuttingDown = true
 
     try {
       await stopRuntimeIdleSweeper()
@@ -1447,6 +1458,10 @@ export async function startDiscordBot({
       await stopHranaServer()
 
       discordLogger.log('Destroying Discord client...')
+      // Remove all listeners before destroy to prevent late-arriving shard
+      // errors (from pending DNS lookups, WebSocket frames) from becoming
+      // uncaught exceptions after the client's internal handlers are torn down.
+      discordClient.removeAllListeners()
       void discordClient.destroy()
 
       discordLogger.log('Cleanup complete.')
@@ -1527,6 +1542,17 @@ export async function startDiscordBot({
   })
 
   process.on('uncaughtException', (error) => {
+    // During self-restart or shutdown, discord.js can still fire errors from
+    // pending async operations (DNS lookups, WebSocket frames) after the client
+    // is destroyed. These are expected and must not interfere with the restart
+    // flow — let the existing selfRestart/handleShutdown finish cleanly.
+    if (selfRestarting || global.shuttingDown) {
+      discordLogger.log(
+        'Ignoring uncaught exception during shutdown:',
+        error?.message || String(error),
+      )
+      return
+    }
     discordLogger.error('Uncaught exception:', formatErrorWithStack(error))
     notifyError(error, 'Uncaught exception in bot process')
     void handleShutdown('uncaughtException', { skipExit: true }).catch(
@@ -1543,7 +1569,7 @@ export async function startDiscordBot({
   })
 
   process.on('unhandledRejection', (reason, promise) => {
-    if ((global as any).shuttingDown) {
+    if (global.shuttingDown) {
       discordLogger.log('Ignoring unhandled rejection during shutdown:', reason)
       return
     }
