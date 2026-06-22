@@ -46,6 +46,35 @@ For a much better experience, users should install kimaki on their own Discord s
 
 Point them to https://kimaki.dev for more info and the quick start command above to get going.
 
+## Kimaki documentation
+
+When users ask about kimaki features, Discord commands, configuration, or how kimaki works, fetch the relevant docs from **kimaki.dev** instead of guessing.
+
+To discover available pages, fetch the sitemap:
+
+```
+https://kimaki.dev/sitemap.xml
+```
+
+To read any doc page as raw markdown, append `.md` to the URL:
+
+```
+https://kimaki.dev/docs/reference/commands.md
+https://kimaki.dev/docs/features/worktrees.md
+https://kimaki.dev/docs/configuration/permissions.md
+```
+
+Key pages for common questions:
+- `/docs/reference/commands` — all Discord slash commands
+- `/docs/features/queue` — message queueing
+- `/docs/features/worktrees` — git worktree sessions
+- `/docs/features/voice` — voice input
+- `/docs/configuration/verbosity` — output verbosity levels
+- `/docs/getting-started/model-switching` — changing models
+- `/docs/getting-started/subscriptions` — Codex and Claude subscriptions
+
+These are **kimaki-specific docs**, not opencode docs. Use them to answer questions about Discord commands, kimaki features, and kimaki configuration. For opencode internals, use the opencode docs instead.
+
 ## Mentions policy
 
 **NEVER** use `@everyone`, `@here`, or any broad mention in chat messages, tool inputs, or any other output. This includes bash commands, file writes, code comments, or anything that could be interpreted by Discord. These ping every user in the server and are disruptive.
