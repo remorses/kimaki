@@ -1,4 +1,8 @@
 // Terminal send command for creating Discord threads and scheduling prompts.
+// Designed to work in CI/headless environments with just KIMAKI_BOT_TOKEN.
+// The local SQLite database (channel_directories) is NOT required for the basic
+// flow: post message → create thread → remote bot picks it up. The local project
+// directory mapping is only needed for --send-at, --wait, and --cwd.
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
@@ -395,14 +399,20 @@ cli
             throw new Error(`Thread has no parent channel: ${targetThreadId}`)
           }
 
+          // channelConfig is optional: in CI/headless environments the local DB
+          // has no channel_directories rows because the bot hasn't synced yet.
+          // The running bot on the other end resolves the directory from its own DB.
+          // We only require it for features that genuinely need a local directory
+          // (scheduled tasks and --wait).
           const channelConfig = await getChannelDirectory(threadData.parent_id)
-          if (!channelConfig) {
-            throw new Error(
-              'Thread parent channel is not configured with a project directory',
-            )
-          }
 
           if (parsedSchedule) {
+            if (!channelConfig) {
+              throw new Error(
+                'Thread parent channel is not configured with a project directory. ' +
+                '--send-at requires a local project mapping. Run the bot first to sync channel data.',
+              )
+            }
             const payload: ScheduledTaskPayload = {
               kind: 'thread',
               threadId: targetThreadId,
@@ -475,6 +485,12 @@ cli
           process.stdout.write(`${threadUrl}\n`)
 
           if (options.wait) {
+            if (!channelConfig) {
+              throw new Error(
+                'Thread parent channel is not configured with a project directory. ' +
+                '--wait requires a local project mapping. Run the bot first to sync channel data.',
+              )
+            }
             const { waitAndOutputSession } = await import('../wait-session.js')
             await waitAndOutputSession({
               threadId: targetThreadId,
@@ -500,22 +516,29 @@ cli
           guild_id: string
         }
 
+        // channelConfig is optional: in CI/headless environments the local DB
+        // has no channel_directories rows because the bot hasn't synced yet.
+        // The running bot on the other end resolves the directory from its own DB.
+        // We only require it for features that genuinely need a local directory
+        // (--send-at, --wait, --cwd).
         const channelConfig = await getChannelDirectory(channelData.id)
+        const projectDirectory = channelConfig?.directory
 
-        if (!channelConfig && !notifyOnly) {
-          cliLogger.log('Channel not configured')
+        // Features that require a local project directory mapping
+        const needsProjectDirectory = Boolean(parsedSchedule || options.wait || options.cwd)
+        if (!channelConfig && needsProjectDirectory) {
           throw new Error(
-            `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
+            `Channel #${channelData.name} is not configured with a project directory. ` +
+            `${parsedSchedule ? '--send-at' : options.wait ? '--wait' : '--cwd'} requires a local project mapping. ` +
+            'Run the bot first to sync channel data.',
           )
         }
-
-        const projectDirectory = channelConfig?.directory
 
         // Validate --cwd is inside the project or an existing git worktree.
         let resolvedCwd: string | undefined
         if (options.cwd) {
-          // projectDirectory is guaranteed here: --cwd is incompatible with --notify-only,
-          // and non-notify sends already require channelConfig above.
+          // projectDirectory is guaranteed here: needsProjectDirectory check above
+          // already threw if channelConfig is missing when --cwd is used.
           const cwdResult = await resolveSessionWorkingDirectory({
             projectDirectory: projectDirectory!,
             candidatePath: options.cwd,
@@ -690,8 +713,8 @@ cli
         process.stdout.write(`${threadUrl}\n`)
 
         if (options.wait) {
-          // projectDirectory is guaranteed here: --wait is incompatible with --notify-only,
-          // and non-notify sends already require channelConfig above.
+          // projectDirectory is guaranteed here: needsProjectDirectory check above
+          // already threw if channelConfig is missing when --wait is used.
           const { waitAndOutputSession } = await import('../wait-session.js')
           await waitAndOutputSession({
             threadId: threadData.id,
