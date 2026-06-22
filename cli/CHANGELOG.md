@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.18.0
+
+1. **New `kimaki bot token` command** — prints the bot token for CI and automation use. In self-hosted mode it prints the Discord bot token; in gateway mode it prints the `clientId:clientSecret` credential.
+
+   ```bash
+   # Print your token (works in both self-hosted and gateway modes)
+   kimaki bot token
+
+   # Store it as a GitHub Actions secret
+   kimaki bot token | gh secret set KIMAKI_BOT_TOKEN
+   ```
+
+   Set the output as `KIMAKI_BOT_TOKEN` in your CI environment to let `kimaki send` and other CLI subcommands authenticate without interactive setup.
+
+2. **Harden gateway reconnect restart for sustained network outages** — previously, when the gateway proxy was unreachable (DNS down, network outage), kimaki would hit the 50-reconnect limit, trigger self-restart, crash during cleanup from uncaught discord.js shard errors, and permanently exit. Now uncaught exceptions during shutdown are suppressed, client listeners are removed before destroy, transient network errors on initial connection allow the wrapper to retry, and progressive restart backoff (2s → 4s → 8s → 16s, capped at 30s) prevents hammering DNS. The existing crash loop detector (5 crashes in 60s) still acts as the ultimate circuit breaker.
+
+3. **Fix slash commands handled by the wrong machine in multi-machine setups** — when kimaki is installed on multiple machines sharing the same Discord guild via gateway proxy, interactions (slash commands, buttons, select menus, modals) were processed by every machine regardless of channel ownership. Now the interaction handler checks if the channel has a project directory configured in the local SQLite database before processing; if not, the interaction is silently ignored so the correct machine handles it.
+
+4. **Fix workspace worktree setup and cleanup** — worktree creation now correctly parses `.gitmodules` inside the plugin-safe workspace adaptor so submodules initialize. Deleting a worktree from `/worktrees` now removes the matching OpenCode workspace record through the workspace SDK before deleting the local thread mapping, keeping OpenCode workspace state, git worktrees, and Kimaki thread metadata in sync.
+
+5. **Fix multi-question Discord dropdowns submitting incomplete answers** — duplicate select interactions on one dropdown could submit empty answers for later questions. Kimaki now derives question completion from the actual answered question indexes instead of incrementing a counter.
+
+6. **Add `--no-auto-upgrade` CLI flag** — disables the background auto-upgrade check on startup. Useful for pinned deployments or air-gapped environments.
+
+   ```bash
+   kimaki --no-auto-upgrade
+   ```
+
+7. **Fix gateway install URL on Windows** — the Discord OAuth install URL now opens correctly on Windows during onboarding. Thanks @TheLonelyDevil9 for #152!
+
 ## 0.17.1
 
 1. **Fix gateway onboarding flow silently failing** — the CLI would get stuck on "Still waiting..." after the user authorized the bot. Discord doesn't always include `guild_id` in the OAuth callback URL (e.g. when previously authorized). Now the `guild_id` is cached in KV before the callback, `prompt` is set to `consent` so the authorization screen always shows, and specific onboarding errors are surfaced to the CLI instead of a generic timeout.
