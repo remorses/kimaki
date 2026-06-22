@@ -183,6 +183,20 @@ async function migrateSchema({
     await client.execute(stmt).catch(() => undefined)
   }
 
+  // Migrate legacy thread_worktrees rows into thread_workspaces.
+  // Rows that already exist in thread_workspaces (by thread_id) are skipped.
+  await client.execute(`
+    INSERT OR IGNORE INTO thread_workspaces (
+      thread_id, workspace_type, status, error_message,
+      project_directory, workspace_directory, workspace_name, created_at
+    )
+    SELECT
+      thread_id, 'kimaki-worktree', status, error_message,
+      project_directory, worktree_directory, worktree_name, created_at
+    FROM thread_worktrees
+    WHERE thread_id NOT IN (SELECT thread_id FROM thread_workspaces)
+  `).catch(() => undefined)
+
   const botRows = await db.query.bot_tokens.findMany({
     columns: {
       app_id: true,

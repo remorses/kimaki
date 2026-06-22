@@ -21,7 +21,7 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
-import { getChannelDirectory, getThreadWorktree } from './database.js'
+import { getChannelDirectory, getThreadWorktreeOrWorkspace } from './database.js'
 import { DiscordOperationError } from './errors.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
@@ -708,10 +708,10 @@ export async function resolveProjectDirectoryFromAutocomplete(
     return channelConfig.directory
   }
 
-  // If we're in a thread, try worktree info first (has project_directory)
-  const worktreeInfo = await getThreadWorktree(channelId)
-  if (worktreeInfo?.project_directory) {
-    return worktreeInfo.project_directory
+  // If we're in a thread, try worktree/workspace info first (has project_directory)
+  const workspace = await getThreadWorktreeOrWorkspace(channelId)
+  if (workspace?.project_directory) {
+    return workspace.project_directory
   }
 
   // Thread fallback: resolve parent channel ID and look up its directory.
@@ -775,9 +775,10 @@ export async function resolveWorkingDirectory({
 
   let workingDirectory = metadata.projectDirectory
   if (isThread) {
-    const worktreeInfo = await getThreadWorktree(channel.id)
-    if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
-      workingDirectory = worktreeInfo.worktree_directory
+    // Check thread_workspaces first (new path), then thread_worktrees (legacy)
+    const info = await getThreadWorktreeOrWorkspace(channel.id)
+    if (info?.status === 'ready' && info.workspace_directory) {
+      workingDirectory = info.workspace_directory
     }
   }
 

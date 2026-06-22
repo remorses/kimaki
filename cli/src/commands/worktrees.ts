@@ -18,8 +18,8 @@ import {
   type InteractionEditReplyOptions,
 } from 'discord.js'
 import {
-  deleteThreadWorktree,
-  type ThreadWorktree,
+  deleteThreadWorkspace,
+  type ThreadWorkspace,
 } from '../database.js'
 import { getDb } from '../db.js'
 import { splitTablesFromMarkdown, truncateComponents } from '../format-tables.js'
@@ -320,15 +320,20 @@ async function buildWorktreeRows({
   gitWorktrees: GitWorktree[]
 }): Promise<WorktreeRow[]> {
   const db = await getDb()
-  const dbWorktrees = await db.query.thread_worktrees.findMany({
+  const dbWorkspaces = await db.query.thread_workspaces.findMany({
     where: { project_directory: projectDirectory },
   })
 
-  // Index DB worktrees by directory for fast lookup
-  const dbByDirectory = new Map<string, ThreadWorktree>()
-  for (const dbWt of dbWorktrees) {
-    if (dbWt.worktree_directory) {
-      dbByDirectory.set(dbWt.worktree_directory, dbWt)
+  const toDate = (v: Date | string | null | undefined): Date | null => {
+    if (!v) return null
+    return v instanceof Date ? v : new Date(v)
+  }
+
+  // Index by directory for fast lookup
+  const dbByDirectory = new Map<string, ThreadWorkspace>()
+  for (const ws of dbWorkspaces) {
+    if (ws.workspace_directory) {
+      dbByDirectory.set(ws.workspace_directory, ws)
     }
   }
 
@@ -336,8 +341,6 @@ async function buildWorktreeRows({
   const matchedDbThreadIds = new Set<string>()
 
   // Build rows from git worktrees (the source of truth for on-disk state).
-  // Use real DB status when available — a git-visible worktree whose DB row
-  // is still 'pending' means setup hasn't finished (race window).
   const gitRows: WorktreeRow[] = gitWorktrees.map((gw) => {
     const dbMatch = dbByDirectory.get(gw.directory)
     if (dbMatch) {
@@ -349,15 +352,9 @@ async function buildWorktreeRows({
     })
     const name = gw.branch ?? path.basename(gw.directory)
     const dbStatus: 'ready' | 'pending' | 'error' = (() => {
-      if (!dbMatch) {
-        return 'ready'
-      }
-      if (dbMatch.status === 'error') {
-        return 'error'
-      }
-      if (dbMatch.status === 'pending') {
-        return 'pending'
-      }
+      if (!dbMatch) return 'ready'
+      if (dbMatch.status === 'error') return 'error'
+      if (dbMatch.status === 'pending') return 'pending'
       return 'ready'
     })()
     return {
@@ -365,8 +362,8 @@ async function buildWorktreeRows({
       branch: gw.branch,
       name,
       threadId: dbMatch?.thread_id ?? null,
-      guildId: null, // filled in by caller
-      createdAt: dbMatch?.created_at ?? null,
+      guildId: null,
+      createdAt: toDate(dbMatch?.created_at),
       source,
       dbStatus,
       locked: gw.locked,
@@ -374,35 +371,21 @@ async function buildWorktreeRows({
     }
   })
 
-  // Append DB-only worktrees (pending/error/stale — not visible to git).
-  // Preserve actual DB status so stale 'ready' rows show as 'ready' (missing).
-  const dbOnlyRows: WorktreeRow[] = dbWorktrees
-    .filter((dbWt) => {
-      return !matchedDbThreadIds.has(dbWt.thread_id)
-    })
-    .map((dbWt) => {
-      const dbStatus: 'ready' | 'pending' | 'error' = (() => {
-        if (dbWt.status === 'error') {
-          return 'error'
-        }
-        if (dbWt.status === 'pending') {
-          return 'pending'
-        }
-        return 'ready'
-      })()
-      return {
-        directory: dbWt.worktree_directory ?? dbWt.project_directory,
-        branch: null,
-        name: dbWt.worktree_name,
-        threadId: dbWt.thread_id,
-        guildId: null,
-        createdAt: dbWt.created_at,
-        source: 'kimaki' as const,
-        dbStatus,
-        locked: false,
-        prunable: false,
-      }
-    })
+  // Append DB-only workspaces (pending/error/stale — not visible to git).
+  const dbOnlyRows: WorktreeRow[] = dbWorkspaces
+    .filter((ws) => !matchedDbThreadIds.has(ws.thread_id))
+    .map((ws) => ({
+      directory: ws.workspace_directory ?? ws.project_directory,
+      branch: null,
+      name: ws.workspace_name,
+      threadId: ws.thread_id,
+      guildId: null,
+      createdAt: toDate(ws.created_at),
+      source: 'kimaki' as const,
+      dbStatus: (ws.status === 'error' ? 'error' : ws.status === 'pending' ? 'pending' : 'ready') as 'ready' | 'pending' | 'error',
+      locked: false,
+      prunable: false,
+    }))
 
   return [...gitRows, ...dbOnlyRows]
 }
@@ -596,9 +579,8 @@ async function handleDeleteWorktreeAction({
     return
   }
 
-  // Clean up DB row if this was a kimaki-tracked worktree
   if (row.threadId) {
-    await deleteThreadWorktree(row.threadId)
+    await deleteThreadWorkspace(row.threadId)
   }
 
   await renderWorktreesReply({

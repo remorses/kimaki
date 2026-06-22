@@ -15,6 +15,7 @@ import type {
   SessionEvent,
   ThreadSessionSource,
   VerbosityLevel,
+  WorkspaceStatus,
   WorktreeStatus,
 } from './schema.js'
 import { store } from './store.js'
@@ -383,6 +384,95 @@ export async function deleteThreadWorktree(threadId: string) {
   const db = await getDb()
   await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
 }
+
+// ─── thread_workspaces helpers ───────────────────────────────────────────────
+
+export type ThreadWorkspace = typeof schema.thread_workspaces.$inferSelect
+export type { WorkspaceStatus }
+
+export async function createPendingWorkspace({
+  threadId,
+  workspaceType,
+  workspaceName,
+  projectDirectory,
+}: {
+  threadId: string
+  workspaceType: string
+  workspaceName: string
+  projectDirectory: string
+}) {
+  const db = await getDb()
+  await db.batch([
+    db.insert(schema.thread_sessions)
+      .values({ thread_id: threadId, session_id: '' })
+      .onConflictDoNothing({ target: schema.thread_sessions.thread_id }),
+    db.insert(schema.thread_workspaces)
+      .values({
+        thread_id: threadId,
+        workspace_type: workspaceType,
+        workspace_name: workspaceName,
+        project_directory: projectDirectory,
+        status: 'pending',
+      })
+      .onConflictDoUpdate({
+        target: schema.thread_workspaces.thread_id,
+        set: {
+          workspace_type: workspaceType,
+          workspace_name: workspaceName,
+          project_directory: projectDirectory,
+          status: 'pending',
+          workspace_id: null,
+          workspace_directory: null,
+          error_message: null,
+        },
+      }),
+  ] as const)
+}
+
+export async function setWorkspaceReady({
+  threadId,
+  workspaceId,
+  workspaceDirectory,
+}: {
+  threadId: string
+  workspaceId?: string
+  workspaceDirectory: string
+}) {
+  const db = await getDb()
+  await db.update(schema.thread_workspaces)
+    .set({
+      workspace_directory: workspaceDirectory,
+      workspace_id: workspaceId ?? null,
+      status: 'ready',
+    })
+    .where(orm.eq(schema.thread_workspaces.thread_id, threadId))
+}
+
+export async function setWorkspaceError({
+  threadId,
+  errorMessage,
+}: {
+  threadId: string
+  errorMessage: string
+}) {
+  const db = await getDb()
+  await db.update(schema.thread_workspaces)
+    .set({ status: 'error', error_message: errorMessage })
+    .where(orm.eq(schema.thread_workspaces.thread_id, threadId))
+}
+
+export async function getThreadWorkspace(threadId: string) {
+  const db = await getDb()
+  return await db.query.thread_workspaces.findFirst({ where: { thread_id: threadId } }) ?? undefined
+}
+
+export async function deleteThreadWorkspace(threadId: string) {
+  const db = await getDb()
+  await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
+}
+
+/** Alias for getThreadWorkspace — used throughout the codebase. */
+export const getThreadWorktreeOrWorkspace = getThreadWorkspace
 
 export async function getChannelVerbosity(channelId: string): Promise<VerbosityLevel> {
   const db = await getDb()

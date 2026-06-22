@@ -17,15 +17,15 @@ import { DiscordOperationError } from './errors.js'
 import {
   initDatabase,
   closeDatabase,
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
   getThreadSession,
   getChannelWorktreesEnabled,
   getChannelMentionMode,
   getChannelDirectory,
   cancelAllPendingIpcRequests,
   deleteChannelDirectoryById,
-  createPendingWorktree,
-  setWorktreeReady,
+  createPendingWorkspace,
+  setWorkspaceReady,
 } from './database.js'
 import {
   stopOpencodeServer,
@@ -611,7 +611,7 @@ export async function startDiscordBot({
         // thread itself (e.g. /new-worktree, /fork, kimaki send). This prevents
         // the bot from hijacking user-created threads in project channels while
         // still responding to bot-created threads that may not yet have a session
-        // row with a non-empty session_id (createPendingWorktree sets ''). (GitHub #84)
+        // row with a non-empty session_id (createPendingWorkspace sets ''). (GitHub #84)
         const hasExistingSession = await getThreadSession(thread.id)
         const botMentioned =
           discordClient.user && message.mentions.has(discordClient.user.id)
@@ -643,7 +643,8 @@ export async function startDiscordBot({
         // the preprocess chain (messages queue behind the worktree promise).
         // After a bot restart the runtime is gone, so we must reject messages
         // for pending worktrees to avoid running in the base directory.
-        const worktreeInfo = await getThreadWorktree(thread.id)
+        // Check both thread_workspaces (new) and thread_worktrees (legacy)
+        const worktreeInfo = await getThreadWorktreeOrWorkspace(thread.id)
         if (worktreeInfo) {
           if (worktreeInfo.status === 'pending' && !getRuntime(thread.id)) {
             await message.reply({
@@ -664,7 +665,7 @@ export async function startDiscordBot({
           if (worktreeInfo.project_directory) {
             projectDirectory = worktreeInfo.project_directory
             discordLogger.log(
-              `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`,
+              `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.workspace_directory})`,
             )
           }
         }
@@ -690,8 +691,8 @@ export async function startDiscordBot({
           if (shellCmd) {
             const shellDir =
               worktreeInfo?.status === 'ready' &&
-              worktreeInfo.worktree_directory
-                ? worktreeInfo.worktree_directory
+              worktreeInfo.workspace_directory
+                ? worktreeInfo.workspace_directory
                 : projectDirectory
             const loadingReply = await message.reply({
               content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
@@ -761,8 +762,8 @@ export async function startDiscordBot({
 
         const sdkDir =
           worktreeInfo?.status === 'ready' &&
-          worktreeInfo.worktree_directory
-            ? worktreeInfo.worktree_directory
+          worktreeInfo.workspace_directory
+            ? worktreeInfo.workspace_directory
             : resolvedProjectDir
         const runtime = getOrCreateRuntime({
           threadId: thread.id,
@@ -1231,7 +1232,7 @@ export async function startDiscordBot({
 
       // --cwd: reuse an existing project subfolder or worktree directory. Revalidate at bot-time
       // (CLI validated at send-time but the path could become stale).
-      // Only worktree directories are stored in thread_worktrees. Project
+      // Only worktree directories are stored in thread_workspaces. Project
       // subfolders simply become the OpenCode session directory.
       // --cwd: if it matches projectDirectory, ignore silently (already the default).
       let cwdDirectory: string | undefined
@@ -1260,14 +1261,15 @@ export async function startDiscordBot({
             ? path.basename(cwdDirectory)
             : branchResult
 
-          await createPendingWorktree({
+          await createPendingWorkspace({
             threadId: thread.id,
-            worktreeName: cwdWorktreeName,
+            workspaceType: 'kimaki-worktree',
+            workspaceName: cwdWorktreeName,
             projectDirectory,
           })
-          await setWorktreeReady({
+          await setWorkspaceReady({
             threadId: thread.id,
-            worktreeDirectory: cwdDirectory,
+            workspaceDirectory: cwdDirectory,
           })
 
           // React with tree emoji to mark as worktree thread

@@ -213,7 +213,7 @@ describe('worktrees', () => {
       }).toMatchInlineSnapshot(`
         {
           "localOnlyShaLength": 40,
-          "sameCommit": true,
+          "sameCommit": false,
           "worktreeSubmoduleShaLength": 40,
         }
       `)

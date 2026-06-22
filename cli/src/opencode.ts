@@ -787,6 +787,7 @@ async function startSingleServer({
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
+        OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
         KIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),

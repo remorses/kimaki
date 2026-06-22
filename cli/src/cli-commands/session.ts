@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktree } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktreeOrWorkspace } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -49,9 +49,9 @@ async function resolveSessionDirectoryFromDatabase({
 }): Promise<Error | string> {
   const threadId = await getThreadIdBySessionId(sessionId)
   if (threadId) {
-    const worktree = await getThreadWorktree(threadId)
-    if (worktree?.status === 'ready' && worktree.worktree_directory) {
-      return worktree.worktree_directory
+    const workspace = await getThreadWorktreeOrWorkspace(threadId)
+    if (workspace?.status === 'ready' && workspace.workspace_directory) {
+      return workspace.workspace_directory
     }
 
     const { token: botToken } = await resolveBotCredentials({})

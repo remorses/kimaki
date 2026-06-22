@@ -87,6 +87,18 @@ export const thread_worktrees = sqliteCore.sqliteTable('thread_worktrees', {
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
+export const thread_workspaces = sqliteCore.sqliteTable('thread_workspaces', {
+  thread_id: sqliteCore.text('thread_id').primaryKey().notNull().references(() => thread_sessions.thread_id, { onUpdate: 'cascade' }),
+  workspace_id: sqliteCore.text('workspace_id'),
+  workspace_type: sqliteCore.text('workspace_type').notNull(),
+  status: sqliteCore.text('status', { enum: ['pending', 'ready', 'error'] }).notNull().default('pending'),
+  error_message: sqliteCore.text('error_message'),
+  project_directory: sqliteCore.text('project_directory').notNull(),
+  workspace_directory: sqliteCore.text('workspace_directory'),
+  workspace_name: sqliteCore.text('workspace_name').notNull(),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
 export const channel_models = sqliteCore.sqliteTable('channel_models', {
   channel_id: sqliteCore.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
   model_id: sqliteCore.text('model_id').notNull(),
@@ -212,6 +224,7 @@ export const relations = defineRelations({
   bot_tokens,
   bot_api_keys,
   thread_worktrees,
+  thread_workspaces,
   channel_directories,
   channel_models,
   session_models,
@@ -231,6 +244,7 @@ export const relations = defineRelations({
     part_messages: r.many.part_messages(),
     scheduled_tasks: r.many.scheduled_tasks(),
     thread_worktree: r.one.thread_worktrees({ from: r.thread_sessions.thread_id, to: r.thread_worktrees.thread_id }),
+    thread_workspace: r.one.thread_workspaces({ from: r.thread_sessions.thread_id, to: r.thread_workspaces.thread_id }),
     ipc_requests: r.many.ipc_requests(),
   },
   session_events: {
@@ -249,6 +263,9 @@ export const relations = defineRelations({
   },
   thread_worktrees: {
     thread: r.one.thread_sessions({ from: r.thread_worktrees.thread_id, to: r.thread_sessions.thread_id }),
+  },
+  thread_workspaces: {
+    thread: r.one.thread_sessions({ from: r.thread_workspaces.thread_id, to: r.thread_sessions.thread_id }),
   },
   channel_directories: {
     channel_model: r.one.channel_models({ from: r.channel_directories.channel_id, to: r.channel_models.channel_id }),
@@ -301,3 +318,4 @@ export type SessionEvent = typeof session_events.$inferSelect
 export type ThreadSessionSource = typeof thread_sessions.$inferSelect.source
 export type VerbosityLevel = typeof channel_verbosity.$inferSelect.verbosity
 export type WorktreeStatus = typeof thread_worktrees.$inferSelect.status
+export type WorkspaceStatus = typeof thread_workspaces.$inferSelect.status

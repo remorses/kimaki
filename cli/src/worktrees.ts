@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getDataDir } from './config.js'
 import { execAsync } from './exec-async.js'
+import { createWorktreeCore, type WorktreeResult } from './git-worktree-core.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 export { execAsync } from './exec-async.js'
@@ -502,11 +503,6 @@ async function validateSubmodulePointers(
   )
 }
 
-type WorktreeResult = {
-  directory: string
-  branch: string
-}
-
 async function resolveDefaultWorktreeTarget(
   directory: string,
 ): Promise<string> {
@@ -564,79 +560,21 @@ export async function createWorktreeWithSubmodules({
   /** Called with a short phase label so callers can update UI (e.g. Discord status message). */
   onProgress?: (phase: string) => void
 }): Promise<WorktreeResult | Error> {
-  // 1. Create worktree via git (checked out immediately).
   const worktreeDir = getManagedWorktreeDirectory({ directory, name })
-  const targetRef = baseBranch || (await resolveDefaultWorktreeTarget(directory))
 
-  if (fs.existsSync(worktreeDir)) {
-    return new Error(`Worktree directory already exists: ${worktreeDir}`)
-  }
-
-  await fs.promises.mkdir(path.dirname(worktreeDir), { recursive: true })
-
-  const createCommand = `git worktree add ${JSON.stringify(worktreeDir)} -B ${JSON.stringify(name)} ${JSON.stringify(targetRef)}`
-  const createResult = await execAsync(createCommand, {
-    cwd: directory,
-    timeout: SUBMODULE_INIT_TIMEOUT_MS,
-  }).catch((e) =>
-    new Error(`git worktree add failed: ${formatCommandError(e)}`, {
-      cause: e,
-    }),
-  )
-  if (createResult instanceof Error) return createResult
-
-  // 2. Remove broken submodule stubs before init
-  // git worktree creates stub directories with .git files pointing to incomplete gitdirs
-  await removeBrokenSubmoduleStubs(worktreeDir)
-
-  // 4. Init submodules in new worktree.
-  // For each submodule we use git's built-in --reference mechanism when the
-  // source checkout already has that submodule cloned. This preserves commit
-  // pinning while allowing local-only submodule commits to resolve reliably.
-  logger.log(
-    `Initializing submodules in ${worktreeDir} (timeout=${SUBMODULE_INIT_TIMEOUT_MS}ms)`,
-  )
-  const submoduleInitResult = await initializeSubmodulesWithLocalReferences({
-    sourceDirectory: directory,
-    worktreeDirectory: worktreeDir,
+  // Delegate to the plugin-safe core module, passing our logger as callbacks.
+  return createWorktreeCore({
+    projectDirectory: directory,
+    targetDirectory: worktreeDir,
+    branchName: name,
+    baseBranch,
+    onProgress,
+    log: {
+      info: (msg) => logger.log(msg),
+      warn: (msg) => logger.warn(msg),
+      error: (msg) => logger.error(msg),
+    },
   })
-  if (submoduleInitResult instanceof Error) {
-    // Non-fatal: log and continue. The worktree itself is already created,
-    // only submodule init had issues (e.g. stale .gitmodules entries).
-    logger.error('Submodule initialization failed (non-fatal)', {
-      worktreeDir,
-      timeoutMs: SUBMODULE_INIT_TIMEOUT_MS,
-      command: 'git submodule update --init --recursive [--reference ...]',
-      error: submoduleInitResult.message,
-    })
-  } else {
-    logger.log(`Submodules initialized in ${worktreeDir}`)
-  }
-
-  // 4.5 Validate submodule pointers and git metadata.
-  // Non-fatal: stale .gitmodules entries (path listed but removed from tree)
-  // should not block worktree creation.
-  const submoduleValidationError = await validateSubmodulePointers(worktreeDir)
-  if (submoduleValidationError instanceof Error) {
-    logger.error('Submodule validation issues (non-fatal)', {
-      worktreeDir,
-      error: submoduleValidationError.message,
-    })
-  }
-
-  // 5. Dependency install (non-fatal, 60s timeout).
-  // Runs the detected package manager install so workspace packages with
-  // `prepare` scripts get built (e.g. errore → dist/).
-  onProgress?.('Installing dependencies...')
-  const installResult = await runDependencyInstall({ directory: worktreeDir })
-  if (installResult instanceof Error) {
-    logger.error('Dependency install failed (non-fatal)', {
-      worktreeDir,
-      error: installResult.message,
-    })
-  }
-
-  return { directory: worktreeDir, branch: name }
 }
 
 // ─── Worktree merge ──────────────────────────────────────────────────────────

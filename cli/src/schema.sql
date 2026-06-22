@@ -171,6 +171,19 @@ CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS `thread_workspaces` (
+	`thread_id` text PRIMARY KEY,
+	`workspace_id` text,
+	`workspace_type` text NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`error_message` text,
+	`project_directory` text NOT NULL,
+	`workspace_directory` text,
+	`workspace_name` text NOT NULL,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+	CONSTRAINT `fk_thread_workspaces_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS `thread_worktrees` (
 	`thread_id` text PRIMARY KEY,
 	`worktree_name` text NOT NULL,

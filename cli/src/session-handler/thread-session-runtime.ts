@@ -50,7 +50,7 @@ import {
   setPartMessage,
   getThreadSession,
   setThreadSession,
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
   setSessionAgent,
   clearSessionModel,
   getVariantCascade,
@@ -3002,13 +3002,13 @@ export class ThreadSessionRuntime {
       })()
 
       // ── Worktree + channel topic for per-turn prompt context ──
-      const worktreeInfo = await getThreadWorktree(this.thread.id)
+      const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
       const worktree: WorktreeInfo | undefined =
-        worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+        worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
           ? {
-              worktreeDirectory: worktreeInfo.worktree_directory,
-              branch: worktreeInfo.worktree_name,
-              mainRepoDirectory: worktreeInfo.project_directory,
+              worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
+              branch: worktreeInfoForPrompt.workspace_name,
+              mainRepoDirectory: worktreeInfoForPrompt.project_directory,
             }
           : undefined
 
@@ -3708,13 +3708,13 @@ export class ThreadSessionRuntime {
     })()
 
     // ── Worktree info for per-turn prompt context ─────────────
-    const worktreeInfo = await getThreadWorktree(this.thread.id)
+    const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
     const worktree: WorktreeInfo | undefined =
-      worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+      worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
         ? {
-            worktreeDirectory: worktreeInfo.worktree_directory,
-            branch: worktreeInfo.worktree_name,
-            mainRepoDirectory: worktreeInfo.project_directory,
+            worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
+            branch: worktreeInfoForPrompt.workspace_name,
+            mainRepoDirectory: worktreeInfoForPrompt.project_directory,
           }
         : undefined
 
@@ -3991,13 +3991,13 @@ export class ThreadSessionRuntime {
     const directory = this.sdkDirectory
 
     // Resolve worktree info for server initialization
-    const worktreeInfo = await getThreadWorktree(this.thread.id)
+    const workspaceInfo = await getThreadWorktreeOrWorkspace(this.thread.id)
     const worktreeDirectory =
-      worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
-        ? worktreeInfo.worktree_directory
+      workspaceInfo?.status === 'ready' && workspaceInfo.workspace_directory
+        ? workspaceInfo.workspace_directory
         : undefined
     const originalRepoDirectory = worktreeDirectory
-      ? worktreeInfo?.project_directory
+      ? workspaceInfo?.project_directory
       : undefined
 
     const getClientResult = await initializeOpencodeForDirectory(directory, {

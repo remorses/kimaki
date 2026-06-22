@@ -29,7 +29,7 @@ import {
   setChannelVerbosity,
   setChannelWorktreesEnabled,
   getThreadSession,
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
@@ -442,10 +442,10 @@ describe('worktree lifecycle', () => {
       const worktreeSession = await getThreadSession(worktreeThread.id)
       expect(worktreeSession).toBeTruthy()
       expect(worktreeSession).not.toBe(sessionBefore)
-      await expect(getThreadWorktree(thread.id)).resolves.toBeUndefined()
-      const worktreeInfo = await getThreadWorktree(worktreeThread.id)
+      await expect(getThreadWorktreeOrWorkspace(thread.id)).resolves.toBeUndefined()
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(worktreeThread.id)
       expect(worktreeInfo?.status).toBe('ready')
-      expect(worktreeInfo?.worktree_directory).toContain(WORKTREE_NAME)
+      expect(worktreeInfo?.workspace_directory).toContain(WORKTREE_NAME)
 
       const runtimeAfter = getRuntime(thread.id)
       expect(runtimeAfter).toBe(runtimeBefore)
@@ -583,9 +583,9 @@ describe('worktree lifecycle', () => {
       })
 
       // 4. Verify the DB has the worktree info
-      const worktreeInfo = await getThreadWorktree(worktreeThread.id)
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(worktreeThread.id)
       expect(worktreeInfo?.status).toBe('ready')
-      expect(worktreeInfo?.worktree_directory).toContain(CHANNEL_WORKTREE_NAME)
+      expect(worktreeInfo?.workspace_directory).toContain(CHANNEL_WORKTREE_NAME)
 
       // 5. Send a message in the worktree thread and verify it responds
       await wt.user(TEST_USER_ID).sendMessage({
@@ -677,9 +677,9 @@ describe('worktree lifecycle', () => {
       expect(runtime!.sdkDirectory).not.toBe(directories.projectDirectory)
 
       // Verify DB has worktree info
-      const worktreeInfo = await getThreadWorktree(thread.id)
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(thread.id)
       expect(worktreeInfo?.status).toBe('ready')
-      expect(worktreeInfo?.worktree_directory).toBeTruthy()
+      expect(worktreeInfo?.workspace_directory).toBeTruthy()
 
       // Send a follow-up message to verify session works inside worktree
       await th.user(TEST_USER_ID).sendMessage({

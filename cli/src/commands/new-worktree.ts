@@ -13,9 +13,9 @@ import fs from 'node:fs'
 import { OpenCodeSdkError } from '../errors.js'
 import type { CommandContext } from './types.js'
 import {
-  createPendingWorktree,
-  setWorktreeReady,
-  setWorktreeError,
+  createPendingWorkspace,
+  setWorkspaceReady,
+  setWorkspaceError,
   getChannelDirectory,
   getThreadSession,
   setThreadSession,
@@ -30,7 +30,6 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
-  createWorktreeWithSubmodules,
   execAsync,
   listBranchesByLastCommit,
   validateBranchRef,
@@ -196,9 +195,49 @@ async function getProjectDirectoryFromChannel(
 }
 
 /**
- * Create worktree and update the status message when done.
- * Handles the full lifecycle: pending DB entry, git creation, DB ready/error,
+ * Try creating a worktree via the OpenCode workspace SDK.
+ * Returns the workspace directory on success, or an Error if the workspace
+ * feature is not available or the creation fails. Callers fall back to the
+ * direct git path on Error.
+ */
+async function tryWorkspaceCreate({
+  threadId,
+  worktreeName,
+  projectDirectory,
+  baseBranch,
+}: {
+  threadId: string
+  worktreeName: string
+  projectDirectory: string
+  baseBranch?: string
+}): Promise<{ directory: string; workspaceId?: string } | Error> {
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (getClient instanceof Error) return getClient
+
+  const client = getClient()
+  const response = await client.experimental.workspace.create({
+    directory: projectDirectory,
+    type: 'kimaki-worktree',
+    branch: worktreeName,
+    extra: baseBranch ? { baseBranch } : null,
+  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
+  if (response instanceof Error) return response
+  if (response.error) {
+    return new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
+  }
+  const workspace = response.data
+  if (!workspace?.directory) {
+    return new Error('Workspace SDK returned no directory')
+  }
+  return { directory: workspace.directory, workspaceId: workspace.id }
+}
+
+/**
+ * Create worktree via the OpenCode workspace SDK and update the status message.
+ * Handles the full lifecycle: pending DB entry, SDK creation, DB ready/error,
  * tree emoji reaction, and editing the status message.
+ *
+ * Uses thread_workspaces table exclusively (no legacy thread_worktrees).
  *
  * starterMessage is optional — if omitted, status edits are skipped (creation
  * still proceeds). This keeps worktree creation independent of Discord message
@@ -238,36 +277,35 @@ export async function createWorktreeInBackground({
           .catch(() => {})
       }
 
-      // DB pending entry must complete before git creation so error paths
-      // (setWorktreeError) can find the row reliably
-      await createPendingWorktree({
+      // Write pending row BEFORE workspace creation so restarts/follow-up
+      // messages can see the in-progress state.
+      await createPendingWorkspace({
         threadId: thread.id,
-        worktreeName,
+        workspaceType: 'kimaki-worktree',
+        workspaceName: worktreeName,
         projectDirectory,
       })
 
-      const worktreeResult = await createWorktreeWithSubmodules({
-        directory: projectDirectory,
-        name: worktreeName,
+      const workspaceResult = await tryWorkspaceCreate({
+        threadId: thread.id,
+        worktreeName,
+        projectDirectory,
         baseBranch,
-        onProgress: (phase) => {
-          editStatus(`🌳 **Worktree: ${worktreeName}**\n${phase}`)
-        },
       })
 
-      if (worktreeResult instanceof Error) {
-        const errorMsg = worktreeResult.message
-        logger.error('[WORKTREE] Creation failed:', worktreeResult)
-        await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
+      if (workspaceResult instanceof Error) {
+        const errorMsg = workspaceResult.message
+        logger.error('[WORKTREE] Workspace creation failed:', workspaceResult)
+        await setWorkspaceError({ threadId: thread.id, errorMessage: errorMsg })
         editStatus(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
         await editChain
-        return worktreeResult
+        return workspaceResult
       }
 
-      // DB ready update is critical; reaction is best-effort
-      await setWorktreeReady({
+      await setWorkspaceReady({
         threadId: thread.id,
-        worktreeDirectory: worktreeResult.directory,
+        workspaceId: workspaceResult.workspaceId,
+        workspaceDirectory: workspaceResult.directory,
       })
 
       void reactToThread({
@@ -279,12 +317,13 @@ export async function createWorktreeInBackground({
 
       editStatus(
         `🌳 **Worktree: ${worktreeName}**\n` +
-          `📁 \`${worktreeResult.directory}\`\n` +
-          `🌿 Branch: \`${worktreeResult.branch}\``,
+          `📁 \`${workspaceResult.directory}\`\n` +
+          `🌿 Branch: \`${worktreeName}\``,
       )
       await editChain
 
-      return worktreeResult.directory
+      logger.log(`[WORKTREE] Created via workspace SDK: ${workspaceResult.directory}`)
+      return workspaceResult.directory
   })().catch((e) => {
     logger.error('[WORKTREE] Unexpected error in createWorktreeInBackground:', e)
     return new Error(`Worktree creation failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
