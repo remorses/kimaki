@@ -406,13 +406,17 @@ cli
           // (scheduled tasks and --wait).
           const channelConfig = await getChannelDirectory(threadData.parent_id)
 
+          // Guard early: fail before sending the message if a feature that
+          // needs local project directory mapping is requested.
+          if (!channelConfig && (parsedSchedule || options.wait)) {
+            const flag = parsedSchedule ? '--send-at' : '--wait'
+            throw new Error(
+              'Thread parent channel is not configured with a project directory. ' +
+              `${flag} requires a local project mapping. Run the bot first to sync channel data.`,
+            )
+          }
+
           if (parsedSchedule) {
-            if (!channelConfig) {
-              throw new Error(
-                'Thread parent channel is not configured with a project directory. ' +
-                '--send-at requires a local project mapping. Run the bot first to sync channel data.',
-              )
-            }
             const payload: ScheduledTaskPayload = {
               kind: 'thread',
               threadId: targetThreadId,
@@ -435,7 +439,8 @@ cli
               channelId: threadData.parent_id,
               threadId: targetThreadId,
               sessionId: sessionId || undefined,
-              projectDirectory: channelConfig.directory,
+              // channelConfig is guaranteed: early guard threw if missing with --send-at
+              projectDirectory: channelConfig!.directory,
             })
 
             const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
@@ -485,16 +490,12 @@ cli
           process.stdout.write(`${threadUrl}\n`)
 
           if (options.wait) {
-            if (!channelConfig) {
-              throw new Error(
-                'Thread parent channel is not configured with a project directory. ' +
-                '--wait requires a local project mapping. Run the bot first to sync channel data.',
-              )
-            }
+            // channelConfig is guaranteed here: early guard above already
+            // threw if channelConfig is missing when --wait is used.
             const { waitAndOutputSession } = await import('../wait-session.js')
             await waitAndOutputSession({
               threadId: targetThreadId,
-              projectDirectory: channelConfig.directory,
+              projectDirectory: channelConfig!.directory,
               waitStartedAtMs,
             })
           }
