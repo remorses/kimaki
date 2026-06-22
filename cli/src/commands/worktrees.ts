@@ -11,8 +11,6 @@ import {
   ChannelType,
   ComponentType,
   MessageFlags,
-  type TextChannel,
-  type ThreadChannel,
   type APIMessageTopLevelComponent,
   type APITextDisplayComponent,
   type InteractionEditReplyOptions,
@@ -30,8 +28,9 @@ import {
 } from '../html-actions.js'
 import * as errore from 'errore'
 import crypto from 'node:crypto'
-import { GitCommandError } from '../errors.js'
+import { GitCommandError, OpenCodeSdkError } from '../errors.js'
 import { resolveWorkingDirectory } from '../discord-utils.js'
+import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   deleteWorktree,
   git,
@@ -90,6 +89,7 @@ type WorktreeRow = {
   guildId: string | null
   createdAt: Date | null
   source: 'kimaki' | 'opencode' | 'manual'
+  workspaceId: string | null
   // DB-only worktrees (pending/error) won't appear in git list
   dbStatus: 'ready' | 'pending' | 'error'
   // Git-level flags that block deletion
@@ -233,16 +233,7 @@ function buildActionCell({
   if (!canDeleteWorktree({ row, gitStatus })) {
     return '-'
   }
-  return buildDeleteButtonHtml({
-    buttonId: `del-wt-${worktreeButtonKey(row.directory)}`,
-  })
-}
-
-function buildDeleteButtonHtml({
-  buttonId,
-}: {
-  buttonId: string
-}): string {
+  const buttonId = `del-wt-${worktreeButtonKey(row.directory)}`
   return `<button id="${buttonId}" variant="secondary">Delete</button>`
 }
 
@@ -365,6 +356,7 @@ async function buildWorktreeRows({
       guildId: null,
       createdAt: toDate(dbMatch?.created_at),
       source,
+      workspaceId: dbMatch?.workspace_id ?? null,
       dbStatus,
       locked: gw.locked,
       prunable: gw.prunable,
@@ -382,22 +374,13 @@ async function buildWorktreeRows({
       guildId: null,
       createdAt: toDate(ws.created_at),
       source: 'kimaki' as const,
-      dbStatus: (ws.status === 'error' ? 'error' : ws.status === 'pending' ? 'pending' : 'ready') as 'ready' | 'pending' | 'error',
+      workspaceId: ws.workspace_id,
+      dbStatus: ws.status === 'error' ? 'error' : ws.status === 'pending' ? 'pending' : 'ready',
       locked: false,
       prunable: false,
     }))
 
   return [...gitRows, ...dbOnlyRows]
-}
-
-function getWorktreesActionOwnerKey({
-  userId,
-  channelId,
-}: {
-  userId: string
-  channelId: string
-}): string {
-  return `worktrees:${userId}:${channelId}`
 }
 
 function isProjectChannel(
@@ -415,6 +398,20 @@ function isProjectChannel(
   ].includes(channel.type)
 }
 
+function resolveWorktreesWorkingDirectory(
+  channel: NonNullable<ChatInputCommandInteraction['channel']>,
+) {
+  switch (channel.type) {
+    case ChannelType.GuildText:
+    case ChannelType.PublicThread:
+    case ChannelType.PrivateThread:
+    case ChannelType.AnnouncementThread:
+      return resolveWorkingDirectory({ channel })
+    default:
+      return undefined
+  }
+}
+
 async function renderWorktreesReply({
   guildId,
   userId,
@@ -423,7 +420,7 @@ async function renderWorktreesReply({
   notice,
   editReply,
 }: WorktreesReplyTarget): Promise<void> {
-  const ownerKey = getWorktreesActionOwnerKey({ userId, channelId })
+  const ownerKey = `worktrees:${userId}:${channelId}`
   cancelHtmlActionsForOwner(ownerKey)
 
   const gitWorktrees = await listGitWorktrees({
@@ -555,14 +552,17 @@ async function handleDeleteWorktreeAction({
     return
   }
 
-  // Pass branch name for branch cleanup. Empty string for detached HEAD
-  // worktrees so deleteWorktree skips the `git branch -d` step.
+  // SDK-created workspaces must be removed through OpenCode so its workspace
+  // table stays in sync. Legacy/manual worktrees have no workspace_id, so they
+  // still use the direct git cleanup path.
   const displayName = row.branch ?? row.name
-  const deleteResult = await deleteWorktree({
-    projectDirectory,
-    worktreeDirectory: row.directory,
-    worktreeName: row.branch ?? '',
-  })
+  const deleteResult = row.workspaceId
+    ? await deleteWorkspace({ projectDirectory, workspaceId: row.workspaceId })
+    : await deleteWorktree({
+        projectDirectory,
+        worktreeDirectory: row.directory,
+        worktreeName: row.branch ?? '',
+      })
   if (deleteResult instanceof Error) {
     const gitStderr = extractGitStderr(deleteResult)
     const detail = gitStderr
@@ -595,6 +595,24 @@ async function handleDeleteWorktreeAction({
   })
 }
 
+async function deleteWorkspace({
+  projectDirectory,
+  workspaceId,
+}: {
+  projectDirectory: string
+  workspaceId: string
+}) {
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (getClient instanceof Error) return getClient
+
+  const response = await getClient().experimental.workspace.remove({
+    id: workspaceId,
+    directory: projectDirectory,
+  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.remove', cause: e }))
+  if (response instanceof Error) return response
+  if (response.error) return new Error(`Workspace removal failed: ${JSON.stringify(response.error)}`)
+}
+
 export async function handleWorktreesCommand({
   command,
 }: {
@@ -619,9 +637,7 @@ export async function handleWorktreesCommand({
     return
   }
 
-  const resolved = await resolveWorkingDirectory({
-    channel: channel as TextChannel | ThreadChannel,
-  })
+  const resolved = await resolveWorktreesWorkingDirectory(channel)
   if (!resolved) {
     await command.reply({
       content: 'Could not determine the project folder for this channel.',

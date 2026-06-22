@@ -41,15 +41,13 @@ type CommandError = Error & {
   killed?: boolean
 }
 
-function formatCommandError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error)
-  const e = error as CommandError
-  const parts: string[] = [e.message]
-  if (e.cmd) parts.push(`cmd=${e.cmd}`)
-  if (e.signal) parts.push(`signal=${e.signal}`)
-  if (e.killed) parts.push('process=killed')
-  if (e.stderr?.trim()) parts.push(`stderr=${e.stderr.trim()}`)
-  if (e.stdout?.trim()) parts.push(`stdout=${e.stdout.trim()}`)
+function formatCommandError(error: CommandError): string {
+  const parts: string[] = [error.message]
+  if (error.cmd) parts.push(`cmd=${error.cmd}`)
+  if (error.signal) parts.push(`signal=${error.signal}`)
+  if (error.killed) parts.push('process=killed')
+  if (error.stderr?.trim()) parts.push(`stderr=${error.stderr.trim()}`)
+  if (error.stdout?.trim()) parts.push(`stdout=${error.stdout.trim()}`)
   return parts.join(' | ')
 }
 
@@ -61,7 +59,7 @@ type GitSubmoduleConfig = {
   url: string | null
 }
 
-function parseGitmodulesFileContent(
+export function parseGitmodulesFileContent(
   content: string,
 ): GitSubmoduleConfig[] | Error {
   const lines = content.split('\n')
@@ -78,7 +76,9 @@ function parseGitmodulesFileContent(
     currentUrl = null
   }
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue
     const sectionMatch = line.match(/^\[submodule\s+"([^"]+)"\]/)
     if (sectionMatch?.[1]) {
       flushCurrent()
