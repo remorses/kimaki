@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.19.0
+
+1. **Compact session markdown export** — `kimaki session read` now renders tool calls as compact one-liners by default, showing the tool name, key parameters, and output line count instead of full YAML inputs and raw output blocks. This makes exported sessions much more readable and smaller, especially for sessions with many file reads and grep results.
+
+   ```
+   > 🛠️ **bash** command=echo hello, description=Print greeting (2 lines)
+   > 🛠️ **read** filePath=src/config.ts (124 lines)
+   ```
+
+   Use `--verbose` to get the full tool output when you need it:
+
+   ```bash
+   kimaki session read <session-id> --verbose
+   ```
+
+2. **Fix `kimaki send` failing in CI/headless environments** — `kimaki send --channel <id> --prompt "..."` no longer requires a local SQLite database with channel-to-directory mappings. Previously, this mapping (populated when the bot runs locally) was required unconditionally, making it impossible to use `kimaki send` from CI runners or GitHub Actions. Now the local project directory mapping is only required for `--send-at`, `--wait`, and `--cwd`. The basic flow (post message, create thread, let the remote bot pick it up) works with just `KIMAKI_BOT_TOKEN`.
+
+3. **Fix `--wait` and `--send-at` erroring after message was already sent** — the channel config requirement check now runs before posting the Discord message, so these flags fail early with a clear error instead of posting the message and then crashing.
+
 ## 0.18.0
 
 1. **New `kimaki bot token` command** — prints the bot token for CI and automation use. In self-hosted mode it prints the Discord bot token; in gateway mode it prints the `clientId:clientSecret` credential.
