@@ -188,7 +188,8 @@ cli
     'Read a session conversation as markdown (pipe to file to grep)',
   )
   .option('--project <path>', 'Project directory (defaults to cwd)')
-  .action(async (sessionId: string, options: { project?: string }) => {
+  .option('--verbose', 'Show full tool inputs and outputs instead of compact summaries')
+  .action(async (sessionId: string, options: { project?: string; verbose?: boolean }) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
@@ -202,8 +203,9 @@ cli
       }
 
       // Try current project first (fast path)
+      const compactTools = !options.verbose
       const markdown = new ShareMarkdown(getClient())
-      const result = await markdown.generate({ sessionID: sessionId })
+      const result = await markdown.generate({ sessionID: sessionId, compactTools })
       if (!(result instanceof Error)) {
         process.stdout.write(result)
         process.exit(0)
@@ -236,6 +238,7 @@ cli
         const otherMarkdown = new ShareMarkdown(otherClient())
         const otherResult = await otherMarkdown.generate({
           sessionID: sessionId,
+          compactTools,
         })
         if (!(otherResult instanceof Error)) {
           process.stdout.write(otherResult)
