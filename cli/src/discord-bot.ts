@@ -297,6 +297,8 @@ export async function startDiscordBot({
     discordClient = await createDiscordClient()
   }
 
+  store.setState({ useWorktrees: Boolean(useWorktrees) })
+
   let currentAppId: string | undefined = appId
 
   const setupHandlers = async (c: Client<true>) => {

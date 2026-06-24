@@ -21,6 +21,7 @@ import {
   getThreadSession,
   getSessionAgent,
   getChannelAgent,
+  getChannelWorktreesEnabled,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -32,6 +33,14 @@ import {
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { getCurrentModelInfo } from './model.js'
+import { isGitRepositoryRoot } from '../worktrees.js'
+import {
+  formatAutoWorktreeName,
+  createWorktreeInBackground,
+  worktreeCreatingMessage,
+} from './new-worktree.js'
+import { WORKTREE_PREFIX } from './merge-worktree.js'
+import { store } from '../store.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -597,26 +606,78 @@ async function handleQuickAgentWithPrompt({
 
     await command.deferReply()
 
+    // Check if worktrees should be enabled (CLI flag OR channel setting),
+    // mirroring the logic in discord-bot.ts message handler.
+    const wantsWorktrees =
+      store.getState().useWorktrees ||
+      (await getChannelWorktreesEnabled(channel.id))
+    const shouldUseWorktrees =
+      wantsWorktrees && (await isGitRepositoryRoot(projectDirectory))
+
+    if (wantsWorktrees && !shouldUseWorktrees) {
+      agentLogger.warn(
+        `[WORKTREE] Skipping automatic worktree for non-git project directory: ${projectDirectory}`,
+      )
+    }
+
+    const baseThreadName = prompt.slice(0, 80)
+    const threadName = shouldUseWorktrees
+      ? `${WORKTREE_PREFIX}${baseThreadName}`
+      : baseThreadName
+
     const starterMessage = await channel.send({
       content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
     const thread = await starterMessage.startThread({
-      name: prompt.slice(0, 80),
+      name: threadName.slice(0, 80),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `${resolvedAgentName} agent prompt`,
     })
 
     await thread.members.add(command.user.id)
 
-    await command.editReply(`Sent with **${resolvedAgentName}** agent in ${thread.toString()}`)
+    // Create worktree in background if enabled, same as discord-bot.ts
+    let worktreePromise: Promise<string | Error> | undefined
+    if (shouldUseWorktrees) {
+      const worktreeName = formatAutoWorktreeName(baseThreadName.slice(0, 50))
+      agentLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
+
+      const worktreeStatusMessage = await thread
+        .send({
+          content: worktreeCreatingMessage(worktreeName),
+          flags: SILENT_MESSAGE_FLAGS,
+        })
+        .catch(() => undefined)
+
+      worktreePromise = createWorktreeInBackground({
+        thread,
+        starterMessage: worktreeStatusMessage,
+        worktreeName,
+        projectDirectory,
+        rest: command.client.rest,
+      })
+    }
+
+    const sessionDirectory = await (async () => {
+      if (!worktreePromise) return projectDirectory
+      const result = await worktreePromise
+      if (result instanceof Error) return projectDirectory
+      return result
+    })()
+
+    await command
+      .editReply(`Sent with **${resolvedAgentName}** agent in ${thread.toString()}`)
+      .catch(() => {
+        agentLogger.warn('[AGENT] Failed to edit quick-agent reply, continuing session')
+      })
 
     const runtime = getOrCreateRuntime({
       threadId: thread.id,
       thread,
       projectDirectory,
-      sdkDirectory: projectDirectory,
+      sdkDirectory: sessionDirectory,
       channelId: channel.id,
       appId,
     })
