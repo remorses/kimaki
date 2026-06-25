@@ -560,6 +560,13 @@ export type IngressInput = {
   /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
   /**
+   * When true, the message is added to the session context without triggering
+   * the AI agent loop. Used for messages that should be visible to the model
+   * on the next real turn but should not cause a response on their own
+   * (e.g. user-to-user replies in a thread).
+   */
+  noReply?: boolean
+  /**
    * Lazy preprocessing callback. When set, the runtime serializes it via a
    * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
    * from the raw Discord message. This replaces the threadIngressQueue in
@@ -2838,6 +2845,18 @@ export class ThreadSessionRuntime {
         return
       }
 
+      // Context-only messages (noReply) should not create a new session.
+      // If there is no existing session, silently skip.
+      if (input.noReply) {
+        const existingSessionId = this.state?.sessionId || await getThreadSession(this.thread.id) || undefined
+        if (!existingSessionId) {
+          logger.log(
+            `[INGRESS] Skipping noReply message for thread ${this.threadId}: no existing session`,
+          )
+          return
+        }
+      }
+
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
         this.stopTyping()
@@ -3063,6 +3082,7 @@ export class ThreadSessionRuntime {
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
         ...variantField,
+        ...(input.noReply ? { noReply: true } : {}),
       }
       const promptResult = await getClient().session.promptAsync(request)
         .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
@@ -3082,7 +3102,10 @@ export class ThreadSessionRuntime {
         `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
       )
 
-      this.markQueueDispatchBusy(session.id)
+      // noReply messages don't trigger the agent loop, so don't mark as busy
+      if (!input.noReply) {
+        this.markQueueDispatchBusy(session.id)
+      }
     })
 
     if (skippedBySessionGuard) {
@@ -3241,8 +3264,15 @@ export class ThreadSessionRuntime {
         // Route with the resolved mode through normal paths.
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.
-        const enqueueResult =
-          resolvedInput.mode === 'local-queue' || resolvedInput.command
+        // noReply messages always go through the opencode path so the flag
+        // reaches promptAsync; local queue doesn't support noReply.
+        const enqueueResult = resolvedInput.noReply
+          ? await this.submitViaOpencodeQueue({
+              ...resolvedInput,
+              mode: 'opencode',
+              command: undefined,
+            })
+          : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
             ? await this.enqueueViaLocalQueue(resolvedInput)
             : await this.submitViaOpencodeQueue(resolvedInput)
         resolveOuter(enqueueResult)

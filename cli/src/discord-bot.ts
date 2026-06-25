@@ -505,15 +505,14 @@ export async function startDiscordBot({
         }
       }
 
-      // Ignore messages that start with a mention of another user (not the bot).
-      // These are likely users talking to each other, not the bot.
+      // Detect messages that start with a mention of another user (not the bot).
+      // In channels these are fully ignored. In threads they are added to the
+      // session context without triggering the AI (noReply), so the agent sees
+      // user-to-user conversation on the next real turn.
       const leadingMentionMatch = message.content?.match(/^<@!?(\d+)>/)
-      if (leadingMentionMatch) {
-        const mentionedUserId = leadingMentionMatch[1]
-        if (mentionedUserId !== discordClient.user?.id) {
-          return
-        }
-      }
+      const isLeadingMentionToOtherUser =
+        leadingMentionMatch &&
+        leadingMentionMatch[1] !== discordClient.user?.id
 
       if (message.partial) {
         discordLogger.log(`Fetching partial message ${message.id}`)
@@ -532,6 +531,14 @@ export async function startDiscordBot({
       // When mention mode is enabled, users without Kimaki role can message
       // without getting a permission error - we just silently ignore.
       const channel = message.channel
+
+      // In text channels, messages starting with a mention to another user
+      // are fully ignored before any permission or mention-mode checks.
+      // This prevents permission-error replies for user-to-user conversation.
+      if (channel.type === ChannelType.GuildText && isLeadingMentionToOtherUser) {
+        return
+      }
+
       if (channel.type === ChannelType.GuildText && !isCliInjectedPrompt) {
         const mentionModeEnabled = await getChannelMentionMode(channel.id)
         if (mentionModeEnabled) {
@@ -631,6 +638,13 @@ export async function startDiscordBot({
           return
         }
 
+        // Context-only messages (user-to-user replies) can't be stored without
+        // an existing session. Skip early to avoid creating a runtime or running
+        // preprocessing for nothing.
+        if (isLeadingMentionToOtherUser && !hasExistingSession) {
+          return
+        }
+
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         if (parent) {
@@ -715,7 +729,7 @@ export async function startDiscordBot({
           projectDirectory && worktreeInfo?.status !== 'pending'
             ? extractBtwSuffix(message.content || '')
             : null
-        if (btwResult?.forceBtw && projectDirectory) {
+        if (btwResult?.forceBtw && projectDirectory && !isLeadingMentionToOtherUser) {
           const result = await forkSessionToBtwThread({
             sourceThread: thread,
             projectDirectory,
@@ -777,7 +791,9 @@ export async function startDiscordBot({
         })
 
         // Cancel interactive UI when a real user sends a message.
-        if (!message.author.bot && !isCliInjectedPrompt) {
+        // Context-only messages (user-to-user replies) should not interrupt
+        // the active run or dismiss pending UI.
+        if (!message.author.bot && !isCliInjectedPrompt && !isLeadingMentionToOtherUser) {
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
@@ -814,6 +830,7 @@ export async function startDiscordBot({
           model: cliInjectedModel,
           permissions: cliInjectedPermissions,
           injectionGuardPatterns: cliInjectedInjectionGuardPatterns,
+          noReply: isLeadingMentionToOtherUser || undefined,
           sessionStartSource: sessionStartSource
             ? {
                 scheduleKind: sessionStartSource.scheduleKind,
