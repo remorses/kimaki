@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.20.0
+
+1. **Mention-prefixed messages now visible to the agent** — when a user sends a message in a thread that starts with `@mention` to another user (not the bot), it's added to the session context without triggering an AI response. The agent sees user-to-user conversation on the next turn, giving it better context about what's being discussed. Channel-level messages with leading mentions to other users are still ignored (no thread creation).
+
+2. **Custom tools, MCP tools, and plugin tools shown in default verbosity** — the default `text_and_essential_tools` verbosity used a whitelist of known tool names, hiding any tool not in the list. Now the logic is flipped: only known read-only built-in tools (`read`, `glob`, `grep`, `describe-media`, `todoread`) are hidden. Everything else is shown by default.
+
+3. **Fix `project add` and `project create` selecting wrong guild in gateway mode** — the guild selection heuristic fetched the most recent channel from the database, but that channel could belong to a different bot instance (e.g. old self-hosted bot). In gateway mode the proxy rejected the REST call and the fallback non-deterministically picked the wrong guild. Now multiple existing channels are tried before falling back to the guild cache, which in gateway mode is already filtered to authorized guilds.
+
+4. **Fix quick agent commands not creating worktrees** — `/plan-agent <prompt>`, `/build-agent <prompt>` and other quick agent slash commands now correctly create worktrees when used from a project channel with worktree mode enabled. Previously these created plain threads without a worktree.
+
+5. **Fix bash tool rendering with missing description** — newer opencode versions removed the `description` field from the bash tool schema, causing multiline or long commands to render as just `┣ bash` with no context. Now the first line of the command is shown truncated with `…` when no description is available.
+
 ## 0.19.0
 
 1. **Compact session markdown export** — `kimaki session read` now renders tool calls as compact one-liners by default, showing the tool name, key parameters, and output line count instead of full YAML inputs and raw output blocks. This makes exported sessions much more readable and smaller, especially for sessions with many file reads and grep results.
