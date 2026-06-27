@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { formatPart, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
+import { formatBashToolTitle, formatPart, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
@@ -45,6 +45,53 @@ describe('formatPart', () => {
       ## Summary
       Done."
     `)
+  })
+})
+
+describe('formatBashToolTitle', () => {
+  test('short single-line command shown in full', () => {
+    expect(formatBashToolTitle({ command: 'echo hello' })).toMatchInlineSnapshot(`" _echo hello_"`)
+  })
+
+  test('multiline command without description truncates to first line', () => {
+    expect(
+      formatBashToolTitle({ command: 'echo hello\necho world\necho done' }),
+    ).toMatchInlineSnapshot(`" _echo hello_"`)
+  })
+
+  test('long single-line command is truncated with ellipsis', () => {
+    const longCommand = 'a'.repeat(150)
+    const result = formatBashToolTitle({ command: longCommand })
+    expect(result).toContain('…')
+    expect(result.length).toBeLessThan(150)
+  })
+
+  test('description is preferred over truncated command when present', () => {
+    expect(
+      formatBashToolTitle({
+        command: 'echo hello\necho world',
+        description: 'Print greeting',
+      }),
+    ).toMatchInlineSnapshot(`" _Print greeting_"`)
+  })
+
+  test('stateTitle used as last resort', () => {
+    expect(
+      formatBashToolTitle({ command: '', stateTitle: 'Running tests' }),
+    ).toMatchInlineSnapshot(`" _Running tests_"`)
+  })
+
+  test('empty inputs return empty string', () => {
+    expect(formatBashToolTitle({ command: '' })).toBe('')
+  })
+
+  test('no description field (new opencode) with multiline command', () => {
+    // This is the exact scenario that was broken: opencode removed `description`
+    // from the bash tool schema, so multiline commands rendered as just "┣ bash"
+    const command = 'git diff HEAD~1 --stat && git log --oneline -5'
+    expect(formatBashToolTitle({ command: command + '\n' + 'echo done' })).toMatchInlineSnapshot(
+      `" _git diff HEAD\\~1 --stat && git log --oneline -5_"`,
+    )
   })
 })
 
