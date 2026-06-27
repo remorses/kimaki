@@ -85,6 +85,18 @@ describe('formatBashToolTitle', () => {
     expect(formatBashToolTitle({ command: '' })).toBe('')
   })
 
+  test('leading blank line skipped, uses first meaningful line', () => {
+    expect(
+      formatBashToolTitle({ command: '\npnpm test\npnpm build' }),
+    ).toMatchInlineSnapshot(`" _pnpm test_"`)
+  })
+
+  test('whitespace-only first line skipped', () => {
+    expect(
+      formatBashToolTitle({ command: '   \npnpm test' }),
+    ).toMatchInlineSnapshot(`" _pnpm test_"`)
+  })
+
   test('no description field (new opencode) with multiline command', () => {
     // This is the exact scenario that was broken: opencode removed `description`
     // from the bash tool schema, so multiline commands rendered as just "┣ bash"

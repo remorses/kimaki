@@ -371,8 +371,13 @@ export function formatBashToolTitle({
 }): string {
   if (!command && !description && !stateTitle) return ''
 
-  const firstLine = command.split('\n')[0] || ''
   const isSingleLine = !command.includes('\n')
+  // Find first non-empty line to handle commands with leading blank lines
+  const firstMeaningfulLine =
+    command
+      .split('\n')
+      .find((line) => line.trim().length > 0)
+      ?.trimStart() ?? ''
 
   if (command && isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH) {
     return ` _${escapeInlineMarkdown(command)}_`
@@ -380,11 +385,11 @@ export function formatBashToolTitle({
   if (description) {
     return ` _${escapeInlineMarkdown(description)}_`
   }
-  if (firstLine.length > 0) {
+  if (firstMeaningfulLine.length > 0) {
     const truncated =
-      firstLine.length > MAX_BASH_COMMAND_INLINE_LENGTH
-        ? firstLine.slice(0, MAX_BASH_COMMAND_INLINE_LENGTH) + '…'
-        : firstLine
+      firstMeaningfulLine.length > MAX_BASH_COMMAND_INLINE_LENGTH
+        ? firstMeaningfulLine.slice(0, MAX_BASH_COMMAND_INLINE_LENGTH) + '…'
+        : firstMeaningfulLine
     return ` _${escapeInlineMarkdown(truncated)}_`
   }
   if (stateTitle) {
