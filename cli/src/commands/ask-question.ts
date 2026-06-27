@@ -49,6 +49,19 @@ type PendingQuestionContext = {
 // Configurable via --interaction-timeout-minutes CLI flag (default: 10 minutes).
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
+/**
+ * Atomic take: removes context from Map and returns it. Only the first caller
+ * (TTL expiry or select menu click) wins, preventing duplicate replies.
+ */
+function takePendingQuestionContext(contextHash: string): PendingQuestionContext | undefined {
+  const ctx = pendingQuestionContexts.get(contextHash)
+  if (!ctx) {
+    return undefined
+  }
+  pendingQuestionContexts.delete(contextHash)
+  return ctx
+}
+
 export function findPendingQuestionContextForRequest({
   threadId,
   requestId,
@@ -146,23 +159,13 @@ export async function showAskUserQuestionDropdowns({
   }
 
   pendingQuestionContexts.set(contextHash, context)
-  // On TTL expiry: hide the dropdown UI and abort the session so OpenCode
-  // unblocks. We intentionally do NOT call question.reply() — sending 'Other'
-  // made the model think the user chose an option when they didn't.
+  // On TTL expiry: abort the session so OpenCode isn't stuck waiting for a reply.
+  // Uses atomic take so only one of TTL-expiry or button-click can win.
   setTimeout(async () => {
-    const ctx = pendingQuestionContexts.get(contextHash)
+    const ctx = takePendingQuestionContext(contextHash)
     if (!ctx) {
       return
     }
-    // Delete context first so the dropdown becomes inert immediately.
-    // Without this, a user clicking during the abort() await would still
-    // be accepted by handleAskQuestionSelectMenu, then abort() would
-    // kill that valid run.
-    deletePendingQuestionContextsForRequest({
-      threadId: ctx.thread.id,
-      requestId: ctx.requestId,
-    })
-    // Abort the session so OpenCode isn't stuck waiting for a reply
     const client = getOpencodeClient(ctx.directory)
     if (client) {
       await client.session
@@ -243,7 +246,7 @@ export async function handleAskQuestionSelectMenu(
     return
   }
 
-  const context = pendingQuestionContexts.get(contextHash)
+  const context = takePendingQuestionContext(contextHash)
 
   if (!context) {
     await interaction.reply({
@@ -396,16 +399,14 @@ export async function cancelPendingQuestion(
 ): Promise<CancelQuestionResult> {
   // Find pending question for this thread
   let contextHash: string | undefined
-  let context: PendingQuestionContext | undefined
   for (const [hash, ctx] of pendingQuestionContexts) {
     if (ctx.thread.id === threadId) {
       contextHash = hash
-      context = ctx
       break
     }
   }
 
-  if (!contextHash || !context) {
+  if (!contextHash) {
     return 'no-pending'
   }
 
@@ -414,10 +415,12 @@ export async function cancelPendingQuestion(
   // the question without providing an answer (e.g. voice/attachment-only
   // messages where content needs transcription before it can be an answer).
   if (userMessage === undefined) {
-    deletePendingQuestionContextsForRequest({
-      threadId: context.thread.id,
-      requestId: context.requestId,
-    })
+    takePendingQuestionContext(contextHash)
+    return 'no-pending'
+  }
+
+  const context = takePendingQuestionContext(contextHash)
+  if (!context) {
     return 'no-pending'
   }
 
@@ -440,14 +443,10 @@ export async function cancelPendingQuestion(
     logger.log(`Answered question ${context.requestId} with user message`)
   } catch (error) {
     logger.error('Failed to answer question:', error)
-    // Keep context pending so TTL can still fire.
-    // Caller should not consume the user message since reply failed.
+    // TTL already deleted context via take above; context is gone.
+    // If reply failed, the session is already in a broken state.
     return 'reply-failed'
   }
 
-  deletePendingQuestionContextsForRequest({
-    threadId: context.thread.id,
-    requestId: context.requestId,
-  })
   return 'replied'
 }
