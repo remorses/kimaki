@@ -365,23 +365,24 @@ function getTokenTotal(tokens: TokenUsage): number {
   )
 }
 
+/**
+ * Built-in read-only tools that are hidden in default verbosity mode.
+ * Any tool NOT in this list is considered "essential" and shown,
+ * which means custom tools, MCP tools, and plugin tools are visible by default.
+ */
+const HIDDEN_READONLY_TOOLS = [
+  'read',
+  'glob',
+  'grep',
+  'describe-media',
+  'todoread',
+]
+
 /** Check if a tool part is "essential" (shown in text-and-essential-tools mode). */
 export function isEssentialToolName(toolName: string): boolean {
-  const essentialTools = [
-    'edit',
-    'write',
-    'apply_patch',
-    'bash',
-    'webfetch',
-    'websearch',
-    'googlesearch',
-    'codesearch',
-    'task',
-    'todowrite',
-    'skill',
-  ]
-  // Also match any MCP tool that contains these names
-  return essentialTools.some((name) => {
+  // Hide known read-only built-in tools; show everything else
+  // (custom tools, MCP tools, plugin tools are visible by default)
+  return !HIDDEN_READONLY_TOOLS.some((name) => {
     return toolName === name || toolName.endsWith(`_${name}`)
   })
 }
