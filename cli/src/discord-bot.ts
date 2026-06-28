@@ -415,9 +415,8 @@ export async function startDiscordBot({
       discordLogger.error(
         `[GATEWAY] Shard ${shardId} exceeded ${MAX_RECONNECT_ATTEMPTS} reconnect attempts, self-restarting`,
       )
-      // Self-restart: cleanup then spawn a fresh process. This works whether
-      // the bin.ts wrapper is present or not (unlike process.exit(1) which
-      // only restarts when the wrapper is the parent).
+      // Self-restart: cleanup, then exit non-zero so the bin.ts wrapper
+      // restarts us. Without the wrapper this exits after logging a warning.
       void selfRestart('gateway-reconnect-limit')
     }
   })
