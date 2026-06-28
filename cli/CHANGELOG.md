@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.20.1
+
+1. **Fix user-defined commands not creating worktrees** — `-cmd`, `-skill`, and `-mcp-prompt` slash commands now correctly create worktrees in channels with worktrees enabled. Previously, running a command like `/review-cmd` would create a plain thread without a worktree, even though regular messages and `/agent` commands already respected the per-channel worktree setting.
+
+2. **Fix bot not restarting after gateway reconnect limit without wrapper** — when running with `tsx src/cli.ts` (local dev, no `bin.ts` wrapper), the previous fallback used a detached `spawn()` + `process.exit(0)` which was unreliable. Now `selfRestart` always exits with code 1; the `bin.ts` wrapper catches it and restarts with exponential backoff and crash-loop detection. Running without the wrapper logs a warning suggesting `bin.ts`.
+
+3. **Fail fast on oversized Discord file uploads** — `uploadFilesToDiscord` now checks each file's size before reading it into memory. If a file exceeds the bot limit (25 MB default, higher for boosted servers), it throws immediately with a clear error instead of sending to Discord and waiting for rejection.
+
+4. **Add `description` field to bash tool prompt** — the system prompt now instructs models to always send a short `description` with each bash call. The field is shown in Discord as context for what the command does. The instructions are structured as a TypeScript interface so models follow the schema more reliably.
+
+5. **Fix truncated bash commands missing ellipsis** — multiline commands displayed only the first line but without any visual indicator that the command was longer. Now always appends "..." when showing a partial command.
+
 ## 0.20.0
 
 1. **Mention-prefixed messages now visible to the agent** — when a user sends a message in a thread that starts with `@mention` to another user (not the bot), it's added to the session context without triggering an AI response. The agent sees user-to-user conversation on the next turn, giving it better context about what's being discussed. Channel-level messages with leading mentions to other users are still ignored (no thread creation).
