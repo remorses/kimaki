@@ -356,9 +356,9 @@ const MAX_BASH_COMMAND_INLINE_LENGTH = 100
  * 2. Long/multiline command with description → show description
  * 3. Long/multiline command without description → truncate first line of command
  *
- * The description field was removed from the bash tool schema in newer opencode
- * versions, so case 3 is the common path now. Without this fallback, long commands
- * would render as just "┣ bash" with no context.
+ * The description field was removed from the opencode v2 bash tool schema but
+ * kimaki's system prompt instructs models to always send it as an extra field.
+ * Case 3 is the fallback when a model omits it.
  */
 export function formatBashToolTitle({
   command,

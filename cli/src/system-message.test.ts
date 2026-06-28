@@ -44,10 +44,22 @@ describe('system-message', () => {
 
       ## bash tool
 
-      When calling the bash tool, always include a boolean field \`hasSideEffect\`.
-      Set \`hasSideEffect: true\` for any command that writes files, modifies repo state, installs packages, changes config, runs scripts that mutate state, or triggers external effects.
-      Set \`hasSideEffect: false\` for read-only commands (e.g. ls, tree, cat, rg, grep, git status, git diff, pwd, whoami, etc).
-      This is required to distinguish essential bash calls from read-only ones in low-verbosity mode.
+      When calling the bash tool, always include these extra fields alongside \`command\`:
+
+      \`\`\`ts
+      interface BashToolInput {
+        command: string
+        /** Short 5-10 word summary of what this command does */
+        description: string
+        /** true if the command writes files, modifies state, installs packages, or triggers external effects */
+        hasSideEffect: boolean
+        workdir?: string
+        timeout?: number
+      }
+      \`\`\`
+
+      \`description\` is shown to the user in Discord as a summary of the bash call.
+      \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
 
       Your current OpenCode session ID is: ses_123
       Your current Discord channel ID is: chan_123
