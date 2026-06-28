@@ -788,21 +788,45 @@ export async function resolveWorkingDirectory({
   }
 }
 
+// Discord upload size limits per server boost tier (bytes).
+// Bots default to 25 MB; boosted servers raise the ceiling.
+export const DISCORD_DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024
+
 /**
  * Upload files to a Discord thread/channel in a single message.
  * Sending all files in one message causes Discord to display images in a grid layout.
+ *
+ * Files are validated against the Discord upload size limit before reading them
+ * into memory. Pass `maxFileSize` if you know the guild's boost tier limit;
+ * otherwise the conservative 25 MB bot default is used.
  */
 export async function uploadFilesToDiscord({
   threadId,
   botToken,
   files,
+  maxFileSize = DISCORD_DEFAULT_MAX_FILE_SIZE,
 }: {
   threadId: string
   botToken: string
   files: string[]
+  /** Per-file size limit in bytes. Defaults to 25 MB (bot default). */
+  maxFileSize?: number
 }): Promise<void> {
   if (files.length === 0) {
     return
+  }
+
+  // Fail fast: check file sizes before reading anything into memory
+  const sizeLimit = maxFileSize ?? DISCORD_DEFAULT_MAX_FILE_SIZE
+  for (const file of files) {
+    const stat = fs.statSync(file)
+    if (stat.size > sizeLimit) {
+      const fileMB = (stat.size / 1024 / 1024).toFixed(1)
+      const limitMB = (sizeLimit / 1024 / 1024).toFixed(0)
+      throw new Error(
+        `File "${path.basename(file)}" is ${fileMB} MB, which exceeds Discord's ${limitMB} MB upload limit`,
+      )
+    }
   }
 
   // Build attachments array for all files
