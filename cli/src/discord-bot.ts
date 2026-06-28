@@ -1525,7 +1525,13 @@ export async function startDiscordBot({
     })
   })
 
-  // Self-restart: prefer bin.ts wrapper (keeps Ctrl+C), fall back to detached spawn.
+  // Self-restart: exit with code 1 so the bin.ts wrapper restarts us with
+  // exponential backoff and crash-loop detection. When running without the
+  // wrapper (e.g. `tsx src/cli.ts`), the process just exits and the user
+  // sees the non-zero exit code — they should use `tsx src/bin.ts` instead
+  // for auto-restart support. The previous detached-spawn fallback was
+  // unreliable: process.exit(0) could kill the child before it started,
+  // there was no backoff between restarts, and spawn failures were silent.
   let selfRestarting = false
   async function selfRestart(reason: string) {
     if (selfRestarting) {
@@ -1540,21 +1546,12 @@ export async function startDiscordBot({
       voiceLogger.error(`[${reason}] Error during shutdown:`, error)
     }
 
-    if (process.env.__KIMAKI_CHILD) {
-      discordLogger.log('Wrapper detected, exiting for wrapper restart')
-      process.exit(1)
+    if (!process.env.__KIMAKI_CHILD) {
+      discordLogger.warn(
+        'No restart wrapper detected. Run via `tsx src/bin.ts` (dev) or `kimaki` (npm) for auto-restart on crash.',
+      )
     }
-
-    const { spawn } = await import('node:child_process')
-    const env = { ...process.env }
-    delete env.__KIMAKI_CHILD
-    spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
-      stdio: 'inherit',
-      detached: true,
-      cwd: process.cwd(),
-      env,
-    }).unref()
-    process.exit(0)
+    process.exit(1)
   }
 
   process.on('SIGUSR2', () => {
