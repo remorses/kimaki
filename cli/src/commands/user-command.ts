@@ -5,15 +5,27 @@ import type { CommandHandler } from './types.js'
 import {
   ChannelType,
   MessageFlags,
+  ThreadAutoArchiveDuration,
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getChannelDirectory, getThreadSession } from '../database.js'
+import {
+  getChannelDirectory,
+  getChannelWorktreesEnabled,
+  getThreadSession,
+} from '../database.js'
 import { store } from '../store.js'
 import fs from 'node:fs'
+import { isGitRepositoryRoot } from '../worktrees.js'
+import {
+  createWorktreeInBackground,
+  formatAutoWorktreeName,
+  worktreeCreatingMessage,
+} from './new-worktree.js'
+import { WORKTREE_PREFIX } from './merge-worktree.js'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
 const DISCORD_MESSAGE_LIMIT = 2000
@@ -144,19 +156,64 @@ export const handleUserCommand: CommandHandler = async ({
       })
     } else if (textChannel) {
       // Running in text channel - create a new thread
+      const wantsWorktrees =
+        store.getState().useWorktrees ||
+        (await getChannelWorktreesEnabled(textChannel.id))
+      const shouldUseWorktrees =
+        wantsWorktrees && (await isGitRepositoryRoot(projectDirectory))
+
+      if (wantsWorktrees && !shouldUseWorktrees) {
+        userCommandLogger.warn(
+          `[WORKTREE] Skipping automatic worktree for non-git project directory: ${projectDirectory}`,
+        )
+      }
+
+      const baseThreadName = commandInvocation.slice(0, DISCORD_THREAD_NAME_LIMIT)
+      const threadName = shouldUseWorktrees
+        ? `${WORKTREE_PREFIX}${baseThreadName}`
+        : baseThreadName
+
       const starterMessage = await textChannel.send({
         content: threadOpeningMessage,
         flags: SILENT_MESSAGE_FLAGS,
       })
 
       const newThread = await starterMessage.startThread({
-        name: commandInvocation.slice(0, DISCORD_THREAD_NAME_LIMIT),
-        autoArchiveDuration: 1440,
+        name: threadName.slice(0, DISCORD_THREAD_NAME_LIMIT),
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
         reason: `OpenCode command: ${commandName}`,
       })
 
       // Add user to thread so it appears in their sidebar
       await newThread.members.add(command.user.id)
+
+      let worktreePromise: Promise<string | Error> | undefined
+      if (shouldUseWorktrees) {
+        const worktreeName = formatAutoWorktreeName(baseThreadName.slice(0, 50))
+        userCommandLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
+
+        const worktreeStatusMessage = await newThread
+          .send({
+            content: worktreeCreatingMessage(worktreeName),
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          .catch(() => undefined)
+
+        worktreePromise = createWorktreeInBackground({
+          thread: newThread,
+          starterMessage: worktreeStatusMessage,
+          worktreeName,
+          projectDirectory,
+          rest: command.client.rest,
+        })
+      }
+
+      const sessionDirectory = await (async () => {
+        if (!worktreePromise) return projectDirectory
+        const result = await worktreePromise
+        if (result instanceof Error) return projectDirectory
+        return result
+      })()
 
       await command.editReply(
         `Started /${commandName} in ${newThread.toString()}`,
@@ -166,7 +223,7 @@ export const handleUserCommand: CommandHandler = async ({
         threadId: newThread.id,
         thread: newThread,
         projectDirectory,
-        sdkDirectory: projectDirectory,
+        sdkDirectory: sessionDirectory,
         channelId: textChannel.id,
         appId,
       })
