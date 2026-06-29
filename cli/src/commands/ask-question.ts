@@ -10,9 +10,17 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  sendThreadMessage,
+  NOTIFY_MESSAGE_FLAGS,
+  SILENT_MESSAGE_FLAGS,
+  resolveWorkingDirectory,
+} from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { extractOpencodeCommandReference } from '../opencode-command-detection.js'
+import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
+import type { RegisteredUserCommand } from '../store.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -316,7 +324,95 @@ export async function handleAskQuestionSelectMenu(
       threadId: context.thread.id,
       requestId: context.requestId,
     })
+    await maybeQueueCommandFromSelectedOption({
+      context,
+      questionIndex,
+      selectedValues,
+      interaction,
+    })
   }
+}
+
+// Decides whether a dropdown selection should run a registered opencode command
+// instead of replying its label. Scoped to single-question, single-select
+// answers so multi-question forms and free-text "Other" are left alone, and only
+// registered commands match. Pure so the guard logic is unit-testable.
+export function resolveSelectedOptionCommand({
+  questions,
+  totalQuestions,
+  questionIndex,
+  selectedValues,
+  registered,
+}: {
+  questions: AskUserQuestionInput['questions']
+  totalQuestions: number
+  questionIndex: number
+  selectedValues: string[]
+  registered?: RegisteredUserCommand[]
+}): { name: string; arguments: string } | null {
+  if (totalQuestions !== 1) return null
+  if (selectedValues.length !== 1) return null
+  const selected = selectedValues[0]
+  if (!selected || selected === 'other') return null
+
+  const option = questions[questionIndex]?.options[parseInt(selected, 10)]
+  if (!option) return null
+
+  const detected = extractOpencodeCommandReference(
+    `${option.label}\n${option.description}`,
+    registered,
+  )
+  return detected?.command ?? null
+}
+
+// Routes a command-bearing option through opencode's command path (which
+// switches agent), instead of replying the bare label to the current agent.
+async function maybeQueueCommandFromSelectedOption({
+  context,
+  questionIndex,
+  selectedValues,
+  interaction,
+}: {
+  context: PendingQuestionContext
+  questionIndex: number
+  selectedValues: string[]
+  interaction: StringSelectMenuInteraction
+}): Promise<void> {
+  const command = resolveSelectedOptionCommand({
+    questions: context.questions,
+    totalQuestions: context.totalQuestions,
+    questionIndex,
+    selectedValues,
+  })
+  if (!command) return
+
+  const thread = context.thread
+  const resolved = await resolveWorkingDirectory({ channel: thread })
+  if (!resolved) {
+    logger.error(
+      'Could not resolve project directory for command option enqueue',
+    )
+    return
+  }
+
+  const username = interaction.user.globalName || interaction.user.username
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
+    thread,
+    projectDirectory: resolved.projectDirectory,
+    sdkDirectory: resolved.workingDirectory,
+    channelId: thread.parentId || thread.id,
+  })
+  await runtime.enqueueIncoming({
+    prompt: '',
+    userId: interaction.user.id,
+    username,
+    command,
+    mode: 'local-queue',
+  })
+  logger.log(
+    `Queued /${command.name} from selected option in session ${context.sessionId}`,
+  )
 }
 
 /**
