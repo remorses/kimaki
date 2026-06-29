@@ -175,6 +175,15 @@ function sanitizeOutputLine(line: string): string {
   return stripAnsiCodes(line).trim()
 }
 
+// OpenCode may log "duplicate skill name" warnings to stderr when the same
+// skill file is discovered through multiple scan paths. Downgrade from error
+// to warn — these are not actual errors.
+function isDuplicateSkillWarning(line: string): boolean {
+  return line.includes('duplicate skill name')
+}
+
+
+
 function sanitizeForCodeFence(line: string): string {
   return line.replaceAll('```', '`\u200b``')
 }
@@ -833,6 +842,12 @@ async function startSingleServer({
       if (!serverReady) {
         logBuffer.push(`[stderr] ${line}`)
         pushStartupStderrTail({ stderrTail: startupStderrTail, line })
+        return
+      }
+      // Downgrade "duplicate skill name" warnings to warn level —
+      // these are not actual errors.
+      if (isDuplicateSkillWarning(line)) {
+        opencodeLogger.warn(line)
         return
       }
       opencodeLogger.error(line)
