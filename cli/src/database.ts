@@ -279,6 +279,17 @@ export async function getGlobalModel(appId: string) {
   return row ? { modelId: row.model_id, variant: row.variant } : undefined
 }
 
+/**
+ * Global model preference without an appId, for callers that only know the
+ * channel (backend routing). Kimaki installs run a single bot per data dir,
+ * so the first row is the effective global default.
+ */
+export async function getAnyGlobalModel() {
+  const db = await getDb()
+  const row = await db.query.global_models.findFirst()
+  return row ? { modelId: row.model_id, variant: row.variant } : undefined
+}
+
 export async function setGlobalModel({ appId, modelId, variant }: { appId: string; modelId: string; variant?: string | null }) {
   const db = await getDb()
   await db.insert(schema.global_models)

@@ -49,6 +49,7 @@
         "group": "Features",
         "icon": "lucide:sparkles",
         "pages": [
+          "docs/features/claude-code",
           "docs/features/queue",
           "docs/features/btw",
           "docs/features/worktrees",
