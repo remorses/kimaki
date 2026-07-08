@@ -787,6 +787,7 @@ async function startSingleServer({
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
+        OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
         KIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),
@@ -862,7 +863,7 @@ async function startSingleServer({
     // - SIGINT propagated from Ctrl+C (parent process group signal)
     // - any exit during bot shutdown (shuttingDown flag)
     // Only unexpected crashes (non-zero exit without signal) get retried.
-    if (signal === 'SIGTERM' || signal === 'SIGINT' || (global as any).shuttingDown) {
+    if (signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
       serverRetryCount = 0
       return
     }

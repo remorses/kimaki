@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktree } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktreeOrWorkspace } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -49,9 +49,9 @@ async function resolveSessionDirectoryFromDatabase({
 }): Promise<Error | string> {
   const threadId = await getThreadIdBySessionId(sessionId)
   if (threadId) {
-    const worktree = await getThreadWorktree(threadId)
-    if (worktree?.status === 'ready' && worktree.worktree_directory) {
-      return worktree.worktree_directory
+    const workspace = await getThreadWorktreeOrWorkspace(threadId)
+    if (workspace?.status === 'ready' && workspace.workspace_directory) {
+      return workspace.workspace_directory
     }
 
     const { token: botToken } = await resolveBotCredentials({})
@@ -188,7 +188,8 @@ cli
     'Read a session conversation as markdown (pipe to file to grep)',
   )
   .option('--project <path>', 'Project directory (defaults to cwd)')
-  .action(async (sessionId: string, options: { project?: string }) => {
+  .option('--verbose', 'Show full tool inputs and outputs instead of compact summaries')
+  .action(async (sessionId: string, options: { project?: string; verbose?: boolean }) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
@@ -202,8 +203,9 @@ cli
       }
 
       // Try current project first (fast path)
+      const compactTools = !options.verbose
       const markdown = new ShareMarkdown(getClient())
-      const result = await markdown.generate({ sessionID: sessionId })
+      const result = await markdown.generate({ sessionID: sessionId, compactTools })
       if (!(result instanceof Error)) {
         process.stdout.write(result)
         process.exit(0)
@@ -236,6 +238,7 @@ cli
         const otherMarkdown = new ShareMarkdown(otherClient())
         const otherResult = await otherMarkdown.generate({
           sessionID: sessionId,
+          compactTools,
         })
         if (!(otherResult instanceof Error)) {
           process.stdout.write(otherResult)

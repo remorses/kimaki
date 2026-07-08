@@ -6,7 +6,7 @@
 import { type TextChannel, type ThreadChannel } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
 import {
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
   getThreadSession,
   getChannelDirectory,
 } from '../database.js'
@@ -107,26 +107,26 @@ export async function handleMergeWorktreeCommand({
   }
 
   const thread = channel
-  const worktreeInfo = await getThreadWorktree(thread.id)
-  if (!worktreeInfo) {
+
+  // Check both thread_workspaces (new) and thread_worktrees (legacy)
+  const info = await getThreadWorktreeOrWorkspace(thread.id)
+  if (!info) {
     await command.editReply('This thread is not associated with a worktree')
     return
   }
 
-  if (worktreeInfo.status !== 'ready' || !worktreeInfo.worktree_directory) {
+  if (info.status !== 'ready' || !info.workspace_directory) {
     await command.editReply(
-      `Worktree is not ready (status: ${worktreeInfo.status})${worktreeInfo.error_message ? `: ${worktreeInfo.error_message}` : ''}`,
+      `Worktree is not ready (status: ${info.status})${info.error_message ? `: ${info.error_message}` : ''}`,
     )
     return
   }
-
-
 
   const rawTargetBranch = command.options.getString('target-branch') || undefined
   let targetBranch = rawTargetBranch
   if (targetBranch) {
     const validated = await validateBranchRef({
-      directory: worktreeInfo.project_directory,
+      directory: info.project_directory,
       ref: targetBranch,
     })
     if (validated instanceof Error) {
@@ -137,9 +137,9 @@ export async function handleMergeWorktreeCommand({
   }
 
   const result = await mergeWorktree({
-    worktreeDir: worktreeInfo.worktree_directory,
-    mainRepoDir: worktreeInfo.project_directory,
-    worktreeName: worktreeInfo.worktree_name,
+    worktreeDir: info.workspace_directory,
+    mainRepoDir: info.project_directory,
+    worktreeName: info.workspace_name,
     targetBranch,
     onProgress: (msg) => {
       logger.log(`[merge] ${msg}`)
@@ -187,7 +187,7 @@ export async function handleMergeWorktreeCommand({
           '9. Once the rebase is fully complete, tell me so I can run `/merge-worktree` again',
         ].join('\n'),
         thread,
-        projectDirectory: worktreeInfo.project_directory,
+        projectDirectory: info.project_directory,
         command,
         appId,
       })

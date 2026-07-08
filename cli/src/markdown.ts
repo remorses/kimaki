@@ -32,8 +32,10 @@ export class ShareMarkdown {
     sessionID: string
     includeSystemInfo?: boolean
     lastAssistantOnly?: boolean
+    /** When true (default), tool calls show a compact one-liner with line count instead of full output. */
+    compactTools?: boolean
   }): Promise<SessionNotFoundError | MessagesNotFoundError | string> {
-    const { sessionID, includeSystemInfo, lastAssistantOnly } = options
+    const { sessionID, includeSystemInfo, lastAssistantOnly, compactTools = true } = options
 
     // Get session info
     const sessionResponse = await this.client.session.get({
@@ -96,7 +98,7 @@ export class ShareMarkdown {
     }
 
     for (const message of messagesToRender) {
-      const messageLines = this.renderMessage(message!.info, message!.parts)
+      const messageLines = this.renderMessage(message!.info, message!.parts, { compactTools })
       lines.push(...messageLines)
       lines.push('')
     }
@@ -104,7 +106,7 @@ export class ShareMarkdown {
     return lines.join('\n')
   }
 
-  private renderMessage(message: any, parts: any[]): string[] {
+  private renderMessage(message: any, parts: any[], opts: { compactTools: boolean }): string[] {
     const lines: string[] = []
 
     if (message.role === 'user') {
@@ -148,7 +150,9 @@ export class ShareMarkdown {
       })
 
       for (const part of filteredParts) {
-        const partLines = this.renderPart(part, message)
+        const partLines = opts.compactTools
+          ? this.renderPartCompact(part, message)
+          : this.renderPart(part, message)
         lines.push(...partLines)
       }
 
@@ -249,6 +253,61 @@ export class ShareMarkdown {
     }
 
     return lines
+  }
+
+  /** Compact rendering: tool calls become a single line with line count instead of full output. */
+  private renderPartCompact(part: any, message: any): string[] {
+    // Non-tool parts render the same as verbose
+    if (part.type !== 'tool') {
+      return this.renderPart(part, message)
+    }
+
+    const lines: string[] = []
+
+    if (part.state.status === 'completed') {
+      const output: string = part.state.output || ''
+      const lineCount = output ? output.split('\n').length : 0
+      const inputSummary = this.compactInputSummary(part.state.input)
+      const outputLabel = lineCount > 0 ? `(${lineCount} lines)` : ''
+      const parts = [inputSummary, outputLabel].filter(Boolean).join(' ')
+      lines.push(`> 🛠️ **${part.tool}**${parts ? ` ${parts}` : ''}`)
+      lines.push('')
+    } else if (part.state.status === 'error') {
+      const errorText = (part.state.error || 'Unknown error').split('\n')[0].slice(0, 120)
+      lines.push(`> ❌ **${part.tool}** — ${errorText}`)
+      lines.push('')
+    }
+
+    return lines
+  }
+
+  /** Build a compact key=value summary of tool input, max 2 params, 80 chars each. */
+  private compactInputSummary(input: Record<string, unknown> | undefined): string {
+    if (!input) return ''
+    const entries = Object.entries(input)
+    if (entries.length === 0) return ''
+
+    const parts: string[] = []
+    const maxParams = 2
+    for (let i = 0; i < Math.min(entries.length, maxParams); i++) {
+      const [key, value] = entries[i]!
+      let val: string
+      try {
+        val = typeof value === 'string'
+          ? value
+          : (JSON.stringify(value) ?? String(value))
+      } catch {
+        val = String(value)
+      }
+      // Collapse whitespace for readability
+      const collapsed = val.replace(/\s+/g, ' ').trim()
+      const normalized = collapsed.length > 80 ? `${collapsed.slice(0, 80)}…` : collapsed
+      parts.push(`${key}=${normalized}`)
+    }
+    if (entries.length > maxParams) {
+      parts.push('...')
+    }
+    return parts.join(', ')
   }
 
   private formatDuration(ms: number): string {

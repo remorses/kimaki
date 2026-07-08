@@ -13,7 +13,6 @@ import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getInteractionTimeoutMs } from '../config.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -40,26 +39,28 @@ type PendingQuestionContext = {
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
   totalQuestions: number
-  answeredCount: number
   contextHash: string
+
 }
 
 // Store pending question contexts by hash.
 // TTL prevents unbounded growth if user never answers a question.
-// Configurable via --interaction-timeout-minutes CLI flag (default: 10 minutes).
+const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
-/**
- * Atomic take: removes context from Map and returns it. Only the first caller
- * (TTL expiry or select menu click) wins, preventing duplicate replies.
- */
-function takePendingQuestionContext(contextHash: string): PendingQuestionContext | undefined {
-  const ctx = pendingQuestionContexts.get(contextHash)
-  if (!ctx) {
-    return undefined
+export function areAllQuestionsAnswered({
+  totalQuestions,
+  answers,
+}: {
+  totalQuestions: number
+  answers: Record<number, string[]>
+}): boolean {
+  for (let i = 0; i < totalQuestions; i++) {
+    if (!answers[i]) {
+      return false
+    }
   }
-  pendingQuestionContexts.delete(contextHash)
-  return ctx
+  return true
 }
 
 export function findPendingQuestionContextForRequest({
@@ -121,7 +122,6 @@ export async function showAskUserQuestionDropdowns({
   requestId,
   input,
   silent,
-  subtaskLabel,
 }: {
   thread: ThreadChannel
   sessionId: string
@@ -130,8 +130,6 @@ export async function showAskUserQuestionDropdowns({
   input: AskUserQuestionInput
   /** Suppress notification when queue has pending items */
   silent?: boolean
-  /** Sub-agent label shown in the question header (e.g. "explore-1") */
-  subtaskLabel?: string
 }): Promise<void> {
   const existingPending = findPendingQuestionContextForRequest({
     threadId: thread.id,
@@ -154,29 +152,37 @@ export async function showAskUserQuestionDropdowns({
     questions: input.questions,
     answers: {},
     totalQuestions: input.questions.length,
-    answeredCount: 0,
     contextHash,
+
   }
 
   pendingQuestionContexts.set(contextHash, context)
-  // On TTL expiry: abort the session so OpenCode isn't stuck waiting for a reply.
-  // Uses atomic take so only one of TTL-expiry or button-click can win.
+  // On TTL expiry: hide the dropdown UI and abort the session so OpenCode
+  // unblocks. We intentionally do NOT call question.reply() — sending 'Other'
+  // made the model think the user chose an option when they didn't.
   setTimeout(async () => {
-    const ctx = takePendingQuestionContext(contextHash)
+    const ctx = pendingQuestionContexts.get(contextHash)
     if (!ctx) {
       return
     }
+    // Delete context first so the dropdown becomes inert immediately.
+    // Without this, a user clicking during the abort() await would still
+    // be accepted by handleAskQuestionSelectMenu, then abort() would
+    // kill that valid run.
+    deletePendingQuestionContextsForRequest({
+      threadId: ctx.thread.id,
+      requestId: ctx.requestId,
+    })
+    // Abort the session so OpenCode isn't stuck waiting for a reply
     const client = getOpencodeClient(ctx.directory)
     if (client) {
-      await client.session
-        .abort({
-          sessionID: ctx.sessionId,
-        })
-        .catch((error) => {
-          logger.error('Failed to abort session after question expiry:', error)
-        })
+      await client.session.abort({
+        sessionID: ctx.sessionId,
+      }).catch((error) => {
+        logger.error('Failed to abort session after question expiry:', error)
+      })
     }
-  }, getInteractionTimeoutMs()).unref()
+  }, QUESTION_CONTEXT_TTL_MS).unref()
 
   // Send one message per question with its dropdown directly underneath
   for (let i = 0; i < input.questions.length; i++) {
@@ -197,7 +203,8 @@ export async function showAskUserQuestionDropdowns({
       },
     ]
 
-    const placeholder = options.find((x) => x.label)?.label || 'Select an option'
+    const placeholder =
+      options.find((x) => x.label)?.label || 'Select an option'
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`ask_question:${contextHash}:${i}`)
       .setPlaceholder(placeholder)
@@ -209,17 +216,19 @@ export async function showAskUserQuestionDropdowns({
       selectMenu.setMaxValues(options.length)
     }
 
-    const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+    const actionRow =
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
-    const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
     await thread.send({
-      content: `${subtaskLine}**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
+      content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
       components: [actionRow],
       flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     })
   }
 
-  logger.log(`Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`)
+  logger.log(
+    `Showed ${input.questions.length} question dropdown(s) for session ${sessionId}`,
+  )
 }
 
 /**
@@ -246,7 +255,7 @@ export async function handleAskQuestionSelectMenu(
     return
   }
 
-  const context = takePendingQuestionContext(contextHash)
+  const context = pendingQuestionContexts.get(contextHash)
 
   if (!context) {
     await interaction.reply({
@@ -266,6 +275,13 @@ export async function handleAskQuestionSelectMenu(
     return
   }
 
+  if (context.answers[questionIndex]) {
+    logger.log(
+      `Ignored duplicate answer for question ${context.requestId} index ${questionIndex}`,
+    )
+    return
+  }
+
   // Check if "other" was selected
   if (selectedValues.includes('other')) {
     // User wants to provide custom answer
@@ -279,8 +295,6 @@ export async function handleAskQuestionSelectMenu(
     })
   }
 
-  context.answeredCount++
-
   // Update this question's message: show answer and remove dropdown
   const answeredText = context.answers[questionIndex]!.join(', ')
   await interaction.editReply({
@@ -289,10 +303,13 @@ export async function handleAskQuestionSelectMenu(
   })
 
   const username = interaction.user.globalName || interaction.user.username
-  await sendThreadMessage(context.thread, `» **${username}:** ${answeredText}`)
+  await sendThreadMessage(
+    context.thread,
+    `» **${username}:** ${answeredText}`,
+  )
 
   // Check if all questions are answered
-  if (context.answeredCount >= context.totalQuestions) {
+  if (areAllQuestionsAnswered(context)) {
     // All questions answered - send result back to session
     await submitQuestionAnswers(context)
     deletePendingQuestionContextsForRequest({
@@ -306,7 +323,9 @@ export async function handleAskQuestionSelectMenu(
  * Submit all collected answers back to the OpenCode session.
  * Uses the question.reply API to provide answers to the waiting tool.
  */
-async function submitQuestionAnswers(context: PendingQuestionContext): Promise<void> {
+async function submitQuestionAnswers(
+  context: PendingQuestionContext,
+): Promise<void> {
   try {
     const client = getOpencodeClient(context.directory)
     if (!client) {
@@ -343,7 +362,7 @@ async function submitQuestionAnswers(context: PendingQuestionContext): Promise<v
 export function parseAskUserQuestionTool(part: {
   type: string
   tool?: string
-  state?: { input?: unknown }
+  state?: { input?: AskUserQuestionInput }
 }): AskUserQuestionInput | null {
   if (part.type !== 'tool') {
     return null
@@ -355,9 +374,13 @@ export function parseAskUserQuestionTool(part: {
     return null
   }
 
-  const input = part.state?.input as AskUserQuestionInput | undefined
+  const input = part.state?.input
 
-  if (!input?.questions || !Array.isArray(input.questions) || input.questions.length === 0) {
+  if (
+    !input?.questions ||
+    !Array.isArray(input.questions) ||
+    input.questions.length === 0
+  ) {
     return null
   }
 
@@ -399,14 +422,16 @@ export async function cancelPendingQuestion(
 ): Promise<CancelQuestionResult> {
   // Find pending question for this thread
   let contextHash: string | undefined
+  let context: PendingQuestionContext | undefined
   for (const [hash, ctx] of pendingQuestionContexts) {
     if (ctx.thread.id === threadId) {
       contextHash = hash
+      context = ctx
       break
     }
   }
 
-  if (!contextHash) {
+  if (!contextHash || !context) {
     return 'no-pending'
   }
 
@@ -415,12 +440,10 @@ export async function cancelPendingQuestion(
   // the question without providing an answer (e.g. voice/attachment-only
   // messages where content needs transcription before it can be an answer).
   if (userMessage === undefined) {
-    takePendingQuestionContext(contextHash)
-    return 'no-pending'
-  }
-
-  const context = takePendingQuestionContext(contextHash)
-  if (!context) {
+    deletePendingQuestionContextsForRequest({
+      threadId: context.thread.id,
+      requestId: context.requestId,
+    })
     return 'no-pending'
   }
 
@@ -443,10 +466,14 @@ export async function cancelPendingQuestion(
     logger.log(`Answered question ${context.requestId} with user message`)
   } catch (error) {
     logger.error('Failed to answer question:', error)
-    // TTL already deleted context via take above; context is gone.
-    // If reply failed, the session is already in a broken state.
+    // Keep context pending so TTL can still fire.
+    // Caller should not consume the user message since reply failed.
     return 'reply-failed'
   }
 
+  deletePendingQuestionContextsForRequest({
+    threadId: context.thread.id,
+    requestId: context.requestId,
+  })
   return 'replied'
 }

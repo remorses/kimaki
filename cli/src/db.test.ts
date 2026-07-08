@@ -10,7 +10,7 @@ import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import {
   appendSessionEventsSinceLastTimestamp,
-  createPendingWorktree,
+  createPendingWorkspace,
   getSessionEventSnapshot,
   getSessionModel,
   setSessionModel,
@@ -94,13 +94,14 @@ describe('getDb', () => {
     }
   })
 
-  test('createPendingWorktree creates parent and child rows', async () => {
+  test('createPendingWorkspace creates parent and child rows', async () => {
     const db = await getDb()
-    const threadId = `test-worktree-${Date.now()}`
+    const threadId = `test-workspace-${Date.now()}`
 
-    await createPendingWorktree({
+    await createPendingWorkspace({
       threadId,
-      worktreeName: 'regression-worktree',
+      workspaceType: 'kimaki-worktree',
+      workspaceName: 'regression-workspace',
       projectDirectory: '/tmp/regression-project',
     })
 
@@ -110,15 +111,15 @@ describe('getDb', () => {
     expect(session).toBeTruthy()
     expect(session?.session_id).toBe('')
 
-    const worktree = await db.query.thread_worktrees.findFirst({
+    const workspace = await db.query.thread_workspaces.findFirst({
       where: { thread_id: threadId },
     })
-    expect(worktree).toBeTruthy()
-    expect(worktree?.worktree_name).toBe('regression-worktree')
-    expect(worktree?.project_directory).toBe('/tmp/regression-project')
-    expect(worktree?.status).toBe('pending')
+    expect(workspace).toBeTruthy()
+    expect(workspace?.workspace_name).toBe('regression-workspace')
+    expect(workspace?.project_directory).toBe('/tmp/regression-project')
+    expect(workspace?.status).toBe('pending')
 
-    await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
+    await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
   })
 

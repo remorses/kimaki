@@ -5,7 +5,7 @@ import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
 import type { OpencodeClient, Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
-import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
+import { Events, ActivityType, type PresenceStatusData, type Guild, type Client, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -98,74 +98,7 @@ cli
 
       cliLogger.log('Finding guild...')
 
-      // Find guild
-      let guild: Guild
-      if (options.guild) {
-        const guildId = String(options.guild)
-        const foundGuild = client.guilds.cache.get(guildId)
-        if (!foundGuild) {
-          cliLogger.log('Guild not found')
-          cliLogger.error(`Guild not found: ${guildId}`)
-          void client.destroy()
-          process.exit(EXIT_NO_RESTART)
-        }
-        guild = foundGuild
-      } else {
-        const existingChannelId = await (await getDb()).query.channel_directories.findFirst({
-          where: { channel_type: 'text' },
-          orderBy: { created_at: 'desc' },
-          columns: { channel_id: true },
-        }).then((row) => row?.channel_id)
-
-        if (existingChannelId) {
-          try {
-            const ch = await client.channels.fetch(existingChannelId)
-            if (ch && !ch.isDMBased()) {
-              guild = ch.guild
-            } else {
-              throw new Error('Channel has no guild')
-            }
-          } catch (error) {
-            cliLogger.debug(
-              'Failed to fetch existing channel while selecting guild:',
-              error instanceof Error ? error.stack : String(error),
-            )
-            let firstGuild = client.guilds.cache.first()
-            if (!firstGuild) {
-              // Cache might be empty, try fetching guilds from API
-              const fetched = await client.guilds.fetch()
-              const firstOAuth2Guild = fetched.first()
-              if (firstOAuth2Guild) {
-                firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-              }
-            }
-            if (!firstGuild) {
-              cliLogger.log('No guild found')
-              cliLogger.error('No guild found. Add the bot to a server first.')
-              void client.destroy()
-              process.exit(EXIT_NO_RESTART)
-            }
-            guild = firstGuild
-          }
-        } else {
-          let firstGuild = client.guilds.cache.first()
-          if (!firstGuild) {
-            // Cache might be empty, try fetching guilds from API
-            const fetched = await client.guilds.fetch()
-            const firstOAuth2Guild = fetched.first()
-            if (firstOAuth2Guild) {
-              firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-            }
-          }
-          if (!firstGuild) {
-            cliLogger.log('No guild found')
-            cliLogger.error('No guild found. Add the bot to a server first.')
-            void client.destroy()
-            process.exit(EXIT_NO_RESTART)
-          }
-          guild = firstGuild
-        }
-      }
+      const guild = await resolveGuildForProjectCommand({ client, guildIdOverride: options.guild })
 
       // Check if channel already exists in this guild
       cliLogger.log('Checking for existing channel...')
@@ -466,24 +399,7 @@ cli
       client.login(botToken).catch(reject)
     })
 
-    let guild: Guild
-    if (options.guild) {
-      const found = client.guilds.cache.get(options.guild)
-      if (!found) {
-        cliLogger.error(`Guild not found: ${options.guild}`)
-        void client.destroy()
-        process.exit(EXIT_NO_RESTART)
-      }
-      guild = found
-    } else {
-      const first = client.guilds.cache.first()
-      if (!first) {
-        cliLogger.error('No guild found. Add the bot to a server first.')
-        void client.destroy()
-        process.exit(EXIT_NO_RESTART)
-      }
-      guild = first
-    }
+    const guild = await resolveGuildForProjectCommand({ client, guildIdOverride: options.guild })
 
     const { textChannelId, channelName } = await createProjectChannels({
       guild,
@@ -504,5 +420,101 @@ cli
     process.exit(0)
   })
 
+
+// Resolve the guild for project add/create commands. In gateway mode the
+// guild cache only contains authorized guilds, so picking from cache is safe.
+// The old approach fetched an existing channel to infer the guild, but that
+// breaks when the channel belongs to a different guild (e.g. old self-hosted
+// bot channels) and the gateway proxy rejects the REST call. This led to a
+// non-deterministic fallback that picked the wrong guild.
+async function resolveGuildForProjectCommand({ client, guildIdOverride }: { client: Client; guildIdOverride?: string }): Promise<Guild> {
+  if (guildIdOverride) {
+    const found = client.guilds.cache.get(guildIdOverride)
+    if (!found) {
+      cliLogger.error(`Guild not found: ${guildIdOverride}`)
+      void client.destroy()
+      process.exit(EXIT_NO_RESTART)
+    }
+    return found
+  }
+
+  // Try existing channel lookup to find the guild the user already has channels in.
+  // This handles multi-guild setups where we want to add to the same guild.
+  const db = await getDb()
+  const existingChannels = await db.query.channel_directories.findMany({
+    where: { channel_type: 'text' },
+    orderBy: { created_at: 'desc' },
+    columns: { channel_id: true },
+    limit: 20,
+  })
+
+  // Log available guilds for debugging guild selection issues
+  const cachedGuilds = Array.from(client.guilds.cache.values())
+  cliLogger.debug(`Guilds in cache (${cachedGuilds.length}): ${cachedGuilds.map((g) => `${g.name} (${g.id})`).join(', ')}`)
+
+  // When multiple guilds are available, find which guild has the most
+  // existing channels. The user's main guild will have far more channels
+  // than a test/demo guild.
+  const guildHits = new Map<string, { guild: Guild; count: number }>()
+  for (const row of existingChannels) {
+    try {
+      const ch = await client.channels.fetch(row.channel_id)
+      if (ch && !ch.isDMBased()) {
+        const entry = guildHits.get(ch.guild.id)
+        if (entry) {
+          entry.count++
+        } else {
+          guildHits.set(ch.guild.id, { guild: ch.guild, count: 1 })
+        }
+      }
+    } catch {
+      // Channel might be in a different guild (gateway proxy rejects) or deleted, skip
+    }
+  }
+
+  if (guildHits.size > 0) {
+    // Pick the guild with the most channels
+    const best = Array.from(guildHits.values()).sort((a, b) => b.count - a.count)[0]!
+    cliLogger.debug(
+      `Guild channel counts: ${Array.from(guildHits.values()).map((e) => `${e.guild.name} (${e.guild.id}): ${e.count}`).join(', ')}`,
+    )
+    cliLogger.debug(`Selected guild: ${best.guild.name} (${best.guild.id}) with ${best.count} channels`)
+    return best.guild
+  }
+
+  cliLogger.debug('Could not resolve guild from existing channels, falling back to cache')
+
+  // If only one guild in cache, use it directly (common case).
+  // If multiple guilds, error out and ask the user to specify --guild
+  // since we can't determine which one to use.
+  if (cachedGuilds.length === 1) {
+    return cachedGuilds[0]!
+  }
+  if (cachedGuilds.length > 1) {
+    cliLogger.error(
+      `Multiple guilds found. Use --guild to specify which one:\n${cachedGuilds.map((g) => `  ${g.id}  ${g.name}`).join('\n')}`,
+    )
+    void client.destroy()
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  // Cache empty, try fetching
+  const fetched = await client.guilds.fetch()
+  if (fetched.size === 1) {
+    const firstOAuth2Guild = fetched.first()!
+    return await client.guilds.fetch(firstOAuth2Guild.id)
+  }
+  if (fetched.size > 1) {
+    cliLogger.error(
+      `Multiple guilds found. Use --guild to specify which one:\n${Array.from(fetched.values()).map((g) => `  ${g.id}  ${g.name}`).join('\n')}`,
+    )
+    void client.destroy()
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  cliLogger.error('No guild found. Add the bot to a server first.')
+  void client.destroy()
+  process.exit(EXIT_NO_RESTART)
+}
 
 export default cli

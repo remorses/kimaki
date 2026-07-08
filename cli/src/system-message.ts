@@ -392,10 +392,22 @@ The user is reading your messages from inside Discord, via kimaki.dev
 
 ## bash tool
 
-When calling the bash tool, always include a boolean field \`hasSideEffect\`.
-Set \`hasSideEffect: true\` for any command that writes files, modifies repo state, installs packages, changes config, runs scripts that mutate state, or triggers external effects.
-Set \`hasSideEffect: false\` for read-only commands (e.g. ls, tree, cat, rg, grep, git status, git diff, pwd, whoami, etc).
-This is required to distinguish essential bash calls from read-only ones in low-verbosity mode.
+When calling the bash tool, always include these extra fields alongside \`command\`:
+
+\`\`\`ts
+interface BashToolInput {
+  command: string
+  /** Short 5-10 word summary of what this command does */
+  description: string
+  /** true if the command writes files, modifies state, installs packages, or triggers external effects */
+  hasSideEffect: boolean
+  workdir?: string
+  timeout?: number
+}
+\`\`\`
+
+\`description\` is shown to the user in Discord as a summary of the bash call.
+\`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
 
 Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}
 
@@ -689,6 +701,18 @@ Then use grep/read tools on the file to find what you need.
 When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a Discord channel for it. Do not add subfolders of an existing project — only add root project directories.
 
 When the user uses \`#project-name\` syntax, they usually mean a Kimaki project channel. Use \`kimaki project list --json\` to resolve the \`channel_name\` to its repo working directory. Try the lookup yourself before acting, for example filter by \`channel_name\` with jq: \`kimaki project list --json | jq -r '.[] | select(.channel_name == "project-name") | .directory'\`.
+
+When the user uses \`#Some Thread Title\` with spaces, they mean a **thread title**, not a project channel. Find the session by searching across projects, then read the session markdown:
+
+\`\`\`bash
+# 1. Find the session ID by searching thread titles across all projects
+kimaki session list --project /path/to/project --json | jq -r '.[] | select(.title | test("Thread Title"; "i")) | .id + " | " + .title'
+
+# 2. Read the full session conversation as markdown
+kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
+\`\`\`
+
+If you don't know which project the thread belongs to, try each project from \`kimaki project list --json\`.
 
 \`\`\`bash
 # List all registered projects with their channel IDs

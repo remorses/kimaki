@@ -242,6 +242,16 @@ the notification message should use the version as a heading 1 title (e.g. `# v1
 
 when `--notify-only` targets a non-project channel, the message is posted directly without creating a thread. for project channels, a thread is still created so users can reply to start a session.
 
+## deploy website after publish
+
+after every kimaki publish, once the changelog is generated and the gh release is created, deploy the website to production:
+
+```bash
+cd website && pnpm deployment:production
+```
+
+the website shows the changelog and install instructions, so it must be updated right after each release so users see the latest version.
+
 ## github issues
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.

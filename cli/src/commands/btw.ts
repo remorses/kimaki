@@ -94,6 +94,7 @@ export async function forkSessionToBtwThread({
   ])
 
   logger.log(
+    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId})`,
   )
 
   const wrappedPrompt = [

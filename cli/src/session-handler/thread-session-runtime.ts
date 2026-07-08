@@ -43,7 +43,7 @@ import {
   setPartMessage,
   getThreadSession,
   setThreadSession,
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
   setSessionAgent,
   clearSessionModel,
   getVariantCascade,
@@ -334,23 +334,24 @@ function getTokenTotal(tokens: TokenUsage): number {
   return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
 }
 
+/**
+ * Built-in read-only tools that are hidden in default verbosity mode.
+ * Any tool NOT in this list is considered "essential" and shown,
+ * which means custom tools, MCP tools, and plugin tools are visible by default.
+ */
+const HIDDEN_READONLY_TOOLS = [
+  'read',
+  'glob',
+  'grep',
+  'describe-media',
+  'todoread',
+]
+
 /** Check if a tool part is "essential" (shown in text-and-essential-tools mode). */
 export function isEssentialToolName(toolName: string): boolean {
-  const essentialTools = [
-    'edit',
-    'write',
-    'apply_patch',
-    'bash',
-    'webfetch',
-    'websearch',
-    'googlesearch',
-    'codesearch',
-    'task',
-    'todowrite',
-    'skill',
-  ]
-  // Also match any MCP tool that contains these names
-  return essentialTools.some((name) => {
+  // Hide known read-only built-in tools; show everything else
+  // (custom tools, MCP tools, plugin tools are visible by default)
+  return !HIDDEN_READONLY_TOOLS.some((name) => {
     return toolName === name || toolName.endsWith(`_${name}`)
   })
 }
@@ -524,6 +525,13 @@ export type IngressInput = {
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
   /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
+  /**
+   * When true, the message is added to the session context without triggering
+   * the AI agent loop. Used for messages that should be visible to the model
+   * on the next real turn but should not cause a response on their own
+   * (e.g. user-to-user replies in a thread).
+   */
+  noReply?: boolean
   /**
    * Lazy preprocessing callback. When set, the runtime serializes it via a
    * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
@@ -2824,6 +2832,18 @@ export class ThreadSessionRuntime {
         return
       }
 
+      // Context-only messages (noReply) should not create a new session.
+      // If there is no existing session, silently skip.
+      if (input.noReply) {
+        const existingSessionId = this.state?.sessionId || await getThreadSession(this.thread.id) || undefined
+        if (!existingSessionId) {
+          logger.log(
+            `[INGRESS] Skipping noReply message for thread ${this.threadId}: no existing session`,
+          )
+          return
+        }
+      }
+
       // Helper: stop typing and drain queued local messages on error.
       const cleanupOnError = async (errorMessage: string) => {
         this.stopTyping()
@@ -2991,13 +3011,13 @@ export class ThreadSessionRuntime {
       })()
 
       // ── Worktree + channel topic for per-turn prompt context ──
-      const worktreeInfo = await getThreadWorktree(this.thread.id)
+      const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
       const worktree: WorktreeInfo | undefined =
-        worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+        worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
           ? {
-              worktreeDirectory: worktreeInfo.worktree_directory,
-              branch: worktreeInfo.worktree_name,
-              mainRepoDirectory: worktreeInfo.project_directory,
+              worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
+              branch: worktreeInfoForPrompt.workspace_name,
+              mainRepoDirectory: worktreeInfoForPrompt.project_directory,
             }
           : undefined
 
@@ -3053,6 +3073,7 @@ export class ThreadSessionRuntime {
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
         ...variantField,
+        ...(input.noReply ? { noReply: true } : {}),
       }
       const promptResult = await getClient()
         .session.promptAsync(request)
@@ -3072,7 +3093,10 @@ export class ThreadSessionRuntime {
         `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
       )
 
-      this.markQueueDispatchBusy(session.id)
+      // noReply messages don't trigger the agent loop, so don't mark as busy
+      if (!input.noReply) {
+        this.markQueueDispatchBusy(session.id)
+      }
     })
 
     if (skippedBySessionGuard) {
@@ -3221,8 +3245,15 @@ export class ThreadSessionRuntime {
         // Route with the resolved mode through normal paths.
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.
-        const enqueueResult =
-          resolvedInput.mode === 'local-queue' || resolvedInput.command
+        // noReply messages always go through the opencode path so the flag
+        // reaches promptAsync; local queue doesn't support noReply.
+        const enqueueResult = resolvedInput.noReply
+          ? await this.submitViaOpencodeQueue({
+              ...resolvedInput,
+              mode: 'opencode',
+              command: undefined,
+            })
+          : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
             ? await this.enqueueViaLocalQueue(resolvedInput)
             : await this.submitViaOpencodeQueue(resolvedInput)
         resolveOuter(enqueueResult)
@@ -3678,13 +3709,13 @@ export class ThreadSessionRuntime {
     })()
 
     // ── Worktree info for per-turn prompt context ─────────────
-    const worktreeInfo = await getThreadWorktree(this.thread.id)
+    const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
     const worktree: WorktreeInfo | undefined =
-      worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
+      worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
         ? {
-            worktreeDirectory: worktreeInfo.worktree_directory,
-            branch: worktreeInfo.worktree_name,
-            mainRepoDirectory: worktreeInfo.project_directory,
+            worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
+            branch: worktreeInfoForPrompt.workspace_name,
+            mainRepoDirectory: worktreeInfoForPrompt.project_directory,
           }
         : undefined
 
@@ -3942,10 +3973,10 @@ export class ThreadSessionRuntime {
     const directory = this.sdkDirectory
 
     // Resolve worktree info for server initialization
-    const worktreeInfo = await getThreadWorktree(this.thread.id)
+    const workspaceInfo = await getThreadWorktreeOrWorkspace(this.thread.id)
 
     // Auto-recover missing worktree directory
-    if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
+    if (workspaceInfo?.status === 'ready' && workspaceInfo.workspace_directory) {
       const { recoverWorktreeDirectory } = await import('../worktrees.js')
       const recovery = await recoverWorktreeDirectory({ threadId: this.thread.id })
       if (recovery instanceof Error) {
@@ -3958,10 +3989,12 @@ export class ThreadSessionRuntime {
     }
 
     const worktreeDirectory =
-      worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory
-        ? worktreeInfo.worktree_directory
+      workspaceInfo?.status === 'ready' && workspaceInfo.workspace_directory
+        ? workspaceInfo.workspace_directory
         : undefined
-    const originalRepoDirectory = worktreeDirectory ? worktreeInfo?.project_directory : undefined
+    const originalRepoDirectory = worktreeDirectory
+      ? workspaceInfo?.project_directory
+      : undefined
 
     const getClientResult = await initializeOpencodeForDirectory(directory, {
       originalRepoDirectory,

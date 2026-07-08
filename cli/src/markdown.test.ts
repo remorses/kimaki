@@ -45,6 +45,19 @@ function createMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const toolCallMatcher: DeterministicMatcher = {
+    id: 'tool-call-reply',
+    priority: 90,
+    when: { latestUserTextIncludes: 'use a tool please' },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'tool-call', toolCallId: 'tc1', toolName: 'bash', input: JSON.stringify({ command: 'echo hello world', description: 'Print greeting' }) },
+        { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+      ],
+    },
+  }
+
   const defaultMatcher: DeterministicMatcher = {
     id: 'default-reply',
     priority: 1,
@@ -59,13 +72,14 @@ function createMatchers(): DeterministicMatcher[] {
     },
   }
 
-  return [helloMatcher, defaultMatcher]
+  return [helloMatcher, toolCallMatcher, defaultMatcher]
 }
 
 let client: OpencodeClient
 let directories: ReturnType<typeof createRunDirectories>
 let testStartTime: number
 let sessionID: string
+let toolSessionID: string
 
 beforeAll(async () => {
   testStartTime = Date.now()
@@ -148,7 +162,39 @@ beforeAll(async () => {
       setTimeout(resolve, 200)
     })
   }
-}, 20_000)
+
+  // Create a second session that triggers a tool call (bash echo)
+  const toolCreateResult = await client.session.create({
+    directory: directories.projectDirectory,
+    title: 'Tool Call Session',
+  })
+  toolSessionID = toolCreateResult.data!.id
+
+  await client.session.promptAsync({
+    sessionID: toolSessionID,
+    directory: directories.projectDirectory,
+    parts: [{ type: 'text', text: 'use a tool please' }],
+  })
+
+  // Wait for tool execution to complete
+  const toolMaxWait = 15_000
+  const toolPollStart = Date.now()
+  while (Date.now() - toolPollStart < toolMaxWait) {
+    const msgs = await client.session.messages({
+      sessionID: toolSessionID,
+      directory: directories.projectDirectory,
+    })
+    const messages = msgs.data || []
+    const hasToolPart = messages.some((m) =>
+      m.parts.some((p) => p.type === 'tool' && p.state?.status === 'completed'),
+    )
+    if (hasToolPart) {
+      await new Promise((resolve) => { setTimeout(resolve, 500) })
+      break
+    }
+    await new Promise((resolve) => { setTimeout(resolve, 200) })
+  }
+}, 30_000)
 
 afterAll(async () => {
   if (directories) {
@@ -312,4 +358,45 @@ test('generate markdown with lastAssistantOnly', async () => {
   expect(markdown).not.toContain('## Conversation')
   // Should contain the assistant response
   expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
+})
+
+test('compact tools: tool calls show one-liner with line count', async () => {
+  const exporter = new ShareMarkdown(client)
+
+  const result = await exporter.generate({
+    sessionID: toolSessionID,
+    compactTools: true,
+  })
+
+  expect(errore.isOk(result)).toBe(true)
+  const md = errore.unwrap(result)
+
+  // Compact mode: exact one-liner format with params and line count
+  expect(md).toContain(
+    '> 🛠️ **bash** command=echo hello world, description=Print greeting',
+  )
+  expect(md).toMatch(/\(\d+ lines?\)/)
+  // Should NOT contain full output code blocks or input YAML
+  expect(md).not.toContain('**Output:**')
+  expect(md).not.toContain('**Input:**')
+  expect(md).not.toContain('```yaml')
+})
+
+test('verbose tools: tool calls show full input and output', async () => {
+  const exporter = new ShareMarkdown(client)
+
+  const result = await exporter.generate({
+    sessionID: toolSessionID,
+    compactTools: false,
+  })
+
+  expect(errore.isOk(result)).toBe(true)
+  const md = errore.unwrap(result)
+
+  // Verbose mode: full tool rendering with input YAML and output code block
+  expect(md).toContain('#### 🛠️ Tool: bash')
+  expect(md).toContain('**Input:**')
+  expect(md).toContain('```yaml')
+  expect(md).toContain('**Output:**')
+  expect(md).toContain('hello world')
 })

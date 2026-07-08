@@ -94,13 +94,28 @@ export type KimakiState = {
   // Read by: discord-utils.ts hasKimakiBotPermission().
   allowAllUsers: boolean
 
-  // Interaction prompt TTL in milliseconds. When a permission or question prompt
-  // is shown in Discord, the prompt remains active for this duration before
-  // auto-rejecting. Defaults to 10 minutes.
-  // Changes: set once at startup from --interaction-timeout-minutes CLI flag or
-  // KIMAKI_INTERACTION_TIMEOUT_MINUTES env var.
-  // Read by: commands/permissions.ts, commands/ask-question.ts.
-  interactionTimeoutMs: number
+  // Permission button TTL in milliseconds. When a permission prompt is shown
+  // in Discord, buttons remain active for this duration before auto-rejecting.
+  // Defaults to 10 minutes. With continue_loop_on_deny enabled in the opencode
+  // config, a timeout rejection lets the model continue (try alternatives or
+  // explain it couldn't proceed) instead of killing the session.
+  // Changes: set once at startup from --permission-timeout-minutes CLI flag.
+  // Read by: commands/permissions.ts showPermissionButtons().
+  permissionTimeoutMs: number
+
+  // Whether background auto-upgrade of kimaki is enabled on startup.
+  // When true (default), kimaki checks npm for a newer version and installs
+  // it in the background. Set to false via --no-auto-upgrade CLI flag.
+  // Changes: set once at startup.
+  // Read by: cli-runner.ts run() before calling backgroundUpgradeKimaki().
+  autoUpgradeEnabled: boolean
+
+  // When true, all new sessions from channel messages create git worktrees.
+  // Set once at startup from --worktrees CLI flag. The per-channel toggle
+  // (getChannelWorktreesEnabled) is checked separately; this is the global override.
+  // Changes: set once at startup.
+  // Read by: discord-bot.ts message handler, commands/agent.ts quick-agent with prompt.
+  useWorktrees: boolean
 
   // Whether background sync of external OpenCode sessions is enabled.
   // When true (default), sessions started from the OpenCode CLI or TUI
@@ -163,7 +178,9 @@ export const store = createStore<KimakiState>(() => ({
   disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
-  interactionTimeoutMs: 10 * 60 * 1000,
+  permissionTimeoutMs: 10 * 60 * 1000,
+  useWorktrees: false,
+  autoUpgradeEnabled: true,
   syncEnabled: true,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,

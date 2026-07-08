@@ -15,6 +15,7 @@ import {
   recoverWorktreeFromInfo,
   resolveSessionWorkingDirectory,
 } from './worktrees.js'
+import { parseGitmodulesFileContent as parseCoreGitmodulesFileContent } from './git-worktree-core.js'
 import { TargetDirtyWorktreeError } from './errors.js'
 import {
   formatAutoWorktreeName,
@@ -67,6 +68,24 @@ describe('worktrees', () => {
           "name": "gateway-proxy",
           "path": "gateway-proxy",
           "url": "https://github.com/remorses/gateway-proxy.git",
+        },
+      ]
+    `)
+  })
+
+  test('plugin-safe gitmodules parser handles standard indented entries', () => {
+    const parsed = parseCoreGitmodulesFileContent(`
+[submodule "errore"]
+	path = errore
+	url = https://github.com/remorses/errore.git
+`)
+
+    expect(parsed).toMatchInlineSnapshot(`
+      [
+        {
+          "name": "errore",
+          "path": "errore",
+          "url": "https://github.com/remorses/errore.git",
         },
       ]
     `)

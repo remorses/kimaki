@@ -87,6 +87,40 @@ export const KIMAKI_GATEWAY_PROXY_REST_BASE_URL = getGatewayProxyRestBaseUrl({
   gatewayUrl: KIMAKI_GATEWAY_PROXY_URL,
 })
 
+export type OpenUrlCommand = {
+  command: string
+  args: string[]
+}
+
+export function getOpenUrlCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): OpenUrlCommand {
+  if (platform === 'darwin') {
+    return { command: 'open', args: [url] }
+  }
+  if (platform === 'win32') {
+    return { command: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] }
+  }
+  return { command: 'xdg-open', args: [url] }
+}
+
+function openUrlInDefaultBrowser(url: string): void {
+  const { command, args } = getOpenUrlCommand(url)
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  child.on('error', (error) => {
+    cliLogger.warn(
+      'Failed to open install URL:',
+      error instanceof Error ? error.message : String(error),
+    )
+  })
+  child.unref()
+}
+
 // Strip bracketed paste escape sequences from terminal input.
 // iTerm2 and other terminals wrap pasted content with \x1b[200~ and \x1b[201~
 // which can cause validation to fail on macOS. See: https://github.com/remorses/kimaki/issues/18
@@ -404,6 +438,27 @@ function readErrorField(error: object | null, key: string): unknown {
   }
 
   return undefined
+}
+
+/** Transient network errors that may resolve on retry (DNS down, gateway unreachable). */
+const TRANSIENT_ERROR_CODES = new Set([
+  'ENOTFOUND',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'EAI_AGAIN',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+])
+
+export function isTransientNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const code = (error as NodeJS.ErrnoException).code
+  if (code && TRANSIENT_ERROR_CODES.has(code)) return true
+  // discord.js wraps errors in cause chains
+  if (error.cause instanceof Error) return isTransientNetworkError(error.cause)
+  return false
 }
 
 export function isDiscordMemberLookupUnavailable(error: Error): boolean {
@@ -1197,14 +1252,7 @@ export async function resolveCredentials({
       )
 
       // Open URL in default browser
-      const { exec } = await import('node:child_process')
-      const openCmd =
-        process.platform === 'darwin'
-          ? 'open'
-          : process.platform === 'win32'
-            ? 'start'
-            : 'xdg-open'
-      exec(`${openCmd} "${oauthUrl}"`)
+      openUrlInDefaultBrowser(oauthUrl)
     } else {
       // Non-TTY: emit structured JSON so the host process can show the URL to the user.
       emitJsonEvent({ type: 'install_url', url: oauthUrl })
@@ -1430,7 +1478,9 @@ export async function run({
   ])
 
 
-  void backgroundUpgradeKimaki()
+  if (store.getState().autoUpgradeEnabled) {
+    void backgroundUpgradeKimaki()
+  }
 
   // Start in-process Hrana server before database init. Required for the bot
   // process because it serves as both the DB server and the single-instance
@@ -1595,6 +1645,13 @@ export async function run({
     cliLogger.error(
       'Error: ' + (error instanceof Error ? error.stack : String(error)),
     )
+    // Transient network errors (DNS down, gateway unreachable) should allow
+    // the bin.ts wrapper to restart us after a delay. Only truly fatal errors
+    // (bad token, invalid intent, etc.) should use EXIT_NO_RESTART.
+    if (isTransientNetworkError(error)) {
+      cliLogger.error('Transient network error, exiting for wrapper restart...')
+      process.exit(1)
+    }
     process.exit(EXIT_NO_RESTART)
   }
   await setBotToken(appId, token)

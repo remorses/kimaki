@@ -86,10 +86,16 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       }
 
       const reason = signal ? `signal ${signal}` : `code ${code}`
-      console.error(
-        `[kimaki] Process exited with ${reason}, restarting in ${RESTART_DELAY_MS / 1000}s...`,
+      // Progressive backoff: 2s, 4s, 8s, 16s, capped at 30s.
+      // Prevents hammering DNS/gateway during sustained network outages.
+      const delay = Math.min(
+        RESTART_DELAY_MS * 2 ** (restartTimestamps.length - 1),
+        30_000,
       )
-      setTimeout(start, RESTART_DELAY_MS)
+      console.error(
+        `[kimaki] Process exited with ${reason}, restarting in ${(delay / 1000).toFixed(0)}s...`,
+      )
+      setTimeout(start, delay)
     })
   }
 

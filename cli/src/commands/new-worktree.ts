@@ -2,13 +2,20 @@
 // Uses OpenCode SDK v2 to create worktrees with kimaki- prefix
 // Creates thread immediately, then worktree in background so user can type
 
-import { ChannelType, REST, type TextChannel, type ThreadChannel, type Message } from 'discord.js'
+import {
+  ChannelType,
+  REST,
+  type TextChannel,
+  type ThreadChannel,
+  type Message,
+} from 'discord.js'
 import fs from 'node:fs'
 import { OpenCodeSdkError } from '../errors.js'
 import type { CommandContext } from './types.js'
 import {
-  setWorktreeReady,
-  setWorktreeError,
+  createPendingWorkspace,
+  setWorkspaceReady,
+  setWorkspaceError,
   getChannelDirectory,
   getThreadSession,
   setThreadSession,
@@ -23,16 +30,19 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
-  createWorktreeWithSubmodules,
   execAsync,
   listBranchesByLastCommit,
   validateBranchRef,
 } from '../worktrees.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
-import { buildSessionPermissions, initializeOpencodeForDirectory } from '../opencode.js'
+import {
+  buildSessionPermissions,
+  initializeOpencodeForDirectory,
+} from '../opencode.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
+import { copyCurrentSessionModel } from './model.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 const DEFAULT_WORKTREE_BASE_REF = 'HEAD'
@@ -170,20 +180,64 @@ async function getProjectDirectoryFromChannel(
   const channelConfig = await getChannelDirectory(channel.id)
 
   if (!channelConfig) {
-    return new WorktreeError('This channel is not configured with a project directory')
+    return new WorktreeError(
+      'This channel is not configured with a project directory',
+    )
   }
 
   if (!fs.existsSync(channelConfig.directory)) {
-    return new WorktreeError(`Directory does not exist: ${channelConfig.directory}`)
+    return new WorktreeError(
+      `Directory does not exist: ${channelConfig.directory}`,
+    )
   }
 
   return channelConfig.directory
 }
 
 /**
- * Create worktree and update the status message when done.
- * Handles the full lifecycle: pending DB entry, git creation, DB ready/error,
+ * Try creating a worktree via the OpenCode workspace SDK.
+ * Returns the workspace directory on success, or an Error if the workspace
+ * feature is not available or the creation fails. Callers fall back to the
+ * direct git path on Error.
+ */
+async function tryWorkspaceCreate({
+  threadId,
+  worktreeName,
+  projectDirectory,
+  baseBranch,
+}: {
+  threadId: string
+  worktreeName: string
+  projectDirectory: string
+  baseBranch?: string
+}): Promise<{ directory: string; workspaceId?: string } | Error> {
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (getClient instanceof Error) return getClient
+
+  const client = getClient()
+  const response = await client.experimental.workspace.create({
+    directory: projectDirectory,
+    type: 'kimaki-worktree',
+    branch: worktreeName,
+    extra: baseBranch ? { baseBranch } : null,
+  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
+  if (response instanceof Error) return response
+  if (response.error) {
+    return new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
+  }
+  const workspace = response.data
+  if (!workspace?.directory) {
+    return new Error('Workspace SDK returned no directory')
+  }
+  return { directory: workspace.directory, workspaceId: workspace.id }
+}
+
+/**
+ * Create worktree via the OpenCode workspace SDK and update the status message.
+ * Handles the full lifecycle: pending DB entry, SDK creation, DB ready/error,
  * tree emoji reaction, and editing the status message.
+ *
+ * Uses thread_workspaces table exclusively (no legacy thread_worktrees).
  *
  * starterMessage is optional — if omitted, status edits are skipped (creation
  * still proceeds). This keeps worktree creation independent of Discord message
@@ -208,41 +262,71 @@ export async function createWorktreeInBackground({
   rest: REST
 }): Promise<string | Error> {
   return (async () => {
-    logger.log(
-      `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
-    )
+      logger.log(
+        `Creating worktree "${worktreeName}" for project ${projectDirectory}${baseBranch ? ` from ${baseBranch}` : ''}`,
+      )
 
-    const worktreeResult = await createWorktreeWithSubmodules({
-      directory: projectDirectory,
-      name: worktreeName,
-      baseBranch,
-    })
+      // Serialize status message edits so onProgress can't overwrite the
+      // final success/error edit even if Discord's API is slow.
+      let editChain: Promise<void> = Promise.resolve()
+      const editStatus = (content: string) => {
+        editChain = editChain
+          .then(async () => {
+            await starterMessage?.edit(content)
+          })
+          .catch(() => {})
+      }
 
-    if (worktreeResult instanceof Error) {
-      const errorMsg = worktreeResult.message
-      logger.error('[WORKTREE] Creation failed:', worktreeResult)
-      await setWorktreeError({ threadId: thread.id, errorMessage: errorMsg })
-      return worktreeResult
-    }
+      // Write pending row BEFORE workspace creation so restarts/follow-up
+      // messages can see the in-progress state.
+      await createPendingWorkspace({
+        threadId: thread.id,
+        workspaceType: 'kimaki-worktree',
+        workspaceName: worktreeName,
+        projectDirectory,
+      })
 
-    await setWorktreeReady({
-      threadId: thread.id,
-      worktreeDirectory: worktreeResult.directory,
-    })
+      const workspaceResult = await tryWorkspaceCreate({
+        threadId: thread.id,
+        worktreeName,
+        projectDirectory,
+        baseBranch,
+      })
 
-    void reactToThread({
-      rest,
-      threadId: thread.id,
-      channelId: thread.parentId || undefined,
-      emoji: '🌳',
-    }).catch(() => {})
+      if (workspaceResult instanceof Error) {
+        const errorMsg = workspaceResult.message
+        logger.error('[WORKTREE] Workspace creation failed:', workspaceResult)
+        await setWorkspaceError({ threadId: thread.id, errorMessage: errorMsg })
+        editStatus(`🌳 **Worktree: ${worktreeName}**\n❌ ${errorMsg}`)
+        await editChain
+        return workspaceResult
+      }
 
-    return worktreeResult.directory
+      await setWorkspaceReady({
+        threadId: thread.id,
+        workspaceId: workspaceResult.workspaceId,
+        workspaceDirectory: workspaceResult.directory,
+      })
+
+      void reactToThread({
+        rest,
+        threadId: thread.id,
+        channelId: thread.parentId || undefined,
+        emoji: '🌳',
+      }).catch(() => {})
+
+      editStatus(
+        `🌳 **Worktree: ${worktreeName}**\n` +
+          `📁 \`${workspaceResult.directory}\`\n` +
+          `🌿 Branch: \`${worktreeName}\``,
+      )
+      await editChain
+
+      logger.log(`[WORKTREE] Created via workspace SDK: ${workspaceResult.directory}`)
+      return workspaceResult.directory
   })().catch((e) => {
     logger.error('[WORKTREE] Unexpected error in createWorktreeInBackground:', e)
-    return new Error(`Worktree creation failed: ${e instanceof Error ? e.message : String(e)}`, {
-      cause: e,
-    })
+    return new Error(`Worktree creation failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e })
   })
 }
 
@@ -253,9 +337,8 @@ async function findExistingWorktreePath({
   projectDirectory: string
   worktreeName: string
 }): Promise<string | undefined | Error> {
-  const listResult = await execAsync('git worktree list --porcelain', {
-    cwd: projectDirectory,
-  }).catch((e) => new WorktreeError('Failed to list worktrees', { cause: e }))
+  const listResult = await execAsync('git worktree list --porcelain', { cwd: projectDirectory })
+    .catch((e) => new WorktreeError('Failed to list worktrees', { cause: e }))
   if (listResult instanceof Error) return listResult
 
   const lines = listResult.stdout.split('\n')
@@ -267,7 +350,10 @@ async function findExistingWorktreePath({
       currentPath = line.slice('worktree '.length)
       continue
     }
-    if (line.startsWith('branch ') && line.slice('branch '.length) === branchRef) {
+    if (
+      line.startsWith('branch ') &&
+      line.slice('branch '.length) === branchRef
+    ) {
       return currentPath || undefined
     }
   }
@@ -275,7 +361,10 @@ async function findExistingWorktreePath({
   return undefined
 }
 
-export async function handleNewWorktreeCommand({ command, appId }: CommandContext): Promise<void> {
+export async function handleNewWorktreeCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
   await command.deferReply()
 
   const channel = command.channel
@@ -285,7 +374,10 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
   }
 
   // Handle command in existing thread - attach worktree to this thread
-  if (channel.type === ChannelType.PublicThread || channel.type === ChannelType.PrivateThread) {
+  if (
+    channel.type === ChannelType.PublicThread ||
+    channel.type === ChannelType.PrivateThread
+  ) {
     await handleWorktreeInThread({
       command,
       thread: channel,
@@ -296,7 +388,9 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
 
   // Handle command in text channel - create new thread with worktree (existing behavior)
   if (channel.type !== ChannelType.GuildText) {
-    await command.editReply('This command can only be used in text channels or threads')
+    await command.editReply(
+      'This command can only be used in text channels or threads',
+    )
     return
   }
 
@@ -311,11 +405,15 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
 
   const worktreeName = formatWorktreeName(rawName)
   if (!worktreeName) {
-    await command.editReply('Invalid worktree name. Please use letters, numbers, and spaces.')
+    await command.editReply(
+      'Invalid worktree name. Please use letters, numbers, and spaces.',
+    )
     return
   }
 
-  const projectDirectory = await getProjectDirectoryFromChannel(channel)
+  const projectDirectory = await getProjectDirectoryFromChannel(
+    channel,
+  )
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
     return
@@ -343,24 +441,24 @@ export async function handleNewWorktreeCommand({ command, appId }: CommandContex
 
   // Create thread immediately so user can start typing
   const result = await (async () => {
-    const starterMessage = await channel.send({
-      content: worktreeCreatingMessage(worktreeName),
-      flags: SILENT_MESSAGE_FLAGS,
-    })
+      const starterMessage = await channel.send({
+        content: worktreeCreatingMessage(worktreeName),
+        flags: SILENT_MESSAGE_FLAGS,
+      })
 
-    const thread = await starterMessage.startThread({
-      name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`,
-      autoArchiveDuration: 1440,
-      reason: 'Worktree session',
-    })
+      const thread = await starterMessage.startThread({
+        name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`,
+        autoArchiveDuration: 1440,
+        reason: 'Worktree session',
+      })
 
-    // Parallelize: member add and editReply are independent
-    await Promise.all([
-      thread.members.add(command.user.id),
-      command.editReply(`Creating worktree in ${thread.toString()}`),
-    ])
+      // Parallelize: member add and editReply are independent
+      await Promise.all([
+        thread.members.add(command.user.id),
+        command.editReply(`Creating worktree in ${thread.toString()}`),
+      ])
 
-    return { thread, starterMessage }
+      return { thread, starterMessage }
   })().catch((e) => new WorktreeError('Failed to create thread', { cause: e }))
 
   if (result instanceof Error) {
@@ -407,7 +505,9 @@ async function handleWorktreeInThread({
     : deriveWorktreeNameFromThread(thread.name)
 
   if (!worktreeName) {
-    await command.editReply('Invalid worktree name. Please provide a name or rename the thread.')
+    await command.editReply(
+      'Invalid worktree name. Please provide a name or rename the thread.',
+    )
     return
   }
 
@@ -418,7 +518,9 @@ async function handleWorktreeInThread({
     return
   }
 
-  const projectDirectory = await getProjectDirectoryFromChannel(parent)
+  const projectDirectory = await getProjectDirectoryFromChannel(
+    parent,
+  )
   if (errore.isError(projectDirectory)) {
     await command.editReply(projectDirectory.message)
     return
@@ -452,20 +554,20 @@ async function handleWorktreeInThread({
   }
 
   const threadResult = await (async () => {
-    const worktreeThread = await textChannel.threads.create({
-      name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`.slice(0, 100),
-      autoArchiveDuration: 1440,
-      reason: `Worktree fork from thread ${thread.id}`,
-    })
-    // Parallelize: member add and status message send are independent
-    const [, statusMessage] = await Promise.all([
-      worktreeThread.members.add(command.user.id),
-      worktreeThread.send({
-        content: worktreeCreatingMessage(worktreeName),
-        flags: SILENT_MESSAGE_FLAGS,
-      }),
-    ])
-    return { worktreeThread, statusMessage }
+      const worktreeThread = await textChannel.threads.create({
+        name: `${WORKTREE_PREFIX}worktree: ${worktreeName}`.slice(0, 100),
+        autoArchiveDuration: 1440,
+        reason: `Worktree fork from thread ${thread.id}`,
+      })
+      // Parallelize: member add and status message send are independent
+      const [, statusMessage] = await Promise.all([
+        worktreeThread.members.add(command.user.id),
+        worktreeThread.send({
+          content: worktreeCreatingMessage(worktreeName),
+          flags: SILENT_MESSAGE_FLAGS,
+        }),
+      ])
+      return { worktreeThread, statusMessage }
   })().catch((e) => new WorktreeError('Failed to create worktree thread', { cause: e }))
   if (threadResult instanceof Error) {
     await command.editReply(threadResult.message)
@@ -475,7 +577,9 @@ async function handleWorktreeInThread({
   const { worktreeThread, statusMessage } = threadResult
 
   // Fire-and-forget: don't block background worktree creation on editReply
-  void command.editReply(`Creating worktree in ${worktreeThread.toString()}`).catch(() => {})
+  void command.editReply(
+    `Creating worktree in ${worktreeThread.toString()}`,
+  ).catch(() => {})
 
   void createWorktreeInBackground({
     thread: worktreeThread,
@@ -508,12 +612,10 @@ async function handleWorktreeInThread({
         return
       }
 
-      const forkResponse = await getClient()
-        .session.fork({
-          sessionID: sourceSessionId,
-          directory: result,
-        })
-        .catch((e) => new OpenCodeSdkError({ operation: 'session.fork', cause: e }))
+      const forkResponse = await getClient().session.fork({
+        sessionID: sourceSessionId,
+        directory: result,
+      }).catch((e) => new OpenCodeSdkError({ operation: 'session.fork', cause: e }))
       if (forkResponse instanceof Error) {
         logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', forkResponse)
         void notifyError(forkResponse, 'Failed to fork session into worktree')
@@ -536,21 +638,27 @@ async function handleWorktreeInThread({
         return
       }
 
-      const permissionResponse = await getClient()
-        .session.update({
-          sessionID: forkedSession.id,
+      await copyCurrentSessionModel({
+        sourceSessionId,
+        targetSessionId: forkedSession.id,
+        channelId: parent.id,
+        appId,
+        getClient,
+        directory: projectDirectory,
+      })
+
+      const permissionResponse = await getClient().session.update({
+        sessionID: forkedSession.id,
+        directory: result,
+        permission: buildSessionPermissions({
           directory: result,
-          permission: buildSessionPermissions({
-            directory: result,
-            originalRepoDirectory: projectDirectory,
-          }),
-        })
-        .catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
+          originalRepoDirectory: projectDirectory,
+        }),
+      }).catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
       if (permissionResponse instanceof Error || permissionResponse.error) {
-        const error =
-          permissionResponse instanceof Error
-            ? permissionResponse
-            : new Error('OpenCode rejected forked session permission update')
+        const error = permissionResponse instanceof Error
+          ? permissionResponse
+          : new Error('OpenCode rejected forked session permission update')
         logger.error('[NEW-WORKTREE] Failed to update forked session permissions:', error)
         void notifyError(error, 'Failed to update forked session permissions')
         await sendThreadMessage(

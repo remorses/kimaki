@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.20.1
+
+1. **Fix user-defined commands not creating worktrees** — `-cmd`, `-skill`, and `-mcp-prompt` slash commands now correctly create worktrees in channels with worktrees enabled. Previously, running a command like `/review-cmd` would create a plain thread without a worktree, even though regular messages and `/agent` commands already respected the per-channel worktree setting.
+
+2. **Fix bot not restarting after gateway reconnect limit without wrapper** — when running with `tsx src/cli.ts` (local dev, no `bin.ts` wrapper), the previous fallback used a detached `spawn()` + `process.exit(0)` which was unreliable. Now `selfRestart` always exits with code 1; the `bin.ts` wrapper catches it and restarts with exponential backoff and crash-loop detection. Running without the wrapper logs a warning suggesting `bin.ts`.
+
+3. **Fail fast on oversized Discord file uploads** — `uploadFilesToDiscord` now checks each file's size before reading it into memory. If a file exceeds the bot limit (25 MB default, higher for boosted servers), it throws immediately with a clear error instead of sending to Discord and waiting for rejection.
+
+4. **Add `description` field to bash tool prompt** — the system prompt now instructs models to always send a short `description` with each bash call. The field is shown in Discord as context for what the command does. The instructions are structured as a TypeScript interface so models follow the schema more reliably.
+
+5. **Fix truncated bash commands missing ellipsis** — multiline commands displayed only the first line but without any visual indicator that the command was longer. Now always appends "..." when showing a partial command.
+
+## 0.20.0
+
+1. **Mention-prefixed messages now visible to the agent** — when a user sends a message in a thread that starts with `@mention` to another user (not the bot), it's added to the session context without triggering an AI response. The agent sees user-to-user conversation on the next turn, giving it better context about what's being discussed. Channel-level messages with leading mentions to other users are still ignored (no thread creation).
+
+2. **Custom tools, MCP tools, and plugin tools shown in default verbosity** — the default `text_and_essential_tools` verbosity used a whitelist of known tool names, hiding any tool not in the list. Now the logic is flipped: only known read-only built-in tools (`read`, `glob`, `grep`, `describe-media`, `todoread`) are hidden. Everything else is shown by default.
+
+3. **Fix `project add` and `project create` selecting wrong guild in gateway mode** — the guild selection heuristic fetched the most recent channel from the database, but that channel could belong to a different bot instance (e.g. old self-hosted bot). In gateway mode the proxy rejected the REST call and the fallback non-deterministically picked the wrong guild. Now multiple existing channels are tried before falling back to the guild cache, which in gateway mode is already filtered to authorized guilds.
+
+4. **Fix quick agent commands not creating worktrees** — `/plan-agent <prompt>`, `/build-agent <prompt>` and other quick agent slash commands now correctly create worktrees when used from a project channel with worktree mode enabled. Previously these created plain threads without a worktree.
+
+5. **Fix bash tool rendering with missing description** — newer opencode versions removed the `description` field from the bash tool schema, causing multiline or long commands to render as just `┣ bash` with no context. Now the first line of the command is shown truncated with `…` when no description is available.
+
+## 0.19.0
+
+1. **Compact session markdown export** — `kimaki session read` now renders tool calls as compact one-liners by default, showing the tool name, key parameters, and output line count instead of full YAML inputs and raw output blocks. This makes exported sessions much more readable and smaller, especially for sessions with many file reads and grep results.
+
+   ```
+   > 🛠️ **bash** command=echo hello, description=Print greeting (2 lines)
+   > 🛠️ **read** filePath=src/config.ts (124 lines)
+   ```
+
+   Use `--verbose` to get the full tool output when you need it:
+
+   ```bash
+   kimaki session read <session-id> --verbose
+   ```
+
+2. **Fix `kimaki send` failing in CI/headless environments** — `kimaki send --channel <id> --prompt "..."` no longer requires a local SQLite database with channel-to-directory mappings. Previously, this mapping (populated when the bot runs locally) was required unconditionally, making it impossible to use `kimaki send` from CI runners or GitHub Actions. Now the local project directory mapping is only required for `--send-at`, `--wait`, and `--cwd`. The basic flow (post message, create thread, let the remote bot pick it up) works with just `KIMAKI_BOT_TOKEN`.
+
+3. **Fix `--wait` and `--send-at` erroring after message was already sent** — the channel config requirement check now runs before posting the Discord message, so these flags fail early with a clear error instead of posting the message and then crashing.
+
+## 0.18.0
+
+1. **New `kimaki bot token` command** — prints the bot token for CI and automation use. In self-hosted mode it prints the Discord bot token; in gateway mode it prints the `clientId:clientSecret` credential.
+
+   ```bash
+   # Print your token (works in both self-hosted and gateway modes)
+   kimaki bot token
+
+   # Store it as a GitHub Actions secret
+   kimaki bot token | gh secret set KIMAKI_BOT_TOKEN
+   ```
+
+   Set the output as `KIMAKI_BOT_TOKEN` in your CI environment to let `kimaki send` and other CLI subcommands authenticate without interactive setup.
+
+2. **Harden gateway reconnect restart for sustained network outages** — previously, when the gateway proxy was unreachable (DNS down, network outage), kimaki would hit the 50-reconnect limit, trigger self-restart, crash during cleanup from uncaught discord.js shard errors, and permanently exit. Now uncaught exceptions during shutdown are suppressed, client listeners are removed before destroy, transient network errors on initial connection allow the wrapper to retry, and progressive restart backoff (2s → 4s → 8s → 16s, capped at 30s) prevents hammering DNS. The existing crash loop detector (5 crashes in 60s) still acts as the ultimate circuit breaker.
+
+3. **Fix slash commands handled by the wrong machine in multi-machine setups** — when kimaki is installed on multiple machines sharing the same Discord guild via gateway proxy, interactions (slash commands, buttons, select menus, modals) were processed by every machine regardless of channel ownership. Now the interaction handler checks if the channel has a project directory configured in the local SQLite database before processing; if not, the interaction is silently ignored so the correct machine handles it.
+
+4. **Fix workspace worktree setup and cleanup** — worktree creation now correctly parses `.gitmodules` inside the plugin-safe workspace adaptor so submodules initialize. Deleting a worktree from `/worktrees` now removes the matching OpenCode workspace record through the workspace SDK before deleting the local thread mapping, keeping OpenCode workspace state, git worktrees, and Kimaki thread metadata in sync.
+
+5. **Fix multi-question Discord dropdowns submitting incomplete answers** — duplicate select interactions on one dropdown could submit empty answers for later questions. Kimaki now derives question completion from the actual answered question indexes instead of incrementing a counter.
+
+6. **Add `--no-auto-upgrade` CLI flag** — disables the background auto-upgrade check on startup. Useful for pinned deployments or air-gapped environments.
+
+   ```bash
+   kimaki --no-auto-upgrade
+   ```
+
+7. **Fix gateway install URL on Windows** — the Discord OAuth install URL now opens correctly on Windows during onboarding. Thanks @TheLonelyDevil9 for #152!
+
 ## 0.17.1
 
 1. **Fix gateway onboarding flow silently failing** — the CLI would get stuck on "Still waiting..." after the user authorized the bot. Discord doesn't always include `guild_id` in the OAuth callback URL (e.g. when previously authorized). Now the `guild_id` is cached in KV before the callback, `prompt` is set to `consent` so the authorization screen always shows, and specific onboarding errors are surfaced to the CLI instead of a generic timeout.

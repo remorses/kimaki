@@ -28,8 +28,13 @@
     "onlyBuiltDependencies": [
       "@discordjs/opus"
     ],
-    "overrides": {
-      "spiceflow": "1.26.0-rsc.3"
+    "overrides": {},
+    "packageExtensions": {
+      "@holocron.so/vite": {
+        "peerDependencies": {
+          "spiceflow": "*"
+        }
+      }
     }
   }
 }
