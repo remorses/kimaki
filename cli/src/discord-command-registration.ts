@@ -453,6 +453,21 @@ export async function registerCommands({
       )
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('whisper-start')
+      .setDescription(truncateCommandDescription('Start the local voice-transcription service'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('whisper-stop')
+      .setDescription(truncateCommandDescription('Stop the local voice-transcription service (frees GPU/RAM)'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('whisper-status')
+      .setDescription(truncateCommandDescription('Report whether the local voice-transcription service is running'))
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Dynamic commands are registered in priority order:

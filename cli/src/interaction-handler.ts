@@ -105,6 +105,11 @@ import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import { handleScreenshareCommand } from './commands/screenshare.js'
 import { handleVscodeCommand } from './commands/vscode.js'
+import {
+  handleWhisperStartCommand,
+  handleWhisperStopCommand,
+  handleWhisperStatusCommand,
+} from './commands/whisper.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleVariantQuickSelectMenu,
@@ -435,6 +440,18 @@ export function registerInteractionHandler({
 
             case 'vscode':
               await handleVscodeCommand({ command: interaction, appId })
+              return
+
+            case 'whisper-start':
+              await handleWhisperStartCommand({ command: interaction, appId })
+              return
+
+            case 'whisper-stop':
+              await handleWhisperStopCommand({ command: interaction, appId })
+              return
+
+            case 'whisper-status':
+              await handleWhisperStatusCommand({ command: interaction, appId })
               return
           }
 
