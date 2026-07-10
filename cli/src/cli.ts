@@ -26,6 +26,7 @@ import sendCommands from './cli-commands/send.js'
 import sessionCommands from './cli-commands/session.js'
 import taskCommands from './cli-commands/task.js'
 import userCommands from './cli-commands/user.js'
+import whisperCommands from './cli-commands/whisper.js'
 import {
   EXIT_NO_RESTART,
   printDiscordInstallUrlAndExit,
@@ -360,6 +361,7 @@ cli.use(projectCommands)
 cli.use(userCommands)
 cli.use(sessionCommands)
 cli.use(maintenanceCommands)
+cli.use(whisperCommands)
 
 cli.version(getCurrentVersion())
 cli.help()
