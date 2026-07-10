@@ -20,7 +20,9 @@ export async function handleWhisperStartCommand({
   const result = await startWhisperService()
   if (result instanceof Error) {
     logger.error(`whisper start failed: ${result.message}`)
-    await command.editReply(`⚠️ Failed to start whisper service: ${result.message}`)
+    await command.editReply(
+      `⚠️ ${result.message}`,
+    )
     return
   }
   if (result.status === 'already-running') {
@@ -61,6 +63,12 @@ export async function handleWhisperStatusCommand({
   if (status instanceof Error) {
     logger.error(`whisper status failed: ${status.message}`)
     await command.editReply(`⚠️ Failed to read whisper status: ${status.message}`)
+    return
+  }
+  if (!status.configured) {
+    await command.editReply(
+      '🎤 Whisper service: **not configured** — run `kimaki whisper setup` in a terminal on the host first.',
+    )
     return
   }
   if (!status.running) {

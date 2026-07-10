@@ -25,8 +25,17 @@ export class WhisperServiceError extends errore.createTaggedError({
   message: '$reason',
 }) {}
 
+export class WhisperNotConfiguredError extends errore.createTaggedError({
+  name: 'WhisperNotConfiguredError',
+  message:
+    'No local transcription service is configured. Run `kimaki whisper setup` to pick and wire a Whisper backend first.',
+}) {}
+
 export interface WhisperConfig {
-  /** Command to launch the local transcription service (run via a shell). */
+  /**
+   * Command to launch the local transcription service (run via a shell).
+   * Empty until the user configures a real service via `kimaki whisper setup`.
+   */
   command: string
   /** Working directory to launch it from. Defaults to the data dir. */
   cwd?: string
@@ -36,10 +45,19 @@ export interface WhisperConfig {
   startTimeoutSeconds: number
 }
 
+// No default launch command: there is no transcription service bundled with
+// Kimaki (a Whisper backend needs Python + CUDA/Metal + a multi-GB model that
+// cannot ship in an npm package). The user picks and wires one via
+// `kimaki whisper setup`. Until then, `command` is empty and start/status
+// report "not configured" with guidance rather than spawning a missing binary.
 export const DEFAULT_WHISPER_CONFIG: WhisperConfig = {
-  command: 'kimaki-whisper-shim',
+  command: '',
   healthUrl: 'http://localhost:7070/health',
   startTimeoutSeconds: 60,
+}
+
+export function isWhisperConfigured(config: WhisperConfig): boolean {
+  return config.command.trim().length > 0
 }
 
 export function whisperConfigPath(): string {
@@ -127,6 +145,7 @@ async function waitForHealthy({
 }
 
 export interface WhisperStatus {
+  configured: boolean
   running: boolean
   healthy: boolean
   pid: number | null
@@ -137,11 +156,18 @@ export async function getWhisperStatus(): Promise<WhisperConfigError | WhisperSt
   const config = loadWhisperConfig()
   if (config instanceof Error) return config
 
+  const configured = isWhisperConfigured(config)
   const pid = readPid()
   const running = pid !== null && isProcessAlive({ pid })
   const healthy = running ? await isWhisperHealthy({ url: config.healthUrl }) : false
 
-  return { running, healthy, pid: running ? pid : null, healthUrl: config.healthUrl }
+  return {
+    configured,
+    running,
+    healthy,
+    pid: running ? pid : null,
+    healthUrl: config.healthUrl,
+  }
 }
 
 export type WhisperStartResult =
@@ -152,7 +178,12 @@ export async function startWhisperService({
   overrides,
 }: {
   overrides?: Partial<Pick<WhisperConfig, 'command' | 'healthUrl'>>
-} = {}): Promise<WhisperConfigError | WhisperServiceError | WhisperStartResult> {
+} = {}): Promise<
+  | WhisperConfigError
+  | WhisperServiceError
+  | WhisperNotConfiguredError
+  | WhisperStartResult
+> {
   const loaded = loadWhisperConfig()
   if (loaded instanceof Error) return loaded
 
@@ -161,6 +192,8 @@ export async function startWhisperService({
     command: overrides?.command ?? loaded.command,
     healthUrl: overrides?.healthUrl ?? loaded.healthUrl,
   }
+
+  if (!isWhisperConfigured(config)) return new WhisperNotConfiguredError({})
 
   // Idempotent start: if already running, report and return.
   const existingPid = readPid()
@@ -200,6 +233,62 @@ export async function startWhisperService({
   }
 
   return { status: 'started', pid: child.pid, healthUrl: config.healthUrl }
+}
+
+// Known backend presets surfaced by `kimaki whisper setup`. Each is a command
+// the user can run to serve an OpenAI-compatible transcription endpoint. These
+// are guidance only — the user must have the backend installed. `custom` lets
+// the user paste any command.
+export interface WhisperBackendPreset {
+  id: string
+  label: string
+  command: string
+  healthUrl: string
+  /** One-line note about what the user must install for this preset. */
+  requires: string
+}
+
+export const WHISPER_BACKEND_PRESETS: WhisperBackendPreset[] = [
+  {
+    id: 'shim',
+    label: 'Kimaki Whisper shim (bridges chat-audio → a Whisper backend)',
+    command: 'kimaki-whisper-shim',
+    healthUrl: 'http://localhost:7070/health',
+    requires:
+      'the kimaki-whisper-shim on PATH, plus a Whisper backend it points at (see docs)',
+  },
+  {
+    id: 'speaches',
+    label: 'speaches (faster-whisper, GPU) — direct OpenAI-compatible server',
+    command:
+      'uvicorn --factory --host 0.0.0.0 --port 8000 speaches.main:create_app',
+    healthUrl: 'http://localhost:8000/health',
+    requires: 'speaches installed (uv/pip) with its venv active',
+  },
+  {
+    id: 'whisper-cpp',
+    label: 'whisper.cpp server (Metal/CPU) — direct OpenAI-compatible server',
+    command:
+      'whisper-server -m ~/whisper-models/ggml-large-v3.bin --host 0.0.0.0 --port 8000 --inference-path /v1/audio/transcriptions',
+    healthUrl: 'http://localhost:8000/health',
+    requires: 'whisper.cpp installed and a ggml model downloaded',
+  },
+]
+
+export function setupWhisperService({
+  command,
+  healthUrl,
+}: {
+  command: string
+  healthUrl: string
+}): WhisperConfigError | WhisperConfig {
+  const loaded = loadWhisperConfig()
+  if (loaded instanceof Error) return loaded
+
+  const config: WhisperConfig = { ...loaded, command, healthUrl }
+  const saved = saveWhisperConfig({ config })
+  if (saved instanceof Error) return saved
+  return config
 }
 
 export type WhisperStopResult =
