@@ -4,8 +4,17 @@
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { getDataDir } from './config.js'
+import {
+  deleteThreadWorktree,
+  deleteThreadWorkspace,
+  getThreadWorktree,
+  getThreadWorkspace,
+  setWorktreeReady,
+  setWorkspaceReady,
+} from './database.js'
 import { execAsync } from './exec-async.js'
 import { createWorktreeCore, type WorktreeResult } from './git-worktree-core.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -1260,4 +1269,224 @@ export async function listGitWorktrees({
   })
   if (result instanceof Error) return result
   return parseGitWorktreeListPorcelain(result)
+}
+
+// ── Worktree Recovery ──────────────────────────────────────────────
+// Restores missing/stale worktree directories from git state.
+// Checks both thread_workspaces (new) and thread_worktrees (legacy).
+
+export type RecoverWorktreeResult =
+  | {
+      recovered: false
+      reason:
+        | 'no-worktree-entry'
+        | 'dir-exists'
+        | 'project-missing'
+        | 'branch-missing'
+        | 'creation-failed'
+      error?: Error
+    }
+  | { recovered: true; worktreeDirectory: string; worktreeName: string }
+
+/**
+ * Create a symlink from the old worktree path format (~/.local/share/opencode/worktree/...)
+ * to the new path (~/.kimaki/worktrees/...) for backwards compatibility.
+ * This allows existing opencode sessions that were created with old path references
+ * to continue working without aborting the session.
+ */
+function createOldPathSymlink({
+  projectDirectory,
+  worktreeName,
+  newWorktreeDirectory,
+}: {
+  projectDirectory: string
+  worktreeName: string
+  newWorktreeDirectory: string
+}): void {
+  const fullHash = crypto.createHash('sha1').update(projectDirectory).digest('hex')
+  const oldName = worktreeName.replaceAll('/', '-')
+  const oldPath = path.join(
+    os.homedir(),
+    '.local',
+    'share',
+    'opencode',
+    'worktree',
+    fullHash,
+    oldName,
+  )
+
+  if (fs.existsSync(oldPath)) {
+    return
+  }
+
+  fs.mkdirSync(path.dirname(oldPath), { recursive: true })
+  fs.symlinkSync(newWorktreeDirectory, oldPath, 'dir')
+  logger.log(`[WORKTREE] Created backwards-compat symlink: ${oldPath} -> ${newWorktreeDirectory}`)
+}
+
+export async function recoverWorktreeFromInfo({
+  projectDirectory,
+  worktreeName,
+  worktreeDirectory,
+}: {
+  projectDirectory: string
+  worktreeName: string
+  worktreeDirectory: string
+}): Promise<RecoverWorktreeResult> {
+  const isOldPathFormat = worktreeDirectory.includes('/.local/share/opencode/worktree/')
+
+  if (!isOldPathFormat && fs.existsSync(worktreeDirectory)) {
+    return { recovered: false, reason: 'dir-exists' }
+  }
+
+  if (!fs.existsSync(projectDirectory)) {
+    return { recovered: false, reason: 'project-missing' }
+  }
+
+  const branchCheck = await git(projectDirectory, `rev-parse --verify ${worktreeName}`)
+  if (branchCheck instanceof Error) {
+    return { recovered: false, reason: 'branch-missing', error: branchCheck }
+  }
+
+  const result = await createWorktreeWithSubmodules({
+    directory: projectDirectory,
+    name: worktreeName,
+  })
+
+  if (result instanceof Error) {
+    return { recovered: false, reason: 'creation-failed', error: result }
+  }
+
+  const recoveredDir = getManagedWorktreeDirectory({
+    directory: projectDirectory,
+    name: worktreeName,
+  })
+  return { recovered: true, worktreeDirectory: recoveredDir, worktreeName }
+}
+
+/**
+ * Check both thread_workspaces (new) and thread_worktrees (legacy) tables
+ * and recover the directory if missing.
+ */
+export async function recoverWorktreeDirectory({
+  threadId,
+}: {
+  threadId: string
+}): Promise<{ recovered: boolean; reason?: string; worktreeDirectory?: string } | Error> {
+  // Check new table first, fall back to legacy
+  const workspaceInfo = await getThreadWorkspace(threadId)
+  const worktreeInfo = workspaceInfo ? undefined : await getThreadWorktree(threadId)
+  const info = workspaceInfo || worktreeInfo
+  const isWorkspace = Boolean(workspaceInfo)
+
+  if (!info || info.status !== 'ready') {
+    return { recovered: false, reason: 'no-worktree' }
+  }
+
+  const directory = isWorkspace
+    ? (workspaceInfo as NonNullable<typeof workspaceInfo>).workspace_directory
+    : (worktreeInfo as NonNullable<typeof worktreeInfo>).worktree_directory
+  const name = isWorkspace
+    ? (workspaceInfo as NonNullable<typeof workspaceInfo>).workspace_name
+    : (worktreeInfo as NonNullable<typeof worktreeInfo>).worktree_name
+  const projectDirectory = info.project_directory
+
+  if (!directory || !name) {
+    return { recovered: false, reason: 'no-worktree' }
+  }
+
+  const isOldPathFormat = directory.includes('/.local/share/opencode/worktree/')
+
+  if (!isOldPathFormat && fs.existsSync(directory)) {
+    if (name) {
+      createOldPathSymlink({
+        projectDirectory,
+        worktreeName: name,
+        newWorktreeDirectory: directory,
+      })
+    }
+    return { recovered: false, reason: 'dir-exists' }
+  }
+
+  logger.log(
+    `[RECOVER WORKTREE] Worktree directory needs recovery: ${directory} (oldFormat=${isOldPathFormat}, exists=${fs.existsSync(directory)})`,
+  )
+
+  const newWorktreeDirectory = getManagedWorktreeDirectory({
+    directory: projectDirectory,
+    name,
+  })
+
+  // If old path exists, try to migrate it
+  if (isOldPathFormat && fs.existsSync(directory)) {
+    logger.log(
+      `[RECOVER WORKTREE] Migrating from old path to new path: ${directory} -> ${newWorktreeDirectory}`,
+    )
+
+    try {
+      await fs.promises.mkdir(path.dirname(newWorktreeDirectory), { recursive: true })
+
+      const moveResult = await git(
+        projectDirectory,
+        `worktree move ${JSON.stringify(directory)} ${JSON.stringify(newWorktreeDirectory)}`,
+      )
+
+      if (moveResult instanceof Error) {
+        logger.warn(
+          `[RECOVER WORKTREE] git worktree move failed: ${moveResult.message}, falling back to fs.rename`,
+        )
+        await fs.promises.rename(directory, newWorktreeDirectory)
+      }
+
+      logger.log(`[RECOVER WORKTREE] Successfully migrated to: ${newWorktreeDirectory}`)
+
+      if (isWorkspace) {
+        await setWorkspaceReady({ threadId, workspaceDirectory: newWorktreeDirectory })
+      } else {
+        await setWorktreeReady({ threadId, worktreeDirectory: newWorktreeDirectory })
+      }
+
+      createOldPathSymlink({ projectDirectory, worktreeName: name, newWorktreeDirectory })
+
+      return { recovered: true, reason: 'migrated', worktreeDirectory: newWorktreeDirectory }
+    } catch (error) {
+      logger.error(
+        `[RECOVER WORKTREE] Migration failed: ${error instanceof Error ? error.message : error}`,
+      )
+    }
+  }
+
+  // Directory doesn't exist or migration failed — recreate
+  logger.log(`[RECOVER WORKTREE] Recreating worktree at: ${newWorktreeDirectory}`)
+
+  if (isWorkspace) {
+    await deleteThreadWorkspace(threadId)
+  } else {
+    await deleteThreadWorktree(threadId)
+  }
+
+  const createResult = await createWorktreeWithSubmodules({
+    directory: projectDirectory,
+    name,
+  })
+
+  if (createResult instanceof Error) {
+    logger.error(`[RECOVER WORKTREE] Failed to recreate worktree: ${createResult.message}`)
+    return createResult
+  }
+
+  if (isWorkspace) {
+    await setWorkspaceReady({ threadId, workspaceDirectory: createResult.directory })
+  } else {
+    await setWorktreeReady({ threadId, worktreeDirectory: createResult.directory })
+  }
+
+  createOldPathSymlink({
+    projectDirectory,
+    worktreeName: name,
+    newWorktreeDirectory: createResult.directory,
+  })
+
+  logger.log(`[RECOVER WORKTREE] Successfully recovered worktree: ${createResult.directory}`)
+  return { recovered: true, reason: 'recreated', worktreeDirectory: createResult.directory }
 }

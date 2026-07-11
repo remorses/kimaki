@@ -1046,9 +1046,7 @@ export async function startDiscordBot({
       voiceLogger.error('Discord handler error:', error)
       void notifyError(error, 'MessageCreate handler error')
       try {
-        const errMsg = (
-          error instanceof Error ? error.message : String(error)
-        ).slice(0, 1900)
+        const errMsg = formatErrorWithCause(error).slice(0, 1900)
         await message.reply({
           content: `Error: ${errMsg}`,
           flags: NOTIFY_MESSAGE_FLAGS,
@@ -1356,9 +1354,7 @@ export async function startDiscordBot({
       )
       void notifyError(error, 'ThreadCreate handler error')
       try {
-        const errMsg = (
-          error instanceof Error ? error.message : String(error)
-        ).slice(0, 1900)
+        const errMsg = formatErrorWithCause(error).slice(0, 1900)
         await thread.send({
           content: `Error: ${errMsg}`,
           flags: NOTIFY_MESSAGE_FLAGS,
@@ -1602,4 +1598,20 @@ export async function startDiscordBot({
         : new Error(formatErrorWithStack(reason))
     void notifyError(error, 'Unhandled rejection in bot process')
   })
+}
+
+function formatErrorWithCause(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  let msg = error.message
+  let cause: unknown = (error as Error & { cause?: unknown }).cause
+  while (cause) {
+    if (cause instanceof Error) {
+      msg += ` → ${cause.message}`
+      cause = (cause as Error & { cause?: unknown }).cause
+    } else {
+      msg += ` → ${String(cause)}`
+      break
+    }
+  }
+  return msg.slice(0, 1900)
 }

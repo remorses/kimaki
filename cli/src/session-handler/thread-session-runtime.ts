@@ -597,6 +597,7 @@ export class ThreadSessionRuntime {
   // message and showing multiple back-to-back POSTs is wasteful.
   private typingKeepaliveTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly typingRepulseDebounce: ReturnType<typeof createDebouncedTimeout>
+  private interactiveUiWatchdogTimeout: ReturnType<typeof setTimeout> | null = null
 
   private static TYPING_REPULSE_DEBOUNCE_MS = 500
 
@@ -633,6 +634,7 @@ export class ThreadSessionRuntime {
   private static EVENT_BUFFER_TEXT_MAX_CHARS = 512
   private static SESSION_STUCK_TIMEOUT_MS = 5 * 60 * 1_000 // 5 minutes
   private static SESSION_STUCK_TOOL_RUNNING_TIMEOUT_MS = 30 * 60 * 1_000 // 30 minutes
+  private static INTERACTIVE_UI_STUCK_TIMEOUT_MS = 5 * 60 * 1_000 // 5 minutes
   private eventBuffer: EventBufferEntry[] = []
   private nextEventIndex = 0
   private lastEventAppendTime = 0
@@ -1366,9 +1368,10 @@ export class ThreadSessionRuntime {
           resolve()
           return
         }
-        const result = await action().catch(
-          (e) => new OpenCodeSdkError({ operation: 'dispatchAction', cause: e }),
-        )
+        const result = await action().catch((e) => {
+          logger.error('[DISPATCH ACTION] Action failed:', e)
+          return new OpenCodeSdkError({ operation: 'dispatchAction', cause: e })
+        })
         if (result instanceof Error) {
           reject(result)
           return
@@ -1582,6 +1585,58 @@ export class ThreadSessionRuntime {
       return
     }
     this.armTypingKeepalive({ delayMs: 7000 })
+  }
+
+  private startInteractiveUiWatchdog(): void {
+    this.clearInteractiveUiWatchdog()
+    this.interactiveUiWatchdogTimeout = setTimeout(() => {
+      if (this.checkInteractiveUiStuckWatchdog()) {
+        return
+      }
+      // Session recovered (permission answered), clear the timer
+      this.clearInteractiveUiWatchdog()
+    }, ThreadSessionRuntime.INTERACTIVE_UI_STUCK_TIMEOUT_MS)
+  }
+
+  private clearInteractiveUiWatchdog(): void {
+    if (!this.interactiveUiWatchdogTimeout) {
+      return
+    }
+    clearTimeout(this.interactiveUiWatchdogTimeout)
+    this.interactiveUiWatchdogTimeout = null
+  }
+
+  private checkInteractiveUiStuckWatchdog(): boolean {
+    if (!this.hasPendingInteractiveUi()) {
+      return false
+    }
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
+      return false
+    }
+    const elapsed = Date.now() - this.lastEventAppendTime
+    if (elapsed < ThreadSessionRuntime.INTERACTIVE_UI_STUCK_TIMEOUT_MS) {
+      return false
+    }
+    logger.warn(
+      `[INTERACTIVE WATCHDOG] Interactive UI stuck for ${Math.round(elapsed / 1000)}s with no response. Aborting session. sessionId=${sessionId}`,
+    )
+    this.stopTyping()
+    void this.abortSessionViaApi({
+      abortId: this.nextAbortId('interactive-ui-stuck'),
+      reason: 'interactive UI stuck: no response for ' + Math.round(elapsed / 1000) + 's',
+      sessionId,
+    })
+    this.markQueueDispatchIdle(sessionId)
+    void this.tryDrainQueue({ showIndicator: true })
+    void sendThreadMessage(
+      this.thread,
+      `Interactive UI appears unresponsive (no response for ${Math.round(elapsed / 1000 / 60)} minutes). Session has been reset — your next message will start a fresh run.`,
+      { flags: NOTIFY_MESSAGE_FLAGS },
+    ).catch((e) => {
+      logger.error('[INTERACTIVE WATCHDOG] Failed to send stuck notification:', e)
+    })
+    return true
   }
 
   private stopTyping(): void {
@@ -2253,6 +2308,7 @@ export class ThreadSessionRuntime {
       logger.log(
         `[SESSION IDLE] session became idle sessionId=${sessionId} drainQueue=${shouldDrainQueuedMessages} ${this.formatRunStateForLog()}`,
       )
+      this.clearInteractiveUiWatchdog()
       await this.persistEventBufferDebounced.flush()
 
       if (!shouldDrainQueuedMessages) {
@@ -2341,6 +2397,7 @@ export class ThreadSessionRuntime {
 
     const errorMessage = truncateSessionErrorMessage(formatSessionErrorFromProps(properties.error))
     logger.error(`Sending error to thread: ${errorMessage}`)
+    this.clearInteractiveUiWatchdog()
     await sendThreadMessage(this.thread, `✗ opencode session error: ${errorMessage}`, {
       flags: NOTIFY_MESSAGE_FLAGS,
     })
@@ -2422,6 +2479,7 @@ export class ThreadSessionRuntime {
     )
 
     this.stopTyping()
+    this.startInteractiveUiWatchdog()
 
     const { messageId, contextHash } = await showPermissionButtons({
       thread: this.thread,
@@ -2457,6 +2515,8 @@ export class ThreadSessionRuntime {
     }
 
     logger.log(`Permission ${properties.requestID} replied with: ${properties.reply}`)
+
+    this.clearInteractiveUiWatchdog()
 
     const threadPermissions = pendingPermissions.get(this.thread.id)
     if (!threadPermissions) {
@@ -2511,6 +2571,8 @@ export class ThreadSessionRuntime {
       },
     })
 
+    this.startInteractiveUiWatchdog()
+
     if (isMainSession) {
       this.maybeHandoffQueuedItemForPendingQuestion({
         sessionId,
@@ -2530,6 +2592,7 @@ export class ThreadSessionRuntime {
     }
 
     this.onInteractiveUiStateChanged()
+    this.clearInteractiveUiWatchdog()
 
     if (isMainSession) {
       // When a question is answered and the local queue has items, the model may
@@ -3975,17 +4038,15 @@ export class ThreadSessionRuntime {
     // Resolve worktree info for server initialization
     const workspaceInfo = await getThreadWorktreeOrWorkspace(this.thread.id)
 
-    // Auto-recover missing worktree directory
-    if (workspaceInfo?.status === 'ready' && workspaceInfo.workspace_directory) {
-      const { recoverWorktreeDirectory } = await import('../worktrees.js')
-      const recovery = await recoverWorktreeDirectory({ threadId: this.thread.id })
-      if (recovery instanceof Error) {
-        logger.warn(`[WORKTREE] Worktree directory recovery error: ${recovery.message}`)
-      } else if (!recovery.recovered) {
-        logger.warn(
-          `[WORKTREE] Worktree directory recovery failed: ${recovery.reason ?? 'unknown'}`,
-        )
-      }
+    // Auto-recover missing worktree directory (handles both thread_workspaces and thread_worktrees)
+    const { recoverWorktreeDirectory: recoverDir } = await import('../worktrees.js')
+    const recovery = await recoverDir({ threadId: this.thread.id })
+    if (recovery instanceof Error) {
+      logger.warn(`[WORKTREE] Worktree directory recovery error: ${recovery.message}`)
+    } else if (!recovery.recovered) {
+      logger.warn(
+        `[WORKTREE] Worktree directory recovery failed: ${recovery.reason ?? 'unknown'}`,
+      )
     }
 
     const worktreeDirectory =
