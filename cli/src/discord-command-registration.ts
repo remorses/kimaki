@@ -464,9 +464,11 @@ export async function registerCommands({
           .setDescription('Built-in local model — downloads and runs automatically, zero setup (recommended)')
           .setRequired(false)
           .addChoices(
+            { name: 'Auto — pick the best model for this machine (recommended)', value: 'auto' },
             { name: 'Fast — quickest, ~110 MB download', value: 'fast' },
-            { name: 'Balanced — recommended, ~200 MB download', value: 'balanced' },
-            { name: 'Accurate — best quality, ~600 MB download', value: 'accurate' },
+            { name: 'Balanced — good accuracy, ~200 MB download', value: 'balanced' },
+            { name: 'Accurate — better accuracy, ~600 MB download', value: 'accurate' },
+            { name: 'Best — large-v3-turbo, ~1 GB, needs 16 GB+ RAM', value: 'best' },
             { name: 'Off — go back to cloud transcription', value: 'off' },
           ),
       )
