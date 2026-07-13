@@ -106,6 +106,7 @@ import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
 import { handleScreenshareCommand } from './commands/screenshare.js'
 import { handleVscodeCommand } from './commands/vscode.js'
 import {
+  handleWhisperSetupCommand,
   handleWhisperStartCommand,
   handleWhisperStopCommand,
   handleWhisperStatusCommand,
@@ -440,6 +441,19 @@ export function registerInteractionHandler({
 
             case 'vscode':
               await handleVscodeCommand({ command: interaction, appId })
+              return
+
+            case 'whisper-setup':
+              // Setup writes the shell command the host will later execute on
+              // /whisper-start — admin-only, same gate as transcription-key.
+              if (!hasKimakiAdminPermission(interaction.member, interaction.guild)) {
+                await interaction.reply({
+                  content: `Only server admins or users with the **Kimaki** role can configure the transcription service.`,
+                  flags: MessageFlags.Ephemeral,
+                })
+                return
+              }
+              await handleWhisperSetupCommand({ command: interaction, appId })
               return
 
             case 'whisper-start':

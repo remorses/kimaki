@@ -736,11 +736,30 @@ export async function setOpenAIApiKey(appId: string, apiKey: string) {
     .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { openai_api_key: apiKey } })
 }
 
-export async function getTranscriptionApiKey(appId: string): Promise<{ provider: 'openai' | 'gemini'; apiKey: string } | null> {
+export async function setOpenAIBaseUrl(appId: string, baseUrl: string | null) {
+  const db = await getDb()
+  await db.insert(schema.bot_api_keys)
+    .values({ app_id: appId, openai_base_url: baseUrl })
+    .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { openai_base_url: baseUrl } })
+}
+
+export async function getTranscriptionApiKey(appId: string): Promise<{ provider: 'openai' | 'gemini'; apiKey: string; baseUrl?: string } | null> {
   const db = await getDb()
   const row = await db.query.bot_api_keys.findFirst({ where: { app_id: appId } })
   if (!row) return null
-  if (row.openai_api_key) return { provider: 'openai', apiKey: row.openai_api_key }
+  if (row.openai_api_key) {
+    return {
+      provider: 'openai',
+      apiKey: row.openai_api_key,
+      ...(row.openai_base_url && { baseUrl: row.openai_base_url }),
+    }
+  }
+  // A stored base URL implies a local OpenAI-compatible service that usually
+  // needs no real key — allow transcription with a placeholder key so pure
+  // Discord onboarding (no env vars) works.
+  if (row.openai_base_url) {
+    return { provider: 'openai', apiKey: 'local', baseUrl: row.openai_base_url }
+  }
   if (row.gemini_api_key) return { provider: 'gemini', apiKey: row.gemini_api_key }
   return null
 }

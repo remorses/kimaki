@@ -454,6 +454,43 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('whisper-setup')
+      .setDescription(
+        truncateCommandDescription('Configure a local voice-transcription service (backend, launch command, routing)'),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('backend')
+          .setDescription('Which local transcription backend to manage')
+          .setRequired(false)
+          .addChoices(
+            { name: 'Kimaki Whisper shim (chat-audio bridge)', value: 'shim' },
+            { name: 'speaches (faster-whisper, GPU)', value: 'speaches' },
+            { name: 'whisper.cpp server (Metal/CPU)', value: 'whisper-cpp' },
+            { name: 'Custom command', value: 'custom' },
+          ),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('command')
+          .setDescription('Custom launch command (required when backend is Custom)')
+          .setRequired(false),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('health-url')
+          .setDescription('Health-check URL for the service (default per backend)')
+          .setRequired(false),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('transcription-url')
+          .setDescription('OpenAI-compatible /v1 base URL to route voice notes to (stored, no env vars needed)')
+          .setRequired(false),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('whisper-start')
       .setDescription(truncateCommandDescription('Start the local voice-transcription service'))
       .setDMPermission(false)

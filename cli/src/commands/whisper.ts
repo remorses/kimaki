@@ -5,13 +5,66 @@ import { MessageFlags } from 'discord.js'
 import type { CommandContext } from './types.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { setOpenAIBaseUrl } from '../database.js'
 import {
   startWhisperService,
   stopWhisperService,
   getWhisperStatus,
+  setupWhisperService,
+  WHISPER_BACKEND_PRESETS,
 } from '../whisper-service.js'
 
 const logger = createLogger(LogPrefix.VOICE)
+
+export async function handleWhisperSetupCommand({
+  command,
+  appId,
+}: CommandContext): Promise<void> {
+  await command.deferReply({ flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS })
+
+  const backend = command.options.getString('backend')
+  const customCommand = command.options.getString('command')
+  const healthUrlOption = command.options.getString('health-url')
+  const transcriptionUrl = command.options.getString('transcription-url')
+
+  const preset = backend && backend !== 'custom'
+    ? WHISPER_BACKEND_PRESETS.find((p) => p.id === backend)
+    : undefined
+
+  const launchCommand = customCommand ?? preset?.command
+  const healthUrl = healthUrlOption ?? preset?.healthUrl ?? 'http://localhost:7070/health'
+
+  const lines: string[] = []
+
+  if (launchCommand) {
+    const saved = setupWhisperService({ command: launchCommand, healthUrl })
+    if (saved instanceof Error) {
+      logger.error(`whisper setup failed: ${saved.message}`)
+      await command.editReply(`⚠️ Failed to save whisper config: ${saved.message}`)
+      return
+    }
+    lines.push(`🎤 Whisper service configured:`)
+    lines.push(`- **Launch command:** \`${saved.command}\``)
+    lines.push(`- **Health URL:** ${saved.healthUrl}`)
+    if (preset) lines.push(`- **Requires:** ${preset.requires}`)
+  }
+
+  if (transcriptionUrl) {
+    await setOpenAIBaseUrl(appId, transcriptionUrl)
+    lines.push(`- **Transcription URL:** ${transcriptionUrl} (voice notes now route here — no env vars needed)`)
+  }
+
+  if (lines.length === 0) {
+    await command.editReply(
+      'Nothing to configure. Pass `backend` (or a custom `command`) to set the managed service, and/or `transcription-url` to route voice notes to a local OpenAI-compatible endpoint.',
+    )
+    return
+  }
+
+  lines.push('')
+  lines.push(launchCommand ? 'Start it with `/whisper-start`.' : 'Send a voice note to test.')
+  await command.editReply(lines.join('\n'))
+}
 
 export async function handleWhisperStartCommand({
   command,
