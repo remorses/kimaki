@@ -83,6 +83,8 @@ export const bot_api_keys = sqliteCore.sqliteTable('bot_api_keys', {
   openai_base_url: sqliteCore.text('openai_base_url'),
   /** Built-in local whisper model id (fast/balanced/accurate). Takes priority over cloud transcription. */
   transcription_local_model: sqliteCore.text('transcription_local_model'),
+  /** Direct /v1/audio/transcriptions endpoint (e.g. the auto-provisioned Pro server). Highest priority. */
+  transcription_endpoint: sqliteCore.text('transcription_endpoint'),
   xai_api_key: sqliteCore.text('xai_api_key'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })

@@ -30,9 +30,11 @@ import {
   getGeminiApiKey,
   getTranscriptionApiKey,
   getLocalWhisperModel,
+  getTranscriptionEndpoint,
   findTextChannelByVoiceChannel,
 } from './database.js'
 import { transcribeLocalWhisper } from './whisper-local.js'
+import { transcribeViaEndpoint } from './whisper-pro.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
@@ -608,6 +610,8 @@ export async function processVoiceAttachment({
   // Built-in local whisper model takes priority: no API key, service, or URL
   // needed — the model runs in-process (configured via /whisper-setup).
   const localWhisperModel = appId ? await getLocalWhisperModel(appId) : null
+  // A direct transcription endpoint (auto-provisioned Pro server) outranks all.
+  const transcriptionEndpoint = appId ? await getTranscriptionEndpoint(appId) : null
 
   // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars.
   let transcriptionApiKey: string | undefined
@@ -630,8 +634,8 @@ export async function processVoiceAttachment({
     transcriptionProvider = 'gemini'
   }
 
-  // A configured local model needs no API key at all — skip the key prompt.
-  if (!transcriptionApiKey && !localWhisperModel) {
+  // A configured local model or Pro endpoint needs no API key — skip the prompt.
+  if (!transcriptionApiKey && !localWhisperModel && !transcriptionEndpoint) {
     if (!appId) {
       await sendThreadMessage(
         thread,
@@ -650,7 +654,13 @@ export async function processVoiceAttachment({
     transcriptionProvider = requested.provider
   }
 
-  const transcription = localWhisperModel
+  const transcription = transcriptionEndpoint
+    ? await transcribeViaEndpoint({
+        audio: audioBuffer,
+        mediaType: audioAttachment.contentType || 'audio/ogg',
+        endpointUrl: transcriptionEndpoint,
+      })
+    : localWhisperModel
     ? await transcribeLocalWhisper({
         audio: audioBuffer,
         mediaType: audioAttachment.contentType || 'audio/ogg',
@@ -677,6 +687,7 @@ export async function processVoiceAttachment({
       NoResponseContentError: (e) => e.message,
       NoToolResponseError: (e) => e.message,
       LocalWhisperError: (e) => e.message,
+      WhisperProError: (e) => e.message,
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)

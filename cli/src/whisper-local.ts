@@ -307,7 +307,7 @@ const QUEUE_PHRASES = [
   'queue it',
 ]
 
-function detectQueueIntent(text: string): { transcription: string; queueMessage: boolean } {
+export function detectQueueIntent(text: string): { transcription: string; queueMessage: boolean } {
   const lower = text.toLowerCase()
   for (const phrase of QUEUE_PHRASES) {
     const idx = lower.indexOf(phrase)

@@ -469,6 +469,7 @@ export async function registerCommands({
             { name: 'Balanced — good accuracy, ~200 MB download', value: 'balanced' },
             { name: 'Accurate — better accuracy, ~600 MB download', value: 'accurate' },
             { name: 'Best — large-v3-turbo, ~1 GB, needs 16 GB+ RAM', value: 'best' },
+            { name: 'Pro — faster-whisper large-v3, auto-provisioned (GPU or strong CPU)', value: 'pro' },
             { name: 'Off — go back to cloud transcription', value: 'off' },
           ),
       )
