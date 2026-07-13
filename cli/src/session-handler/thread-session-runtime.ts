@@ -610,6 +610,20 @@ type AbortRunOutcome = {
   apiAbortPromise: Promise<void> | undefined
 }
 
+type PendingStaleSessionRecovery =
+  | {
+    sessionId: string
+    input: IngressInput
+    source: 'opencode'
+    retried: boolean
+  }
+  | {
+    sessionId: string
+    input: QueuedMessage
+    source: 'local-queue'
+    retried: boolean
+  }
+
 function getWorktreePromptKey(worktree: WorktreeInfo | undefined): string | null {
   if (!worktree) {
     return null
@@ -698,6 +712,11 @@ export class ThreadSessionRuntime {
   // resolved input is then routed through the normal enqueue paths which
   // use dispatchAction internally.
   private preprocessChain: Promise<void> = Promise.resolve()
+
+  // promptAsync accepts before OpenCode resolves the session internally. Keep
+  // the accepted input until its session error arrives so a missing session can
+  // be recreated and retried exactly once from the event stream.
+  private pendingStaleSessionRecovery: PendingStaleSessionRecovery | undefined
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
@@ -2358,6 +2377,27 @@ export class ThreadSessionRuntime {
       return
     }
 
+    const missingSessionId = getMissingSessionId({
+      message: properties.error?.data?.message || '',
+    })
+    if (missingSessionId === sessionId) {
+      const recovery = await this.prepareStaleSessionRecovery({
+        sessionId,
+      })
+      if (recovery) {
+        this.stopTyping()
+        this.markQueueDispatchIdle(sessionId)
+        void this.retryStaleSessionPrompt(recovery).catch((error) => {
+          logger.error(
+            `[SESSION RECOVERY] Retry failed for thread ${this.threadId}:`,
+            error,
+          )
+          void notifyError(error, 'Stale OpenCode session retry failed')
+        })
+        return
+      }
+    }
+
     const errorMessage = truncateSessionErrorMessage(
       formatSessionErrorFromProps(properties.error),
     )
@@ -2828,20 +2868,18 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private async recoverStaleSession({
-    input,
-    staleSessionId,
-    agent,
-    model,
-    variant,
+  private async prepareStaleSessionRecovery({
+    sessionId,
   }: {
-    input: IngressInput
-    staleSessionId: string
-    agent?: string
-    model: { providerID: string; modelID: string }
-    variant?: string
-  }): Promise<{ id: string } | undefined> {
-    if (this.state?.sessionId !== staleSessionId) {
+    sessionId: string
+  }): Promise<PendingStaleSessionRecovery | undefined> {
+    const recovery = this.pendingStaleSessionRecovery
+    if (!recovery || recovery.sessionId !== sessionId || recovery.retried) {
+      return undefined
+    }
+    recovery.retried = true
+
+    if (this.state?.sessionId !== sessionId) {
       logger.warn(
         `[SESSION RECOVERY] Skipping stale mapping replacement for thread ${this.threadId}: current session changed`,
       )
@@ -2850,7 +2888,7 @@ export class ThreadSessionRuntime {
 
     const cleared = await clearThreadSessionIfMatches({
       threadId: this.thread.id,
-      sessionId: staleSessionId,
+      sessionId,
     })
     if (!cleared) {
       logger.warn(
@@ -2860,41 +2898,20 @@ export class ThreadSessionRuntime {
     }
 
     threadState.setSessionId(this.threadId, undefined)
-    const sessionResult = await this.ensureSession({
-      prompt: input.prompt,
-      agent,
-      permissions: input.permissions,
-      permissionRules: input.permissionRules,
-      injectionGuardPatterns: input.injectionGuardPatterns,
-      sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
-      sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
-    })
-    if (sessionResult instanceof Error) {
-      logger.warn(
-        `[SESSION RECOVERY] Failed to replace session ${staleSessionId} for thread ${this.threadId}: ${sessionResult.message}`,
-      )
-      return undefined
-    }
+    return recovery
+  }
 
-    const { session, getClient, createdNewSession } = sessionResult
-    await ensureSessionPreferencesSnapshot({
-      sessionId: session.id,
-      channelId: this.channelId,
-      appId: input.appId,
-      getClient,
-      directory: this.sdkDirectory,
-      agentOverride: agent,
-      force: createdNewSession,
-    })
-    await setSessionModel({
-      sessionId: session.id,
-      modelId: `${model.providerID}/${model.modelID}`,
-      variant: variant ?? null,
-    })
+  private async retryStaleSessionPrompt(
+    recovery: PendingStaleSessionRecovery,
+  ): Promise<void> {
     logger.log(
-      `[SESSION RECOVERY] Replaced stale session ${staleSessionId} with ${session.id} for thread ${this.threadId}`,
+      `[SESSION RECOVERY] Retrying prompt after replacing stale session ${recovery.sessionId} for thread ${this.threadId}`,
     )
-    return session
+    if (recovery.source === 'opencode') {
+      await this.submitViaOpencodeQueue(recovery.input, true)
+      return
+    }
+    await this.dispatchPrompt(recovery.input, true)
   }
 
   // ── Ingress API ─────────────────────────────────────────────
@@ -2907,7 +2924,10 @@ export class ThreadSessionRuntime {
    * recovery so that promptAsync receives the same agent/model/variant/system
    * fields that the local-queue path provides.
    */
-  private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
+  private async submitViaOpencodeQueue(
+    input: IngressInput,
+    staleSessionRetry = false,
+  ): Promise<EnqueueResult> {
     let skippedBySessionGuard = false
 
     await this.dispatchAction(async () => {
@@ -3077,11 +3097,13 @@ export class ThreadSessionRuntime {
         ? { variant: thinkingValue }
         : {}
 
-      await this.sendNewSessionModelInfo({
-        createdNewSession,
-        model: modelField,
-        agent: resolvedAgent,
-      })
+      if (!staleSessionRetry) {
+        await this.sendNewSessionModelInfo({
+          createdNewSession,
+          model: modelField,
+          agent: resolvedAgent,
+        })
+      }
 
       // ── Build prompt parts ──────────────────────────────────
       const images = input.images || []
@@ -3167,41 +3189,6 @@ export class ThreadSessionRuntime {
         const errorMessage = promptResult instanceof Error
           ? promptResult.message
           : extractSdkErrorMessage(promptResult.error)
-        const missingSessionId = getMissingSessionId({ message: errorMessage })
-        if (missingSessionId === session.id) {
-          const replacementSession = await this.recoverStaleSession({
-            input,
-            staleSessionId: session.id,
-            agent: resolvedAgent,
-            model: modelField,
-            variant: thinkingValue,
-          })
-          if (replacementSession) {
-            const retryResult = await getClient().session.promptAsync({
-              ...request,
-              sessionID: replacementSession.id,
-              system: getOpencodeSystemMessage({
-                sessionId: replacementSession.id,
-                channelId,
-                guildId: this.thread.guildId,
-                threadId: this.thread.id,
-                channelTopic,
-                agents: availableAgents,
-                username: this.state?.sessionUsername || input.username,
-                userId: this.state?.sessionUserId || input.userId,
-              }),
-            }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
-            if (!(retryResult instanceof Error) && !retryResult.error) {
-              logger.log(
-                `[INGRESS] promptAsync recovered stale sessionId=${session.id} replacementSessionId=${replacementSession.id} threadId=${this.threadId}`,
-              )
-              if (!input.noReply) {
-                this.markQueueDispatchBusy(replacementSession.id)
-              }
-              return
-            }
-          }
-        }
         const errObj = promptResult instanceof Error
           ? promptResult
           : new Error(errorMessage)
@@ -3217,6 +3204,12 @@ export class ThreadSessionRuntime {
       // noReply messages don't trigger the agent loop, so don't mark as busy
       if (!input.noReply) {
         this.markQueueDispatchBusy(session.id)
+      }
+      this.pendingStaleSessionRecovery = {
+        sessionId: session.id,
+        input,
+        source: 'opencode',
+        retried: staleSessionRetry,
       }
     })
 
@@ -3659,7 +3652,10 @@ export class ThreadSessionRuntime {
   // The listener is already running, so this only handles
   // session ensure + model/agent + SDK call + state.
 
-  private async dispatchPrompt(input: QueuedMessage): Promise<void> {
+  private async dispatchPrompt(
+    input: QueuedMessage,
+    staleSessionRetry = false,
+  ): Promise<void> {
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
 
@@ -3829,11 +3825,13 @@ export class ThreadSessionRuntime {
       modelID: earlyModelParam.modelID,
     })
 
-    await this.sendNewSessionModelInfo({
-      createdNewSession,
-      model: earlyModelParam,
-      agent: earlyAgentPreference,
-    })
+    if (!staleSessionRetry) {
+      await this.sendNewSessionModelInfo({
+        createdNewSession,
+        model: earlyModelParam,
+        agent: earlyAgentPreference,
+      })
+    }
 
     // ── Build prompt parts ────────────────────────────────────
     const images = input.images || []
@@ -4046,42 +4044,6 @@ export class ThreadSessionRuntime {
         if (promptResponse instanceof Error) return promptResponse.message
         return parseOpenCodeErrorMessage(promptResponse.error)
       })()
-      const missingSessionId = getMissingSessionId({ message: errorMessage })
-      if (missingSessionId === session.id) {
-        const replacementSession = await this.recoverStaleSession({
-          input,
-          staleSessionId: session.id,
-          agent: earlyAgentPreference,
-          model: earlyModelParam,
-          variant: earlyThinkingValue,
-        })
-        if (replacementSession) {
-          const retryResponse = await getClient().session.promptAsync({
-            sessionID: replacementSession.id,
-            directory: this.sdkDirectory,
-            parts,
-            system: getOpencodeSystemMessage({
-              sessionId: replacementSession.id,
-              channelId,
-              guildId: this.thread.guildId,
-              threadId: this.thread.id,
-              channelTopic,
-              agents: earlyAvailableAgents,
-              username: this.state?.sessionUsername || input.username,
-              userId: this.state?.sessionUserId || input.userId,
-            }),
-            model: earlyModelParam,
-            agent: earlyAgentPreference,
-            ...variantField,
-          }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
-          if (!(retryResponse instanceof Error) && !retryResponse.error) {
-            logger.log(
-              `[DISPATCH] promptAsync recovered stale sessionId=${session.id} replacementSessionId=${replacementSession.id} threadId=${this.threadId}`,
-            )
-            return
-          }
-        }
-      }
       const errorObject = promptResponse instanceof Error
         ? promptResponse
         : new Error(errorMessage)
@@ -4100,6 +4062,12 @@ export class ThreadSessionRuntime {
     logger.log(
       `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
     )
+    this.pendingStaleSessionRecovery = {
+      sessionId: session.id,
+      input,
+      source: 'local-queue',
+      retried: staleSessionRetry,
+    }
   }
 
   // ── Session Ensure ──────────────────────────────────────────
