@@ -608,11 +608,13 @@ export async function processVoiceAttachment({
   // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars.
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
+  let transcriptionBaseUrl: string | undefined
   if (appId) {
     const stored = await getTranscriptionApiKey(appId)
     if (stored) {
       transcriptionApiKey = stored.apiKey
       transcriptionProvider = stored.provider
+      transcriptionBaseUrl = stored.baseUrl
     }
   }
   if (!transcriptionApiKey && process.env.OPENAI_API_KEY) {
@@ -673,6 +675,7 @@ export async function processVoiceAttachment({
         prompt: transcriptionPrompt,
         apiKey: transcriptionApiKey!,
         provider: transcriptionProvider!,
+        baseURL: transcriptionBaseUrl,
         mediaType: audioAttachment.contentType || undefined,
         currentSessionContext,
         lastSessionContext,
