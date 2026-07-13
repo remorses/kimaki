@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS `bot_api_keys` (
 	`gemini_api_key` text,
 	`openai_api_key` text,
 	`openai_base_url` text,
+	`transcription_local_model` text,
 	`xai_api_key` text,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
 	CONSTRAINT `fk_bot_api_keys_app_id_bot_tokens_app_id_fk` FOREIGN KEY (`app_id`) REFERENCES `bot_tokens`(`app_id`) ON UPDATE CASCADE

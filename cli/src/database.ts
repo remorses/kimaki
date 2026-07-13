@@ -736,6 +736,19 @@ export async function setOpenAIApiKey(appId: string, apiKey: string) {
     .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { openai_api_key: apiKey } })
 }
 
+export async function getLocalWhisperModel(appId: string): Promise<string | null> {
+  const db = await getDb()
+  const row = await db.query.bot_api_keys.findFirst({ where: { app_id: appId } })
+  return row?.transcription_local_model ?? null
+}
+
+export async function setLocalWhisperModel(appId: string, modelId: string | null) {
+  const db = await getDb()
+  await db.insert(schema.bot_api_keys)
+    .values({ app_id: appId, transcription_local_model: modelId })
+    .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: { transcription_local_model: modelId } })
+}
+
 export async function setOpenAIBaseUrl(appId: string, baseUrl: string | null) {
   const db = await getDb()
   await db.insert(schema.bot_api_keys)
