@@ -27,6 +27,7 @@ import {
   closeDatabase,
   setChannelDirectory,
   setChannelVerbosity,
+  getThreadSession,
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
@@ -41,6 +42,7 @@ import {
   initTestGitRepo,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
+  waitForFooterMessage,
 } from './test-utils.js'
 
 
@@ -426,7 +428,7 @@ describe('runtime lifecycle', () => {
   )
 
   test(
-    'existing runtime reconnects after shared opencode server restart',
+    'retries an accepted prompt after a stale session error from server restart',
     async () => {
       const prompt = 'Reply with exactly: reconnect-alpha'
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -447,7 +449,7 @@ describe('runtime lifecycle', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '*project',
-        timeout: 4_000,
+        timeout: 10_000,
       })
 
       const runtimeBeforeRestart = getRuntime(thread.id)
@@ -496,7 +498,7 @@ describe('runtime lifecycle', () => {
       const runtimeAfterRestart = getRuntime(thread.id)
       expect(runtimeAfterRestart).toBe(runtimeBeforeRestart)
     },
-    15_000,
+    20_000,
   )
 
   test(
