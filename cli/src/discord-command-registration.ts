@@ -463,12 +463,24 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('whisper-setup')
       .setDescription(
-        truncateCommandDescription('Configure a local voice-transcription service (backend, launch command, routing)'),
+        truncateCommandDescription('Set up local voice transcription — pick a model and Kimaki handles the rest'),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('model')
+          .setDescription('Built-in local model — downloads and runs automatically, zero setup (recommended)')
+          .setRequired(false)
+          .addChoices(
+            { name: 'Fast — quickest, ~110 MB download', value: 'fast' },
+            { name: 'Balanced — recommended, ~200 MB download', value: 'balanced' },
+            { name: 'Accurate — best quality, ~600 MB download', value: 'accurate' },
+            { name: 'Off — go back to cloud transcription', value: 'off' },
+          ),
       )
       .addStringOption((option) =>
         option
           .setName('backend')
-          .setDescription('Which local transcription backend to manage')
+          .setDescription('Advanced: manage a self-hosted transcription backend instead')
           .setRequired(false)
           .addChoices(
             { name: 'Kimaki Whisper shim (chat-audio bridge)', value: 'shim' },
