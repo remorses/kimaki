@@ -527,6 +527,24 @@ export async function setThreadSession(threadId: string, sessionId: string) {
   await upsertThreadSession({ threadId, sessionId, source: 'kimaki' })
 }
 
+/** Remove a thread mapping only when it still points at the stale session. */
+export async function clearThreadSessionIfMatches({
+  threadId,
+  sessionId,
+}: {
+  threadId: string
+  sessionId: string
+}): Promise<boolean> {
+  const db = await getDb()
+  const deleted = await db.delete(schema.thread_sessions)
+    .where(orm.and(
+      orm.eq(schema.thread_sessions.thread_id, threadId),
+      orm.eq(schema.thread_sessions.session_id, sessionId),
+    ))
+    .returning({ threadId: schema.thread_sessions.thread_id })
+  return deleted.length === 1
+}
+
 export async function upsertThreadSession({ threadId, sessionId, source }: { threadId: string; sessionId: string; source: ThreadSessionSource }) {
   const db = await getDb()
   await db.insert(schema.thread_sessions)

@@ -14,6 +14,9 @@ import {
   getSessionEventSnapshot,
   getSessionModel,
   setSessionModel,
+  setThreadSession,
+  getThreadSession,
+  clearThreadSessionIfMatches,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { chooseLockPort } from './test-utils.js'
@@ -121,6 +124,20 @@ describe('getDb', () => {
 
     await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
+  })
+
+  test('clears a stale thread session mapping at most once', async () => {
+    const threadId = `test-stale-session-${crypto.randomUUID()}`
+    const sessionId = `ses_stale_${crypto.randomUUID()}`
+    await setThreadSession(threadId, sessionId)
+
+    const results = await Promise.all([
+      clearThreadSessionIfMatches({ threadId, sessionId }),
+      clearThreadSessionIfMatches({ threadId, sessionId }),
+    ])
+
+    expect(results.sort()).toEqual([false, true])
+    await expect(getThreadSession(threadId)).resolves.toBeUndefined()
   })
 
   test('copyCurrentSessionModel snapshots source session model to forked session', async () => {

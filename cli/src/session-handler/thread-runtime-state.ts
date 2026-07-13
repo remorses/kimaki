@@ -71,8 +71,8 @@ export type ThreadRunState = {
   // on first dispatch (not on thread creation). Persists across multiple
   // prompt runs — the same session is reused for the thread's lifetime.
   // Also stored in the DB (thread_sessions table) for recovery after restart.
-  // Changes: set on first dispatch, may be re-set if the old session is
-  // invalid and a new one is created. Never cleared except on dispose.
+  // Changes: set on first dispatch, may be cleared while replacing a stale
+  // mapping, then re-set when the replacement session is created.
   // Read by: dispatchPrompt, ensureSession, abortSessionViaApi, footer.
   sessionId: string | undefined
 
@@ -158,7 +158,7 @@ export function removeThread(threadId: string): void {
   })
 }
 
-export function setSessionId(threadId: string, sessionId: string): void {
+export function setSessionId(threadId: string, sessionId: string | undefined): void {
   updateThread(threadId, (t) => ({ ...t, sessionId }))
 }
 

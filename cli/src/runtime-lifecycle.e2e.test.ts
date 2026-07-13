@@ -27,6 +27,7 @@ import {
   closeDatabase,
   setChannelDirectory,
   setChannelVerbosity,
+  getThreadSession,
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
@@ -41,6 +42,7 @@ import {
   initTestGitRepo,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
+  waitForFooterMessage,
 } from './test-utils.js'
 
 
@@ -495,6 +497,68 @@ describe('runtime lifecycle', () => {
 
       const runtimeAfterRestart = getRuntime(thread.id)
       expect(runtimeAfterRestart).toBe(runtimeBeforeRestart)
+    },
+    15_000,
+  )
+
+  test(
+    'replaces a deleted persisted session before dispatching the prompt',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: stale-session-alpha',
+      })
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (candidate) => candidate.name === 'Reply with exactly: stale-session-alpha',
+      })
+      const th = discord.thread(thread.id)
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        afterMessageIncludes: 'stale-session-alpha',
+        afterAuthorId: TEST_USER_ID,
+        timeout: 4_000,
+      })
+
+      const staleSessionId = await getThreadSession(thread.id)
+      expect(staleSessionId).toBeDefined()
+      const getClient = await initializeOpencodeForDirectory(directories.projectDirectory)
+      if (getClient instanceof Error || !staleSessionId) {
+        throw getClient instanceof Error ? getClient : new Error('Expected session')
+      }
+      await getClient().session.delete({
+        sessionID: staleSessionId,
+        directory: directories.projectDirectory,
+      })
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: stale-session-beta',
+      })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        afterMessageIncludes: 'stale-session-beta',
+        afterAuthorId: TEST_USER_ID,
+        timeout: 4_000,
+      })
+
+      const replacementSessionId = await getThreadSession(thread.id)
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (lifecycle-tester)
+        Reply with exactly: stale-session-alpha
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        --- from: user (lifecycle-tester)
+        Reply with exactly: stale-session-beta
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+      expect(replacementSessionId).toBeDefined()
+      expect(replacementSessionId).not.toBe(staleSessionId)
     },
     15_000,
   )
