@@ -31,10 +31,12 @@ import {
   getTranscriptionApiKey,
   getBotTokenWithMode,
   getLocalWhisperModel,
+  getTranscriptionEndpoint,
   findTextChannelByVoiceChannel,
 } from './database.js'
 import { transcribeViaKimakiGateway } from './cloudflare-transcription.js'
 import { transcribeLocalWhisper } from './whisper-local.js'
+import { transcribeViaEndpoint } from './whisper-pro.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
@@ -610,6 +612,8 @@ export async function processVoiceAttachment({
   // Built-in local whisper model takes priority: no API key, service, or URL
   // needed — the model runs in-process (configured via /whisper-setup).
   const localWhisperModel = appId ? await getLocalWhisperModel(appId) : null
+  // A direct transcription endpoint (auto-provisioned Pro server) outranks all.
+  const transcriptionEndpoint = appId ? await getTranscriptionEndpoint(appId) : null
 
   // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars.
   let transcriptionApiKey: string | undefined
@@ -636,10 +640,10 @@ export async function processVoiceAttachment({
   // via the kimaki.dev Whisper fallback before we bother the user with the
   // "add API key" dialog. This fallback has no tool-calling, so it can't
   // detect queueMessage/agent hints spoken in the voice message the way the
-  // OpenAI/Gemini path can. Skipped when a built-in local model is configured —
-  // that path needs neither keys nor network.
+  // OpenAI/Gemini path can. Skipped when a built-in local model or Pro
+  // endpoint is configured — those paths need neither keys nor the gateway.
   let gatewayTranscription: string | undefined
-  if (!transcriptionApiKey && !localWhisperModel) {
+  if (!transcriptionApiKey && !localWhisperModel && !transcriptionEndpoint) {
     const botRow = await getBotTokenWithMode().catch(() => undefined)
     if (botRow?.mode === 'gateway' && botRow.clientId && botRow.clientSecret) {
       const result = await transcribeViaKimakiGateway({
@@ -656,8 +660,8 @@ export async function processVoiceAttachment({
     }
   }
 
-  // A configured local model needs no API key at all — skip the key prompt.
-  if (!transcriptionApiKey && !gatewayTranscription && !localWhisperModel) {
+  // A configured local model or Pro endpoint needs no API key — skip the prompt.
+  if (!transcriptionApiKey && !gatewayTranscription && !localWhisperModel && !transcriptionEndpoint) {
     if (!appId) {
       await sendThreadMessage(
         thread,
@@ -676,7 +680,13 @@ export async function processVoiceAttachment({
     transcriptionProvider = requested.provider
   }
 
-  const transcription = localWhisperModel
+  const transcription = transcriptionEndpoint
+    ? await transcribeViaEndpoint({
+        audio: audioBuffer,
+        mediaType: audioAttachment.contentType || 'audio/ogg',
+        endpointUrl: transcriptionEndpoint,
+      })
+    : localWhisperModel
     ? await transcribeLocalWhisper({
         audio: audioBuffer,
         mediaType: audioAttachment.contentType || 'audio/ogg',
@@ -705,6 +715,7 @@ export async function processVoiceAttachment({
       NoResponseContentError: (e) => e.message,
       NoToolResponseError: (e) => e.message,
       LocalWhisperError: (e) => e.message,
+      WhisperProError: (e) => e.message,
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)

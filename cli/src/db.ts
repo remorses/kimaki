@@ -153,6 +153,7 @@ async function migrateSchema({
     'ALTER TABLE bot_api_keys ADD COLUMN openai_api_key TEXT',
     'ALTER TABLE bot_api_keys ADD COLUMN openai_base_url TEXT',
     'ALTER TABLE bot_api_keys ADD COLUMN transcription_local_model TEXT',
+    'ALTER TABLE bot_api_keys ADD COLUMN transcription_endpoint TEXT',
     "ALTER TABLE bot_tokens ADD COLUMN bot_mode TEXT DEFAULT 'self_hosted'",
     'ALTER TABLE bot_tokens ADD COLUMN client_id TEXT',
     'ALTER TABLE bot_tokens ADD COLUMN client_secret TEXT',
