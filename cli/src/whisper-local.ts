@@ -13,6 +13,7 @@
 import * as errore from 'errore'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { getDataDir } from './config.js'
@@ -45,7 +46,7 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
   {
     id: 'balanced',
     hfModel: 'onnx-community/whisper-base',
-    label: 'Balanced (recommended)',
+    label: 'Balanced',
     approxSize: '~200 MB',
   },
   {
@@ -54,7 +55,91 @@ export const LOCAL_WHISPER_MODELS: LocalWhisperModel[] = [
     label: 'Accurate',
     approxSize: '~600 MB',
   },
+  {
+    id: 'best',
+    hfModel: 'onnx-community/whisper-large-v3-turbo',
+    label: 'Best (large-v3-turbo)',
+    approxSize: '~1 GB',
+  },
 ]
+
+export interface WhisperEnvironment {
+  platform: NodeJS.Platform
+  arch: string
+  cpuCores: number
+  totalMemGb: number
+  nvidiaGpu: string | null
+  appleSilicon: boolean
+}
+
+/** Detect the host environment to drive model recommendations. */
+export async function detectWhisperEnvironment(): Promise<WhisperEnvironment> {
+  const nvidiaGpu = await new Promise<string | null>((resolve) => {
+    const child = spawn('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], {
+      shell: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    let out = ''
+    const timer = setTimeout(() => {
+      child.kill()
+      resolve(null)
+    }, 3000)
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString()
+    })
+    child.on('error', () => {
+      clearTimeout(timer)
+      resolve(null)
+    })
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      const name = out.split('\n')[0]?.trim()
+      resolve(code === 0 && name ? name : null)
+    })
+  })
+
+  return {
+    platform: process.platform,
+    arch: process.arch,
+    cpuCores: os.cpus().length,
+    totalMemGb: Math.round(os.totalmem() / 1e9),
+    nvidiaGpu,
+    appleSilicon: process.platform === 'darwin' && process.arch === 'arm64',
+  }
+}
+
+/**
+ * Recommend a built-in model tier for the detected environment. Conservative on
+ * RAM: the loaded model roughly doubles its download size in memory, and the
+ * bot + inference must not push a small machine into swap.
+ */
+export function recommendLocalWhisperModel(env: WhisperEnvironment): {
+  model: LocalWhisperModel
+  reason: string
+} {
+  if (env.totalMemGb >= 16 && env.cpuCores >= 8) {
+    return {
+      model: getLocalWhisperModelById('best')!,
+      reason: `${env.cpuCores} cores + ${env.totalMemGb} GB RAM handle the large-v3-turbo model comfortably`,
+    }
+  }
+  if (env.totalMemGb >= 8) {
+    return {
+      model: getLocalWhisperModelById('accurate')!,
+      reason: `${env.totalMemGb} GB RAM fits the Accurate model without memory pressure`,
+    }
+  }
+  if (env.totalMemGb >= 4) {
+    return {
+      model: getLocalWhisperModelById('balanced')!,
+      reason: `${env.totalMemGb} GB RAM suits the Balanced model`,
+    }
+  }
+  return {
+    model: getLocalWhisperModelById('fast')!,
+    reason: `limited RAM (${env.totalMemGb} GB) — Fast keeps transcription snappy without swapping`,
+  }
+}
 
 export function getLocalWhisperModelById(id: string): LocalWhisperModel | undefined {
   return LOCAL_WHISPER_MODELS.find((m) => m.id === id)

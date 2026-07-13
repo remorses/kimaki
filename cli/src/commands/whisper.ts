@@ -16,6 +16,8 @@ import {
 import {
   getLocalWhisperModelById,
   prepareLocalWhisperModel,
+  detectWhisperEnvironment,
+  recommendLocalWhisperModel,
 } from '../whisper-local.js'
 
 const logger = createLogger(LogPrefix.VOICE)
@@ -44,10 +46,19 @@ export async function handleWhisperSetupCommand({
       return
     }
 
-    const model = getLocalWhisperModelById(modelChoice)
+    // 'auto' resolves to the best tier for this machine's RAM/CPU.
+    const autoPick = modelChoice === 'auto'
+      ? recommendLocalWhisperModel(await detectWhisperEnvironment())
+      : null
+    const model = autoPick?.model ?? getLocalWhisperModelById(modelChoice)
     if (!model) {
       await command.editReply(`⚠️ Unknown model: ${modelChoice}`)
       return
+    }
+    if (autoPick) {
+      await command.editReply(
+        `🎤 Auto-selected **${model.label}** for this machine — ${autoPick.reason}.`,
+      )
     }
 
     await command.editReply(
@@ -110,9 +121,25 @@ export async function handleWhisperSetupCommand({
   }
 
   if (lines.length === 0) {
-    await command.editReply(
-      'Nothing to configure. Pass `backend` (or a custom `command`) to set the managed service, and/or `transcription-url` to route voice notes to a local OpenAI-compatible endpoint.',
-    )
+    // Bare invocation: report the environment and recommend a model, so a
+    // non-technical user learns exactly what to pick without leaving Discord.
+    const env = await detectWhisperEnvironment()
+    const rec = recommendLocalWhisperModel(env)
+    const report = [
+      '🎤 **Local transcription setup**',
+      '',
+      `**This machine:** ${env.platform}/${env.arch}, ${env.cpuCores} cores, ${env.totalMemGb} GB RAM${env.nvidiaGpu ? `, ${env.nvidiaGpu}` : ''}${env.appleSilicon ? ' (Apple Silicon)' : ''}`,
+      `**Recommended:** \`${rec.model.label}\` (${rec.model.approxSize} one-time download) — ${rec.reason}.`,
+      '',
+      `Run \`/whisper-setup model: Auto\` to set it up — Kimaki downloads and runs everything automatically. No keys, services, or URLs needed; audio never leaves this machine.`,
+      ...(env.nvidiaGpu
+        ? [
+            '',
+            `💡 With your ${env.nvidiaGpu}, the advanced \`backend\` options can run even larger GPU-accelerated models (e.g. faster-whisper large-v3) — for technical users.`,
+          ]
+        : []),
+    ]
+    await command.editReply(report.join('\n'))
     return
   }
 
