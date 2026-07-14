@@ -4035,9 +4035,6 @@ export class ThreadSessionRuntime {
   > {
     const directory = this.sdkDirectory
 
-    // Resolve worktree info for server initialization
-    const workspaceInfo = await getThreadWorktreeOrWorkspace(this.thread.id)
-
     // Auto-recover missing worktree directory (handles both thread_workspaces and thread_worktrees)
     const { recoverWorktreeDirectory: recoverDir } = await import('../worktrees.js')
     const recovery = await recoverDir({ threadId: this.thread.id })
@@ -4049,12 +4046,16 @@ export class ThreadSessionRuntime {
       )
     }
 
+    // Re-fetch workspace info after recovery in case it was updated
+    const workspaceInfoAfterRecovery = await getThreadWorktreeOrWorkspace(this.thread.id)
+
     const worktreeDirectory =
-      workspaceInfo?.status === 'ready' && workspaceInfo.workspace_directory
-        ? workspaceInfo.workspace_directory
+      workspaceInfoAfterRecovery?.status === 'ready' &&
+      workspaceInfoAfterRecovery.workspace_directory
+        ? workspaceInfoAfterRecovery.workspace_directory
         : undefined
     const originalRepoDirectory = worktreeDirectory
-      ? workspaceInfo?.project_directory
+      ? workspaceInfoAfterRecovery?.project_directory
       : undefined
 
     const getClientResult = await initializeOpencodeForDirectory(directory, {
