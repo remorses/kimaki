@@ -16,6 +16,7 @@ import {
   sanitizeAgentName,
   buildQuickAgentCommandDescription,
 } from './commands/agent.js'
+import { archiveThreadSlashCommand } from './commands/archive-thread.js'
 import { isSkillAllowed } from './skill-filter.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
@@ -400,6 +401,11 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('archive-thread')
+      .setDescription(truncateCommandDescription('Immediately archive this thread without confirmation'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('verbosity')
       .setDescription(truncateCommandDescription('Set output verbosity for this channel'))
       .setDMPermission(false)
@@ -474,6 +480,19 @@ export async function registerCommands({
       .setDescription(
         truncateCommandDescription('Open VS Code in the browser for this project or worktree (auto-stops after 30 minutes)'),
       )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('recover')
+      .setDescription(truncateCommandDescription('Recover a lost session by restoring conversation from Discord thread'))
+      .addStringOption((option) => {
+        option
+          .setName('thread')
+          .setDescription(truncateCommandDescription('Thread ID or link to recover (default: current thread)'))
+          .setRequired(false)
+
+        return option
+      })
       .setDMPermission(false)
       .toJSON(),
   ]

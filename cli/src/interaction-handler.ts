@@ -94,6 +94,7 @@ import {
   handleQueueCommandAutocomplete,
 } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
+import { handleArchiveThreadCommand } from './commands/archive-thread.js'
 import { handleUserCommand } from './commands/user-command.js'
 import {
   handleVerbosityCommand,
@@ -111,6 +112,7 @@ import {
   handleScreenshareStopCommand,
 } from './commands/screenshare.js'
 import { handleVscodeCommand } from './commands/vscode.js'
+import { handleRecoverCommand } from './commands/recover.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleModelVariantCommand,
@@ -417,6 +419,10 @@ export function registerInteractionHandler({
               await handleRedoCommand({ command: interaction, appId })
               return
 
+            case 'archive-thread':
+              await handleArchiveThreadCommand({ command: interaction, appId })
+              return
+
             case 'verbosity':
               await handleVerbosityCommand({ command: interaction, appId })
               return
@@ -480,6 +486,10 @@ export function registerInteractionHandler({
 
             case 'vscode':
               await handleVscodeCommand({ command: interaction, appId })
+              return
+
+            case 'recover':
+              await handleRecoverCommand({ command: interaction, appId })
               return
           }
 
