@@ -84,7 +84,7 @@ cli
   )
   .option(
     '--permission-timeout-minutes <minutes>',
-    'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
+    'Permission prompt timeout in minutes before auto-rejecting (default: 1440)',
   )
   .option(
     '--disable-sync',

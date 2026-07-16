@@ -115,7 +115,7 @@ type PendingPermissionContext = {
 
 // Store pending permission contexts by hash.
 // TTL prevents unbounded growth if user never clicks a permission button.
-// Configurable via --permission-timeout-minutes CLI flag (default: 10 minutes).
+// Configurable via --permission-timeout-minutes CLI flag (default: 24 hours).
 export const pendingPermissionContexts = new Map<
   string,
   PendingPermissionContext

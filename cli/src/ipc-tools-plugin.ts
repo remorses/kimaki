@@ -42,7 +42,7 @@ const logger = createPluginLogger('OPENCODE')
 
 const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
-const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
+const ACTION_BUTTON_TIMEOUT_MS = 24 * 60 * 60 * 1000
 
 async function loadDatabaseModule() {
   // The plugin-loading e2e test boots OpenCode directly without the bot-side

@@ -45,7 +45,7 @@ type PendingQuestionContext = {
 
 // Store pending question contexts by hash.
 // TTL prevents unbounded growth if user never answers a question.
-const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
+const QUESTION_CONTEXT_TTL_MS = 24 * 60 * 60 * 1000
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
 export function areAllQuestionsAnswered({

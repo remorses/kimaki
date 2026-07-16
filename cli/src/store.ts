@@ -178,7 +178,7 @@ export const store = createStore<KimakiState>(() => ({
   disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
-  permissionTimeoutMs: 10 * 60 * 1000,
+  permissionTimeoutMs: 24 * 60 * 60 * 1000,
   useWorktrees: false,
   autoUpgradeEnabled: true,
   syncEnabled: true,
