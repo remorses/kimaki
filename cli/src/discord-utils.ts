@@ -236,20 +236,21 @@ export async function archiveThread({
 
   if (client && sessionId) {
     const updateResult = await (async () => {
-        const sessionResponse = await client.session.get({
-          sessionID: sessionId,
-        })
-        if (!sessionResponse.data) {
-          return
-        }
-        const currentTitle = sessionResponse.data.title || ''
-        const newTitle = currentTitle.startsWith('📁')
-          ? currentTitle
-          : `📁 ${currentTitle}`.trim()
-        await client.session.update({
-          sessionID: sessionId,
-          title: newTitle,
-        })
+      const sessionResponse = await client.session.get({
+        sessionID: sessionId,
+      })
+      if (!sessionResponse.data) {
+        return
+      }
+      const currentTitle = sessionResponse.data.title || ''
+      const newTitle = currentTitle.startsWith('📁')
+        ? currentTitle
+        : `📁 ${currentTitle}`.trim()
+      await client.session.update({
+        sessionID: sessionId,
+        title: newTitle,
+        time: { archived: Date.now() },
+      })
     })().catch((e) => new Error('Failed to update session title', { cause: e }))
     if (updateResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${updateResult.message}`)
