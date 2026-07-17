@@ -281,9 +281,12 @@ function buildStartupTimeoutReason({
 // Clients are created per-directory with the x-opencode-directory header.
 
 type SingleServer = {
-  process: ChildProcess
+  process: ChildProcess | null
   port: number
   baseUrl: string
+  /** True when this server was discovered from the bot's hrana endpoint,
+   *  not spawned by this process. We must not kill it on cleanup. */
+  discovered?: boolean
 }
 
 type ServerLifecycleEvent =
@@ -318,6 +321,11 @@ function killSingleServerProcessNow({
   reason: string
 }): void {
   if (!singleServer) {
+    return
+  }
+
+  // Never kill a server we didn't spawn (discovered from another process)
+  if (singleServer.discovered || !singleServer.process) {
     return
   }
 
@@ -559,22 +567,82 @@ function ensureOpencodeHomeDirectories({
   })
 }
 
+/**
+ * Try to discover an OpenCode server already running in the bot process.
+ * Queries the hrana server on the lock port for the OpenCode server port,
+ * then verifies the server is healthy. Returns null if no server found.
+ */
+async function discoverExistingServer(): Promise<SingleServer | null> {
+  const lockPort = getLockPort()
+  try {
+    const portResponse = await requestHealthcheck({
+      url: `http://127.0.0.1:${lockPort}/kimaki/opencode-port`,
+      timeoutMs: 2000,
+    })
+    if (portResponse.status !== 200) {
+      return null
+    }
+    const parsed = JSON.parse(portResponse.body)
+    const port = parsed?.port
+    if (typeof port !== 'number') {
+      return null
+    }
+
+    // Verify the OpenCode server is actually healthy
+    const healthResponse = await requestHealthcheck({
+      url: `http://127.0.0.1:${port}/api/health`,
+      timeoutMs: 2000,
+    })
+    if (healthResponse.status >= 500) {
+      return null
+    }
+
+    opencodeLogger.log(
+      `Discovered existing OpenCode server on port ${port} via hrana lock port ${lockPort}`,
+    )
+    return {
+      process: null,
+      port,
+      baseUrl: `http://127.0.0.1:${port}`,
+      discovered: true,
+    }
+  } catch {
+    // Connection refused or other network error — no bot running
+    return null
+  }
+}
+
 async function ensureSingleServer({
   directory,
 }: {
   directory?: string
 } = {}): Promise<ServerStartError | SingleServer> {
   const startupDirectory = directory || preferredStartupDirectory || undefined
-  if (singleServer && !singleServer.process.killed) {
+  if (singleServer && !singleServer.process?.killed) {
     return singleServer
   }
 
-  // Deduplicate concurrent startup attempts
+  // Deduplicate concurrent startup attempts (covers both discovery and spawn)
   if (startingServer) {
     return startingServer
   }
 
-  startingServer = startSingleServer({ directory: startupDirectory })
+  // Wrap discovery + spawn in a single shared promise so concurrent callers
+  // don't each run discoverExistingServer() and then each spawn a server.
+  startingServer = (async () => {
+    // Try to discover an already-running server from the bot process via
+    // the hrana server's /kimaki/opencode-port endpoint. This lets CLI
+    // subcommands (kimaki session list, archive, wait, etc.) reuse the
+    // bot's OpenCode server instead of spawning a redundant one.
+    const discovered = await discoverExistingServer()
+    if (discovered) {
+      singleServer = discovered
+      return discovered
+    }
+
+    return startSingleServer({ directory: startupDirectory })
+  })()
+
   try {
     return await startingServer
   } finally {
@@ -1316,13 +1384,23 @@ export async function stopOpencodeServer(): Promise<boolean> {
   }
 
   const server = singleServer
+
+  // For discovered servers (from another process), just clear local state
+  // without killing the process we don't own.
+  if (server.discovered || !server.process) {
+    singleServer = null
+    clientCache.clear()
+    serverRetryCount = 0
+    return true
+  }
+
   opencodeLogger.log(
     `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
   )
   if (!server.process.killed) {
     const killResult = errore.try(
       () => {
-        server.process.kill('SIGTERM')
+        server.process!.kill('SIGTERM')
       },
       (error) => {
         return new Error('Failed to send SIGTERM to opencode server', {
