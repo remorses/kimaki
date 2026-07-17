@@ -83,6 +83,14 @@ export function getOpencodeServerAuthHeaders(): Record<string, string> {
   return { Authorization: `Basic ${encoded}` }
 }
 
+export function isExternalOpencodeServer(): boolean {
+  return !!store.getState().opencodeServerUrl
+}
+
+export function getExternalOpencodeServerUrl(): string | null {
+  return store.getState().opencodeServerUrl
+}
+
 // Tracks directories that have been initialized, to avoid repeated log spam
 // from the external sync polling loop.
 const initializedDirectories = new Set<string>()
@@ -587,6 +595,16 @@ async function startSingleServer({
 }: {
   directory?: string
 } = {}): Promise<ServerStartError | SingleServer> {
+  const externalUrl = store.getState().opencodeServerUrl
+  if (externalUrl) {
+    opencodeLogger.log(`Using external OpenCode server: ${externalUrl}`)
+    return {
+      port: 0,
+      process: { pid: 0, kill: () => true } as ChildProcess,
+      baseUrl: externalUrl,
+    }
+  }
+
   ensureProcessCleanupHandlersRegistered()
 
   const port = await getOpenPort()
@@ -685,6 +703,7 @@ async function startSingleServer({
   // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
   // causing issue #90 (project permissions not being respected).
   const isDev = import.meta.url.endsWith('.ts') || import.meta.url.endsWith('.tsx')
+  const isExternal = isExternalOpencodeServer()
   // Skill whitelist/blacklist from --enable-skill / --disable-skill CLI flags.
   // Applied as opencode permission.skill rules so every agent inherits the
   // filter via Permission.merge(defaults, agentRules, user).
@@ -692,16 +711,10 @@ async function startSingleServer({
     enabledSkills: store.getState().enabledSkills,
     disabledSkills: store.getState().disabledSkills,
   })
-  const opencodeConfig = {
+  const opencodeConfig: Record<string, unknown> = {
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
     formatter: false,
-    plugin: [
-      new URL(
-        isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
-        import.meta.url,
-      ).href,
-    ],
     permission: {
       edit: 'allow',
       bash: 'allow',
@@ -709,6 +722,16 @@ async function startSingleServer({
       webfetch: 'allow',
       ...(skillPermission && { skill: skillPermission }),
     },
+    ...(isExternal
+      ? {}
+      : {
+          plugin: [
+            new URL(
+              isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
+              import.meta.url,
+            ).href,
+          ],
+        }),
     agent: {
       explore: {
         permission: {
@@ -1246,10 +1269,23 @@ export function readInjectionGuardConfig({ sessionId }: { sessionId: string }): 
 // These helpers expose the single shared server and directory-scoped clients.
 
 export function getOpencodeServerPort(_directory?: string): number | null {
+  const externalUrl = store.getState().opencodeServerUrl
+  if (externalUrl) {
+    try {
+      const url = new URL(externalUrl)
+      return parseInt(url.port, 10) || (url.protocol === 'https:' ? 443 : 80)
+    } catch {
+      return null
+    }
+  }
   return singleServer?.port ?? null
 }
 
 export function getOpencodeServerBaseUrl(): string | null {
+  const externalUrl = store.getState().opencodeServerUrl
+  if (externalUrl) {
+    return externalUrl
+  }
   return singleServer?.baseUrl ?? null
 }
 

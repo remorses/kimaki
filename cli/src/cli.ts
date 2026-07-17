@@ -97,6 +97,10 @@ cli
     'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
   )
   .option(
+    '--opencode-url <url>',
+    'Use an existing OpenCode server instead of starting one. When set, Kimaki connects to this URL and disables all Kimaki-specific plugins (file uploads, action buttons, context awareness). Example: http://127.0.0.1:9090',
+  )
+  .option(
     '--gateway-callback-url <url>',
     'After gateway OAuth install, redirect to this URL instead of the default success page (appends ?guild_id=<id>)',
   )
@@ -146,6 +150,7 @@ cli
       noSentry?: boolean
       noAutoUpgrade?: boolean
       gateway?: boolean
+      opencodeUrl?: string
       gatewayCallbackUrl?: string
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
@@ -275,6 +280,7 @@ cli
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
+          ...(options.opencodeUrl && { opencodeServerUrl: options.opencodeUrl }),
         })
 
         if (enabledSkills.length > 0) {
@@ -299,6 +305,11 @@ cli
 
         if (options.verbosity) {
           cliLogger.log(`Default verbosity: ${options.verbosity}`)
+        }
+        if (options.opencodeUrl) {
+          cliLogger.log(
+            `Using external OpenCode server: ${options.opencodeUrl} (Kimaki plugins disabled)`,
+          )
         }
         if (options.mentionMode) {
           cliLogger.log(

@@ -125,6 +125,14 @@ export type KimakiState = {
   // Read by: external-opencode-sync.ts startExternalOpencodeSessionSync().
   syncEnabled: boolean
 
+  // External OpenCode server URL. When set via --opencode-url CLI flag,
+  // Kimaki connects to this existing server instead of spawning its own.
+  // When set, all Kimaki-specific plugins are disabled (file uploads,
+  // action buttons, context awareness) since they require IPC with the bot.
+  // Changes: set once at startup from --opencode-url CLI flag.
+  // Read by: opencode.ts for server URL and plugin loading.
+  opencodeServerUrl: string | null
+
   // Base URL for Discord REST API calls (default https://discord.com).
   // Overridden when using a gateway-proxy or gateway Discord mode.
   // Changes: set by getBotTokenWithMode() which runs at startup and on
@@ -182,6 +190,7 @@ export const store = createStore<KimakiState>(() => ({
   useWorktrees: false,
   autoUpgradeEnabled: true,
   syncEnabled: true,
+  opencodeServerUrl: null,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],
