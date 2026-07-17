@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/@holocron.so/vite/src/schema.json",
+  "$schema": "https://holocron.so/docs.json",
   "name": "Kimaki",
   "description": "Iron Man's Jarvis for coding agents, inside Discord",
   "favicon": "/logo.jpeg",
