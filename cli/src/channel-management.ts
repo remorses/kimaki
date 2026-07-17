@@ -188,6 +188,11 @@ __pycache__/
 *.egg-info/
 `
 
+/** Returns the absolute path to the default kimaki project directory. */
+export function getDefaultKimakiDirectory(): string {
+  return path.join(getProjectsDir(), 'kimaki')
+}
+
 const DEFAULT_CHANNEL_TOPIC =
   'General channel for misc tasks with Kimaki. Not connected to a specific OpenCode project or repository.'
 
@@ -216,7 +221,7 @@ export async function createDefaultKimakiChannel({
   channelName: string
   projectDirectory: string
 } | null> {
-  const projectDirectory = path.join(getProjectsDir(), 'kimaki')
+  const projectDirectory = getDefaultKimakiDirectory()
 
   // Ensure the default kimaki project directory exists before any DB mapping
   // restoration or git setup. Custom data dirs may not have <dataDir>/projects
@@ -242,11 +247,34 @@ export async function createDefaultKimakiChannel({
     directory: projectDirectory,
     channelType: 'text',
   })
-  const mappedChannelInGuild = existingMappings
-    .map((row) => guild.channels.cache.get(row.channel_id))
-    .find((ch): ch is TextChannel => ch?.type === ChannelType.GuildText)
-  if (mappedChannelInGuild) {
-    logger.log(`Default kimaki channel already exists: ${mappedChannelInGuild.id}`)
+  const mappedRow = existingMappings.find((row) => {
+    const ch = guild.channels.cache.get(row.channel_id)
+    return ch?.type === ChannelType.GuildText
+  })
+  if (mappedRow) {
+    // Backfill guild_id for rows created before this column existed,
+    // so the tombstone check works if the channel is deleted later.
+    if (mappedRow.guild_id !== guild.id) {
+      await setChannelDirectory({
+        channelId: mappedRow.channel_id,
+        directory: projectDirectory,
+        channelType: 'text',
+        guildId: guild.id,
+      })
+    }
+    logger.log(`Default kimaki channel already exists: ${mappedRow.channel_id}`)
+    return null
+  }
+
+  // 1b. If a mapping exists for this guild but the channel is gone from Discord,
+  // it was previously created and then deleted. Don't recreate it.
+  const staleForThisGuild = existingMappings.find(
+    (row) => row.guild_id === guild.id,
+  )
+  if (staleForThisGuild) {
+    logger.log(
+      `Default kimaki channel was previously provisioned for guild ${guild.name} (${guild.id}) as ${staleForThisGuild.channel_id}, but no longer exists. Skipping recreation.`,
+    )
     return null
   }
 
@@ -318,6 +346,7 @@ export async function createDefaultKimakiChannel({
     channelId: textChannel.id,
     directory: projectDirectory,
     channelType: 'text',
+    guildId: guild.id,
   })
 
   logger.log(`Created default kimaki channel: #${channelName} (${textChannel.id})`)

@@ -69,6 +69,9 @@ export const channel_directories = sqliteCore.sqliteTable('channel_directories',
   channel_id: sqliteCore.text('channel_id').primaryKey().notNull(),
   directory: sqliteCore.text('directory').notNull(),
   channel_type: sqliteCore.text('channel_type', { enum: ['text', 'voice'] }).notNull(),
+  // Guild that owns this channel. Used to scope the default-channel tombstone
+  // check so multi-guild setups don't cross-block each other.
+  guild_id: sqliteCore.text('guild_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 

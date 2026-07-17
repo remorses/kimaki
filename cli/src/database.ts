@@ -761,20 +761,20 @@ export async function getAnyAudioApiKey(): Promise<{ provider: 'openai' | 'gemin
 
 
 
-export async function setChannelDirectory({ channelId, directory, channelType, skipIfExists = false }: { channelId: string; directory: string; channelType: DatabaseChannelType; skipIfExists?: boolean }) {
+export async function setChannelDirectory({ channelId, directory, channelType, guildId, skipIfExists = false }: { channelId: string; directory: string; channelType: DatabaseChannelType; guildId?: string; skipIfExists?: boolean }) {
   const db = await getDb()
   if (skipIfExists) {
     await db.insert(schema.channel_directories)
-      .values({ channel_id: channelId, directory, channel_type: channelType })
+      .values({ channel_id: channelId, directory, channel_type: channelType, guild_id: guildId })
       .onConflictDoNothing({ target: schema.channel_directories.channel_id })
     return
   }
   await db.insert(schema.channel_directories)
-    .values({ channel_id: channelId, directory, channel_type: channelType })
-    .onConflictDoUpdate({ target: schema.channel_directories.channel_id, set: { directory, channel_type: channelType } })
+    .values({ channel_id: channelId, directory, channel_type: channelType, guild_id: guildId })
+    .onConflictDoUpdate({ target: schema.channel_directories.channel_id, set: { directory, channel_type: channelType, guild_id: guildId } })
 }
 
-export async function findChannelsByDirectory({ directory, channelType }: { directory?: string; channelType?: DatabaseChannelType }): Promise<Array<{ channel_id: string; directory: string; channel_type: string }>> {
+export async function findChannelsByDirectory({ directory, channelType }: { directory?: string; channelType?: DatabaseChannelType }): Promise<Array<{ channel_id: string; directory: string; channel_type: string; guild_id: string | null }>> {
   const db = await getDb()
   const where = directory && channelType
     ? { directory, channel_type: channelType }
@@ -783,7 +783,7 @@ export async function findChannelsByDirectory({ directory, channelType }: { dire
       : channelType
         ? { channel_type: channelType }
         : undefined
-  return db.query.channel_directories.findMany({ where, columns: { channel_id: true, directory: true, channel_type: true } })
+  return db.query.channel_directories.findMany({ where, columns: { channel_id: true, directory: true, channel_type: true, guild_id: true } })
 }
 
 export async function getAllTextChannelDirectories() {

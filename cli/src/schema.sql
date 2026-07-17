@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS `channel_directories` (
 	`channel_id` text PRIMARY KEY,
 	`directory` text NOT NULL,
 	`channel_type` text NOT NULL,
+	`guild_id` text,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 

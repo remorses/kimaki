@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
+import { getDefaultKimakiDirectory } from '../channel-management.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
@@ -277,6 +278,7 @@ cli
                 channel_id: ch.id,
                 directory: '',
                 channel_type: 'text' as const,
+                guild_id: guildId,
                 created_at: null,
                 channelName: ch.name,
                 guildId,
@@ -323,7 +325,10 @@ cli
     // Prune stale entries if requested
     let finalEntries = enrichedWithGuild
     if (options.prune) {
-      const stale = finalEntries.filter((ch) => ch.deleted && ch.isLocal)
+      // Skip default kimaki directory tombstones — those are preserved
+      // intentionally so the tutorial channel isn't recreated after deletion.
+      const defaultDir = getDefaultKimakiDirectory()
+      const stale = finalEntries.filter((ch) => ch.deleted && ch.isLocal && ch.directory !== defaultDir)
       if (stale.length === 0) {
         cliLogger.log('No stale channels to prune')
       } else {

@@ -97,6 +97,7 @@ import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
+import { getDefaultKimakiDirectory } from './channel-management.js'
 import { store } from './store.js'
 import {
   startExternalOpencodeSessionSync,
@@ -1455,6 +1456,17 @@ export async function startDiscordBot({
   // channel are disposed by their own ThreadDelete events from Discord.
   discordClient.on(Events.ChannelDelete, async (channel) => {
     try {
+      // Check if this is the default kimaki channel. If so, preserve the
+      // channel_directories row as a tombstone so we don't recreate it.
+      const mapping = await getChannelDirectory(channel.id)
+      const defaultDir = getDefaultKimakiDirectory()
+      if (mapping && mapping.directory === defaultDir) {
+        discordLogger.log(
+          `Preserving channel_directories row for deleted default channel ${channel.id} as tombstone`,
+        )
+        return
+      }
+
       const deleted = await deleteChannelDirectoryById(channel.id)
       if (deleted) {
         discordLogger.log(
