@@ -29,6 +29,7 @@ import {
 } from './database.js'
 import {
   stopOpencodeServer,
+  isExternalOpencodeServer,
 } from './opencode.js'
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
@@ -1277,9 +1278,10 @@ export async function startDiscordBot({
             ? path.basename(cwdDirectory)
             : branchResult
 
+          const workspaceType = isExternalOpencodeServer() ? 'worktree' : 'kimaki-worktree'
           await createPendingWorkspace({
             threadId: thread.id,
-            workspaceType: 'kimaki-worktree',
+            workspaceType,
             workspaceName: cwdWorktreeName,
             projectDirectory,
           })

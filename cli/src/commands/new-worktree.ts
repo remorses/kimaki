@@ -38,6 +38,7 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import {
   buildSessionPermissions,
   initializeOpencodeForDirectory,
+  isExternalOpencodeServer,
 } from '../opencode.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
@@ -215,9 +216,10 @@ async function tryWorkspaceCreate({
   if (getClient instanceof Error) return getClient
 
   const client = getClient()
+  const workspaceType = isExternalOpencodeServer() ? 'worktree' : 'kimaki-worktree'
   const response = await client.experimental.workspace.create({
     directory: projectDirectory,
-    type: 'kimaki-worktree',
+    type: workspaceType,
     branch: worktreeName,
     extra: baseBranch ? { baseBranch } : null,
   }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
@@ -281,7 +283,7 @@ export async function createWorktreeInBackground({
       // messages can see the in-progress state.
       await createPendingWorkspace({
         threadId: thread.id,
-        workspaceType: 'kimaki-worktree',
+        workspaceType: workspaceType,
         workspaceName: worktreeName,
         projectDirectory,
       })
