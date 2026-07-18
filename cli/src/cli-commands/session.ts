@@ -645,6 +645,7 @@ cli
 
       const sessionId = options.session || await getThreadSession(resolvedThreadId)
       let client: OpencodeClient | null = null
+      let workingDirectory: string | undefined
       if (sessionId && threadData.parent_id) {
         const channelConfig = await getChannelDirectory(threadData.parent_id)
         if (!channelConfig) {
@@ -652,6 +653,11 @@ cli
             `No channel directory mapping found for parent channel ${threadData.parent_id}`,
           )
         } else {
+          workingDirectory = channelConfig.directory
+          const worktreeInfo = await getThreadWorktreeOrWorkspace(resolvedThreadId)
+          if (worktreeInfo?.status === 'ready' && worktreeInfo.workspace_directory) {
+            workingDirectory = worktreeInfo.workspace_directory
+          }
           const getClient = await initializeOpencodeForDirectory(
             channelConfig.directory,
           )
@@ -675,6 +681,7 @@ cli
         parentChannelId: threadData.parent_id,
         sessionId,
         client,
+        workingDirectory,
       })
 
       const threadLabel = threadData.name || resolvedThreadId

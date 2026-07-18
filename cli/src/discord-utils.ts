@@ -219,6 +219,7 @@ export async function archiveThread({
   sessionId,
   client,
   archiveDelay = 0,
+  workingDirectory,
 }: {
   rest: RESTType
   threadId: string
@@ -226,6 +227,7 @@ export async function archiveThread({
   sessionId?: string
   client?: OpencodeClient | null
   archiveDelay?: number
+  workingDirectory?: string
 }): Promise<void> {
   await reactToThread({
     rest,
@@ -256,7 +258,10 @@ export async function archiveThread({
       discordLogger.warn(`[archive-thread] ${updateResult.message}`)
     }
 
-    const abortResult = await client.session.abort({ sessionID: sessionId })
+    const abortResult = await client.session.abort({
+        sessionID: sessionId,
+        ...(workingDirectory ? { directory: workingDirectory } : {}),
+      })
       .catch((e) => new Error('Failed to abort session', { cause: e }))
     if (abortResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${abortResult.message}`)
