@@ -17,6 +17,12 @@ ENV PATH="/root/.bun/bin:$PATH"
 # Bump this after publishing a new kimaki version, then fly deploy.
 RUN npm install -g kimaki@0.22.0
 
+# Pre-install opencode so kimaki doesn't need to fetch it at runtime.
+# The opencode installer can fail when GitHub API rate-limits the version lookup.
+# Pin a specific version to bypass the API call entirely.
+RUN curl -fsSL https://opencode.ai/install | bash -s -- --version 1.18.3
+ENV PATH="/root/.opencode/bin:$PATH"
+
 # Pre-install tools the AI agent uses via bunx so first invocations are instant.
 # critique: diff viewing and sharing (bunx critique --web)
 # tuistory: background process management for dev servers (bunx tuistory)
