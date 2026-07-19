@@ -223,6 +223,16 @@ do NOT add simple prisma query wrappers to database.ts. if a query is a straight
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 
+## pre-publish checklist
+
+before publishing to npm, always sync skills as the first step:
+
+```bash
+cd cli && pnpm sync-skills
+```
+
+this ensures the npm package ships the latest synced skills from their source repos. commit any skill changes before proceeding with the publish.
+
 ## post-publish release notification
 
 after every publish, once the `gh release create` step is done:
@@ -256,15 +266,41 @@ the website shows the changelog and install instructions, so it must be updated 
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
 
+## creating pull requests
+
+use `scripts/create-pr` to create PRs to your fork instead of upstream. usage:
+
+```bash
+git push -u origin my-branch
+./scripts/create-pr << 'EOF'
+fix: my fix
+Description here
+EOF
+```
+
 ## libsql in-memory gotcha
 
 when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memory:?cache=shared`. without `cache=shared`, libsql's `transaction()` method sets its internal `#db = null` and lazily creates a `new Database("file::memory:")` on the next operation -- which gives a **separate empty in-memory database**. this silently breaks any Prisma operation that uses transactions internally (`upsert`, `$transaction`, etc.) while simple `create`/`findMany` keep working, making the bug hard to diagnose.
 
+## git submodules
+
+this repo has git submodules (`errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`). their configured branches are in `.gitmodules`.
+
+**never rewrite or force-push a submodule branch in a way that drops commits kimaki still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
+
+workflow when changing a submodule:
+
+1. commit and **push** the submodule branch first so GitHub has the objects
+2. only then bump the gitlink in kimaki (`git add gateway-proxy` etc.) and commit that pointer update
+3. before changing a gitlink, prove the remote has the target SHA, e.g. `gh api repos/remorses/gateway-proxy/commits/<sha> --jq .sha` (must not 422)
+
+when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
+
+if a submodule tip was lost on the remote but still exists in a local checkout, restore it by fast-forwarding (or cherry-picking) the branch back onto the missing tip and pushing. do not "fix" kimaki by pointing at an older reachable commit unless those tip commits are intentionally abandoned.
+
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
-
-when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
 
 it is a package for using errors as values in ts.
 

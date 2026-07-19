@@ -1,0 +1,15 @@
+#!/bin/bash
+# Create PR to your fork (zpetterd/kimaki) instead of upstream
+# Usage: git push -u origin my-branch && ./scripts/create-pr
+# Then enter title on first line, body on remaining lines (Ctrl+D to submit)
+
+read -r title
+body=$(cat)
+branch=$(git rev-parse --abbrev-ref HEAD)
+
+gh pr create \
+  --title "$title" \
+  --body "$body" \
+  --base main \
+  --head "$branch" \
+  --repo zpetterd/kimaki

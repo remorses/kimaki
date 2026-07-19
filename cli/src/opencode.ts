@@ -598,11 +598,12 @@ async function startSingleServer({
   const externalUrl = store.getState().opencodeServerUrl
   if (externalUrl) {
     opencodeLogger.log(`Using external OpenCode server: ${externalUrl}`)
-    return {
+    singleServer = {
       port: 0,
       process: { pid: 0, kill: () => true } as ChildProcess,
       baseUrl: externalUrl,
     }
+    return singleServer
   }
 
   ensureProcessCleanupHandlersRegistered()
