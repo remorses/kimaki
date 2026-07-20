@@ -183,6 +183,77 @@ describe('formatTodoList', () => {
 
     expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒈ **fix the bug**"`)
   })
+
+  test('returns empty string when todos is not an array', () => {
+    // Regression test: external sync received a non-array todos value
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          // Testing runtime guard against malformed data (type allows any)
+          todos: { invalid: 'object' },
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    // Should not throw "todos.findIndex is not a function"
+    expect(formatTodoList(part)).toBe('')
+  })
+
+  test('returns empty string when todos is undefined', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {},
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
+  })
+
+  test('returns empty string when todos is null', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          // Testing runtime guard against malformed data (type allows any)
+          todos: null,
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
+  })
 })
 
 describe('serializeEmbeds', () => {
