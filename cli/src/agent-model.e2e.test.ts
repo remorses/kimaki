@@ -710,14 +710,17 @@ describe('agent model resolution', () => {
       await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
       await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
 
+      const existingThreadIds = new Set(
+        (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id),
+      )
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: btw-source-msg',
       })
 
       const sourceThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: btw-source-msg'
+        predicate: (thread) => {
+          return !existingThreadIds.has(thread.id)
         },
       })
 
@@ -742,14 +745,17 @@ describe('agent model resolution', () => {
         modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
       })
 
+      const existingForkThreadIds = new Set(
+        (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id),
+      )
       await discord.thread(sourceThread.id).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: btw-model-check. btw',
       })
 
       const forkedThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'btw: Reply with exactly: btw-model-check'
+        predicate: (thread) => {
+          return !existingForkThreadIds.has(thread.id)
         },
       })
 

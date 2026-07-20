@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.22.0
+
+1. **`--file` option for `kimaki send`** — attach local files (images, text files, PDFs) to Discord messages when creating threads or sending to existing ones.
+
+   ```bash
+   # Attach a screenshot to a new thread
+   kimaki send --channel <channelId> --prompt 'Review this screenshot' --file ./screenshot.png
+
+   # Attach multiple files to an existing thread
+   kimaki send --thread <threadId> --prompt 'Here are the logs' --file ./error.log --file ./trace.txt
+   ```
+
+   Files are uploaded as Discord attachments on the starter message. Images and PDFs are passed to the AI model as visual context; text files are inlined into the prompt. File size is validated against Discord's 25 MB limit before upload. Not compatible with `--send-at` (scheduled tasks store prompts as text).
+
+2. **`/new-session` now works inside threads** — previously `/new-session` only worked in text channels. When used in a thread, the new session inherits the same working directory (worktree or workspace), and the new thread is created in the parent text channel.
+
+3. **`--all` flag for `kimaki project list`** — when multiple kimaki instances share the same Discord server (different machines), `--all` scans the Kimaki category to discover text channels created by other instances.
+
+   ```bash
+   # Show local projects only (default)
+   kimaki project list
+
+   # Include remote projects from other machines
+   kimaki project list --all
+
+   # Machine-readable with is_local field
+   kimaki project list --all --json
+   ```
+
+   Remote projects show as `[remote]` with `(Not registered on this machine)` instead of a directory path. Use `--guild <id>` to specify which guild to scan when no local projects exist yet.
+
+4. **Auto-resolve remote ref for worktree base branches** — when creating a worktree with `--base-branch main`, kimaki now fetches the latest from `upstream` (then `origin`) and uses the remote ref if it's strictly ahead of the local branch. Avoids creating worktrees from stale local branches. Explicit remote refs like `origin/main` are passed through unchanged. Closes [#138](https://github.com/remorses/kimaki/issues/138)
+
+5. **Fix `/btw` and `. btw` suffix using wrong directory in worktree threads** — sessions forked via `/btw` or the `. btw` suffix, and user-defined OpenCode commands, now correctly use the worktree path instead of the base project directory.
+
+6. **Fix `kimaki send --channel` ignoring worktree toggle** — `kimaki send --channel` now auto-creates worktrees when `/toggle-worktrees` is enabled for the channel or when the global `--worktrees` flag is set. Previously, worktrees were only created when `--worktree` was explicitly passed.
+
+7. **Fix queue items removed by embed-only message updates** — Discord fires `MESSAGE_UPDATE` for link preview unfurling even when the user didn't edit the message. These events (`editedTimestamp = null`) no longer cause queued messages to be spuriously removed.
+
+8. **Channel column in `/tasks` output** — scheduled task listings now show the associated Discord channel as a clickable mention between the Status and Prompt columns.
+
+9. **Session ID shown alongside thread ID in system message** — agents now see both `--thread <threadId>` (preferred for cross-machine) and `--session <sessionId>` (fallback) in the system message, so they can reference the current session using either method.
+
+## 0.21.0
+
+1. **Guild name and ID in `kimaki project list`** — project listings now show which Discord server each channel belongs to, making it easy to distinguish channels with the same name across different servers.
+
+   Human-readable output shows the server name next to each channel:
+
+   ```
+   #kimaki (Personal Server)
+      Folder: kimaki
+      Directory: /Users/morse/.kimaki/projects/kimaki
+      Channel ID: 1505879613723906048
+      Guild ID: 1422625037164351591
+   ```
+
+   JSON output (`--json`) includes two new fields (`guild_id`, `guild_name`). A warning is printed when the same directory is registered in multiple channels across guilds.
+
+2. **New `kimaki project remove <channel_id>` command** — removes a single channel mapping from the local database without deleting the Discord channel. Useful for cleaning up duplicate or stale entries from multi-server setups.
+
+3. **Parent session ID forwarding** — sessions started via `kimaki send` now pass `--parent-session <id>` so child sessions know who started them and can message back when asked.
+
+   ```bash
+   kimaki send --channel <channelId> \
+     --prompt 'Help with this task' \
+     --agent build \
+     --parent-session ses_current
+   ```
+
+   Child sessions receive the parent ID in their system message with instructions on how to reply back.
+
+4. **Run now button for scheduled tasks** — `/tasks` now shows a **Run now** button next to planned tasks so you can fire them immediately instead of waiting for the scheduled time.
+
+   | Action | Button |
+   | --- | --- |
+   | Run early | **Run now** (planned tasks) |
+   | Remove | **Delete** (planned or running) |
+
+5. **Queue message deletion** — deleting a Discord message that is still waiting in the local queue now removes it before it drains into OpenCode. Previously, only editing a queued message to empty would remove it.
+
+6. **Fix `kimaki send` crash in read-only directories** — long prompts (attached as files) now use `os.tmpdir()` instead of `process.cwd()/tmp`, so `kimaki send` works from read-only directories like `/var/www/`. Fixes [#159](https://github.com/remorses/kimaki/issues/159)
+
+7. **Retry on Discord TLS certificate errors** — transient TLS failures like `unable to verify the first certificate` now exit with code 1 instead of 64 (`EXIT_NO_RESTART`), so the auto-restart wrapper recovers with backoff instead of stopping permanently.
+
+8. **Fix setup commands in multi-machine mode** — `create-new-project` and `add-project` now work from any channel when multiple machines are connected to the same Discord server. Previously these commands were incorrectly blocked by the ownership check.
+
+9. **Remove critique review instructions from system prompt** — the system prompt no longer includes the `bunx critique review --web` section (39 lines of instructions and 6 example commands), reducing prompt size.
+
 ## 0.20.1
 
 1. **Fix user-defined commands not creating worktrees** — `-cmd`, `-skill`, and `-mcp-prompt` slash commands now correctly create worktrees in channels with worktrees enabled. Previously, running a command like `/review-cmd` would create a plain thread without a worktree, even though regular messages and `/agent` commands already respected the per-channel worktree setting.

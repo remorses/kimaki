@@ -51,6 +51,10 @@ export type QueuedMessage = {
   // Written to a temp config file after session creation so the plugin
   // can check per-session whether to scan tool outputs.
   injectionGuardPatterns?: string[]
+  // Parent OpenCode session ID from `kimaki send --parent-session`.
+  // Applied once on first session create so the child system message can
+  // expose how to message the parent when the user asks.
+  parentSessionId?: string
   // Discord message ID and thread ID of the source message. Embedded in
   // <discord-user> synthetic context so the external sync loop can detect
   // messages that originated from Discord and skip re-mirroring them.
@@ -82,6 +86,11 @@ export type ThreadRunState = {
   sessionUsername: string | undefined
   sessionUserId: string | undefined
 
+  // Parent OpenCode session that spawned this thread via
+  // `kimaki send --parent-session`. Set once on first ingress and reused for
+  // the session-stable system prompt.
+  parentSessionId: string | undefined
+
   // FIFO queue of pending inputs waiting for kimaki-local dispatch.
   // Normal user messages default to opencode queue mode; this queue is
   // for explicit local-queue flows (for example /queue).
@@ -107,6 +116,7 @@ export function initialThreadState(): ThreadRunState {
     sessionId: undefined,
     sessionUsername: undefined,
     sessionUserId: undefined,
+    parentSessionId: undefined,
     queueItems: [],
     sentPartIds: new Set(),
   }
@@ -177,6 +187,15 @@ export function setSessionUserId(threadId: string, userId: string): void {
       return t
     }
     return { ...t, sessionUserId: userId }
+  })
+}
+
+export function setParentSessionId(threadId: string, parentSessionId: string): void {
+  updateThread(threadId, (t) => {
+    if (t.parentSessionId) {
+      return t
+    }
+    return { ...t, parentSessionId }
   })
 }
 

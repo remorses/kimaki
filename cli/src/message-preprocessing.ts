@@ -390,10 +390,18 @@ export async function preprocessNewSessionMessage({
   }
 
   const qs = extractQueueSuffix(prompt)
+
+  const fileAttachments = await getFileAttachments(message)
+  const textAttachmentsContent = await getTextAttachments(message)
+  const finalPrompt = textAttachmentsContent
+    ? `${qs.prompt}\n\n${textAttachmentsContent}`
+    : qs.prompt
+
   if (
     shouldSkipEmptyPrompt({
       message,
-      prompt: qs.prompt,
+      prompt: finalPrompt,
+      images: fileAttachments,
       hasVoiceAttachment,
     })
   ) {
@@ -401,7 +409,8 @@ export async function preprocessNewSessionMessage({
   }
 
   return {
-    prompt: qs.prompt,
+    prompt: finalPrompt,
+    images: fileAttachments.length > 0 ? fileAttachments : undefined,
     repliedMessage,
     permissionRules,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',

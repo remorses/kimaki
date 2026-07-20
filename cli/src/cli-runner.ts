@@ -57,6 +57,7 @@ import { discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl, getInt
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
+import os from 'node:os'
 import { spawn } from 'node:child_process'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -213,6 +214,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
   embeds,
   rest,
   splitInsteadOfAttach,
+  files,
 }: {
   channelId: string
   prompt: string
@@ -223,8 +225,88 @@ export async function sendDiscordMessageWithOptionalAttachment({
    *  being attached as a file. Useful for notify-only messages where the content
    *  should be directly visible in the channel. */
   splitInsteadOfAttach?: boolean
+  /** Local file paths to attach to the message (images, text files, etc.). */
+  files?: string[]
 }): Promise<{ id: string }> {
   const discordMaxLength = 2000
+
+  // When files are provided, always use multipart FormData upload
+  if (files?.length) {
+    const { DISCORD_DEFAULT_MAX_FILE_SIZE } = await import('./discord-utils.js')
+    const { default: mime } = await import('mime')
+
+    for (const file of files) {
+      const stat = fs.statSync(file)
+      if (stat.size > DISCORD_DEFAULT_MAX_FILE_SIZE) {
+        const fileMB = (stat.size / 1024 / 1024).toFixed(1)
+        const limitMB = (DISCORD_DEFAULT_MAX_FILE_SIZE / 1024 / 1024).toFixed(0)
+        throw new Error(
+          `File "${path.basename(file)}" is ${fileMB} MB, which exceeds Discord's ${limitMB} MB upload limit`,
+        )
+      }
+    }
+
+    // When prompt exceeds Discord's limit, attach it as prompt.md alongside
+    // user files so nothing is silently lost.
+    const isLongPrompt = prompt.length > discordMaxLength
+    const content = isLongPrompt
+      ? `Prompt attached as file (${prompt.length} chars)\n\n> ${prompt.slice(0, 100).replace(/\n/g, ' ')}...`
+      : prompt
+
+    // Build attachment metadata: user files + optional prompt.md
+    const allFiles: Array<{ filePath: string; filename: string; mimeType: string }> = files.map((file) => ({
+      filePath: file,
+      filename: path.basename(file),
+      mimeType: mime.getType(file) || 'application/octet-stream',
+    }))
+
+    if (isLongPrompt) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-prompt-'))
+      const tmpFile = path.join(tmpDir, 'prompt.md')
+      fs.writeFileSync(tmpFile, prompt)
+      allFiles.push({ filePath: tmpFile, filename: 'prompt.md', mimeType: 'text/markdown' })
+    }
+
+    const attachments = allFiles.map((f, index) => ({
+      id: index,
+      filename: f.filename,
+    }))
+
+    const formData = new FormData()
+    formData.append(
+      'payload_json',
+      JSON.stringify({
+        content,
+        attachments,
+        embeds,
+        allowed_mentions: { parse: store.getState().allowedMentions },
+      }),
+    )
+
+    for (const [index, f] of allFiles.entries()) {
+      const buffer = fs.readFileSync(f.filePath)
+      formData.append(
+        `files[${index}]`,
+        new Blob([buffer], { type: f.mimeType }),
+        f.filename,
+      )
+    }
+
+    const response = await fetch(
+      discordApiUrl(`/channels/${channelId}/messages`),
+      {
+        method: 'POST',
+        headers: { Authorization: `Bot ${botToken}` },
+        body: formData,
+      },
+    )
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`Discord API error: ${response.status} - ${error}`)
+    }
+    return (await response.json()) as { id: string }
+  }
+
   if (prompt.length <= discordMaxLength) {
     return (await rest.post(Routes.channelMessages(channelId), {
       body: {
@@ -264,11 +346,8 @@ export async function sendDiscordMessageWithOptionalAttachment({
   const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
   const summaryContent = `Prompt attached as file (${prompt.length} chars)\n\n> ${preview}...`
 
-  const tmpDir = path.join(process.cwd(), 'tmp')
-  if (!fs.existsSync(tmpDir)) {
-    fs.mkdirSync(tmpDir, { recursive: true })
-  }
-  const tmpFile = path.join(tmpDir, `prompt-${Date.now()}.md`)
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-prompt-'))
+  const tmpFile = path.join(tmpDir, 'prompt.md')
   // Wrap long lines so the file is readable in Discord's preview
   // (Discord doesn't wrap text in file attachments)
   const wrappedPrompt = prompt
@@ -340,6 +419,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
     return (await starterMessageResponse.json()) as { id: string }
   } finally {
     fs.unlinkSync(tmpFile)
+    fs.rmdirSync(tmpDir)
   }
 }
 
@@ -440,7 +520,7 @@ function readErrorField(error: object | null, key: string): unknown {
   return undefined
 }
 
-/** Transient network errors that may resolve on retry (DNS down, gateway unreachable). */
+/** Transient network errors that may resolve on retry (DNS down, gateway unreachable, TLS blips). */
 const TRANSIENT_ERROR_CODES = new Set([
   'ENOTFOUND',
   'ECONNREFUSED',
@@ -450,12 +530,41 @@ const TRANSIENT_ERROR_CODES = new Set([
   'EPIPE',
   'EHOSTUNREACH',
   'ENETUNREACH',
+  // TLS/cert errors can be transient (intermediate CA blip, MITM proxy, cert rotation).
+  // Without these, Discord login failure exits EXIT_NO_RESTART and the bin wrapper
+  // never restarts — the bot dies permanently on "unable to verify the first certificate".
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY',
+  'CERT_SIGNATURE_FAILURE',
+  'CERT_NOT_YET_VALID',
+  'CERT_HAS_EXPIRED',
+  'CRL_HAS_EXPIRED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
 ])
+
+const TRANSIENT_ERROR_MESSAGE_PATTERNS = [
+  /unable to verify the first certificate/i,
+  /certificate has expired/i,
+  /self[- ]signed certificate/i,
+  /unable to get local issuer certificate/i,
+]
 
 export function isTransientNetworkError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
   const code = (error as NodeJS.ErrnoException).code
   if (code && TRANSIENT_ERROR_CODES.has(code)) return true
+  // Fallback when code is stripped by wrappers (discord.js sometimes rethrows by message only).
+  if (
+    TRANSIENT_ERROR_MESSAGE_PATTERNS.some((pattern) =>
+      pattern.test(error.message),
+    )
+  ) {
+    return true
+  }
   // discord.js wraps errors in cause chains
   if (error.cause instanceof Error) return isTransientNetworkError(error.cause)
   return false

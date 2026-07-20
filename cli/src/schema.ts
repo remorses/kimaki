@@ -29,6 +29,10 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   session_id: sqliteCore.text('session_id').notNull(),
   source: sqliteCore.text('source', { enum: ['kimaki', 'external_poll'] }).notNull().default('kimaki'),
   last_synced_name: sqliteCore.text('last_synced_name'),
+  cleanup_prompted_at: datetime('cleanup_prompted_at'),
+  // Parent OpenCode session that spawned this thread via kimaki send --parent-session.
+  // Survives bot restarts so child multi-turn system prompts keep the parent ID.
+  parent_session_id: sqliteCore.text('parent_session_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 

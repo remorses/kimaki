@@ -11,7 +11,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
 import { describe, beforeAll, afterAll, test, expect } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
+import { ChannelType, Client, GatewayIntentBits, Partials, Routes } from 'discord.js'
+import YAML from 'yaml'
+import type { ThreadStartMarker } from './system-message.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencodeConfig,
@@ -59,6 +61,7 @@ function normalizeWorktreeLifecycleText(text: string): string {
     .replaceAll(CHANNEL_WORKTREE_NAME, 'CHANNEL_WORKTREE_NAME')
     .replaceAll(AUTO_WORKTREE_SUFFIX, 'AUTO_WORKTREE_NAME')
     .replaceAll(WORKTREE_NAME, 'WORKTREE_NAME')
+    .replaceAll(WORKTREE_SUFFIX, 'SUFFIX')
     .replace(/ses_[a-zA-Z0-9]+/g, 'ses_TEST')
     .replace(/<#\d+>/g, '<#THREAD_ID>')
     .replace(/`[^`\n]*\/worktrees\/[^`\n]*`/g, '`/tmp/worktrees/WORKTREE_NAME`')
@@ -773,5 +776,89 @@ describe('worktree lifecycle', () => {
       expect(okCount).toBe(2)
     },
     20_000,
+  )
+
+  test(
+    'kimaki send --channel auto-creates worktree when channel toggle is enabled',
+    async () => {
+      // Simulate `kimaki send --channel AUTO_WORKTREE_CHANNEL_ID --prompt '...'`
+      // WITHOUT --worktree flag. The bot-side ThreadCreate handler should detect
+      // the channel toggle and auto-create a worktree.
+      const prompt = `Reply with exactly: send-auto-wt-${WORKTREE_SUFFIX}`
+      const embedMarker: ThreadStartMarker = {
+        start: true,
+        username: 'worktree-tester',
+        userId: TEST_USER_ID,
+      }
+
+      // Post starter message (what `kimaki send` does)
+      const starterMessage = await discord
+        .channel(AUTO_WORKTREE_CHANNEL_ID)
+        .bot()
+        .sendMessage({
+          content: `» **kimaki-cli:**\n${prompt}`,
+          embeds: [
+            { color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } },
+          ],
+        })
+
+      // Create thread on that message (what `kimaki send` does via REST)
+      const threadData = (await botClient.rest.post(
+        Routes.threads(AUTO_WORKTREE_CHANNEL_ID, starterMessage.id),
+        {
+          body: {
+            name: prompt.slice(0, 80),
+            auto_archive_duration: 1440,
+          },
+        },
+      )) as { id: string; name: string }
+
+      // Wait for worktree creation status message (Branch:)
+      await waitForBotMessageContaining({
+        discord,
+        threadId: threadData.id,
+        userId: TEST_USER_ID,
+        text: 'Branch:',
+        timeout: 25_000,
+      })
+
+      // Wait for the bot reply to the prompt. The starter message is from
+      // the bot (kimaki-cli), not a user, so just wait for the text to appear.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: threadData.id,
+        userId: discord.botUserId,
+        text: '⬥ ok',
+        timeout: 10_000,
+      })
+
+      // Snapshot the thread content
+      const th = discord.thread(threadData.id)
+      expect(
+        normalizeWorktreeLifecycleText(await th.text()),
+      ).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        » **kimaki-cli:**
+        Reply with exactly: send-auto-wt-SUFFIX
+        [embed]
+        🌳 **Worktree: opencode/kimaki-rply-wth-exctly-snd-at-wt-l8kct**
+        📁 \`/tmp/worktrees/WORKTREE_NAME\`
+        🌿 Branch: \`opencode/kimaki-rply-wth-exctly-snd-at-wt-l8kct\`
+        *using deterministic-provider/deterministic-v2*
+        ⬥ ok"
+      `)
+
+      // Verify DB has worktree info
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(threadData.id)
+      expect(worktreeInfo?.status).toBe('ready')
+      expect(worktreeInfo?.workspace_directory).toBeTruthy()
+
+      // Verify runtime is in the worktree directory
+      const runtime = getRuntime(threadData.id)
+      expect(runtime).toBeDefined()
+      expect(runtime!.sdkDirectory).toContain(`${path.sep}worktrees${path.sep}`)
+      expect(runtime!.sdkDirectory).not.toBe(directories.projectDirectory)
+    },
+    35_000,
   )
 })

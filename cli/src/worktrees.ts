@@ -1006,6 +1006,80 @@ export async function mergeWorktree({
 }
 
 /**
+ * Resolve the best git ref for a base branch by checking remote tracking refs.
+ * Prefers upstream/<branch> over origin/<branch> over local <branch>.
+ * Fetches the remote first so tracking refs are up to date.
+ *
+ * If the remote is strictly ahead of local, returns the remote ref.
+ * If local and remote have diverged (local is both ahead and behind),
+ * returns the local branch to avoid needing a merge/rebase.
+ * If the branch is already an explicit remote ref (e.g. `origin/main`), skips resolution.
+ * Uses `git remote` to distinguish real remote prefixes from local branches
+ * containing `/` like `feature/foo`.
+ */
+export async function resolveBestBaseRef({
+  directory,
+  branch,
+}: {
+  directory: string
+  branch: string
+}): Promise<string> {
+  // Check if branch is already an explicit remote ref like "origin/main".
+  // Local branches can contain `/` (e.g. "feature/foo"), so we check
+  // against actual remote names instead of a naive slash check.
+  if (branch.includes('/')) {
+    const remotes = await git(directory, 'remote')
+    if (!(remotes instanceof Error)) {
+      const prefix = branch.slice(0, branch.indexOf('/'))
+      if (remotes.split('\n').some((r) => r.trim() === prefix)) {
+        return branch
+      }
+    }
+  }
+
+  for (const remote of ['upstream', 'origin']) {
+    // Best-effort fetch with short timeout
+    const fetchResult = await git(directory, `fetch ${remote} ${branch}`, {
+      timeout: 15_000,
+    })
+    if (fetchResult instanceof Error) continue
+
+    const remoteRef = `${remote}/${branch}`
+    const refExists = await git(directory, `rev-parse --verify refs/remotes/${remoteRef}`)
+    if (refExists instanceof Error) continue
+
+    // Check if local branch exists
+    const localExists = await git(directory, `rev-parse --verify refs/heads/${branch}`)
+    if (localExists instanceof Error) {
+      // No local branch but remote exists — use remote
+      return remoteRef
+    }
+
+    // Count commits: remote ahead of local, and local ahead of remote
+    const [remoteAhead, localAhead] = await Promise.all([
+      git(directory, `rev-list --count refs/heads/${branch}..refs/remotes/${remoteRef}`),
+      git(directory, `rev-list --count refs/remotes/${remoteRef}..refs/heads/${branch}`),
+    ])
+    if (remoteAhead instanceof Error || localAhead instanceof Error) continue
+
+    const remoteAheadCount = parseInt(remoteAhead, 10)
+    const localAheadCount = parseInt(localAhead, 10)
+
+    // Diverged (both ahead): use local to avoid needing a merge
+    if (remoteAheadCount > 0 && localAheadCount > 0) return branch
+
+    // Remote is strictly ahead: use remote ref
+    if (remoteAheadCount > 0) return remoteRef
+
+    // Equal or local is ahead — check next remote instead of returning early,
+    // because origin might be ahead even when upstream is equal.
+  }
+
+  // No usable remote found — use local branch as-is
+  return branch
+}
+
+/**
  * List branches sorted by most recent commit date.
  * Returns branch short names (e.g. "main", "origin/feature-x").
  * Filters by optional query string (case-insensitive substring match).

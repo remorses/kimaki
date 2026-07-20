@@ -63,6 +63,36 @@ kimaki upgrade
 | Typing indicator stuck, footers missing | `/upgrade-and-restart` |
 | Issue persists after `/restart-opencode-server` | `/upgrade-and-restart` |
 | Bot completely offline | Check the terminal where `kimaki` is running |
+| Messages stop arriving when lid is closed | [Disable sleep globally](#macbook-sleeping-with-lid-closed) |
+
+## MacBook sleeping with lid closed
+
+If you run Kimaki on a MacBook and close the lid, macOS puts the machine to sleep by default. This means Discord messages stop arriving and sessions go unresponsive.
+
+`caffeinate` only prevents **idle sleep**; it does not block the hardware sleep triggered by closing the lid.
+
+### Fix: disable sleep globally
+
+```bash
+sudo pmset -a disablesleep 1
+```
+
+This prevents sleep entirely, including on lid close. To re-enable later:
+
+```bash
+sudo pmset -a disablesleep 0
+```
+
+### Fix: System Settings (power adapter only)
+
+Go to **System Settings > Battery > Options** and enable **"Prevent automatic sleeping on power adapter when the display is off"**. This only works when plugged in and may not be enough on its own for lid-close scenarios.
+
+### Fix: Amphetamine (GUI alternative)
+
+[Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) is a free Mac App Store app with an explicit **"Allow system sleep when display is closed"** toggle. Disable that toggle to keep the Mac awake with the lid shut.
+
+> [!WARNING]
+> Running a MacBook with the lid closed traps heat. Keep it on a flat surface with good airflow; never put it in a bag while awake.
 
 ## Debugging with logs
 

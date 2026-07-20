@@ -2,7 +2,7 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.20.1",
+  "version": "0.22.0",
   "scripts": {
     "dev": "tsx src/bin.ts",
     "prepublishOnly": "pnpm sync-skills && pnpm build",
@@ -21,6 +21,13 @@
   },
   "repository": "https://github.com/remorses/kimaki",
   "bin": "bin.js",
+  "exports": {
+    "./package.json": "./package.json",
+    "./anthropic-auth-plugin": {
+      "types": "./dist/anthropic-auth-plugin.d.ts",
+      "default": "./dist/anthropic-auth-plugin.js"
+    }
+  },
   "files": [
     "dist",
     "src",
