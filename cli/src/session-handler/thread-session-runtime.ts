@@ -43,6 +43,8 @@ import {
   setPartMessage,
   getThreadSession,
   setThreadSession,
+  getThreadParentSessionId,
+  setThreadParentSessionId,
   getThreadWorktreeOrWorkspace,
   setSessionAgent,
   clearSessionModel,
@@ -522,6 +524,12 @@ export type IngressInput = {
   permissions?: string[]
   permissionRules?: PermissionRuleset
   injectionGuardPatterns?: string[]
+  /**
+   * Parent OpenCode session ID from explicit `kimaki send --parent-session` only.
+   * Stored once on first ingress and injected into the child system message.
+   * Never set for /btw, /fork, or task/subagent children (keeps system prompt cache).
+   */
+  parentSessionId?: string
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
   /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
@@ -3132,6 +3140,7 @@ export class ThreadSessionRuntime {
           agents: availableAgents,
           username: this.state?.sessionUsername || input.username,
           userId: this.state?.sessionUserId || input.userId,
+          parentSessionId: this.state?.parentSessionId || input.parentSessionId,
         }),
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
@@ -3185,6 +3194,7 @@ export class ThreadSessionRuntime {
       permissions: input.permissions,
       permissionRules: input.permissionRules,
       injectionGuardPatterns: input.injectionGuardPatterns,
+      parentSessionId: input.parentSessionId,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
       repliedMessage: input.repliedMessage,
@@ -3230,6 +3240,9 @@ export class ThreadSessionRuntime {
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     threadState.setSessionUsername(this.threadId, input.username)
     threadState.setSessionUserId(this.threadId, input.userId)
+    await this.ensureParentSessionId({
+      parentSessionId: input.parentSessionId,
+    })
 
     // When a preprocessor is provided, we must resolve it inside
     // dispatchAction before we know the final mode for routing.
@@ -3250,6 +3263,43 @@ export class ThreadSessionRuntime {
       return this.enqueueViaLocalQueue(input)
     }
     return this.submitViaOpencodeQueue(input)
+  }
+
+  /**
+   * Resolve parent session ID for child system prompts.
+   * Prefer in-memory state, then SQLite, then the ingress marker.
+   * Persist once so multi-turn child sessions keep the parent after restart.
+   */
+  private async ensureParentSessionId({
+    parentSessionId,
+  }: {
+    parentSessionId?: string
+  }) {
+    if (this.state?.parentSessionId) {
+      return
+    }
+
+    const storedParentSessionId = await getThreadParentSessionId(this.threadId)
+    if (storedParentSessionId) {
+      threadState.setParentSessionId(this.threadId, storedParentSessionId)
+      return
+    }
+
+    if (!parentSessionId) {
+      return
+    }
+
+    threadState.setParentSessionId(this.threadId, parentSessionId)
+    // Row may not exist yet on first ingress before ensureSession creates it.
+    // Best-effort write; ensureSession path also persists after setThreadSession.
+    await setThreadParentSessionId({
+      threadId: this.threadId,
+      parentSessionId,
+    }).catch((error) => {
+      logger.warn(
+        `[PARENT SESSION] Failed to persist parent session for thread ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
   }
 
   /**
@@ -3503,6 +3553,17 @@ export class ThreadSessionRuntime {
     if (!original) return { found: false, removed: false }
     if (!trimmed) return { found: true, removed: true }
     return { found: true, removed: false }
+  }
+
+  /** Remove a queued message identified by its Discord source message ID. */
+  removeQueuedMessage(
+    sourceMessageId: string,
+  ): threadState.QueuedMessage | undefined {
+    return threadState.updateQueueItemBySourceMessageId(
+      this.threadId,
+      sourceMessageId,
+      () => null,
+    )
   }
 
   // ── Queue Drain ─────────────────────────────────────────────
@@ -3926,26 +3987,25 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const promptResponse = await getClient()
-      .session.promptAsync({
-        sessionID: session.id,
-        directory: this.sdkDirectory,
-        parts,
-        system: getOpencodeSystemMessage({
-          sessionId: session.id,
-          channelId,
-          guildId: this.thread.guildId,
-          threadId: this.thread.id,
-          channelTopic,
-          agents: earlyAvailableAgents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-        }),
-        model: earlyModelParam,
-        agent: earlyAgentPreference,
-        ...variantField,
-      })
-      .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
+    const promptResponse = await getClient().session.promptAsync({
+      sessionID: session.id,
+      directory: this.sdkDirectory,
+      parts,
+      system: getOpencodeSystemMessage({
+        sessionId: session.id,
+        channelId,
+        guildId: this.thread.guildId,
+        threadId: this.thread.id,
+        channelTopic,
+        agents: earlyAvailableAgents,
+        username: this.state?.sessionUsername || input.username,
+        userId: this.state?.sessionUserId || input.userId,
+        parentSessionId: this.state?.parentSessionId || input.parentSessionId,
+      }),
+      model: earlyModelParam,
+      agent: earlyAgentPreference,
+      ...variantField,
+    }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
 
     if (promptResponse instanceof Error || promptResponse.error) {
       const errorMessage = (() => {
@@ -4154,6 +4214,19 @@ export class ThreadSessionRuntime {
     // Store session in DB and thread state
     await setThreadSession(this.thread.id, session.id)
     threadState.setSessionId(this.threadId, session.id)
+    // Parent may have been set on ingress before the thread_sessions row
+    // existed; write it now that the row is guaranteed.
+    const parentSessionId = this.state?.parentSessionId
+    if (parentSessionId) {
+      await setThreadParentSessionId({
+        threadId: this.thread.id,
+        parentSessionId,
+      }).catch((error) => {
+        logger.warn(
+          `[PARENT SESSION] Failed to persist parent session for thread ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
+    }
     await this.hydrateSessionEventsFromDatabase({ sessionId: session.id })
 
     // Store session start source for scheduled tasks

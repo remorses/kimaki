@@ -1,6 +1,6 @@
 // /tasks command — list all scheduled tasks sorted by next run time.
 // Renders a markdown table that the CV2 pipeline auto-formats for Discord,
-// including HTML-backed action buttons for cancellable tasks.
+// including HTML-backed Run now / Delete action buttons.
 
 import {
   ButtonInteraction,
@@ -23,6 +23,7 @@ import {
   cancelHtmlActionsForOwner,
   registerHtmlAction,
 } from '../html-actions.js'
+import { runScheduledTaskNow } from '../task-runner.js'
 import { formatTimeAgo } from './worktrees.js'
 
 function formatTimeUntil(date: Date): string {
@@ -55,6 +56,10 @@ function scheduleLabel(task: ScheduledTask): string {
   return 'one-time'
 }
 
+function canRunTask(task: ScheduledTask): boolean {
+  return task.status === 'planned'
+}
+
 function canCancelTask(task: ScheduledTask): boolean {
   return task.status === 'planned' || task.status === 'running'
 }
@@ -65,32 +70,43 @@ function sanitizeTableCell(value: string): string {
   return value.replaceAll('|', '\\|').replace(/\s+/g, ' ').trim()
 }
 
-function buildCancelButtonHtml({ buttonId }: { buttonId: string }): string {
-  return `<button id="${buttonId}" variant="secondary">Delete</button>`
+function buildRunCell(task: ScheduledTask): string {
+  if (!canRunTask(task)) {
+    return '-'
+  }
+  return `<button id="run-task-${task.id}" variant="primary">Run now</button>`
 }
 
-function buildActionCell(task: ScheduledTask): string {
+function buildCancelCell(task: ScheduledTask): string {
   if (!canCancelTask(task)) {
     return '-'
   }
-  return buildCancelButtonHtml({ buttonId: `cancel-task-${task.id}` })
+  return `<button id="cancel-task-${task.id}" variant="secondary">Delete</button>`
 }
 
 // Cap rows to avoid exceeding Discord's 40-component CV2 limit.
-// Each cancellable row renders as text + action row + button (~4 components),
-// so 10 rows is a safe ceiling.
-const MAX_TASK_ROWS = 10
+// Each actionable row is text + action row + up to 2 buttons (~4 components),
+// so 7 rows stays under the budget with separators.
+const MAX_TASK_ROWS = 7
+
+function formatChannelCell(task: ScheduledTask): string {
+  if (!task.channel_id) {
+    return '-'
+  }
+  return `<#${task.channel_id}>`
+}
 
 function buildTaskTable({
   tasks,
 }: {
   tasks: ScheduledTask[]
 }): string {
-  const header = '| ID | Status | Prompt | Schedule | Next Run | Action |'
-  const separator = '|---|---|---|---|---|---|'
+  const header = '| ID | Status | Channel | Prompt | Schedule | Next Run | Run | Delete |'
+  const separator = '|---|---|---|---|---|---|---|---|'
   const rows = tasks.map((task) => {
     const id = String(task.id)
     const status = task.status
+    const channel = formatChannelCell(task)
     const prompt = sanitizeTableCell(
       task.prompt_preview.length > 240
         ? task.prompt_preview.slice(0, 237) + '...'
@@ -107,8 +123,9 @@ function buildTaskTable({
       }
       return formatTimeUntil(task.next_run_at)
     })()
-    const action = buildActionCell(task)
-    return `| ${id} | ${status} | ${prompt} | ${schedule} | ${nextRun} | ${action} |`
+    const run = buildRunCell(task)
+    const cancel = buildCancelCell(task)
+    return `| ${id} | ${status} | ${channel} | ${prompt} | ${schedule} | ${nextRun} | ${run} | ${cancel} |`
   })
   return [header, separator, ...rows].join('\n')
 }
@@ -171,12 +188,15 @@ async function renderTasksReply({
       : undefined
   const combinedNotice = [notice, truncatedNotice].filter(Boolean).join('\n')
 
+  const runnableTasksByButtonId = new Map<string, ScheduledTask>()
   const cancellableTasksByButtonId = new Map<string, ScheduledTask>()
   tasks.forEach((task) => {
-    if (!canCancelTask(task)) {
-      return
+    if (canRunTask(task)) {
+      runnableTasksByButtonId.set(`run-task-${task.id}`, task)
     }
-    cancellableTasksByButtonId.set(`cancel-task-${task.id}`, task)
+    if (canCancelTask(task)) {
+      cancellableTasksByButtonId.set(`cancel-task-${task.id}`, task)
+    }
   })
 
   const tableMarkdown = buildTaskTable({ tasks })
@@ -185,18 +205,34 @@ async function renderTasksReply({
     : tableMarkdown
   const segments = splitTablesFromMarkdown(markdown, {
     resolveButtonCustomId: ({ button }) => {
-      const task = cancellableTasksByButtonId.get(button.id)
-      if (!task) {
+      const runTask = runnableTasksByButtonId.get(button.id)
+      if (runTask) {
+        const actionId = registerHtmlAction({
+          ownerKey,
+          threadId: String(runTask.id),
+          run: async ({ interaction }) => {
+            await handleRunTaskAction({
+              interaction,
+              taskId: runTask.id,
+              showAll,
+            })
+          },
+        })
+        return buildHtmlActionCustomId(actionId)
+      }
+
+      const cancelTask = cancellableTasksByButtonId.get(button.id)
+      if (!cancelTask) {
         return new Error(`No task registered for button ${button.id}`)
       }
 
       const actionId = registerHtmlAction({
         ownerKey,
-        threadId: String(task.id),
+        threadId: String(cancelTask.id),
         run: async ({ interaction }) => {
           await handleCancelTaskAction({
             interaction,
-            taskId: task.id,
+            taskId: cancelTask.id,
             showAll,
           })
         },
@@ -221,6 +257,70 @@ async function renderTasksReply({
   await editReply({
     components,
     flags: MessageFlags.IsComponentsV2,
+  })
+}
+
+async function handleRunTaskAction({
+  interaction,
+  taskId,
+  showAll,
+}: {
+  interaction: ButtonInteraction
+  taskId: number
+  showAll: boolean
+}): Promise<void> {
+  const guildId = interaction.guildId
+  if (!guildId) {
+    await interaction.editReply({
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: 'This action can only be used in a server.',
+        },
+      ],
+      flags: MessageFlags.IsComponentsV2,
+    })
+    return
+  }
+
+  const token = interaction.client.token
+  if (!token) {
+    await renderTasksReply({
+      guildId,
+      userId: interaction.user.id,
+      channelId: interaction.channelId,
+      showAll,
+      notice: `Could not run task #${taskId}: bot token unavailable.`,
+      editReply: (options) => {
+        return interaction.editReply(options)
+      },
+    })
+    return
+  }
+
+  const result = await runScheduledTaskNow({ token, taskId })
+  const notice = (() => {
+    if (result instanceof Error) {
+      return `Could not run task #${taskId}: ${result.message}`
+    }
+    if (result.kind === 'skipped') {
+      return `Task #${taskId} is already running or was claimed elsewhere.`
+    }
+    if (result.kind === 'failed') {
+      return `Task #${taskId} failed: ${result.error.message}`
+    }
+    return `Started task #${taskId}.`
+  })()
+
+  await renderTasksReply({
+    guildId,
+    userId: interaction.user.id,
+    channelId: interaction.channelId,
+    showAll,
+    notice,
+    editReply: (options) => {
+      return interaction.editReply(options)
+    },
   })
 }
 

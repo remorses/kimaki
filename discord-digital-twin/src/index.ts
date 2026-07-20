@@ -412,6 +412,43 @@ export class DigitalDiscord {
     return apiMessage
   }
 
+  async simulateUserMessageDelete({
+    messageId,
+    channelId,
+  }: {
+    messageId: string
+    channelId: string
+  }): Promise<void> {
+    if (!this.server) {
+      throw new Error('Server not started')
+    }
+    const existing = await this.prisma.message.findUnique({
+      where: { id: messageId },
+    })
+    if (!existing) {
+      throw new Error(`Message ${messageId} not found`)
+    }
+    if (existing.channelId !== channelId) {
+      throw new Error(`Message ${messageId} is not in channel ${channelId}`)
+    }
+
+    const channel = await this.prisma.channel.findUnique({
+      where: { id: channelId },
+    })
+    const guildId = channel?.guildId ?? undefined
+
+    await this.prisma.message.delete({ where: { id: messageId } })
+    await this.prisma.channel.update({
+      where: { id: channelId },
+      data: { messageCount: { decrement: 1 } },
+    })
+    this.server.gateway.broadcast(GatewayDispatchEvents.MessageDelete, {
+      id: messageId,
+      channel_id: channelId,
+      guild_id: guildId ?? '',
+    })
+  }
+
   async simulateInteraction({
     type,
     channelId,
@@ -1365,6 +1402,13 @@ export class ScopedUserActor {
       messageId,
       channelId: this.channelId,
       content,
+    })
+  }
+
+  async deleteMessage({ messageId }: { messageId: string }) {
+    return this.discord.simulateUserMessageDelete({
+      messageId,
+      channelId: this.channelId,
     })
   }
 

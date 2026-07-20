@@ -3,7 +3,7 @@
 // DigitalDiscord server and that state is correctly persisted in the DB.
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { Client, GatewayIntentBits, ChannelType } from 'discord.js'
+import { Client, GatewayIntentBits, ChannelType, Events, Partials } from 'discord.js'
 import type { Message as DjsMessage, TextChannel } from 'discord.js'
 import { DigitalDiscord } from '../src/index.js'
 
@@ -44,6 +44,7 @@ describe('messages and reactions', () => {
         api: discord.restUrl,
         version: '10',
       },
+      partials: [Partials.Message],
     })
 
     await client.login(discord.botToken)
@@ -106,6 +107,31 @@ describe('messages and reactions', () => {
     `)
     expect(observed.content).toBe(content)
     expect(observed.author.id).toBe(testUserId)
+  })
+
+  test('user actor helper can delete a message and dispatch messageDelete', async () => {
+    const message = await discord.channel(channelId).user(testUserId).sendMessage({
+      content: 'Delete actor helper message',
+    })
+    const deleted = new Promise<string>((resolve) => {
+      client.once(Events.MessageDelete, (msg) => {
+        resolve(msg.id)
+      })
+    })
+
+    await discord.channel(channelId).user(testUserId).deleteMessage({
+      messageId: message.id,
+    })
+
+    expect(await deleted).toBe(message.id)
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: user (TestUser)
+      Hello from user!
+      Actor helper message"
+    `)
+    const messages = await discord.channel(channelId).getMessages()
+    const found = messages.find((item) => item.id === message.id)
+    expect(found).toBeUndefined()
   })
 
   test('channel.send stores message in DB', async () => {

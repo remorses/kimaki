@@ -6,10 +6,11 @@ import YAML from 'yaml'
 import {
   claimScheduledTaskRunning,
   getDuePlannedScheduledTasks,
+  getScheduledTask,
   markScheduledTaskCronRescheduled,
   markScheduledTaskCronRetry,
   markScheduledTaskFailed,
-  markScheduledTaskOneShotCompleted,
+  deleteScheduledTask,
   recoverStaleRunningScheduledTasks,
   type ScheduledTask,
 } from './database.js'
@@ -58,7 +59,10 @@ async function executeThreadScheduledTask({
   const marker: ThreadStartMarker = {
     start: true,
     scheduledKind: task.schedule_kind,
-    scheduledTaskId: task.id,
+    // Only include scheduledTaskId for cron tasks. One-shot tasks are deleted
+    // after execution, so the ID would be stale by the time the bot processes
+    // the Discord event and tries to insert a session_start_sources row.
+    ...(task.schedule_kind === 'cron' ? { scheduledTaskId: task.id } : {}),
     ...(payload.agent ? { agent: payload.agent } : {}),
     ...(payload.model ? { model: payload.model } : {}),
     ...(payload.username ? { username: payload.username } : {}),
@@ -67,6 +71,7 @@ async function executeThreadScheduledTask({
     ...(payload.injectionGuardPatterns?.length
       ? { injectionGuardPatterns: payload.injectionGuardPatterns }
       : {}),
+    ...(payload.parentSessionId ? { parentSessionId: payload.parentSessionId } : {}),
   }
   const embed = [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
   // Newline between prefix and prompt so leading /command detection can
@@ -103,7 +108,8 @@ async function executeChannelScheduledTask({
     : {
         start: true,
         scheduledKind: task.schedule_kind,
-        scheduledTaskId: task.id,
+        // Only include scheduledTaskId for cron tasks (see thread variant comment)
+        ...(task.schedule_kind === 'cron' ? { scheduledTaskId: task.id } : {}),
         ...(payload.worktreeName ? { worktree: payload.worktreeName } : {}),
         ...(payload.cwd ? { cwd: payload.cwd } : {}),
         ...(payload.agent ? { agent: payload.agent } : {}),
@@ -114,6 +120,7 @@ async function executeChannelScheduledTask({
         ...(payload.injectionGuardPatterns?.length
           ? { injectionGuardPatterns: payload.injectionGuardPatterns }
           : {}),
+        ...(payload.parentSessionId ? { parentSessionId: payload.parentSessionId } : {}),
       }
   const embeds = marker
     ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
@@ -219,7 +226,7 @@ async function finalizeSuccessfulTask({
   completedAt: Date
 }): Promise<void> {
   if (task.schedule_kind === 'at') {
-    await markScheduledTaskOneShotCompleted({ taskId: task.id, completedAt })
+    await deleteScheduledTask(task.id)
     return
   }
 
@@ -290,20 +297,25 @@ async function finalizeFailedTask({
   })
 }
 
+export type ProcessDueTaskResult =
+  | { kind: 'skipped' }
+  | { kind: 'success' }
+  | { kind: 'failed'; error: Error }
+
 async function processDueTask({
   rest,
   task,
 }: {
   rest: REST
   task: ScheduledTask
-}): Promise<void> {
+}): Promise<ProcessDueTaskResult> {
   const startedAt = new Date()
   const claimed = await claimScheduledTaskRunning({
     taskId: task.id,
     startedAt,
   })
   if (!claimed) {
-    return
+    return { kind: 'skipped' }
   }
 
   const executeResult = await executeScheduledTask({ rest, task })
@@ -318,10 +330,33 @@ async function processDueTask({
       failedAt: finishedAt,
       error: executeResult,
     })
-    return
+    return { kind: 'failed', error: executeResult }
   }
 
   await finalizeSuccessfulTask({ task, completedAt: finishedAt })
+  return { kind: 'success' }
+}
+
+// Same claim → execute → finalize path as the poller. Used by /tasks Run now.
+export async function runScheduledTaskNow({
+  token,
+  taskId,
+}: {
+  token: string
+  taskId: number
+}): Promise<ProcessDueTaskResult | Error> {
+  const task = await getScheduledTask(taskId)
+  if (!task) {
+    return new Error(`Task #${taskId} not found`)
+  }
+  if (task.status !== 'planned') {
+    return new Error(
+      `Task #${taskId} is ${task.status}; only planned tasks can be run now`,
+    )
+  }
+
+  const rest = createDiscordRest(token)
+  return processDueTask({ rest, task })
 }
 
 async function runTaskRunnerTick({

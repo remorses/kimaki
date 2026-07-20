@@ -119,6 +119,28 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const slowBusyMatcher: DeterministicMatcher = {
+    id: 'slow-busy-reply',
+    priority: 100,
+    when: {
+      latestUserTextIncludes: 'SLOW_BUSY_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'slow-busy' },
+        { type: 'text-delta', id: 'slow-busy', delta: 'slow-busy-reply' },
+        { type: 'text-end', id: 'slow-busy' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 0, 0, 2_000, 0],
+    },
+  }
+
   const toolFollowupMatcher: DeterministicMatcher = {
     id: 'tool-followup',
     priority: 50,
@@ -751,6 +773,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
 
   return [
     slowAbortMatcher,
+    slowBusyMatcher,
     typingRepulseMatcher,
     pluginTimeoutSleepMatcher,
     actionButtonClickFollowupMatcher,

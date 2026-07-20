@@ -103,6 +103,7 @@
         "icon": "lucide:database",
         "pages": [
           "docs/reference/commands",
+          "docs/reference/gateway-architecture",
           "docs/reference/internals"
         ]
       },

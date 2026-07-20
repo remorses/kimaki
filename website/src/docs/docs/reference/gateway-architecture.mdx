@@ -1,0 +1,123 @@
+---
+title: Gateway Architecture and Event Delivery
+sidebarTitle: Gateway Architecture
+description: How events flow from Discord through the gateway proxy to your CLI, including offline buffering and reconnection.
+icon: lucide:network
+---
+
+Kimaki's **gateway mode** lets multiple users share a single Discord bot instead of each user creating their own. A Rust proxy sits between Discord and every kimaki CLI instance, routing events to the right client based on guild authorization.
+
+```diagram
+  Discord servers              Gateway proxy (Rust)            Your machine
+ ┌────────────────┐          ┌──────────────────────────┐    ┌──────────────────┐
+ │                │          │                          │    │                  │
+ │  Bot shard 0   │─────────>  Dispatch + broadcast     │    │  kimaki CLI      │
+ │  Bot shard 1   │─────────>  Per-client guild filter  ├───>│  (discord.js)    │
+ │  Bot shard N   │─────────>  Offline event buffering  │    │                  │
+ │                │          │                          │    │  OpenCode server │
+ └────────────────┘          └──────────────────────────┘    └──────────────────┘
+        ^                                  ^
+        │                                  │
+   Real Discord                   Shared Postgres
+   Gateway WebSocket              (gateway_clients table)
+```
+
+## How events flow
+
+Discord sends all bot events to the proxy's shards. The proxy **broadcasts** each event to all connected clients, but every client only receives events for its **authorized guilds**. Authorization comes from the `gateway_clients` table in Postgres, polled every second.
+
+```diagram
+  Discord Gateway
+        │
+        v
+  Shard receives event ──> broadcast_tx.send(payload, sequence, guild_id)
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    v                     v                     v
+              Client A                Client B              Client C
+              guild: 111              guild: 222            guild: 111
+              ✓ receives              ✓ receives            ✓ receives
+              guild 111 events        guild 222 events      guild 111 events
+```
+
+Events without a `guild_id` (DMs, user updates) are **not forwarded** to multi-tenant clients. Only guild-scoped events pass through.
+
+## Offline event buffering
+
+When a client is **not connected**, the proxy buffers specific event types so they can be replayed later. This is the key mechanism that prevents message loss when the CLI restarts or loses connection.
+
+**Buffered event types:**
+
+| Event | Buffered |
+|---|---|
+| `MESSAGE_CREATE` | Yes |
+| `MESSAGE_UPDATE` | Yes |
+| `MESSAGE_DELETE` | Yes |
+| `THREAD_CREATE` | Yes |
+| `THREAD_UPDATE` | Yes |
+| `THREAD_DELETE` | Yes |
+| Everything else (presence, typing, voice state, guild member updates) | No |
+
+<Aside>
+<Note>
+The buffer is a **FIFO queue capped at 200 events** per client. If more than 200 message/thread events arrive while the CLI is offline, the oldest are dropped.
+</Note>
+</Aside>
+
+Only message and thread events matter for coding sessions. Presence updates, typing indicators, and voice state changes are ephemeral and safe to lose.
+
+## What happens on reconnect
+
+When the CLI connects (or reconnects), the proxy delivers events in a strict three-step sequence before subscribing to the live stream:
+
+```diagram
+  Step 1                    Step 2                      Step 3
+ ┌────────────────────┐   ┌──────────────────────┐    ┌────────────────────────┐
+ │ Synthetic READY    │   │ Buffered events      │    │ Live event stream      │
+ │                    │   │                      │    │                        │
+ │ Filtered to only   │──>│ Up to 200 queued     │───>│ Real-time broadcast    │
+ │ authorized guilds  │   │ MESSAGE/THREAD events│    │ with guild filtering   │
+ │ + GUILD_CREATE     │   │ in FIFO order        │    │                        │
+ └────────────────────┘   └──────────────────────┘    └────────────────────────┘
+```
+
+**Step 1: Synthetic READY.** The proxy builds a custom READY payload containing only the guilds this client is authorized for, followed by `GUILD_CREATE` events for each guild. This is necessary because Discord's native READY includes all bot guilds, but each client should only see its own.
+
+**Step 2: Buffered event replay.** Any MESSAGE/THREAD events that arrived while the client was disconnected are drained from the offline buffer and sent in order. Sequence numbers are rewritten to maintain a continuous sequence for the client.
+
+**Step 3: Live stream.** The client subscribes to the shard's broadcast channel and receives events in real time from this point forward.
+
+## Discord's resume mechanism
+
+Independently of the proxy's buffering, discord.js implements Discord's native **session resume** protocol:
+
+- **RESUME**: discord.js sends `RESUME {session_id, seq}` to the gateway. If the session is still alive on Discord's servers (typically a few minutes), Discord replays all missed events since that sequence number.
+- **Fresh IDENTIFY**: if the session expired or RESUME is rejected (`INVALID_SESSION`), discord.js falls back to a new IDENTIFY. The proxy then runs the full three-step reconnection flow described above.
+
+After a **gateway proxy redeploy**, RESUME always fails because the proxy's in-memory sessions are gone. discord.js falls back to fresh IDENTIFY, re-authenticates via the `gateway_clients` table, and receives the synthetic READY plus any buffered events.
+
+<Aside>
+<Tip>
+The CLI doesn't implement any custom missed-event recovery. All recovery is handled by two layers working together: Discord's RESUME protocol and the proxy's offline buffer.
+</Tip>
+</Aside>
+
+## Limitations
+
+**Buffer is in-memory only.** If the gateway proxy itself restarts or redeploys, all offline buffers are lost. Events that arrived during the proxy's downtime are not recoverable through the proxy. Discord's own RESUME may recover some of them if the session is still valid.
+
+**200 event cap per client.** If a guild is very active and generates more than 200 message/thread events while the CLI is offline, the oldest events are dropped. In practice this is rare for coding-focused servers.
+
+**Non-message events are not buffered.** Typing indicators, presence updates, voice state changes, and guild member updates are not queued. These are ephemeral and regenerated on reconnect (guild state comes via `GUILD_CREATE`).
+
+**Stale protection.** If the proxy cannot reach the Postgres database for more than 30 seconds, it rejects all client authentication to prevent stale authorization data from being used. Clients see a connection failure and retry.
+
+## Summary
+
+| Layer | What it buffers | Capacity | Survives restart |
+|---|---|---|---|
+| **Discord servers** | Full message persistence | Unlimited | Yes |
+| **Gateway proxy** | MESSAGE/THREAD events per client | 200 events FIFO, in-memory | No (lost on redeploy) |
+| **Kimaki CLI** | Nothing (delegates to above layers) | N/A | N/A |
+
+The proxy's offline buffer is the primary mechanism that makes the CLI resilient to brief disconnections. For longer outages where both the proxy buffer and Discord's RESUME window are exhausted, messages still exist in Discord and can be fetched via REST, but real-time event replay is not available.

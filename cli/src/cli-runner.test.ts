@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { getOpenUrlCommand } from './cli-runner.js'
+import { getOpenUrlCommand, isTransientNetworkError } from './cli-runner.js'
 
 describe('getOpenUrlCommand', () => {
   const installUrl = 'https://kimaki.dev/discord-install?clientId=abc&clientSecret=def'
@@ -23,5 +23,43 @@ describe('getOpenUrlCommand', () => {
       command: 'xdg-open',
       args: [installUrl],
     })
+  })
+})
+
+describe('isTransientNetworkError', () => {
+  test('treats TLS leaf verification failures as transient', () => {
+    const error = Object.assign(new Error('unable to verify the first certificate'), {
+      code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    })
+    expect(isTransientNetworkError(error)).toBe(true)
+  })
+
+  test('matches TLS cert failures by message when code is missing', () => {
+    expect(
+      isTransientNetworkError(new Error('unable to verify the first certificate')),
+    ).toBe(true)
+  })
+
+  test('walks cause chains for nested TLS errors', () => {
+    const cause = Object.assign(new Error('unable to verify the first certificate'), {
+      code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    })
+    expect(isTransientNetworkError(new Error('Discord login failed', { cause }))).toBe(
+      true,
+    )
+  })
+
+  test('keeps fatal auth-style errors non-transient', () => {
+    expect(isTransientNetworkError(new Error('An invalid token was provided.'))).toBe(
+      false,
+    )
+    expect(isTransientNetworkError(new Error('Used disallowed intents'))).toBe(false)
+  })
+
+  test('still treats classic socket codes as transient', () => {
+    const error = Object.assign(new Error('getaddrinfo ENOTFOUND'), {
+      code: 'ENOTFOUND',
+    })
+    expect(isTransientNetworkError(error)).toBe(true)
   })
 })

@@ -10,7 +10,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
-import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { SILENT_MESSAGE_FLAGS, resolveWorkingDirectory } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   getChannelDirectory,
@@ -138,11 +138,12 @@ export const handleUserCommand: CommandHandler = async ({
       // Running in existing thread - just send the command
       await command.editReply(`Running ${commandInvocation}...`)
 
+      const resolved = await resolveWorkingDirectory({ channel: thread })
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
         thread,
         projectDirectory,
-        sdkDirectory: projectDirectory,
+        sdkDirectory: resolved?.workingDirectory || projectDirectory,
         channelId: textChannel?.id,
         appId,
       })

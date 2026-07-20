@@ -43,6 +43,12 @@ New folders are created under Kimaki's projects directory. Run multiple isolated
 
 **`/remove-project <project>`** removes the Discord channels for a project. The directory on your machine is left untouched; only the channel mapping is deleted.
 
+From the CLI you can remove individual channel mappings by channel ID (useful for cleaning duplicates without deleting the Discord channel):
+
+```bash
+npx -y kimaki project remove <channel-id>
+```
+
 ## Listing projects
 
 From the CLI:
@@ -51,4 +57,4 @@ From the CLI:
 npx -y kimaki project list
 ```
 
-This shows every directory currently registered with the bot.
+This shows every directory currently registered with the bot, including the guild (server) name each channel belongs to. The `--json` flag outputs machine-readable data with `guild_id` and `guild_name` fields for disambiguation when the same project is registered on multiple servers.

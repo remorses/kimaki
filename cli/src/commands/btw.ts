@@ -26,6 +26,7 @@ const logger = createLogger(LogPrefix.FORK)
 export async function forkSessionToBtwThread({
   sourceThread,
   projectDirectory,
+  sdkDirectory,
   prompt,
   userId,
   username,
@@ -33,6 +34,8 @@ export async function forkSessionToBtwThread({
 }: {
   sourceThread: ThreadChannel
   projectDirectory: string
+  /** Worktree directory when forking from a worktree thread, otherwise same as projectDirectory */
+  sdkDirectory: string
   prompt: string
   userId: string
   username: string
@@ -97,6 +100,9 @@ export async function forkSessionToBtwThread({
     `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId})`,
   )
 
+  // Parent context stays in the user prompt only. Do NOT pass parentSessionId
+  // into enqueueIncoming: that would inject a parent block into the system
+  // message and bust prompt cache shared with the parent session.
   const wrappedPrompt = [
     `The user asked a side question while you were working on another task.`,
     `This is a forked session whose ONLY goal is to answer this question.`,
@@ -112,7 +118,7 @@ export async function forkSessionToBtwThread({
     threadId: thread.id,
     thread,
     projectDirectory,
-    sdkDirectory: projectDirectory,
+    sdkDirectory,
     channelId,
     appId,
   })
@@ -173,7 +179,7 @@ export async function handleBtwCommand({
     return
   }
 
-  const { projectDirectory } = resolved
+  const { projectDirectory, workingDirectory } = resolved
 
   await command.deferReply({ flags: MessageFlags.Ephemeral })
 
@@ -181,6 +187,7 @@ export async function handleBtwCommand({
     const result = await forkSessionToBtwThread({
       sourceThread: threadChannel,
       projectDirectory,
+      sdkDirectory: workingDirectory,
       prompt,
       userId: command.user.id,
       username: command.user.displayName,

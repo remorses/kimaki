@@ -158,6 +158,8 @@ async function migrateSchema({
     'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
     "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'kimaki'",
     'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
+    'ALTER TABLE thread_sessions ADD COLUMN parent_session_id TEXT',
+    'ALTER TABLE thread_sessions ADD COLUMN cleanup_prompted_at DATETIME',
   ]
   for (const stmt of alterStatements) {
     await client.execute(stmt).catch(() => undefined)

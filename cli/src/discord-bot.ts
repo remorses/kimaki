@@ -53,6 +53,7 @@ import {
 } from './system-message.js'
 import YAML from 'yaml'
 import {
+  getFileAttachments,
   getTextAttachments,
   resolveMentions,
 } from './message-formatting.js'
@@ -485,6 +486,9 @@ export async function startDiscordBot({
       const cliInjectedInjectionGuardPatterns = isCliInjectedPrompt
         ? promptMarker?.injectionGuardPatterns
         : undefined
+      const cliInjectedParentSessionId = isCliInjectedPrompt
+        ? promptMarker?.parentSessionId
+        : undefined
 
       // Always ignore our own messages (unless CLI-injected prompt above).
       // Without this, assigning the Kimaki role to the bot itself would loop.
@@ -730,9 +734,15 @@ export async function startDiscordBot({
             ? extractBtwSuffix(message.content || '')
             : null
         if (btwResult?.forceBtw && projectDirectory && !isLeadingMentionToOtherUser) {
+          const btwSdkDir =
+            worktreeInfo?.status === 'ready' &&
+            worktreeInfo.workspace_directory
+              ? worktreeInfo.workspace_directory
+              : projectDirectory
           const result = await forkSessionToBtwThread({
             sourceThread: thread,
             projectDirectory,
+            sdkDirectory: btwSdkDir,
             prompt: btwResult.prompt,
             userId: message.author.id,
             username:
@@ -830,6 +840,7 @@ export async function startDiscordBot({
           model: cliInjectedModel,
           permissions: cliInjectedPermissions,
           injectionGuardPatterns: cliInjectedInjectionGuardPatterns,
+          parentSessionId: cliInjectedParentSessionId,
           noReply: isLeadingMentionToOtherUser || undefined,
           sessionStartSource: sessionStartSource
             ? {
@@ -852,7 +863,10 @@ export async function startDiscordBot({
 
         // Notify when a voice message was queued instead of sent immediately
         if (enqueueResult.queued && enqueueResult.position) {
-          await sendThreadMessage(thread, `Queued at position ${enqueueResult.position}. Edit your message to update it in queue`)
+          await sendThreadMessage(
+            thread,
+            `Queued at position ${enqueueResult.position}. Edit or delete your message to update the queue`,
+          )
         }
       }
 
@@ -1075,6 +1089,10 @@ export async function startDiscordBot({
       if (!message) return
       if (message.author.bot) return
       if (!message.content) return
+      // Discord fires MESSAGE_UPDATE for embed-only updates (link preview
+      // unfurling) without the user actually editing the message content.
+      // editedTimestamp is null for these; skip them to avoid false queue removals.
+      if (!message.editedTimestamp) return
 
       const channel = message.channel
       const isThread = [
@@ -1125,6 +1143,35 @@ export async function startDiscordBot({
     } catch (error) {
       discordLogger.error(
         'Error handling message update:',
+        error instanceof Error ? error.stack : String(error),
+      )
+    }
+  })
+
+  // Handle user message deletes to remove queued messages.
+  // Discord delete events do not include author/content, so attribution comes
+  // from the queued item captured at enqueue time.
+  discordClient.on(Events.MessageDelete, async (message) => {
+    try {
+      const channel = message.channel
+      if (!channel.isThread()) return
+
+      const runtime = getRuntime(channel.id)
+      if (!runtime) return
+
+      const removed = runtime.removeQueuedMessage(message.id)
+      if (!removed) return
+
+      discordLogger.log(
+        `[MESSAGE_DELETE] Removed queued message ${message.id} in thread ${channel.id}`,
+      )
+      await sendThreadMessage(
+        channel,
+        `⬦ **${removed.username}** removed message from queue`,
+      )
+    } catch (error) {
+      discordLogger.error(
+        'Error handling message delete:',
         error instanceof Error ? error.stack : String(error),
       )
     }
@@ -1187,7 +1234,10 @@ export async function startDiscordBot({
         `[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`,
       )
 
-      const textAttachmentsContent = await getTextAttachments(starterMessage)
+      const [textAttachmentsContent, fileAttachments] = await Promise.all([
+        getTextAttachments(starterMessage),
+        getFileAttachments(starterMessage),
+      ])
       const messageText = resolveMentions(starterMessage).trim()
       const prompt = textAttachmentsContent
         ? `${messageText}\n\n${textAttachmentsContent}`
@@ -1220,16 +1270,28 @@ export async function startDiscordBot({
         return
       }
 
-      // Start worktree creation concurrently if requested.
+      // Start worktree creation concurrently if requested via marker OR
+      // if the channel/global toggle enables auto-worktrees.
       // The runtime is created immediately so follow-up messages queue
       // naturally; the worktree promise is awaited inside enqueueIncoming.
+      const autoWorktreeEnabled =
+        !marker.worktree &&
+        !marker.cwd &&
+        (store.getState().useWorktrees ||
+          (await getChannelWorktreesEnabled(parent.id)))
+      const effectiveWorktreeName =
+        marker.worktree ||
+        (autoWorktreeEnabled
+          ? formatAutoWorktreeName(thread.name.slice(0, 50))
+          : undefined)
+
       let worktreePromise: Promise<string | Error> | undefined
-      if (marker.worktree && (await isGitRepositoryRoot(projectDirectory))) {
-        discordLogger.log(`[BOT_SESSION] Creating worktree: ${marker.worktree}`)
+      if (effectiveWorktreeName && (await isGitRepositoryRoot(projectDirectory))) {
+        discordLogger.log(`[BOT_SESSION] Creating worktree: ${effectiveWorktreeName}`)
 
         const worktreeStatusMessage = await thread
           .send({
-            content: worktreeCreatingMessage(marker.worktree),
+            content: worktreeCreatingMessage(effectiveWorktreeName),
             flags: SILENT_MESSAGE_FLAGS,
           })
           .catch(() => undefined)
@@ -1237,13 +1299,17 @@ export async function startDiscordBot({
         worktreePromise = createWorktreeInBackground({
           thread,
           starterMessage: worktreeStatusMessage,
-          worktreeName: marker.worktree,
+          worktreeName: effectiveWorktreeName,
           projectDirectory,
           rest: discordClient.rest,
         })
       } else if (marker.worktree) {
         discordLogger.warn(
           `[BOT_SESSION] Skipping requested worktree for non-git project directory: ${projectDirectory}`,
+        )
+      } else if (autoWorktreeEnabled) {
+        discordLogger.warn(
+          `[BOT_SESSION] Skipping auto-worktree for non-git project directory: ${projectDirectory}`,
         )
       }
 
@@ -1335,6 +1401,7 @@ export async function startDiscordBot({
         model: marker.model,
         permissions: marker.permissions,
         injectionGuardPatterns: marker.injectionGuardPatterns,
+        parentSessionId: marker.parentSessionId,
         mode: 'opencode',
         sessionStartSource: botThreadStartSource
           ? {
@@ -1346,7 +1413,12 @@ export async function startDiscordBot({
           const permissionRules = await getChannelReferencePermissionRules({
             message: starterMessage,
           })
-          return { prompt, permissionRules, mode: 'opencode' }
+          return {
+            prompt,
+            permissionRules,
+            mode: 'opencode',
+            ...(fileAttachments.length > 0 && { images: fileAttachments }),
+          }
         },
       })
     } catch (error) {

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getChannelWorktreesEnabled } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -26,7 +26,7 @@ import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-e
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
-import { execAsync, resolveSessionWorkingDirectory } from '../worktrees.js'
+import { execAsync, resolveSessionWorkingDirectory, isGitRepositoryRoot } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
@@ -96,6 +96,13 @@ cli
     ),
   )
   .option(
+    '-f, --file <path>',
+    z.array(z.string()).describe(
+      'Local file to attach (repeatable). Images, text files, PDFs, etc. ' +
+      'Examples: --file screenshot.png --file report.pdf',
+    ),
+  )
+  .option(
     '--send-at <schedule>',
     'Schedule send for future (UTC ISO date/time ending in Z, or cron expression)',
   )
@@ -103,6 +110,10 @@ cli
   .option(
     '--session <sessionId>',
     'Post prompt to thread mapped to an existing session',
+  )
+  .option(
+    '--parent-session <sessionId>',
+    'Parent OpenCode session ID for newly created child sessions',
   )
   .option(
     '--wait',
@@ -149,9 +160,17 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
+        const filePaths = options.file?.length
+          ? options.file.map((f: string) => path.resolve(f))
+          : undefined
+
         if (sendAt) {
           if (options.wait) {
             cliLogger.error('Cannot use --wait with --send-at')
+            process.exit(EXIT_NO_RESTART)
+          }
+          if (filePaths?.length) {
+            cliLogger.error('Cannot use --file with --send-at')
             process.exit(EXIT_NO_RESTART)
           }
           if (prompt.length > 1900) {
@@ -159,6 +178,31 @@ cli
               '--send-at currently supports prompts up to 1900 characters',
             )
             process.exit(EXIT_NO_RESTART)
+          }
+        }
+
+        // Validate all --file paths exist and are regular files
+        if (filePaths?.length) {
+          // Discord allows max 10 attachments per message. Long prompts also
+          // consume one slot (prompt.md), so reserve space for that.
+          const maxUserFiles = prompt.length > 2000 ? 9 : 10
+          if (filePaths.length > maxUserFiles) {
+            cliLogger.error(
+              `Too many files: ${filePaths.length} provided, Discord allows at most ${maxUserFiles} attachments per message` +
+              (maxUserFiles === 9 ? ' (1 slot reserved for long prompt)' : ''),
+            )
+            process.exit(EXIT_NO_RESTART)
+          }
+          for (const file of filePaths) {
+            if (!fs.existsSync(file)) {
+              cliLogger.error(`File not found: ${file}`)
+              process.exit(EXIT_NO_RESTART)
+            }
+            const stat = fs.statSync(file)
+            if (!stat.isFile()) {
+              cliLogger.error(`Not a regular file: ${file}`)
+              process.exit(EXIT_NO_RESTART)
+            }
           }
         }
 
@@ -427,6 +471,7 @@ cli
               userId: null,
               permissions: options.permission?.length ? options.permission : null,
               injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
+              parentSessionId: options.parentSession || null,
             }
             const taskId = await createScheduledTask({
               scheduleKind: parsedSchedule.scheduleKind,
@@ -458,6 +503,7 @@ cli
             ...(options.model && { model: options.model }),
             ...(options.permission?.length ? { permissions: options.permission } : {}),
             ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
+            ...(options.parentSession && { parentSessionId: options.parentSession }),
           }
           const promptEmbed = [
             {
@@ -477,6 +523,7 @@ cli
             botToken,
             embeds: promptEmbed,
             rest,
+            files: filePaths,
           })
 
           const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
@@ -572,14 +619,23 @@ cli
             : cleanPrompt)
         // Explicit string => use as-is via formatWorktreeName (no vowel strip).
         // Boolean true => derived from thread/prompt, compress via formatAutoWorktreeName.
+        // When no --worktree flag but channel has worktrees enabled via toggle,
+        // the bot-side ThreadCreate handler auto-creates the worktree. We add
+        // the prefix here for cosmetic consistency (thread name shows 🌳).
+        const channelWorktreesEnabled =
+          !options.worktree && !options.cwd && !notifyOnly && projectDirectory
+            ? (await getChannelWorktreesEnabled(channelId)) &&
+              (await isGitRepositoryRoot(projectDirectory))
+            : false
         const worktreeName = options.worktree
           ? typeof options.worktree === 'string'
             ? formatWorktreeName(options.worktree)
             : formatAutoWorktreeName(baseThreadName)
           : undefined
-        const threadName = worktreeName
-          ? `${WORKTREE_PREFIX}${baseThreadName}`
-          : baseThreadName
+        const threadName =
+          worktreeName || channelWorktreesEnabled
+            ? `${WORKTREE_PREFIX}${baseThreadName}`
+            : baseThreadName
 
         if (parsedSchedule) {
           const payload: ScheduledTaskPayload = {
@@ -596,6 +652,7 @@ cli
             userId: resolvedUser?.id || null,
             permissions: options.permission?.length ? options.permission : null,
             injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
+            parentSessionId: options.parentSession || null,
           }
           const taskId = await createScheduledTask({
             scheduleKind: parsedSchedule.scheduleKind,
@@ -634,6 +691,7 @@ cli
               ...(options.model && { model: options.model }),
               ...(options.permission?.length && { permissions: options.permission }),
               ...(options.injectionGuard?.length && { injectionGuardPatterns: options.injectionGuard }),
+              ...(options.parentSession && { parentSessionId: options.parentSession }),
             }
         const autoStartEmbed = embedMarker
           ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } }]
@@ -646,6 +704,7 @@ cli
           embeds: autoStartEmbed,
           rest,
           splitInsteadOfAttach: notifyOnly,
+          files: filePaths,
         })
 
         // For notify-only on non-project channels, just post the message without
