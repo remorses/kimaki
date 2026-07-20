@@ -32,6 +32,8 @@ import {
   SpeechGenerationError,
   type SpeechGenerationErrors,
 } from './errors.js'
+import { getVLLMBaseUrl, checkVLLMServiceRunning } from './vllm-service-manager.js'
+import { startAsrService, shouldAutoStartAsr } from './asr-service-manager.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -428,7 +430,10 @@ export type TranscribeAudioErrors =
   | InvalidAudioFormatError
   | TranscriptionLoopError
 
-export type TranscriptionProvider = 'openai' | 'gemini'
+export type TranscriptionProvider = 'openai' | 'gemini' | 'parakeet' | 'vllm'
+
+// ASR service URL for Parakeet
+const ASR_SERVICE_URL = process.env.ASR_SERVICE_URL || 'http://127.0.0.1:8765'
 
 /**
  * Create a LanguageModelV3 for transcription.
@@ -459,6 +464,184 @@ export function createTranscriptionModel({
   return google('gemini-2.5-flash')
 }
 
+/**
+ * Transcribe audio using local Parakeet ASR service (MLX).
+ * Requires the ASR service to be running at ASR_SERVICE_URL.
+ */
+async function transcribeWithParakeet({
+  audio,
+  prompt,
+  mediaType,
+}: {
+  audio: Buffer | Uint8Array | ArrayBuffer | string
+  prompt?: string
+  mediaType?: string
+}): Promise<TranscribeAudioErrors | TranscriptionResult> {
+  const audioBuffer: Buffer =
+    typeof audio === 'string'
+      ? Buffer.from(audio, 'base64')
+      : audio instanceof Buffer
+        ? audio
+        : audio instanceof ArrayBuffer
+          ? Buffer.from(new Uint8Array(audio))
+          : Buffer.from(audio)
+
+  if (audioBuffer.length === 0) {
+    return new InvalidAudioFormatError()
+  }
+
+  voiceLogger.log(`Transcribing with parakeet-mlx service at ${ASR_SERVICE_URL}`)
+
+  try {
+    const finalBuffer = audioBuffer
+    const finalMediaType = mediaType || 'audio/ogg'
+
+    // Determine file extension from media type for the filename
+    const extMap: Record<string, string> = {
+      'audio/wav': '.wav',
+      'audio/x-wav': '.wav',
+      'audio/mp3': '.mp3',
+      'audio/mpeg': '.mp3',
+      'audio/ogg': '.ogg',
+      'audio/opus': '.ogg',
+      'audio/mp4': '.m4a',
+      'audio/m4a': '.m4a',
+      'audio/x-m4a': '.m4a',
+      'audio/flac': '.flac',
+      'audio/aac': '.aac',
+    }
+    const ext = extMap[finalMediaType.toLowerCase()] || '.ogg'
+
+    const formData = new FormData()
+    formData.append('file', new Blob([finalBuffer], { type: finalMediaType }), `audio${ext}`)
+
+    const response = await fetch(`${ASR_SERVICE_URL}/transcribe`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error')
+      voiceLogger.error(`Parakeet ASR service error: ${response.status} ${errorText}`)
+      return new TranscriptionError({
+        reason: `Parakeet ASR service error: ${response.status} ${errorText}`,
+      })
+    }
+
+    const result = (await response.json()) as { text?: string; success?: boolean }
+    const text = result.text?.trim()
+
+    if (!text) {
+      return new EmptyTranscriptionError()
+    }
+
+    voiceLogger.log(`Parakeet transcription: ${text}`)
+    return { transcription: text, queueMessage: false }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    voiceLogger.error(`Parakeet ASR service failed: ${errorMessage}`)
+
+    if (
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('fetch failed')
+    ) {
+      return new TranscriptionError({
+        reason:
+          'Parakeet ASR service is not running. Start it with: cd asr-service && pip install -r requirements.txt && python asr_server.py',
+      })
+    }
+
+    return new TranscriptionError({
+      reason: `Parakeet ASR service failed: ${errorMessage}`,
+    })
+  }
+}
+
+/**
+ * Transcribe audio using local vLLM Whisper service.
+ * Requires vLLM to be running with Whisper model.
+ */
+export async function transcribeWithVLLM({
+  audio,
+  prompt,
+  mediaType,
+}: {
+  audio: Buffer | Uint8Array | ArrayBuffer | string
+  prompt?: string
+  mediaType?: string
+}): Promise<TranscribeAudioErrors | TranscriptionResult> {
+  const audioBuffer: Buffer =
+    typeof audio === 'string'
+      ? Buffer.from(audio, 'base64')
+      : audio instanceof Buffer
+        ? audio
+        : audio instanceof ArrayBuffer
+          ? Buffer.from(new Uint8Array(audio))
+          : Buffer.from(audio)
+
+  if (audioBuffer.length === 0) {
+    return new InvalidAudioFormatError()
+  }
+
+  const baseUrl = getVLLMBaseUrl()
+
+  // Check if vLLM is running
+  const isRunning = await checkVLLMServiceRunning()
+  if (!isRunning) {
+    return new TranscriptionError({
+      reason:
+        'vLLM service is not running. Start with: vllm serve openai/whisper-large-v3-turbo --port 8766',
+    })
+  }
+
+  voiceLogger.log(`Transcribing with vLLM Whisper at ${baseUrl}`)
+
+  try {
+    const finalBuffer = audioBuffer
+
+    const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      body: (() => {
+        const fd = new FormData()
+        fd.append('file', new Blob([finalBuffer]), 'audio.ogg')
+        fd.append('model', 'openai/whisper-large-v3-turbo')
+        if (prompt) {
+          fd.append('prompt', prompt)
+        }
+        return fd
+      })(),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error')
+      voiceLogger.error(`vLLM transcription error: ${response.status} ${errorText}`)
+      return new TranscriptionError({
+        reason: `vLLM transcription error: ${response.status} ${errorText}`,
+      })
+    }
+
+    const result = (await response.json()) as { text?: string }
+    const text = result.text?.trim()
+
+    if (!text) {
+      return new EmptyTranscriptionError()
+    }
+
+    voiceLogger.log(`vLLM transcription: ${text}`)
+    return { transcription: text, queueMessage: false }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    voiceLogger.error(`vLLM transcription failed: ${errorMessage}`)
+
+    return new TranscriptionError({
+      reason: `vLLM transcription failed: ${errorMessage}`,
+    })
+  }
+}
+
 export async function transcribeAudio({
   audio,
   prompt,
@@ -486,22 +669,65 @@ export async function transcribeAudio({
   /** Available agents for agent selection via voice. Names used as enum values in the tool schema. */
   agents?: Array<{ name: string; description?: string }>
 }): Promise<TranscribeAudioErrors | TranscriptionResult> {
+  // Resolve provider priority: explicit param > env var > platform default
+  const asrProvider = process.env.ASR_PROVIDER?.toLowerCase()
+  const useCloudProvider = asrProvider === 'openai' || asrProvider === 'gemini'
+  const useVLLMProvider = asrProvider === 'vllm'
+
+  const resolvedProvider: TranscriptionProvider = (() => {
+    if (provider) {
+      return provider
+    }
+    // Check for parakeet (default on Apple Silicon)
+    if (process.platform === 'darwin' && process.arch === 'arm64') {
+      if (!useCloudProvider && !useVLLMProvider) {
+        return 'parakeet'
+      }
+    }
+    // Default to vllm if specified, otherwise cloud
+    if (useVLLMProvider) {
+      return 'vllm'
+    }
+    const apiKey = apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
+    if (apiKey) {
+      return apiKey.startsWith('sk-') ? 'openai' : 'gemini'
+    }
+    // No API key and not local - return parakeet as fallback
+    return 'parakeet'
+  })()
+
+  // Handle Parakeet (local ASR) provider
+  if (resolvedProvider === 'parakeet') {
+    const result = await transcribeWithParakeet({ audio, prompt, mediaType: mediaTypeParam })
+    // Auto-restart parakeet service on connection failure, then retry once
+    if (
+      result instanceof TranscriptionError &&
+      shouldAutoStartAsr() &&
+      String(result.reason).includes('not running')
+    ) {
+      voiceLogger.log('Parakeet service not running, attempting auto-restart...')
+      const restarted = await startAsrService()
+      if (restarted) {
+        voiceLogger.log('Parakeet service restarted, retrying transcription')
+        return transcribeWithParakeet({ audio, prompt, mediaType: mediaTypeParam })
+      }
+      voiceLogger.warn('Failed to auto-restart parakeet service')
+    }
+    return result
+  }
+
+  // Handle vLLM Whisper provider
+  if (resolvedProvider === 'vllm') {
+    return transcribeWithVLLM({ audio, prompt, mediaType: mediaTypeParam })
+  }
+
+  // Cloud providers (openai, gemini)
   const apiKey =
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
   if (!model && !apiKey) {
     return Promise.resolve(new ApiKeyMissingError({ service: 'OpenAI or Gemini' }))
   }
-
-  const resolvedProvider: TranscriptionProvider = (() => {
-    if (provider) {
-      return provider
-    }
-    if (apiKey) {
-      return apiKey.startsWith('sk-') ? 'openai' : 'gemini'
-    }
-    return 'gemini'
-  })()
 
   const languageModel: LanguageModelV3 =
     model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })

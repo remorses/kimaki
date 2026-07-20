@@ -32,6 +32,11 @@ import {
   findTextChannelByVoiceChannel,
 } from './database.js'
 import {
+  startAsrService,
+  stopAsrService,
+  shouldAutoStartAsr,
+} from './asr-service-manager.js'
+import {
   sendThreadMessage,
   escapeDiscordFormatting,
   NOTIFY_MESSAGE_FLAGS,
@@ -591,47 +596,61 @@ export async function processVoiceAttachment({
     }
   }
 
-  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars
+  // Resolve transcription provider and API key.
+  // On Apple Silicon, parakeet is the default provider (no API key needed).
+  // transcribeAudio() handles this internally when no provider/apiKey is passed.
+  // Only pass cloud provider/key when parakeet is unavailable or explicitly overridden.
+  const asrEnv = process.env.ASR_PROVIDER?.toLowerCase()
+  const parakeetDefault =
+    process.platform === 'darwin' &&
+    process.arch === 'arm64' &&
+    asrEnv !== 'openai' &&
+    asrEnv !== 'gemini' &&
+    asrEnv !== 'vllm'
+
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
-  if (appId) {
-    const stored = await getTranscriptionApiKey(appId)
-    if (stored) {
-      transcriptionApiKey = stored.apiKey
-      transcriptionProvider = stored.provider
-    }
-  }
-  if (!transcriptionApiKey) {
-    if (process.env.OPENAI_API_KEY) {
-      transcriptionApiKey = process.env.OPENAI_API_KEY
-      transcriptionProvider = 'openai'
-    } else if (process.env.GEMINI_API_KEY) {
-      transcriptionApiKey = process.env.GEMINI_API_KEY
-      transcriptionProvider = 'gemini'
-    }
-  }
 
-  if (!transcriptionApiKey) {
+  if (!parakeetDefault) {
     if (appId) {
-      await showApiKeyRequiredButton({
-        thread,
-        appId,
-        message: 'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
-      })
-    } else {
-      await sendThreadMessage(
-        thread,
-        'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
-      )
+      const stored = await getTranscriptionApiKey(appId)
+      if (stored) {
+        transcriptionApiKey = stored.apiKey
+        transcriptionProvider = stored.provider
+      }
     }
-    return null
+    if (!transcriptionApiKey) {
+      if (process.env.OPENAI_API_KEY) {
+        transcriptionApiKey = process.env.OPENAI_API_KEY
+        transcriptionProvider = 'openai'
+      } else if (process.env.GEMINI_API_KEY) {
+        transcriptionApiKey = process.env.GEMINI_API_KEY
+        transcriptionProvider = 'gemini'
+      }
+    }
+
+    if (!transcriptionApiKey) {
+      if (appId) {
+        await showApiKeyRequiredButton({
+          thread,
+          appId,
+          message: 'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
+        })
+      } else {
+        await sendThreadMessage(
+          thread,
+          'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
+        )
+      }
+      return null
+    }
   }
 
   const transcription = await transcribeAudio({
     audio: audioBuffer,
     prompt: transcriptionPrompt,
-    apiKey: transcriptionApiKey,
-    provider: transcriptionProvider,
+    apiKey: parakeetDefault ? undefined : transcriptionApiKey,
+    provider: parakeetDefault ? undefined : transcriptionProvider,
     mediaType: audioAttachment.contentType || undefined,
     currentSessionContext,
     lastSessionContext,
