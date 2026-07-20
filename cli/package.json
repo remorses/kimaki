@@ -36,6 +36,7 @@
   ],
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/figlet": "1.7.0",
     "@types/heic-convert": "^2.1.0",
     "@types/json-schema": "^7.0.15",
     "@types/ms": "^2.1.0",
@@ -70,6 +71,7 @@
     "domhandler": "^6.0.1",
     "drizzle-orm": "1.0.0-beta.22",
     "errore": "workspace:^",
+    "figlet": "1.11.2",
     "goke": "^6.9.0",
     "htmlparser2": "^12.0.0",
     "kitty-graphics-agent": "^0.0.5",
