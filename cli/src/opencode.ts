@@ -321,6 +321,8 @@ function killSingleServerProcessNow({
     return
   }
 
+  // Any explicit kill is intentional — suppress watchdog respawn logic
+  cpuWatchdogRestartPending = false
   const serverProcess = singleServer.process
   const pid = serverProcess.pid
   if (!pid || serverProcess.killed) {
@@ -386,6 +388,164 @@ function killStartingServerProcessNow({
   opencodeLogger.log(
     `[cleanup:${reason}] Sent SIGTERM to starting opencode server (pid: ${pid})`,
   )
+}
+
+// ── CPU Watchdog ───────────────────────────────────────────────
+// Detects when the opencode serve main thread enters a Bun event-loop spin
+// and auto-restarts the server to reclaim CPU.
+//
+// Reads /proc/[pid]/task/[pid]/stat to isolate the main thread from worker
+// pools (HeapHelper, JITWorker). Samples every 30s; if main-thread CPU
+// exceeds 90% for 3 consecutive samples (90s), kills and lets the exit
+// handler respawn the server.
+
+const CPU_WATCHDOG_INTERVAL_MS = 30_000
+const CPU_WATCHDOG_THRESHOLD = 0.9 // 90% of one core on main thread
+const CPU_WATCHDOG_CONSECUTIVE = 3 // 3 × 30s = 90s sustained
+const CPU_WATCHDOG_MIN_AGE_MS = 120_000 // don't check until server is 2 min old
+const CPU_WATCHDOG_SIGKILL_TIMEOUT_MS = 5_000 // fallback SIGKILL if SIGTERM not processed
+
+// Resolve CLK_TCK once at module init (standard 100 on x86_64 Linux).
+const SYSTEM_CLK_TCK = (() => {
+  try {
+    return Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8', timeout: 1000 }).trim()) || 100
+  } catch {
+    return 100
+  }
+})()
+
+let cpuWatchdogTimer: ReturnType<typeof setInterval> | null = null
+let cpuWatchdogConsecutiveHigh = 0
+let cpuWatchdogLastSample: { utime: number; stime: number; timestampMs: number } | null = null
+let cpuWatchdogRestartPending = false
+
+/**
+ * Read main-thread CPU time from /proc/[pid]/task/[pid]/stat.
+ * Uses task-level stat to isolate the main thread (event loop) from worker
+ * thread pools (HeapHelper, JITWorker) so we detect the Bun event-loop spin
+ * without false positives from legitimate multi-threaded compute.
+ *
+ * Parses past the last ')' to handle process names containing spaces
+ * (e.g. "(opencode serve --port 45061 --print-logs --log-level WARN)").
+ */
+function readMainThreadCpuTime(pid: number): { utime: number; stime: number } | null {
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/task/${pid}/stat`, 'utf-8')
+    const lastParen = stat.lastIndexOf(')')
+    if (lastParen === -1) return null
+
+    // Skip past ') ' — fields are 1-indexed in proc(5); after the closing
+    // paren, field 3 (state) is at offset 0, so utime (field 14) is at
+    // index 11 and stime (field 15) is at index 12.
+    const fields = stat.substring(lastParen + 2).split(' ')
+    return {
+      utime: Number(fields[11]),
+      stime: Number(fields[12]),
+    }
+  } catch {
+    // Process gone or /proc unavailable
+    return null
+  }
+}
+
+function startCpuWatchdog(server: SingleServer): void {
+  stopCpuWatchdog()
+  cpuWatchdogConsecutiveHigh = 0
+  cpuWatchdogLastSample = null
+  const startTime = Date.now()
+
+  cpuWatchdogTimer = setInterval(() => {
+    const pid = server.process.pid
+    if (!pid || server.process.killed) {
+      stopCpuWatchdog()
+      return
+    }
+
+    // Grace period — don't flag a freshly-started server
+    if (Date.now() - startTime < CPU_WATCHDOG_MIN_AGE_MS) return
+
+    const sample = readMainThreadCpuTime(pid)
+    if (!sample) return
+
+    const now = Date.now()
+    const prev = cpuWatchdogLastSample
+    cpuWatchdogLastSample = { ...sample, timestampMs: now }
+
+    if (!prev) return // first sample — need two for a delta
+
+    const deltaWallSec = (now - prev.timestampMs) / 1000
+    if (deltaWallSec < 5) return // guard against clock jitter
+
+    const deltaCpuSec = ((sample.utime + sample.stime) - (prev.utime + prev.stime)) / SYSTEM_CLK_TCK
+    const cpuRatio = deltaCpuSec / deltaWallSec
+
+    if (cpuRatio > CPU_WATCHDOG_THRESHOLD) {
+      cpuWatchdogConsecutiveHigh += 1
+      if (cpuWatchdogConsecutiveHigh >= CPU_WATCHDOG_CONSECUTIVE) {
+        const durationSec = cpuWatchdogConsecutiveHigh * (CPU_WATCHDOG_INTERVAL_MS / 1000)
+        opencodeLogger.warn(
+          `[CPU WATCHDOG] Main thread PID ${pid} sustained ${(cpuRatio * 100).toFixed(0)}% CPU for ${durationSec}s — restarting (CLK_TCK=${SYSTEM_CLK_TCK})`,
+        )
+        stopCpuWatchdog()
+        killServerWithWatchdogFallback(server)
+      }
+    } else {
+      // CPU dropped — reset counter (partial progress is preserved until
+      // it fully cools, then resets)
+      if (cpuRatio < CPU_WATCHDOG_THRESHOLD * 0.5) {
+        cpuWatchdogConsecutiveHigh = 0
+      }
+    }
+  }, CPU_WATCHDOG_INTERVAL_MS)
+}
+
+function stopCpuWatchdog(): void {
+  if (cpuWatchdogTimer) {
+    clearInterval(cpuWatchdogTimer)
+    cpuWatchdogTimer = null
+  }
+  cpuWatchdogConsecutiveHigh = 0
+  cpuWatchdogLastSample = null
+}
+
+/**
+ * Kill with SIGTERM, then escalate to SIGKILL after a short timeout if the
+ * process hasn't exited. Needed because a Bun event-loop spin may prevent
+ * the runtime from processing SIGTERM.
+ */
+function killServerWithWatchdogFallback(server: SingleServer): void {
+  const pid = server.process.pid
+  if (!pid || server.process.killed) return
+
+  // Signal to the exit handler that this SIGTERM should trigger a respawn,
+  // not be treated as an intentional kill.
+  cpuWatchdogRestartPending = true
+
+  const killResult = errore.try(
+    () => { server.process.kill('SIGTERM') },
+    (error) => new Error('CPU watchdog: Failed to send SIGTERM', { cause: error }),
+  )
+
+  if (killResult instanceof Error) {
+    opencodeLogger.warn(`[CPU WATCHDOG] ${killResult.message}, sending SIGKILL`)
+    server.process.kill('SIGKILL')
+    return
+  }
+
+  opencodeLogger.log(`[CPU WATCHDOG] Sent SIGTERM to PID ${pid}, waiting ${CPU_WATCHDOG_SIGKILL_TIMEOUT_MS}ms for exit`)
+
+  const killTimer = setTimeout(() => {
+    if (!server.process.killed) {
+      opencodeLogger.warn(`[CPU WATCHDOG] PID ${pid} did not exit after SIGTERM, sending SIGKILL`)
+      errore.try(
+        () => { server.process.kill('SIGKILL') },
+        (error) => opencodeLogger.warn(`[CPU WATCHDOG] SIGKILL failed: ${error}`),
+      )
+    }
+  }, CPU_WATCHDOG_SIGKILL_TIMEOUT_MS)
+
+  // Don't keep the process alive just for the escalation timer
+  killTimer.unref()
 }
 
 function ensureProcessCleanupHandlersRegistered(): void {
@@ -846,6 +1006,7 @@ async function startSingleServer({
   serverProcess.on('exit', (code, signal) => {
     stdoutReader?.close()
     stderrReader?.close()
+    stopCpuWatchdog()
 
     if (startingServerProcess === serverProcess) {
       startingServerProcess = null
@@ -862,12 +1023,28 @@ async function startSingleServer({
     // - SIGTERM from our cleanup/restart code
     // - SIGINT propagated from Ctrl+C (parent process group signal)
     // - any exit during bot shutdown (shuttingDown flag)
+    // Exception: CPU watchdog sends SIGTERM but expects a respawn.
     // Only unexpected crashes (non-zero exit without signal) get retried.
     if (signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
-      serverRetryCount = 0
-      return
-    }
-    if (code !== 0) {
+      if (cpuWatchdogRestartPending) {
+        cpuWatchdogRestartPending = false
+        opencodeLogger.log(
+          `[CPU WATCHDOG] Server killed due to CPU spin — restarting`,
+        )
+        serverRetryCount = 0
+        void ensureSingleServer().then(
+          (result) => {
+            if (result instanceof Error) {
+              opencodeLogger.error(`Failed to restart after CPU watchdog kill:`, result)
+              void notifyError(result, `OpenCode server restart after CPU watchdog failed`)
+            }
+          },
+        )
+      } else {
+        serverRetryCount = 0
+        return
+      }
+    } else if (code !== 0) {
       if (serverRetryCount < 5) {
         serverRetryCount += 1
         opencodeLogger.log(
@@ -929,6 +1106,7 @@ async function startSingleServer({
     startingServerProcess = null
   }
   singleServer = server
+  startCpuWatchdog(server)
   notifyServerLifecycle({ type: 'started', port })
   return server
 }
@@ -1319,6 +1497,8 @@ export async function stopOpencodeServer(): Promise<boolean> {
   opencodeLogger.log(
     `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
   )
+  // Ensure watchdog doesn't interpret our intentional SIGTERM as a restart trigger
+  cpuWatchdogRestartPending = false
   if (!server.process.killed) {
     const killResult = errore.try(
       () => {
@@ -1341,6 +1521,7 @@ export async function stopOpencodeServer(): Promise<boolean> {
   singleServer = null
   clientCache.clear()
   serverRetryCount = 0
+  stopCpuWatchdog()
   // Don't dispose the global listener here — it will reconnect when
   // the server restarts. Only abort the current SSE connection so it
   // doesn't hang on a dead server.
