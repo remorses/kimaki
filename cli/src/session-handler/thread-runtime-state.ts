@@ -224,8 +224,11 @@ export function dequeueItem(threadId: string): QueuedMessage | undefined {
   return next
 }
 
-export function clearQueueItems(threadId: string): void {
+export function clearQueueItems(threadId: string): QueuedMessage[] {
+  const items =
+    store.getState().threads.get(threadId)?.queueItems.slice() ?? []
   updateThread(threadId, (t) => ({ ...t, queueItems: [] }))
+  return items
 }
 
 export function removeQueueItemAtPosition(

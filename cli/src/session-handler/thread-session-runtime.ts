@@ -2309,6 +2309,25 @@ export class ThreadSessionRuntime {
       repulseTyping: false,
     })
 
+    // Skip footer if model produced no visible output (no text, no tool calls,
+    // just step-start/step-finish lifecycle parts). This happens when the model
+    // decides not to respond.
+    const hasVisibleOutput = assistantMessageIds.some((msgId) => {
+      const parts = this.getBufferedParts(msgId)
+      return parts.some(
+        (part) => part.type !== 'step-start' && part.type !== 'step-finish',
+      )
+    })
+    if (!hasVisibleOutput) {
+      this.stopTyping()
+      this.resetPerRunState()
+      this.clearBufferedPartsForMessages(assistantMessageIds)
+      logger.log(
+        `[ASSISTANT COMPLETED] no visible output, skipping footer for message ${completedMessageId} sessionId=${sessionId}`,
+      )
+      return
+    }
+
     this.stopTyping()
 
     const turnStartTime = getCurrentTurnStartTime({
@@ -3482,9 +3501,9 @@ export class ThreadSessionRuntime {
       : NOTIFY_MESSAGE_FLAGS
   }
 
-  /** Clear all queued messages. */
-  clearQueue(): void {
-    threadState.clearQueueItems(this.threadId)
+  /** Clear all queued messages. Returns the removed items. */
+  clearQueue(): threadState.QueuedMessage[] {
+    return threadState.clearQueueItems(this.threadId)
   }
 
   /** Remove a queued message by its 1-based position. */

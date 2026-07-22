@@ -156,10 +156,21 @@ export async function handleClearQueueCommand({
     return
   }
 
-  runtime?.clearQueue()
+  const cleared = runtime?.clearQueue() ?? []
+
+  const lines = cleared.map((item, i) => {
+    const label = item.command
+      ? `/${item.command.name}`
+      : item.prompt
+    return `${i + 1}. ${label}`
+  })
+  let list = lines.join('\n')
+  if (list.length > 600) {
+    list = list.slice(0, 597) + '...'
+  }
 
   await command.reply({
-    content: `Cleared ${queueLength} queued message${queueLength > 1 ? 's' : ''}`,
+    content: `Cleared ${cleared.length} queued message${cleared.length > 1 ? 's' : ''}:\n${list}`,
     flags: SILENT_MESSAGE_FLAGS,
   })
 
