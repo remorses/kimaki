@@ -20,6 +20,7 @@ import {
   authFilePath,
   findCurrentAccountIndex,
   isOAuthStored,
+  isPermanentOAuthRefreshFailure,
   normalizeAccountStore,
   readJson,
   upsertAccount as sharedUpsertAccount,
@@ -30,12 +31,24 @@ import {
 
 // Re-export types and functions that consumers rely on
 export type { OAuthStored, RotationResult }
-export { accountLabel, authFilePath, withAuthStateLock, shouldRotateAuth }
+export {
+  accountLabel,
+  authFilePath,
+  withAuthStateLock,
+  shouldRotateAuth,
+  isPermanentOAuthRefreshFailure,
+}
 
 export type CurrentAnthropicAccount = {
   auth: OAuthStored
   account?: OAuthStored & AnthropicAccountIdentity
   index?: number
+}
+
+export type RemoveAccountByAuthResult = {
+  removedLabel: string
+  activeLabel: string | undefined
+  active: OAuthStored | undefined
 }
 
 // --- Store file path ---
@@ -173,38 +186,85 @@ export async function rotateAnthropicAccount(
 
 // --- Remove account ---
 
+/** Splice account at index and promote next. Caller must hold withAuthStateLock. */
+async function spliceAccountAndPromote({
+  store,
+  index,
+  client,
+}: {
+  store: AccountStore
+  index: number
+  client?: OpencodeClient
+}) {
+  store.accounts.splice(index, 1)
+  if (store.accounts.length === 0) {
+    store.activeIndex = 0
+    await saveAccountStore(store)
+    await writeAnthropicAuthFile(undefined)
+    return { store, active: undefined as OAuthStored | undefined, activeLabel: undefined as string | undefined }
+  }
+
+  if (store.activeIndex > index) {
+    store.activeIndex -= 1
+  } else if (store.activeIndex >= store.accounts.length) {
+    store.activeIndex = 0
+  }
+
+  const active = store.accounts[store.activeIndex]
+  if (!active) throw new Error('Active Anthropic account disappeared during removal')
+  active.lastUsed = Date.now()
+  await saveAccountStore(store)
+  const nextAuth: OAuthStored = {
+    type: 'oauth',
+    refresh: active.refresh,
+    access: active.access,
+    expires: active.expires,
+  }
+  if (client) {
+    await setAnthropicAuth(nextAuth, client)
+  } else {
+    await writeAnthropicAuthFile(nextAuth)
+  }
+  return {
+    store,
+    active: nextAuth,
+    activeLabel: accountLabel(active, store.activeIndex),
+  }
+}
+
 export async function removeAccount(index: number) {
   return withAuthStateLock(async () => {
     const store = await loadAccountStore()
     if (!Number.isInteger(index) || index < 0 || index >= store.accounts.length) {
       throw new Error(`Account ${index + 1} does not exist`)
     }
+    return spliceAccountAndPromote({ store, index })
+  })
+}
 
-    store.accounts.splice(index, 1)
-    if (store.accounts.length === 0) {
-      store.activeIndex = 0
-      await saveAccountStore(store)
-      await writeAnthropicAuthFile(undefined)
-      return { store, active: undefined }
-    }
+/**
+ * Remove the pool entry matching these OAuth credentials and promote the next
+ * account. Used when refresh fails permanently (invalid_grant).
+ */
+export async function removeAccountByAuth(
+  auth: OAuthStored,
+  client: OpencodeClient,
+): Promise<RemoveAccountByAuthResult | undefined> {
+  return withAuthStateLock(async () => {
+    const store = await loadAccountStore()
+    const index = store.accounts.findIndex(
+      (account) => account.refresh === auth.refresh || account.access === auth.access,
+    )
+    if (index < 0) return undefined
 
-    if (store.activeIndex > index) {
-      store.activeIndex -= 1
-    } else if (store.activeIndex >= store.accounts.length) {
-      store.activeIndex = 0
+    const removed = store.accounts[index]
+    if (!removed) return undefined
+    const removedLabel = accountLabel(removed, index)
+    const result = await spliceAccountAndPromote({ store, index, client })
+    return {
+      removedLabel,
+      activeLabel: result.activeLabel,
+      active: result.active,
     }
-
-    const active = store.accounts[store.activeIndex]
-    if (!active) throw new Error('Active Anthropic account disappeared during removal')
-    active.lastUsed = Date.now()
-    await saveAccountStore(store)
-    const nextAuth: OAuthStored = {
-      type: 'oauth',
-      refresh: active.refresh,
-      access: active.access,
-      expires: active.expires,
-    }
-    await writeAnthropicAuthFile(nextAuth)
-    return { store, active: nextAuth }
   })
 }

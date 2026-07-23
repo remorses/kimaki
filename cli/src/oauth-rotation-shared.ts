@@ -279,6 +279,28 @@ export function isTokenRefreshError(message: string) {
   )
 }
 
+/** Permanent OAuth refresh death (invalid_grant / expired refresh). Remove account, do not rotate. */
+export function isPermanentOAuthRefreshFailure(error: unknown): boolean {
+  const message =
+    typeof error === 'string'
+      ? error
+      : error instanceof Error
+        ? error.message
+        : ''
+  const haystack = message.toLowerCase()
+  if (!haystack) return false
+  if (haystack.includes('invalid_grant')) return true
+  if (haystack.includes('refresh token expired')) return true
+  if (haystack.includes('refresh_token') || haystack.includes('refresh token')) {
+    return (
+      haystack.includes('expired') ||
+      haystack.includes('invalid') ||
+      haystack.includes('revoked')
+    )
+  }
+  return false
+}
+
 // --- Auth file helpers ---
 
 export function isOAuthStored(value: unknown): value is OAuthStored {

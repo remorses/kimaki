@@ -28,8 +28,10 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { appendToastSessionMarker } from "./plugin-logger.js";
 import { createPluginClient } from "./plugin-opencode-client.js";
 import {
+  isPermanentOAuthRefreshFailure,
   loadAccountStore,
   rememberAnthropicOAuth,
+  removeAccountByAuth,
   rotateAnthropicAccount,
   saveAccountStore,
   setAnthropicAuth,
@@ -911,50 +913,91 @@ function isOAuthStored(auth: { type: string }): auth is OAuthStored {
   return auth.type === "oauth";
 }
 
+/**
+ * Refresh Anthropic OAuth. On permanent refresh failure (invalid_grant),
+ * remove that account from the pool and retry with the next one.
+ * removeAccountByAuth runs outside withAuthStateLock to avoid nested locks.
+ */
 async function getFreshOAuth(
   getAuth: () => Promise<OAuthStored | { type: string }>,
   client: OpencodeClient,
-) {
+  options?: { sessionId?: string },
+): Promise<OAuthStored | undefined> {
   const auth = await getAuth();
   if (!isOAuthStored(auth)) return undefined;
   if (auth.access && auth.expires > Date.now()) return auth;
 
   const pending = pendingRefresh.get(auth.refresh);
-  if (pending) {
-    return pending;
-  }
+  if (pending) return pending;
 
-  const refreshPromise = withAuthStateLock(async () => {
-    const latest = await getAuth();
-    if (!isOAuthStored(latest)) {
-      throw new Error("Anthropic OAuth credentials disappeared during refresh");
-    }
-    if (latest.access && latest.expires > Date.now()) return latest;
+  const refreshPromise = (async () => {
+    const attempted = new Set<string>();
+    while (true) {
+      let failedAuth: OAuthStored | undefined;
+      try {
+        return await withAuthStateLock(async () => {
+          const latest = await getAuth();
+          if (!isOAuthStored(latest)) {
+            throw new Error(
+              "Anthropic OAuth credentials disappeared during refresh",
+            );
+          }
+          if (latest.access && latest.expires > Date.now()) return latest;
+          if (attempted.has(latest.refresh)) {
+            throw new Error(
+              "Anthropic OAuth refresh failed for all remaining accounts",
+            );
+          }
+          attempted.add(latest.refresh);
 
-    const refreshed = await refreshAnthropicToken(latest.refresh);
-    await setAnthropicAuth(refreshed, client);
-    const store = await loadAccountStore();
-    if (store.accounts.length > 0) {
-      const identity: AnthropicAccountIdentity | undefined = (() => {
-        const currentIndex = store.accounts.findIndex((account) => {
-          return (
-            account.refresh === latest.refresh ||
-            account.access === latest.access
-          );
+          try {
+            const refreshed = await refreshAnthropicToken(latest.refresh);
+            await setAnthropicAuth(refreshed, client);
+            const store = await loadAccountStore();
+            if (store.accounts.length > 0) {
+              const current = store.accounts.find(
+                (account) =>
+                  account.refresh === latest.refresh ||
+                  account.access === latest.access,
+              );
+              const identity: AnthropicAccountIdentity | undefined = current
+                ? {
+                    ...(current.email ? { email: current.email } : {}),
+                    ...(current.accountId
+                      ? { accountId: current.accountId }
+                      : {}),
+                  }
+                : undefined;
+              upsertAccount(store, { ...refreshed, ...identity });
+              await saveAccountStore(store);
+            }
+            return refreshed;
+          } catch (error) {
+            if (!isPermanentOAuthRefreshFailure(error)) throw error;
+            failedAuth = latest;
+            throw error;
+          }
         });
-        const current =
-          currentIndex >= 0 ? store.accounts[currentIndex] : undefined;
-        if (!current) return undefined;
-        return {
-          ...(current.email ? { email: current.email } : {}),
-          ...(current.accountId ? { accountId: current.accountId } : {}),
-        };
-      })();
-      upsertAccount(store, { ...refreshed, ...identity });
-      await saveAccountStore(store);
+      } catch (error) {
+        if (!failedAuth || !isPermanentOAuthRefreshFailure(error)) throw error;
+        const removed = await removeAccountByAuth(failedAuth, client);
+        if (!removed) throw error;
+        client.tui
+          .showToast({
+            message: appendToastSessionMarker({
+              message: removed.active
+                ? `Removed expired Anthropic account ${removed.removedLabel}, switched to ${removed.activeLabel ?? "next"}`
+                : `Removed expired Anthropic account ${removed.removedLabel} (no accounts left — re-login required)`,
+              sessionId: options?.sessionId,
+            }),
+            variant: removed.active ? "info" : "error",
+          })
+          .catch(() => {});
+        if (!removed.active) throw error;
+      }
     }
-    return refreshed;
-  });
+  })();
+
   pendingRefresh.set(auth.refresh, refreshPromise);
   return refreshPromise.finally(() => {
     pendingRefresh.delete(auth.refresh);
@@ -1060,7 +1103,9 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
               });
             };
 
-            const freshAuth = await getFreshOAuth(getAuth, client);
+            const freshAuth = await getFreshOAuth(getAuth, client, {
+              sessionId,
+            });
             if (!freshAuth) return fetch(input, init);
 
             let response = await runRequest(freshAuth);
@@ -1082,7 +1127,9 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
                       variant: "info",
                     })
                     .catch(() => {});
-                  const retryAuth = await getFreshOAuth(getAuth, client);
+                  const retryAuth = await getFreshOAuth(getAuth, client, {
+                    sessionId,
+                  });
                   if (retryAuth) {
                     response = await runRequest(retryAuth);
                   }
