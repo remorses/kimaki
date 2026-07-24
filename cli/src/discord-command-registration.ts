@@ -265,7 +265,7 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('abort')
-      .setDescription(truncateCommandDescription('Abort the current OpenCode request in this thread'))
+      .setDescription(truncateCommandDescription('Abort, stop, terminate, or cancel the current OpenCode request in this thread'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
