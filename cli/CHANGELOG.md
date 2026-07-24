@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.23.0
+
+1. **Web search is available by default** — every Kimaki OpenCode session now enables the built-in Exa-powered web search tool without extra configuration or an API key. You can still set `EXA_API_KEY` for authenticated access and higher limits.
+
+2. **Scheduled task prompts stay short and maintainable** — agents now put detailed recurring task instructions in a project file such as `tasks/weekly-test-suite.md`, then schedule a concise prompt that points to it:
+
+   ```bash
+   kimaki send --channel <channelId> \
+     --prompt 'Read tasks/weekly-test-suite.md and follow instructions' \
+     --send-at '0 9 * * 1'
+   ```
+
+   Agents also edit an existing cron task instead of creating duplicates when a task needs to run more often. For example, `0 9,18 * * *` runs one task at 09:00 and 18:00 UTC.
+
+3. **`/clear-queue` shows what it removed** — clearing a thread queue now returns a numbered list of the discarded prompts and commands instead of only reporting the count.
+
+4. **Deleted default channels stay deleted** — Kimaki no longer recreates the default project channel on startup after you intentionally remove it. The deletion is tracked independently for each Discord server.
+
+5. **Forked worktree sessions consistently use the worktree checkout** — `apply_patch`, reads, edits, writes, and terminal commands no longer split operations between the new worktree and the source checkout.
+
+6. **CLI subcommands reuse the running OpenCode server** — commands such as `kimaki session list`, `kimaki session archive`, and `kimaki send --wait` discover and health-check the bot's existing server instead of starting a redundant `opencode serve` process. Restarts now wait for the global event stream to reconnect before dispatching prompts, preventing replies and completion footers from being missed. Fixes [#170](https://github.com/remorses/kimaki/issues/170).
+
+7. **Anthropic OAuth rotation recovers from expired refresh tokens** — accounts rejected with `invalid_grant` are removed from the rotation pool, then Kimaki switches to the next account and retries. If no accounts remain, authentication is cleared so you can log in again. Rate-limited accounts are still retained and rotated normally.
+
+8. **One-time scheduled tasks are deleted after running** — completed one-shot tasks no longer accumulate in the local database or task listings. Cron tasks continue to reschedule normally.
+
+9. **No empty completion footers** — when a model intentionally produces no visible text or tool output, Kimaki no longer posts a standalone session footer in Discord.
+
+10. **Clearer worktree merge guidance** — agents in worktree sessions now use `kimaki merge-worktree` and retry after resolving rebase conflicts instead of leaving the merge workflow ambiguous.
+
+11. **Clearer OAuth fallback action** — the login button now says **Paste authorization code or callback url**, matching the modal's existing support for either input.
+
 ## 0.22.0
 
 1. **`--file` option for `kimaki send`** — attach local files (images, text files, PDFs) to Discord messages when creating threads or sending to existing ones.
