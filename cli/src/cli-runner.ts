@@ -1101,6 +1101,8 @@ export async function ensureDefaultChannelsWithWelcome({
   isGatewayMode: boolean
   installerDiscordUserId?: string
 }): Promise<{ name: string; id: string; guildId: string }[]> {
+  if (process.env['KIMAKI_NO_DEFAULT_CHANNEL'] === '1') return []
+
   const created: { name: string; id: string; guildId: string }[] = []
   for (const guild of guilds) {
     try {
