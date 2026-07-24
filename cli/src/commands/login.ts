@@ -1127,7 +1127,7 @@ async function startOAuthFlow(
       // completing login in a browser (possibly on a different machine).
       const button = new ButtonBuilder()
         .setCustomId(`login_oauth_code_btn:${hash}`)
-        .setLabel('Paste authorization code')
+        .setLabel('Paste authorization code or callback url')
         .setStyle(ButtonStyle.Primary)
 
       await interaction.editReply({
