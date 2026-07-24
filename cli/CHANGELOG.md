@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.23.1
+
+1. **Removed retired skills from the npm package** — the bundled `batch`, `security-review`, and `simplify` skills no longer remain in fresh installs after being removed from Kimaki's skill set.
+
 ## 0.23.0
 
 1. **Web search is available by default** — every Kimaki OpenCode session now enables the built-in Exa-powered web search tool without extra configuration or an API key. You can still set `EXA_API_KEY` for authenticated access and higher limits.
