@@ -15,7 +15,7 @@ ENV PATH="/root/.bun/bin:$PATH"
 # IMPORTANT: always use the latest published version here.
 # Check with: npm view kimaki version
 # Bump this after publishing a new kimaki version, then fly deploy.
-RUN npm install -g kimaki@0.22.0
+RUN npm install -g kimaki@0.23.1
 
 # Pre-install opencode so kimaki doesn't need to fetch it at runtime.
 # The opencode installer can fail when GitHub API rate-limits the version lookup.
