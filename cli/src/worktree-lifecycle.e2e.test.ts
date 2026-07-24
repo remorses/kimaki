@@ -61,6 +61,10 @@ function normalizeWorktreeLifecycleText(text: string): string {
     .replaceAll(CHANNEL_WORKTREE_NAME, 'CHANNEL_WORKTREE_NAME')
     .replaceAll(AUTO_WORKTREE_SUFFIX, 'AUTO_WORKTREE_NAME')
     .replaceAll(WORKTREE_NAME, 'WORKTREE_NAME')
+    .replace(
+      /opencode\/kimaki-rply-wth-exctly-snd-at-wt-[a-z0-9]+/g,
+      'AUTO_WORKTREE_BRANCH',
+    )
     .replaceAll(WORKTREE_SUFFIX, 'SUFFIX')
     .replace(/ses_[a-zA-Z0-9]+/g, 'ses_TEST')
     .replace(/<#\d+>/g, '<#THREAD_ID>')
@@ -853,9 +857,9 @@ describe('worktree lifecycle', () => {
         » **kimaki-cli:**
         Reply with exactly: send-auto-wt-SUFFIX
         [embed]
-        🌳 **Worktree: opencode/kimaki-rply-wth-exctly-snd-at-wt-l8kct**
+        🌳 **Worktree: AUTO_WORKTREE_BRANCH**
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
-        🌿 Branch: \`opencode/kimaki-rply-wth-exctly-snd-at-wt-l8kct\`
+        🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
         *using deterministic-provider/deterministic-v2*
         ⬥ ok"
       `)

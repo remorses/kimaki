@@ -30,7 +30,10 @@ import {
   type PermissionRuleset,
 } from '@opencode-ai/sdk/v2'
 
-import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
+import {
+  restartGlobalEventListener,
+  waitForGlobalEventListener,
+} from './session-handler/global-event-listener.js'
 import {
   getDataDir,
   getLockPort,
@@ -1445,5 +1448,7 @@ export async function restartOpencodeServer(): Promise<OpenCodeErrors | true> {
 
   const result = await ensureSingleServer()
   if (result instanceof Error) return result
+  restartGlobalEventListener()
+  await waitForGlobalEventListener()
   return true
 }

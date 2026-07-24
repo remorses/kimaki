@@ -22,8 +22,18 @@ function isAbortError(err: unknown): boolean {
   return false
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve()
+      return
+    }
+    const timeout = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => {
+      clearTimeout(timeout)
+      resolve()
+    }, { once: true })
+  })
 }
 
 // ── Types ──────────────────────────────────────────────────────
@@ -36,6 +46,8 @@ const callbacks = new Map<string, EventCallback>()
 let loopRunning = false
 let disposed = false
 let controller: AbortController | null = null
+let connected = false
+const connectionWaiters = new Set<() => void>()
 
 // ── Public API ─────────────────────────────────────────────────
 
@@ -70,6 +82,7 @@ export function unregisterEventListener(threadId: string): void {
 export function disposeGlobalEventListener(): void {
   disposed = true
   loopRunning = false
+  connected = false
   controller?.abort()
   controller = null
   callbacks.clear()
@@ -81,7 +94,17 @@ export function disposeGlobalEventListener(): void {
  */
 export function restartGlobalEventListener(): void {
   if (disposed) return
+  connected = false
   controller?.abort()
+}
+
+/** Wait until the event stream is connected before starting event-producing work. */
+export function waitForGlobalEventListener(): Promise<void> {
+  if (callbacks.size === 0 || connected) return Promise.resolve()
+  ensureListenerRunning()
+  return new Promise((resolve) => {
+    connectionWaiters.add(resolve)
+  })
 }
 
 // ── Internals ──────────────────────────────────────────────────
@@ -161,7 +184,7 @@ async function runEventLoop(): Promise<void> {
       logger.warn(
         `[GLOBAL LISTENER] No OpenCode server available, retrying in ${backoffMs}ms`,
       )
-      await delay(backoffMs)
+      await delay(backoffMs, signal)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
       continue
     }
@@ -181,13 +204,16 @@ async function runEventLoop(): Promise<void> {
         `[GLOBAL LISTENER] Subscribe failed, retrying in ${backoffMs}ms:`,
         subscribeResult.message,
       )
-      await delay(backoffMs)
+      await delay(backoffMs, signal)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
       continue
     }
 
     const events = subscribeResult.stream
 
+    connected = true
+    for (const resolve of connectionWaiters) resolve()
+    connectionWaiters.clear()
     logger.log('[GLOBAL LISTENER] Connected to global event stream')
 
     let receivedAnyEvent = false
@@ -198,6 +224,8 @@ async function runEventLoop(): Promise<void> {
       }
     })()
       .catch((e) => new OpenCodeSdkError({ operation: 'event.iterate', cause: e }))
+
+    connected = false
 
     if (receivedAnyEvent) {
       backoffMs = 500
@@ -213,13 +241,17 @@ async function runEventLoop(): Promise<void> {
         `[GLOBAL LISTENER] Stream broke, reconnecting in ${backoffMs}ms:`,
         iterResult.message,
       )
-      await delay(backoffMs)
+      await delay(backoffMs, signal)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
     } else {
+      if (signal.aborted) {
+        backoffMs = 500
+        continue
+      }
       logger.log(
         `[GLOBAL LISTENER] Stream ended normally, reconnecting in ${backoffMs}ms`,
       )
-      await delay(backoffMs)
+      await delay(backoffMs, signal)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
     }
   }

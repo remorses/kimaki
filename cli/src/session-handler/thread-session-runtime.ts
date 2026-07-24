@@ -34,6 +34,7 @@ import { isAbortError } from '../utils.js'
 import {
   registerEventListener,
   unregisterEventListener,
+  waitForGlobalEventListener,
 } from './global-event-listener.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
@@ -3113,6 +3114,7 @@ export class ThreadSessionRuntime {
         ...variantField,
         ...(input.noReply ? { noReply: true } : {}),
       }
+      await waitForGlobalEventListener()
       const promptResult = await getClient().session.promptAsync(request)
         .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
       if (promptResult instanceof Error || promptResult.error) {
@@ -3991,6 +3993,7 @@ export class ThreadSessionRuntime {
       return
     }
 
+    await waitForGlobalEventListener()
     const promptResponse = await getClient().session.promptAsync({
       sessionID: session.id,
       directory: this.sdkDirectory,
