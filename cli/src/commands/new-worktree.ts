@@ -18,6 +18,7 @@ import {
   setWorkspaceError,
   getChannelDirectory,
   getThreadSession,
+  getThreadWorktreeOrWorkspace,
   setThreadSession,
 } from '../database.js'
 import {
@@ -223,7 +224,7 @@ async function tryWorkspaceCreate({
   worktreeName: string
   projectDirectory: string
   baseBranch?: string
-}): Promise<{ directory: string; workspaceId?: string } | Error> {
+}): Promise<{ directory: string; workspaceId: string } | Error> {
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
@@ -239,8 +240,8 @@ async function tryWorkspaceCreate({
     return new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
   }
   const workspace = response.data
-  if (!workspace?.directory) {
-    return new Error('Workspace SDK returned no directory')
+  if (!workspace?.directory || !workspace.id) {
+    return new Error('Workspace SDK returned no directory or ID')
   }
   return { directory: workspace.directory, workspaceId: workspace.id }
 }
@@ -613,6 +614,15 @@ async function handleWorktreeInThread({
         return
       }
 
+      const workspace = await getThreadWorktreeOrWorkspace(worktreeThread.id)
+      if (!workspace?.workspace_id) {
+        await sendThreadMessage(
+          worktreeThread,
+          '✗ Worktree is ready, but OpenCode returned no workspace ID for context reuse.',
+        )
+        return
+      }
+
       const getClient = await initializeOpencodeForDirectory(result, {
         originalRepoDirectory: projectDirectory,
         channelId: parent.id,
@@ -628,6 +638,7 @@ async function handleWorktreeInThread({
       const forkResponse = await getClient().session.fork({
         sessionID: sourceSessionId,
         directory: result,
+        workspace: workspace.workspace_id,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.fork', cause: e }))
       if (forkResponse instanceof Error) {
         logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', forkResponse)

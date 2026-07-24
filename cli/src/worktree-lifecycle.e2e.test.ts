@@ -444,11 +444,23 @@ describe('worktree lifecycle', () => {
       expect(sourceSessionAfterFork).toBe(sessionBefore)
       const worktreeSession = await getThreadSession(worktreeThread.id)
       expect(worktreeSession).toBeTruthy()
+      if (!worktreeSession) throw new Error('Worktree session was not persisted')
       expect(worktreeSession).not.toBe(sessionBefore)
       await expect(getThreadWorktreeOrWorkspace(thread.id)).resolves.toBeUndefined()
       const worktreeInfo = await getThreadWorktreeOrWorkspace(worktreeThread.id)
       expect(worktreeInfo?.status).toBe('ready')
       expect(worktreeInfo?.workspace_directory).toContain(WORKTREE_NAME)
+      const worktreeDirectory = worktreeInfo?.workspace_directory
+      if (!worktreeDirectory) throw new Error('Worktree directory was not persisted')
+      const getWorktreeClient = await initializeOpencodeForDirectory(
+        worktreeDirectory,
+      )
+      if (getWorktreeClient instanceof Error) throw getWorktreeClient
+      const worktreeSessionResponse = await getWorktreeClient().session.get({
+        sessionID: worktreeSession,
+        directory: worktreeDirectory,
+      })
+      expect(worktreeSessionResponse.data?.directory).toBe(worktreeDirectory)
 
       const runtimeAfter = getRuntime(thread.id)
       expect(runtimeAfter).toBe(runtimeBefore)
