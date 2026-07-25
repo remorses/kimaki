@@ -111,6 +111,7 @@ import {
   handleScreenshareStopCommand,
 } from './commands/screenshare.js'
 import { handleVscodeCommand } from './commands/vscode.js'
+import { handleArchiveThreadCommand } from './commands/archive-thread.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
   handleModelVariantCommand,
@@ -468,6 +469,10 @@ export function registerInteractionHandler({
 
             case 'vscode':
               await handleVscodeCommand({ command: interaction, appId })
+              return
+
+            case 'archive-thread':
+              await handleArchiveThreadCommand({ command: interaction })
               return
           }
 
