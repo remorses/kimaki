@@ -530,6 +530,95 @@ e2eTest('voice message handling', () => {
   )
 
   test(
+    'first voice message resumes after the user saves an API key',
+    async () => {
+      setDeterministicTranscription({
+        transcription: 'Resume the original voice note',
+        queueMessage: false,
+        requireApiKey: true,
+      })
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendVoiceMessage()
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (candidate) => candidate.name === 'Voice Message',
+      })
+      const th = discord.thread(thread.id)
+      const messages = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Voice transcription requires an API key',
+        timeout: 4_000,
+      })
+      const keyMessage = messages.find((message) => {
+        return message.content.includes('Voice transcription requires an API key')
+      })
+      if (!keyMessage) throw new Error('Expected API key prompt message')
+
+      const buttonData = JSON.stringify(keyMessage.components)
+      const buttonCustomId = buttonData.match(
+        /"custom_id":"(transcription_apikey:[^"]+)"/,
+      )?.[1]
+      if (!buttonCustomId) throw new Error('Expected API key button custom id')
+
+      const buttonInteraction = await th.user(TEST_USER_ID).clickButton({
+        messageId: keyMessage.id,
+        customId: buttonCustomId,
+      })
+      await th.waitForInteractionAck({
+        interactionId: buttonInteraction.id,
+        timeout: 4_000,
+      })
+      const modalResponse = await th.getInteractionResponse(buttonInteraction.id)
+      const modalCustomId = modalResponse?.data?.match(
+        /"custom_id":"(transcription_apikey_modal:[^"]+)"/,
+      )?.[1]
+      if (!modalCustomId) throw new Error('Expected API key modal custom id')
+
+      const modalInteraction = await th.user(TEST_USER_ID).submitModal({
+        customId: modalCustomId,
+        fields: [{ customId: 'apikey', value: 'AIza-test-key' }],
+      })
+      await th.waitForInteractionAck({
+        interactionId: modalInteraction.id,
+        timeout: 4_000,
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Resume the original voice note',
+        timeout: 4_000,
+      })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (voice-tester)
+        [attachment: voice-message.ogg]
+        --- from: assistant (TestBot)
+        🎤 Transcribing voice message...
+        Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.
+        Gemini API key saved. Retrying the original voice message.
+        📝 **Transcribed message:** Resume the original voice note
+        *using deterministic-provider/deterministic-v2*
+        ⬥ session-reply
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+      `)
+
+      const finalState = getThreadState(thread.id)
+      expect(finalState?.sessionId).toBeDefined()
+    },
+    10_000,
+  )
+
+  test(
     'voice attachment without content type still transcribes and avoids empty prompt dispatch',
     async () => {
       setDeterministicTranscription({

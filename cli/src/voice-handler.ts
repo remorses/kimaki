@@ -37,7 +37,7 @@ import {
   NOTIFY_MESSAGE_FLAGS,
   hasKimakiBotPermission,
 } from './discord-utils.js'
-import { showApiKeyRequiredButton } from './commands/gemini-apikey.js'
+import { requestAudioApiKey } from './commands/gemini-apikey.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
 import { DiscordOperationError, FetchError } from './errors.js'
 import { store } from './store.js'
@@ -512,14 +512,26 @@ export async function processVoiceAttachment({
 
   await sendThreadMessage(thread, '🎤 Transcribing voice message...')
 
-  // Deterministic mode: skip audio download and AI model call entirely,
-  // return a canned result after an optional delay. Used by e2e tests to
-  // control transcription output, timing, and queueMessage deterministically.
-  // Only active when KIMAKI_VITEST=1 to prevent accidental activation in production.
   const deterministicConfig =
     process.env['KIMAKI_VITEST'] === '1'
       ? store.getState().test.deterministicTranscription
       : null
+
+  if (deterministicConfig?.requireApiKey) {
+    if (!appId) return null
+    const requested = await requestAudioApiKey({
+      thread,
+      appId,
+      message:
+        'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
+    })
+    if (!requested) return null
+  }
+
+  // Deterministic mode: skip audio download and AI model call entirely,
+  // return a canned result after an optional delay. Used by e2e tests to
+  // control transcription output, timing, and queueMessage deterministically.
+  // Only active when KIMAKI_VITEST=1 to prevent accidental activation in production.
   if (deterministicConfig) {
     if (deterministicConfig.delayMs) {
       await new Promise<void>((resolve) => {
@@ -591,7 +603,7 @@ export async function processVoiceAttachment({
     }
   }
 
-  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars
+  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars.
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
   if (appId) {
@@ -601,30 +613,32 @@ export async function processVoiceAttachment({
       transcriptionProvider = stored.provider
     }
   }
-  if (!transcriptionApiKey) {
-    if (process.env.OPENAI_API_KEY) {
-      transcriptionApiKey = process.env.OPENAI_API_KEY
-      transcriptionProvider = 'openai'
-    } else if (process.env.GEMINI_API_KEY) {
-      transcriptionApiKey = process.env.GEMINI_API_KEY
-      transcriptionProvider = 'gemini'
-    }
+  if (!transcriptionApiKey && process.env.OPENAI_API_KEY) {
+    transcriptionApiKey = process.env.OPENAI_API_KEY
+    transcriptionProvider = 'openai'
+  }
+  if (!transcriptionApiKey && process.env.GEMINI_API_KEY) {
+    transcriptionApiKey = process.env.GEMINI_API_KEY
+    transcriptionProvider = 'gemini'
   }
 
   if (!transcriptionApiKey) {
-    if (appId) {
-      await showApiKeyRequiredButton({
-        thread,
-        appId,
-        message: 'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
-      })
-    } else {
+    if (!appId) {
       await sendThreadMessage(
         thread,
         'Voice transcription requires an API key. Set OPENAI_API_KEY or GEMINI_API_KEY, or use /login in this channel.',
       )
+      return null
     }
-    return null
+    const requested = await requestAudioApiKey({
+      thread,
+      appId,
+      message:
+        'Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.',
+    })
+    if (!requested) return null
+    transcriptionApiKey = requested.apiKey
+    transcriptionProvider = requested.provider
   }
 
   const transcription = await transcribeAudio({

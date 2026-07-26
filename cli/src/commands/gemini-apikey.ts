@@ -2,6 +2,7 @@
 // Used for both transcription and speech generation — same OpenAI/Gemini keys.
 // Auto-detects provider from key prefix: sk-* = OpenAI, otherwise Gemini.
 
+import crypto from 'node:crypto'
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -18,9 +19,45 @@ import {
 import { setGeminiApiKey, setOpenAIApiKey } from '../database.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 
-function buildTranscriptionApiKeyModal(appId: string): ModalBuilder {
+type AudioApiKey = {
+  apiKey: string
+  provider: 'openai' | 'gemini'
+}
+
+type PendingAudioApiKeyRequest = {
+  resolve: (result: AudioApiKey | null) => void
+  timeout: ReturnType<typeof setTimeout>
+}
+
+const AUDIO_API_KEY_REQUEST_TTL_MS = 60 * 60 * 1000
+const pendingAudioApiKeyRequests = new Map<string, PendingAudioApiKeyRequest>()
+
+function resolvePendingAudioApiKeyRequest({
+  requestId,
+  result,
+}: {
+  requestId: string | undefined
+  result: AudioApiKey
+}): boolean {
+  if (!requestId) return false
+  const pending = pendingAudioApiKeyRequests.get(requestId)
+  if (!pending) return false
+  clearTimeout(pending.timeout)
+  pendingAudioApiKeyRequests.delete(requestId)
+  pending.resolve(result)
+  return true
+}
+
+function buildTranscriptionApiKeyModal({
+  appId,
+  requestId,
+}: {
+  appId: string
+  requestId?: string
+}): ModalBuilder {
+  const context = requestId ? `${appId}:${requestId}` : appId
   const modal = new ModalBuilder()
-    .setCustomId(`transcription_apikey_modal:${appId}`)
+    .setCustomId(`transcription_apikey_modal:${context}`)
     .setTitle('Audio API Key')
 
   const apiKeyInput = new TextInputBuilder()
@@ -46,14 +83,17 @@ export async function showApiKeyRequiredButton({
   thread,
   appId,
   message,
+  requestId,
 }: {
   thread: ThreadChannel
   appId: string
   /** Custom message explaining why a key is needed */
   message?: string
+  requestId?: string
 }): Promise<void> {
+  const context = requestId ? `${appId}:${requestId}` : appId
   const button = new ButtonBuilder()
-    .setCustomId(`transcription_apikey:${appId}`)
+    .setCustomId(`transcription_apikey:${context}`)
     .setLabel('Set API Key')
     .setStyle(ButtonStyle.Primary)
 
@@ -66,14 +106,37 @@ export async function showApiKeyRequiredButton({
   })
 }
 
+export async function requestAudioApiKey({
+  thread,
+  appId,
+  message,
+}: {
+  thread: ThreadChannel
+  appId: string
+  message: string
+}): Promise<AudioApiKey | null> {
+  const requestId = crypto.randomBytes(8).toString('hex')
+  const result = new Promise<AudioApiKey | null>((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingAudioApiKeyRequests.delete(requestId)
+      resolve(null)
+    }, AUDIO_API_KEY_REQUEST_TTL_MS)
+    pendingAudioApiKeyRequests.set(requestId, { resolve, timeout })
+  })
+
+  await showApiKeyRequiredButton({ thread, appId, message, requestId })
+  return result
+}
+
 export async function handleTranscriptionApiKeyButton(
   interaction: ButtonInteraction,
 ): Promise<void> {
   if (!interaction.customId.startsWith('transcription_apikey:')) return
 
-  const appId = interaction.customId
+  const [appId, requestId] = interaction.customId
     .slice('transcription_apikey:'.length)
     .trim()
+    .split(':')
   if (!appId) {
     await interaction.reply({
       content: 'Missing app id for API key setup.',
@@ -82,7 +145,7 @@ export async function handleTranscriptionApiKeyButton(
     return
   }
 
-  await interaction.showModal(buildTranscriptionApiKeyModal(appId))
+  await interaction.showModal(buildTranscriptionApiKeyModal({ appId, requestId }))
 }
 
 export async function handleTranscriptionApiKeyCommand({
@@ -92,7 +155,7 @@ export async function handleTranscriptionApiKeyCommand({
   interaction: ChatInputCommandInteraction
   appId: string
 }): Promise<void> {
-  await interaction.showModal(buildTranscriptionApiKeyModal(appId))
+  await interaction.showModal(buildTranscriptionApiKeyModal({ appId }))
 }
 
 export async function handleTranscriptionApiKeyModalSubmit(
@@ -100,9 +163,10 @@ export async function handleTranscriptionApiKeyModalSubmit(
 ): Promise<void> {
   if (!interaction.customId.startsWith('transcription_apikey_modal:')) return
 
-  const appId = interaction.customId
+  const [appId, requestId] = interaction.customId
     .slice('transcription_apikey_modal:'.length)
     .trim()
+    .split(':')
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral })
 
@@ -121,16 +185,21 @@ export async function handleTranscriptionApiKeyModalSubmit(
     return
   }
 
-  // Auto-detect provider from key prefix
-  if (apiKey.startsWith('sk-')) {
+  const provider = apiKey.startsWith('sk-') ? 'openai' : 'gemini'
+  if (provider === 'openai') {
     await setOpenAIApiKey(appId, apiKey)
-    await interaction.editReply({
-      content: 'OpenAI API key saved. Voice transcription and speech generation are now enabled.',
-    })
   } else {
     await setGeminiApiKey(appId, apiKey)
-    await interaction.editReply({
-      content: 'Gemini API key saved. Voice transcription and speech generation are now enabled.',
-    })
   }
+
+  const resumed = resolvePendingAudioApiKeyRequest({
+    requestId,
+    result: { apiKey, provider },
+  })
+  const providerName = provider === 'openai' ? 'OpenAI' : 'Gemini'
+  await interaction.editReply({
+    content: resumed
+      ? `${providerName} API key saved. Retrying the original voice message.`
+      : `${providerName} API key saved. Voice transcription and speech generation are now enabled.`,
+  })
 }

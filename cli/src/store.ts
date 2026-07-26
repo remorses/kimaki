@@ -25,6 +25,8 @@ export type RegisteredUserCommand = {
 export type DeterministicTranscriptionConfig = {
   transcription: string
   queueMessage: boolean
+  /** Exercise the production API-key prompt before returning the canned result. */
+  requireApiKey?: boolean
   /** Agent name extracted from voice message. Only set if user explicitly requested an agent. */
   agent?: string
   /** Artificial delay before returning the result (ms). Default 0. */
