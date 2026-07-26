@@ -296,7 +296,7 @@ export async function createWorktreeInBackground({
       // messages can see the in-progress state.
       await createPendingWorkspace({
         threadId: thread.id,
-        workspaceType: workspaceType,
+        workspaceType: 'kimaki-worktree',
         workspaceName: worktreeName,
         projectDirectory,
       })
