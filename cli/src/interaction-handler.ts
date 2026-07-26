@@ -211,6 +211,22 @@ export function registerInteractionHandler({
           // prevent the owning machine from responding (tokens are single-use).
           return
         }
+        if (!owned && isSetupCommand) {
+          // Setup commands get a helpful reply instead of silent ignore.
+          // Both machines may race to reply; one wins, the other silently
+          // fails (interaction tokens are single-use). The message is the
+          // same from either machine so the race is harmless.
+          await interaction
+            .reply({
+              content:
+                'Run this command in an existing Kimaki project channel.\nTo add a new project channel from the terminal, run:\n```\nkimaki project add /path/to/folder\n```',
+              flags: MessageFlags.Ephemeral,
+            })
+            .catch(() => {
+              // Another machine already responded, safe to ignore
+            })
+          return
+        }
 
         if (interaction.isAutocomplete()) {
           if (!hasKimakiBotPermission(interaction.member, interaction.guild)) {
