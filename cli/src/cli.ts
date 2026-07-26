@@ -87,6 +87,10 @@ cli
     'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
   )
   .option(
+    '--interaction-timeout-minutes <minutes>',
+    'Alias for --permission-timeout-minutes (kept for backward compatibility with custom startup scripts)',
+  )
+  .option(
     '--disable-sync',
     'Disable background sync of external OpenCode sessions into Discord',
   )
@@ -145,6 +149,7 @@ cli
       noCritique?: boolean
       allowAllUsers?: boolean
       permissionTimeoutMinutes?: string
+      interactionTimeoutMinutes?: string
       disableSync?: boolean
       autoRestart?: boolean
       noSentry?: boolean
@@ -255,12 +260,14 @@ cli
         // --permission-timeout-minutes validation
         // Node setTimeout max is 2_147_483_647ms; larger values fire immediately.
         const MAX_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000)
-        const permissionTimeoutMs = (() => {
-          if (!options.permissionTimeoutMinutes) return undefined
-          const parsed = Number(options.permissionTimeoutMinutes)
+        const interactionTimeoutMs = (() => {
+          // Prefer --permission-timeout-minutes, fall back to --interaction-timeout-minutes (alias)
+          const minutes = options.permissionTimeoutMinutes ?? options.interactionTimeoutMinutes
+          if (!minutes) return undefined
+          const parsed = Number(minutes)
           if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_TIMEOUT_MINUTES) {
             cliLogger.error(
-              `Invalid permission timeout: ${options.permissionTimeoutMinutes}. Must be a positive whole number of minutes (max ${MAX_TIMEOUT_MINUTES}).`,
+              `Invalid permission timeout: ${minutes}. Must be a positive whole number of minutes (max ${MAX_TIMEOUT_MINUTES}).`,
             )
             process.exit(EXIT_NO_RESTART)
           }
@@ -274,7 +281,7 @@ cli
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
-          ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
+          ...(interactionTimeoutMs !== undefined && { interactionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
@@ -299,8 +306,9 @@ cli
             'Allow all users: any Discord member can start sessions (no-kimaki role still blocks)',
           )
         }
-        if (permissionTimeoutMs !== undefined) {
-          cliLogger.log(`Permission timeout set to ${options.permissionTimeoutMinutes} minutes`)
+        if (interactionTimeoutMs !== undefined) {
+          const minutes = options.permissionTimeoutMinutes ?? options.interactionTimeoutMinutes
+          cliLogger.log(`Interaction timeout set to ${minutes} minutes`)
         }
 
         if (options.verbosity) {

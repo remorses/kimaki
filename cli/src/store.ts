@@ -101,7 +101,7 @@ export type KimakiState = {
   // explain it couldn't proceed) instead of killing the session.
   // Changes: set once at startup from --permission-timeout-minutes CLI flag.
   // Read by: commands/permissions.ts showPermissionButtons().
-  permissionTimeoutMs: number
+  interactionTimeoutMs: number
 
   // Whether background auto-upgrade of kimaki is enabled on startup.
   // When true (default), kimaki checks npm for a newer version and installs
@@ -186,7 +186,7 @@ export const store = createStore<KimakiState>(() => ({
   disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
-  permissionTimeoutMs: 10 * 60 * 1000,
+  interactionTimeoutMs: 10 * 60 * 1000,
   useWorktrees: false,
   autoUpgradeEnabled: true,
   syncEnabled: true,

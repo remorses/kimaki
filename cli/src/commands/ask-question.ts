@@ -13,6 +13,7 @@ import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { getInteractionTimeoutMs } from '../config.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -44,8 +45,7 @@ type PendingQuestionContext = {
 }
 
 // Store pending question contexts by hash.
-// TTL prevents unbounded growth if user never answers a question.
-const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
+// TTL is controlled via --permission-timeout-minutes (default: 10 minutes).
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
 export function areAllQuestionsAnswered({
@@ -182,7 +182,7 @@ export async function showAskUserQuestionDropdowns({
         logger.error('Failed to abort session after question expiry:', error)
       })
     }
-  }, QUESTION_CONTEXT_TTL_MS).unref()
+  }, getInteractionTimeoutMs()).unref()
 
   // Send one message per question with its dropdown directly underneath
   for (let i = 0; i < input.questions.length; i++) {
