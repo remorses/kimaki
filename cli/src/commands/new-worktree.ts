@@ -228,6 +228,9 @@ async function tryWorkspaceCreate({
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
+  const { ensureSseConnection } = await import('../session-handler/global-event-listener.js')
+  await ensureSseConnection()
+
   const client = getClient()
   const workspaceType = isExternalOpencodeServer() ? 'worktree' : 'kimaki-worktree'
   const response = await client.experimental.workspace.create({

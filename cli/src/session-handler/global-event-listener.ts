@@ -39,6 +39,9 @@ const callbacks = new Map<string, EventCallback>()
 let loopRunning = false
 let disposed = false
 let controller: AbortController | null = null
+let sseConnected = false
+
+const SSE_CONNECTION_TIMEOUT_MS = 10_000
 
 // ── Public API ─────────────────────────────────────────────────
 
@@ -70,6 +73,7 @@ export function unregisterEventListener(threadId: string): void {
 export function disposeGlobalEventListener(): void {
   disposed = true
   loopRunning = false
+  sseConnected = false
   controller?.abort()
   controller = null
   callbacks.clear()
@@ -82,6 +86,34 @@ export function disposeGlobalEventListener(): void {
 export function restartGlobalEventListener(): void {
   if (disposed) return
   controller?.abort()
+}
+
+/**
+ * Wait for the global SSE event stream to be connected.
+ * Returns true if connected, false if timeout elapsed without connection.
+ */
+export async function waitForSseConnection(timeoutMs = SSE_CONNECTION_TIMEOUT_MS): Promise<boolean> {
+  if (sseConnected) return true
+
+  const startTime = Date.now()
+  while (!sseConnected && !disposed) {
+    if (Date.now() - startTime > timeoutMs) {
+      return false
+    }
+    await delay(100)
+  }
+  return sseConnected
+}
+
+/**
+ * Ensure the global event listener is running and the SSE stream is connected.
+ * This should be called before making SDK calls that depend on global events
+ * (like workspace.create) to avoid race conditions where the event subscription
+ * hasn't been established yet.
+ */
+export async function ensureSseConnection(timeoutMs = SSE_CONNECTION_TIMEOUT_MS): Promise<void> {
+  ensureListenerRunning()
+  await waitForSseConnection(timeoutMs)
 }
 
 // ── Internals ──────────────────────────────────────────────────
@@ -152,6 +184,7 @@ async function runEventLoop(): Promise<void> {
     if (!baseUrl) {
       if (callbacks.size === 0) {
         logger.log('[GLOBAL LISTENER] No registrations, pausing')
+        sseConnected = false
         loopRunning = false
         return
       }
@@ -169,7 +202,10 @@ async function runEventLoop(): Promise<void> {
 
     if (subscribeResult instanceof Error) {
       if (isAbortError(subscribeResult)) {
-        if (disposed) return
+        if (disposed) {
+          sseConnected = false
+          return
+        }
         backoffMs = 500
         continue
       }
@@ -184,6 +220,7 @@ async function runEventLoop(): Promise<void> {
 
     const events = subscribeResult.stream
 
+    sseConnected = true
     logger.log('[GLOBAL LISTENER] Connected to global event stream')
 
     let receivedAnyEvent = false
@@ -209,6 +246,7 @@ async function runEventLoop(): Promise<void> {
     })().catch((e) => new OpenCodeSdkError({ operation: 'event.iterate', cause: e }))
 
     clearInterval(staleCheck)
+    sseConnected = false
 
     if (receivedAnyEvent) {
       backoffMs = 500
