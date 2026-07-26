@@ -26,6 +26,9 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+const STALE_TIMEOUT_MS = 120_000
+const STALE_CHECK_INTERVAL_MS = 15_000
+
 // ── Types ──────────────────────────────────────────────────────
 
 type EventCallback = (event: OpenCodeEvent) => void
@@ -44,10 +47,7 @@ let controller: AbortController | null = null
  * global SSE stream is broadcast to every callback; the runtime's own
  * handleEvent() filters by sessionId.
  */
-export function registerEventListener(
-  threadId: string,
-  callback: EventCallback,
-): void {
+export function registerEventListener(threadId: string, callback: EventCallback): void {
   // Allow restart after dispose (e.g. server restart in tests).
   if (disposed) {
     disposed = false
@@ -106,10 +106,7 @@ function ensureLifecycleSubscription(): void {
       })
     })
     .catch((error) => {
-      logger.warn(
-        '[GLOBAL LISTENER] Failed to subscribe to OpenCode lifecycle:',
-        error,
-      )
+      logger.warn('[GLOBAL LISTENER] Failed to subscribe to OpenCode lifecycle:', error)
     })
 }
 
@@ -158,9 +155,7 @@ async function runEventLoop(): Promise<void> {
         loopRunning = false
         return
       }
-      logger.warn(
-        `[GLOBAL LISTENER] No OpenCode server available, retrying in ${backoffMs}ms`,
-      )
+      logger.warn(`[GLOBAL LISTENER] No OpenCode server available, retrying in ${backoffMs}ms`)
       await delay(backoffMs)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
       continue
@@ -168,7 +163,8 @@ async function runEventLoop(): Promise<void> {
 
     const client = createGlobalClient(baseUrl)
 
-    const subscribeResult = await client.global.event({ signal })
+    const subscribeResult = await client.global
+      .event({ signal })
       .catch((e) => new OpenCodeSdkError({ operation: 'event.subscribe', cause: e }))
 
     if (subscribeResult instanceof Error) {
@@ -191,13 +187,28 @@ async function runEventLoop(): Promise<void> {
     logger.log('[GLOBAL LISTENER] Connected to global event stream')
 
     let receivedAnyEvent = false
+    let lastEventTime = Date.now()
+
+    const staleCheck = setInterval(() => {
+      const elapsed = Date.now() - lastEventTime
+      if (elapsed > STALE_TIMEOUT_MS) {
+        clearInterval(staleCheck)
+        logger.warn(
+          `[GLOBAL LISTENER] No events received for ${Math.round(elapsed / 1000)}s, aborting stale connection`,
+        )
+        controller?.abort()
+      }
+    }, STALE_CHECK_INTERVAL_MS)
+
     const iterResult = await (async () => {
       for await (const event of events) {
         receivedAnyEvent = true
+        lastEventTime = Date.now()
         dispatchEvent(event)
       }
-    })()
-      .catch((e) => new OpenCodeSdkError({ operation: 'event.iterate', cause: e }))
+    })().catch((e) => new OpenCodeSdkError({ operation: 'event.iterate', cause: e }))
+
+    clearInterval(staleCheck)
 
     if (receivedAnyEvent) {
       backoffMs = 500
@@ -216,9 +227,7 @@ async function runEventLoop(): Promise<void> {
       await delay(backoffMs)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
     } else {
-      logger.log(
-        `[GLOBAL LISTENER] Stream ended normally, reconnecting in ${backoffMs}ms`,
-      )
+      logger.log(`[GLOBAL LISTENER] Stream ended normally, reconnecting in ${backoffMs}ms`)
       await delay(backoffMs)
       backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
     }
