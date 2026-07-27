@@ -233,21 +233,49 @@ async function tryWorkspaceCreate({
 
   const client = getClient()
   const workspaceType = isExternalOpencodeServer() ? 'worktree' : 'kimaki-worktree'
-  const response = await client.experimental.workspace.create({
-    directory: projectDirectory,
-    type: workspaceType,
-    branch: worktreeName,
-    extra: baseBranch ? { baseBranch } : null,
-  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
-  if (response instanceof Error) return response
-  if (response.error) {
-    return new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
+
+  const doCreate = async (): Promise<{ directory: string; workspaceId?: string } | Error> => {
+    const response = await client.experimental.workspace.create({
+      directory: projectDirectory,
+      type: workspaceType,
+      branch: worktreeName,
+      extra: baseBranch ? { baseBranch } : null,
+    }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
+    if (response instanceof Error) return response
+    if (response.error) {
+      return new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
+    }
+    const workspace = response.data
+    if (!workspace?.directory) {
+      return new Error('Workspace SDK returned no directory')
+    }
+    return { directory: workspace.directory, workspaceId: workspace.id }
   }
-  const workspace = response.data
-  if (!workspace?.directory) {
-    return new Error('Workspace SDK returned no directory')
+
+  const result = await doCreate()
+  if (result instanceof Error && result.message.includes('Timed out waiting for global event')) {
+    logger.warn('[WORKTREE] workspace.create timed out, retrying after SSE reconnect')
+    const { restartGlobalEventListener, waitForSseConnection } = await import('../session-handler/global-event-listener.js')
+    restartGlobalEventListener()
+    await waitForSseConnection()
+    return doCreate()
   }
-  return { directory: workspace.directory, workspaceId: workspace.id }
+  if (result instanceof Error && result.message.includes('a branch named') && result.message.includes('already exists')) {
+    // Recover from a previous timed-out run: git already created the branch and
+    // the worktree dir, but the opencode SDK never recorded the workspace. Reuse
+    // the existing worktree directory instead of creating a new one.
+    const existingPath = await findExistingWorktreePath({
+      projectDirectory,
+      worktreeName,
+    })
+    if (existingPath && !errore.isError(existingPath)) {
+      logger.warn(
+        `[WORKTREE] Branch already exists — reusing existing worktree dir: ${existingPath}`,
+      )
+      return { directory: existingPath }
+    }
+  }
+  return result
 }
 
 /**

@@ -674,11 +674,27 @@ export async function startDiscordBot({
             return
           }
           if (worktreeInfo.status === 'error') {
-            await message.reply({
-              content: `❌ Worktree creation failed: ${(worktreeInfo.error_message || '').slice(0, 1900)}`,
-              flags: NOTIFY_MESSAGE_FLAGS,
+            const retryName = worktreeInfo.workspace_name
+            const retryProjectDir = worktreeInfo.project_directory
+            const previousError = (worktreeInfo.error_message || '').slice(0, 800)
+            discordLogger.log(
+              `[WORKTREE] Retrying failed worktree "${retryName}" after user message in thread ${thread.id}`,
+            )
+            const retryStatusMessage = await thread
+              .send({
+                content:
+                  `🌳 **Retrying worktree: ${retryName}**\n` +
+                  `Previous error: ${previousError}\n⏳ Setting up...`,
+                flags: SILENT_MESSAGE_FLAGS,
+              })
+              .catch(() => undefined)
+            void createWorktreeInBackground({
+              thread,
+              starterMessage: retryStatusMessage,
+              worktreeName: retryName,
+              projectDirectory: retryProjectDir,
+              rest: discordClient.rest,
             })
-            return
           }
           // Use original project directory for OpenCode server (session lives there)
           // The worktree directory is passed via query.directory in prompt/command calls
