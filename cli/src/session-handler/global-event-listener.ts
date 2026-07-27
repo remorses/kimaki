@@ -95,13 +95,16 @@ export function restartGlobalEventListener(): void {
 export async function waitForSseConnection(timeoutMs = SSE_CONNECTION_TIMEOUT_MS): Promise<boolean> {
   if (sseConnected) return true
 
+  logger.log('[GLOBAL LISTENER] waitForSseConnection: SSE not connected, waiting...')
   const startTime = Date.now()
   while (!sseConnected && !disposed) {
     if (Date.now() - startTime > timeoutMs) {
+      logger.warn(`[GLOBAL LISTENER] waitForSseConnection: timed out after ${timeoutMs}ms`)
       return false
     }
     await delay(100)
   }
+  logger.log('[GLOBAL LISTENER] waitForSseConnection: SSE connected')
   return sseConnected
 }
 
@@ -113,7 +116,12 @@ export async function waitForSseConnection(timeoutMs = SSE_CONNECTION_TIMEOUT_MS
  */
 export async function ensureSseConnection(timeoutMs = SSE_CONNECTION_TIMEOUT_MS): Promise<void> {
   ensureListenerRunning()
-  await waitForSseConnection(timeoutMs)
+  const connected = await waitForSseConnection(timeoutMs)
+  if (connected) {
+    logger.log('[GLOBAL LISTENER] ensureSseConnection: SSE ready')
+  } else {
+    logger.warn('[GLOBAL LISTENER] ensureSseConnection: timed out waiting for SSE')
+  }
 }
 
 // ── Internals ──────────────────────────────────────────────────
@@ -144,6 +152,7 @@ function ensureLifecycleSubscription(): void {
 
 function ensureListenerRunning(): void {
   if (loopRunning || disposed) return
+  logger.log('[GLOBAL LISTENER] ensureListenerRunning: starting event loop')
   ensureLifecycleSubscription()
   loopRunning = true
   void runEventLoop()
