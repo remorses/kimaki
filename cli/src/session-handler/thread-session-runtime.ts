@@ -91,10 +91,12 @@ import {
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
+  writeSessionSystemPrompt,
   type AgentInfo,
   type RepliedMessageContext,
   type WorktreeInfo,
 } from '../system-message.js'
+import { getDataDir } from '../config.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
 import {
   appendOpencodeSessionEventLog,
@@ -3906,6 +3908,50 @@ export class ThreadSessionRuntime {
         sourceThreadId: input.sourceThreadId,
         repliedMessage: input.repliedMessage,
       })
+      // OpenCode's session.command API has no `system` field. Persist the
+      // kimaki system prompt so the context-awareness plugin can attach it
+      // on chat.message when the command user message is created.
+      // Fail the dispatch if persistence fails — otherwise the command runs
+      // without Discord context and silently restores the original bug.
+      const commandSystem = getOpencodeSystemMessage({
+        sessionId: session.id,
+        channelId,
+        guildId: this.thread.guildId,
+        threadId: this.thread.id,
+        channelTopic,
+        agents: earlyAvailableAgents,
+        username: this.state?.sessionUsername || input.username,
+        userId: this.state?.sessionUserId || input.userId,
+        parentSessionId: this.state?.parentSessionId || input.parentSessionId,
+      })
+      const systemWriteResult = await writeSessionSystemPrompt({
+        sessionId: session.id,
+        system: commandSystem,
+        dataDir: getDataDir(),
+      }).catch((e) => {
+        return e instanceof Error
+          ? e
+          : new Error(String(e), { cause: e })
+      })
+      if (systemWriteResult instanceof Error) {
+        logger.error(
+          `[DISPATCH] Failed to persist system prompt for command session ${session.id}: ${systemWriteResult.message}`,
+        )
+        void notifyError(
+          systemWriteResult,
+          'Failed to persist system prompt before session.command',
+        )
+        this.stopTyping()
+        await sendThreadMessage(
+          this.thread,
+          `✗ Failed to prepare command system prompt: ${systemWriteResult.message}`,
+          { flags: NOTIFY_MESSAGE_FLAGS },
+        )
+        await this.dispatchAction(() => {
+          return this.tryDrainQueue({ showIndicator: true })
+        })
+        return
+      }
       const commandResponse = await getClient().session.command(
         {
           sessionID: session.id,

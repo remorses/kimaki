@@ -3,6 +3,7 @@
 // - Working directory (pwd) changes (e.g. after /new-worktree mid-session)
 // - MEMORY.md reminder after a large assistant reply
 // - Onboarding tutorial instructions (when TUTORIAL_WELCOME_TEXT detected)
+// - Missing kimaki system prompt on session.command user messages
 //
 // Synthetic parts are hidden from the TUI but sent to the model, keeping it
 // aware of context changes without cluttering the UI.
@@ -31,6 +32,10 @@ import {
   ONBOARDING_TUTORIAL_INSTRUCTIONS,
   TUTORIAL_WELCOME_TEXT,
 } from './onboarding-tutorial.js'
+import {
+  deleteSessionSystemPrompt,
+  readSessionSystemPrompt,
+} from './system-message.js'
 
 const logger = createPluginLogger('OPENCODE')
 
@@ -320,6 +325,23 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
           const { sessionID } = input
           const state = getOrCreateSession(sessionID)
 
+          // -- System prompt for session.command path --
+          // OpenCode's session.command API has no `system` field. The bot
+          // writes the kimaki system prompt to disk before calling command;
+          // attach it here when the user message would otherwise miss it.
+          // promptAsync already sets message.system, so leave those alone.
+          // Only ENOENT is treated as missing; other I/O errors propagate so
+          // we do not silently drop kimaki system context.
+          if (!output.message.system && dataDir) {
+            const persistedSystem = await readSessionSystemPrompt({
+              sessionId: sessionID,
+              dataDir,
+            })
+            if (persistedSystem) {
+              output.message.system = persistedSystem
+            }
+          }
+
           // -- Onboarding tutorial injection --
           // Runs before the non-synthetic text guard because the tutorial
           // marker (TUTORIAL_WELCOME_TEXT) can appear in synthetic/system
@@ -465,6 +487,11 @@ const contextAwarenessPlugin: Plugin = async ({ directory, serverUrl }) => {
             return
           }
           sessions.delete(id)
+          // Drop the command-path system prompt side-channel file so Discord
+          // IDs / channel topics do not accumulate on disk after sessions end.
+          if (dataDir) {
+            await deleteSessionSystemPrompt({ sessionId: id, dataDir })
+          }
       })().catch((error) => {
         return new Error('context-awareness event hook failed', { cause: error })
       })

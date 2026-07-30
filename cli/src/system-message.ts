@@ -3,9 +3,98 @@
 // session, plus per-turn synthetic context for Discord/user/worktree metadata.
 // Keep per-message data out of the system prompt so prompt caching can reuse
 // the same session prefix across turns.
+//
+// session.command has no `system` field in the OpenCode SDK, so kimaki persists
+// the system prompt under <dataDir>/session-system/<sessionId>.txt and the
+// context-awareness plugin copies it onto user messages that arrive without one
+// (command path). promptAsync still passes system directly.
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { getDataDir } from './config.js'
 import { store } from './store.js'
+
+/** Subfolder under the kimaki data dir for session system prompt side-channel files. */
+export const SESSION_SYSTEM_PROMPT_DIR = 'session-system'
+
+/** Stable marker present in every kimaki system prompt; used by tests and plugins. */
+export const KIMAKI_SYSTEM_PROMPT_MARKER = 'via kimaki.dev'
+
+export function getSessionSystemPromptPath({
+  sessionId,
+  dataDir = getDataDir(),
+}: {
+  sessionId: string
+  dataDir?: string
+}) {
+  return path.join(dataDir, SESSION_SYSTEM_PROMPT_DIR, `${sessionId}.txt`)
+}
+
+/**
+ * Persist the kimaki system prompt for a session so the OpenCode plugin can
+ * attach it when session.command creates a user message without a system field.
+ * Fails loudly on I/O errors so callers do not run session.command without system.
+ */
+export async function writeSessionSystemPrompt({
+  sessionId,
+  system,
+  dataDir = getDataDir(),
+}: {
+  sessionId: string
+  system: string
+  dataDir?: string
+}) {
+  const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
+  const dirPath = path.dirname(filePath)
+  await fs.promises.mkdir(dirPath, { recursive: true, mode: 0o700 })
+  // mkdir recursive ignores mode on existing dirs; tighten permissions explicitly.
+  await fs.promises.chmod(dirPath, 0o700).catch(() => undefined)
+  await fs.promises.writeFile(filePath, system, { encoding: 'utf8', mode: 0o600 })
+  await fs.promises.chmod(filePath, 0o600).catch(() => undefined)
+}
+
+/**
+ * Read a previously persisted session system prompt.
+ * Returns null only when the file is missing (ENOENT) or empty.
+ * Other I/O errors are rethrown so the plugin can surface them instead of
+ * silently dropping kimaki system context.
+ */
+export async function readSessionSystemPrompt({
+  sessionId,
+  dataDir,
+}: {
+  sessionId: string
+  dataDir: string
+}): Promise<string | null> {
+  const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
+  const content = await fs.promises.readFile(filePath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+    if (error?.code === 'ENOENT') {
+      return null
+    }
+    throw error
+  })
+  if (!content?.trim()) {
+    return null
+  }
+  return content
+}
+
+/** Remove the side-channel system prompt file for a deleted OpenCode session. */
+export async function deleteSessionSystemPrompt({
+  sessionId,
+  dataDir,
+}: {
+  sessionId: string
+  dataDir: string
+}) {
+  const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
+  await fs.promises.unlink(filePath).catch((error: NodeJS.ErrnoException) => {
+    if (error?.code === 'ENOENT') {
+      return
+    }
+    throw error
+  })
+}
 
 function getCritiqueInstructions(sessionId: string) {
   return `

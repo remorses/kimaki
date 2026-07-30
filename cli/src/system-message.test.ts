@@ -1,16 +1,35 @@
 // Tests for session-stable system prompt generation and per-turn prompt context.
 
-import { describe, expect, test } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, test } from 'vitest'
 import {
+  deleteSessionSystemPrompt,
   getOpencodePromptContext,
   getOpencodeSystemMessage,
+  getSessionSystemPromptPath,
+  KIMAKI_SYSTEM_PROMPT_MARKER,
+  readSessionSystemPrompt,
+  writeSessionSystemPrompt,
 } from './system-message.js'
+
+const tempDirs: string[] = []
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => {
+      return fs.promises.rm(dir, { recursive: true, force: true })
+    }),
+  )
+})
 
 describe('system-message', () => {
   test('includes callout guidance for important content', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
     })
+    expect(message).toContain(KIMAKI_SYSTEM_PROMPT_MARKER)
     expect(message).toContain('## Callouts in Kimaki Discord')
     expect(message).toContain('Do **not** use GitHub callout syntax')
     expect(message).toContain('> [!WARNING]')
@@ -18,6 +37,56 @@ describe('system-message', () => {
     expect(message).toContain('- failing tests')
     expect(message).toContain('- failed commands')
     expect(message).toContain('<callout accent="#f59e0b">')
+  })
+
+  test('persists and reads session system prompt for command path', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
+    tempDirs.push(dataDir)
+    const sessionId = 'ses_command_system'
+    const system = getOpencodeSystemMessage({ sessionId })
+
+    await writeSessionSystemPrompt({ sessionId, system, dataDir })
+
+    const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
+    expect(filePath).toBe(
+      path.join(dataDir, 'session-system', `${sessionId}.txt`),
+    )
+    await expect(
+      readSessionSystemPrompt({ sessionId, dataDir }),
+    ).resolves.toBe(system)
+    expect(system).toContain(KIMAKI_SYSTEM_PROMPT_MARKER)
+    expect(system).toContain('kimaki upload-to-discord --session')
+
+    const fileMode = (await fs.promises.stat(filePath)).mode & 0o777
+    const dirMode = (await fs.promises.stat(path.dirname(filePath))).mode & 0o777
+    expect(fileMode).toBe(0o600)
+    expect(dirMode).toBe(0o700)
+
+    await deleteSessionSystemPrompt({ sessionId, dataDir })
+    await expect(
+      readSessionSystemPrompt({ sessionId, dataDir }),
+    ).resolves.toBeNull()
+  })
+
+  test('readSessionSystemPrompt returns null when missing', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
+    tempDirs.push(dataDir)
+    await expect(
+      readSessionSystemPrompt({ sessionId: 'ses_missing', dataDir }),
+    ).resolves.toBeNull()
+  })
+
+  test('readSessionSystemPrompt rethrows non-ENOENT errors', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
+    tempDirs.push(dataDir)
+    const sessionId = 'ses_blocked'
+    const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
+    // Path exists as a directory so readFile fails with EISDIR, not ENOENT.
+    await fs.promises.mkdir(filePath)
+    await expect(
+      readSessionSystemPrompt({ sessionId, dataDir }),
+    ).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
   test('includes parent session context when parentSessionId is set', () => {

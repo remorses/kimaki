@@ -101,6 +101,10 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
+const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
+const COMMAND_SYSTEM_CHECK_TEMPLATE =
+  'Reply with exactly: command-system-check'
+
 function createDeterministicMatchers(): DeterministicMatcher[] {
   const systemContextMatcher: DeterministicMatcher = {
     id: 'system-context-check',
@@ -120,6 +124,38 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
           delta: 'system-context-ok',
         },
         { type: 'text-end', id: 'system-context-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 0],
+    },
+  }
+
+  // session.command has no system field. Match an operational kimaki system
+  // instruction (upload helper) so we know the real session system prompt was
+  // injected — not just any string that happens to mention kimaki.dev.
+  // Without the fix this never fires and the bot replies "ok" from the fallback.
+  const commandSystemMatcher: DeterministicMatcher = {
+    id: 'command-system-check',
+    priority: 25,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: COMMAND_SYSTEM_CHECK_TEMPLATE,
+      promptTextIncludes: 'kimaki upload-to-discord --session',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'command-system-reply' },
+        {
+          type: 'text-delta',
+          id: 'command-system-reply',
+          delta: 'command-system-ok',
+        },
+        { type: 'text-end', id: 'command-system-reply' },
         {
           type: 'finish',
           finishReason: 'stop',
@@ -182,7 +218,12 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  return [systemContextMatcher, replyContextMatcher, userReplyMatcher]
+  return [
+    commandSystemMatcher,
+    systemContextMatcher,
+    replyContextMatcher,
+    userReplyMatcher,
+  ]
 }
 
 /**
@@ -271,16 +312,25 @@ describe('agent model resolution', () => {
       .toString()
 
     // Build base config with default model
-    const opencodeConfig = buildDeterministicOpencodeConfig({
-      providerName: PROVIDER_NAME,
-      providerNpm,
-      model: DEFAULT_MODEL,
-      smallModel: DEFAULT_MODEL,
-      settings: {
-        strict: false,
-        matchers: createDeterministicMatchers(),
+    const opencodeConfig = {
+      ...buildDeterministicOpencodeConfig({
+        providerName: PROVIDER_NAME,
+        providerNpm,
+        model: DEFAULT_MODEL,
+        smallModel: DEFAULT_MODEL,
+        settings: {
+          strict: false,
+          matchers: createDeterministicMatchers(),
+        },
+      }),
+      // OpenCode command used to verify session.command still gets kimaki system
+      command: {
+        [COMMAND_SYSTEM_CHECK_NAME]: {
+          description: 'Test command for kimaki system prompt injection',
+          template: COMMAND_SYSTEM_CHECK_TEMPLATE,
+        },
       },
-    })
+    }
 
     // Add extra models to the provider so opencode accepts them
     const providerConfig = opencodeConfig.provider[PROVIDER_NAME]
@@ -295,6 +345,18 @@ describe('agent model resolution', () => {
       path.join(directories.projectDirectory, 'opencode.json'),
       JSON.stringify(opencodeConfig, null, 2),
     )
+
+    // Leading /command detection only rewrites when registeredUserCommands is set
+    store.setState({
+      registeredUserCommands: [
+        {
+          name: COMMAND_SYSTEM_CHECK_NAME,
+          discordCommandName: `${COMMAND_SYSTEM_CHECK_NAME}-cmd`,
+          description: 'Test command for kimaki system prompt injection',
+          source: 'command',
+        },
+      ],
+    })
 
     // Create agent .md files with custom models
     createAgentFile({
@@ -503,6 +565,36 @@ describe('agent model resolution', () => {
         ⬥ system-context-ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
+    },
+    15_000,
+  )
+
+  test(
+    'session.command path includes kimaki system prompt on first message',
+    async () => {
+      // Leading /command is rewritten to session.command. Without system
+      // injection the matcher requiring "kimaki upload-to-discord --session"
+      // never matches and the bot falls through to the generic "ok" reply.
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: `/${COMMAND_SYSTEM_CHECK_NAME}`,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === `/${COMMAND_SYSTEM_CHECK_NAME}`
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'command-system-ok',
+        timeout: 4_000,
+      })
+
+      expect(await discord.thread(thread.id).text()).toContain('command-system-ok')
     },
     15_000,
   )
