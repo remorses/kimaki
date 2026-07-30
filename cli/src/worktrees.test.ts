@@ -16,6 +16,7 @@ import {
   resolveSessionWorkingDirectory,
 } from './worktrees.js'
 import { parseGitmodulesFileContent as parseCoreGitmodulesFileContent } from './git-worktree-core.js'
+import { createWorktreeCore, removeWorktreeCore } from './git-worktree-core.js'
 import { TargetDirtyWorktreeError } from './errors.js'
 import {
   formatAutoWorktreeName,
@@ -745,6 +746,171 @@ describe('recoverWorktreeFromInfo', () => {
         throw new Error('Expected recovery to fail')
       }
       expect(result.reason).toBe('branch-missing')
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('createWorktreeCore branch collision handling', () => {
+  async function initRepo({ cwd }: { cwd: string }) {
+    await git({ cwd, args: ['init', '-b', 'main'] })
+    await git({ cwd, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+    await git({ cwd, args: ['config', 'user.name', 'Kimaki Tests'] })
+    fs.writeFileSync(path.join(cwd, 'README.md'), 'init\n')
+    await git({ cwd, args: ['add', 'README.md'] })
+    await git({ cwd, args: ['commit', '-m', 'init'] })
+  }
+
+  test('picks the requested branch name when it does not exist', async () => {
+    const sandbox = createTestRoot()
+    const projectDir = path.join(sandbox, 'project')
+    const targetDir = path.join(sandbox, 'worktree')
+    fs.mkdirSync(projectDir, { recursive: true })
+
+    try {
+      await initRepo({ cwd: projectDir })
+      const result = await createWorktreeCore({
+        projectDirectory: projectDir,
+        targetDirectory: targetDir,
+        branchName: 'opencode/kimaki-fresh',
+      })
+
+      expect(result).toEqual({
+        directory: targetDir,
+        branch: 'opencode/kimaki-fresh',
+      })
+      expect(fs.existsSync(targetDir)).toBe(true)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('falls back to a -2 suffix when the requested branch already exists', async () => {
+    const sandbox = createTestRoot()
+    const projectDir = path.join(sandbox, 'project')
+    const targetDir = path.join(sandbox, 'worktree')
+    fs.mkdirSync(projectDir, { recursive: true })
+
+    try {
+      await initRepo({ cwd: projectDir })
+      await git({ cwd: projectDir, args: ['branch', 'opencode/kimaki-collision'] })
+
+      const result = await createWorktreeCore({
+        projectDirectory: projectDir,
+        targetDirectory: targetDir,
+        branchName: 'opencode/kimaki-collision',
+      })
+
+      expect(result).toEqual({
+        directory: targetDir,
+        branch: 'opencode/kimaki-collision-2',
+      })
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('escalates through -3, -4 when -2 is also taken', async () => {
+    const sandbox = createTestRoot()
+    const projectDir = path.join(sandbox, 'project')
+    const targetDir = path.join(sandbox, 'worktree')
+    fs.mkdirSync(projectDir, { recursive: true })
+
+    try {
+      await initRepo({ cwd: projectDir })
+      await git({ cwd: projectDir, args: ['branch', 'opencode/kimaki-multi'] })
+      await git({ cwd: projectDir, args: ['branch', 'opencode/kimaki-multi-2'] })
+
+      const result = await createWorktreeCore({
+        projectDirectory: projectDir,
+        targetDirectory: targetDir,
+        branchName: 'opencode/kimaki-multi',
+      })
+
+      expect(result).toEqual({
+        directory: targetDir,
+        branch: 'opencode/kimaki-multi-3',
+      })
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('falls back to a random unique suffix when all predictable suffixes are taken', async () => {
+    const sandbox = createTestRoot()
+    const projectDir = path.join(sandbox, 'project')
+    const targetDir = path.join(sandbox, 'worktree')
+    fs.mkdirSync(projectDir, { recursive: true })
+
+    try {
+      await initRepo({ cwd: projectDir })
+      await git({ cwd: projectDir, args: ['branch', 'opencode/kimaki-flood'] })
+      for (let i = 2; i <= 99; i++) {
+        await git({ cwd: projectDir, args: ['branch', `opencode/kimaki-flood-${i}`] })
+      }
+
+      const result = await createWorktreeCore({
+        projectDirectory: projectDir,
+        targetDirectory: targetDir,
+        branchName: 'opencode/kimaki-flood',
+      })
+
+      if (result instanceof Error) {
+        throw new Error(`Expected worktree creation to succeed, got: ${result.message}`)
+      }
+      expect(result.branch.startsWith('opencode/kimaki-flood-')).toBe(true)
+      expect(result.branch).not.toBe('opencode/kimaki-flood')
+      // Should not match any of the predictable suffixes 2..99
+      const suffix = result.branch.slice('opencode/kimaki-flood-'.length)
+      const numericSuffix = Number(suffix)
+      expect(Number.isInteger(numericSuffix)).toBe(false)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('removeWorktreeCore does not delete the original branch when passed a stale name', async () => {
+    // Regression: when a collision renames the worktree branch (e.g. "foo" ->
+    // "foo-2"), removeWorktreeCore must NOT delete the user's pre-existing
+    // original branch even if called with the stale original name.
+    const sandbox = createTestRoot()
+    const projectDir = path.join(sandbox, 'project')
+    const targetDir = path.join(sandbox, 'worktree')
+    fs.mkdirSync(projectDir, { recursive: true })
+
+    try {
+      await initRepo({ cwd: projectDir })
+      // Pre-existing branch that the user created before kimaki touched it
+      await git({ cwd: projectDir, args: ['branch', 'opencode/kimaki-collision'] })
+
+      const result = await createWorktreeCore({
+        projectDirectory: projectDir,
+        targetDirectory: targetDir,
+        branchName: 'opencode/kimaki-collision',
+      })
+      if (result instanceof Error) throw result
+
+      // Worktree was renamed to -2 due to collision
+      expect(result.branch).toBe('opencode/kimaki-collision-2')
+      expect(fs.existsSync(targetDir)).toBe(true)
+
+      // Simulate the buggy call: remove with the ORIGINAL (stale) branch name
+      const removeResult = await removeWorktreeCore({
+        projectDirectory: projectDir,
+        worktreeDirectory: targetDir,
+        branchName: 'opencode/kimaki-collision', // stale — not what the worktree uses
+      })
+      if (removeResult instanceof Error) throw removeResult
+
+      // Worktree directory must be gone
+      expect(fs.existsSync(targetDir)).toBe(false)
+      // Original branch MUST survive
+      const originalSurvives = await git({
+        cwd: projectDir,
+        args: ['rev-parse', '--verify', 'refs/heads/opencode/kimaki-collision'],
+      })
+      expect(originalSurvives).toBeTruthy()
     } finally {
       fs.rmSync(sandbox, { recursive: true, force: true })
     }

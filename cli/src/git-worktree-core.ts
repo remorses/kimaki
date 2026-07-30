@@ -6,12 +6,14 @@
 //
 // All logging goes through an optional `log` callback so callers control output.
 
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execAsync } from './exec-async.js'
 
 const SUBMODULE_INIT_TIMEOUT_MS = 20 * 60_000
 const INSTALL_TIMEOUT_MS = 60_000
+const BRANCH_COLLISION_SUFFIX_LIMIT = 99
 
 const LOCKFILE_TO_INSTALL_COMMAND: Array<[string, string]> = [
   ['pnpm-lock.yaml', 'pnpm install'],
@@ -297,6 +299,54 @@ export type WorktreeResult = {
   branch: string
 }
 
+async function branchExists({
+  projectDirectory,
+  branchName,
+}: {
+  projectDirectory: string
+  branchName: string
+}): Promise<boolean> {
+  const result = await execAsync(
+    `git rev-parse --verify refs/heads/${JSON.stringify(branchName)}`,
+    { cwd: projectDirectory, timeout: 10_000 },
+  ).then(() => true).catch(() => false)
+  return result
+}
+
+/**
+ * Resolve a non-colliding branch name to use for a new worktree.
+ *
+ * If the requested branch does not exist it is returned as-is. If it already
+ * exists, a short predictable suffix (`-2`, `-3`, ...) is tried first. If
+ * those are also taken, a random unique string is appended as a fallback so
+ * the caller always gets a branch name they can create.
+ */
+async function pickAvailableBranchName({
+  projectDirectory,
+  branchName,
+  log,
+}: {
+  projectDirectory: string
+  branchName: string
+  log: WorktreeLog
+}): Promise<string | Error> {
+  if (!(await branchExists({ projectDirectory, branchName }))) {
+    return branchName
+  }
+
+  for (let suffix = 2; suffix <= BRANCH_COLLISION_SUFFIX_LIMIT; suffix++) {
+    const candidate = `${branchName}-${suffix}`
+    if (!(await branchExists({ projectDirectory, branchName: candidate }))) {
+      log.info(`Branch "${branchName}" already exists; using "${candidate}" instead`)
+      return candidate
+    }
+  }
+
+  const fallback = `${branchName}-${crypto.randomBytes(4).toString('hex')}`
+  log.info(`Branch "${branchName}" already exists; using unique fallback "${fallback}"`)
+  return fallback
+}
+
 /**
  * Create a git worktree with full submodule initialization and dependency install.
  * Plugin-safe: no config.ts or logger.ts imports. Logging is done via the `log`
@@ -322,8 +372,15 @@ export async function createWorktreeCore({
   }
   await fs.promises.mkdir(path.dirname(targetDirectory), { recursive: true })
 
+  const resolvedBranchName = await pickAvailableBranchName({
+    projectDirectory,
+    branchName,
+    log,
+  })
+  if (resolvedBranchName instanceof Error) return resolvedBranchName
+
   const targetRef = baseBranch || 'HEAD'
-  const createCmd = `git worktree add ${JSON.stringify(targetDirectory)} -B ${JSON.stringify(branchName)} ${JSON.stringify(targetRef)}`
+  const createCmd = `git worktree add ${JSON.stringify(targetDirectory)} -b ${JSON.stringify(resolvedBranchName)} ${JSON.stringify(targetRef)}`
   const createResult = await execAsync(createCmd, {
     cwd: projectDirectory,
     timeout: SUBMODULE_INIT_TIMEOUT_MS,
@@ -358,12 +415,17 @@ export async function createWorktreeCore({
     log.error(`Dependency install failed (non-fatal): ${installResult.message}`)
   }
 
-  return { directory: targetDirectory, branch: branchName }
+  return { directory: targetDirectory, branch: resolvedBranchName }
 }
 
 /**
  * Remove a git worktree and its branch.
  * Plugin-safe version of deleteWorktree.
+ *
+ * Safety: before deleting the branch, verifies the worktree actually uses it.
+ * Skips branch deletion if the worktree uses a different branch (handles
+ * collision-rename cases where the original branch name differs from the
+ * actual worktree branch).
  */
 export async function removeWorktreeCore({
   projectDirectory,
@@ -381,9 +443,27 @@ export async function removeWorktreeCore({
   if (removeResult instanceof Error) return removeResult
 
   if (branchName) {
-    await execAsync(
-      `git branch -D ${JSON.stringify(branchName)}`,
+    // Verify this worktree actually uses the branch before deleting it.
+    // In collision-rename cases the worktree branch differs from the
+    // originally-requested name (e.g. user asked for "foo" but got "foo-2").
+    const worktreeListResult = await execAsync(
+      `git worktree list --porcelain ${JSON.stringify(worktreeDirectory)}`,
       { cwd: projectDirectory, timeout: 10_000 },
-    ).catch(() => {/* branch may not exist */})
+    ).catch(() => null)
+
+    let shouldDeleteBranch = false
+    if (worktreeListResult && !worktreeListResult.stderr) {
+      const lines = worktreeListResult.stdout.split('\n')
+      const branchLine = lines.find((l) => l.startsWith('branch refs/heads/'))
+      const actualBranch = branchLine ? branchLine.replace('branch refs/heads/', '') : null
+      shouldDeleteBranch = actualBranch === branchName
+    }
+
+    if (shouldDeleteBranch) {
+      await execAsync(
+        `git branch -D ${JSON.stringify(branchName)}`,
+        { cwd: projectDirectory, timeout: 10_000 },
+      ).catch(() => {/* branch may not exist */})
+    }
   }
 }

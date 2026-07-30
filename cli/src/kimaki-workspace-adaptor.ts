@@ -76,6 +76,8 @@ function createKimakiWorktreeAdaptor(projectDirectory: string): WorkspaceAdapter
       if (result instanceof Error) {
         throw result
       }
+      // Persist the resolved branch name so remove() always passes the real branch
+      info.branch = result.branch
     },
 
     async remove(info: WorkspaceInfo): Promise<void> {
