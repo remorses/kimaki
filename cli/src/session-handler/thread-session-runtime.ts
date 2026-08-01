@@ -97,6 +97,12 @@ import {
   type WorktreeInfo,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
+import {
+  trackEvent,
+  type AnalyticsIngressMode,
+  type AnalyticsTurnInputKind,
+  type AnalyticsTurnSource,
+} from '../analytics.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
 import {
   appendOpencodeSessionEventLog,
@@ -506,6 +512,8 @@ export type EnqueueResult = {
   queued: boolean
   /** Queue position (1-based). Only set when queued is true. */
   position?: number
+  /** Stable queue entry id. Set when the item was placed in the local queue. */
+  queueId?: string
 }
 
 /**
@@ -579,6 +587,11 @@ export type IngressInput = {
    */
   noReply?: boolean
   /**
+   * Product-analytics turn source. Defaults to discord. Set retry/cli/scheduled
+   * at the ingress site so DAU queries can exclude non-user activity.
+   */
+  analyticsSource?: AnalyticsTurnSource
+  /**
    * Lazy preprocessing callback. When set, the runtime serializes it via a
    * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
    * from the raw Discord message. This replaces the threadIngressQueue in
@@ -590,6 +603,37 @@ export type IngressInput = {
    * runtime stays platform-agnostic — it just awaits the callback.
    */
   preprocess?: () => Promise<PreprocessResult>
+}
+
+function resolveTurnSource(input: {
+  analyticsSource?: AnalyticsTurnSource
+  sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
+  sessionStartScheduleKind?: 'at' | 'cron'
+}): AnalyticsTurnSource {
+  if (input.analyticsSource) return input.analyticsSource
+  if (input.sessionStartSource || input.sessionStartScheduleKind) {
+    return 'scheduled'
+  }
+  return 'discord'
+}
+
+function trackTurnStarted({
+  inputKind,
+  ingressMode,
+  source,
+  agent,
+}: {
+  inputKind: AnalyticsTurnInputKind
+  ingressMode: AnalyticsIngressMode
+  source: AnalyticsTurnSource
+  agent?: string
+}) {
+  trackEvent('turn_started', {
+    input_kind: inputKind,
+    ingress_mode: ingressMode,
+    source,
+    uses_custom_agent: Boolean(agent && agent !== 'build'),
+  })
 }
 
 // Rewrite `{ prompt: "/build foo" }` → `{ prompt: "", command: { name, arguments }, mode: "local-queue" }`
@@ -2338,6 +2382,15 @@ export class ThreadSessionRuntime {
       sessionId,
     })
     if (turnStartTime !== undefined) {
+      // Track before Discord footer side effects so successful turns are
+      // counted even when footer delivery fails.
+      const durationSec = Math.max(
+        0,
+        Math.round((completedAt - turnStartTime) / 1000),
+      )
+      trackEvent('turn_completed', {
+        duration_sec: durationSec,
+      })
       await this.emitFooter({
         completedAt,
         runStartTime: turnStartTime,
@@ -3135,6 +3188,15 @@ export class ThreadSessionRuntime {
         `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
       )
 
+      if (!input.noReply) {
+        trackTurnStarted({
+          inputKind: input.command ? 'command' : 'prompt',
+          ingressMode: 'direct',
+          source: resolveTurnSource(input),
+          agent: resolvedAgent,
+        })
+      }
+
       // noReply messages don't trigger the agent loop, so don't mark as busy
       if (!input.noReply) {
         this.markQueueDispatchBusy(session.id)
@@ -3152,7 +3214,9 @@ export class ThreadSessionRuntime {
    * Used for explicit queue workflows (/queue, queueMessage=true).
    */
   private async enqueueViaLocalQueue(input: IngressInput): Promise<EnqueueResult> {
+    const queueId = crypto.randomBytes(8).toString('hex')
     const queuedMessage: QueuedMessage = {
+      queueId,
       prompt: input.prompt,
       userId: input.userId,
       username: input.username,
@@ -3170,9 +3234,10 @@ export class ThreadSessionRuntime {
       repliedMessage: input.repliedMessage,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
+      analyticsSource: resolveTurnSource(input),
     }
 
-    let result: EnqueueResult = { queued: false }
+    let result: EnqueueResult = { queued: false, queueId }
 
     await this.dispatchAction(async () => {
       // Enqueue the message
@@ -3188,8 +3253,8 @@ export class ThreadSessionRuntime {
         )
         : false
       result = !willDrainNow && position > 0
-        ? { queued: true, position }
-        : { queued: false }
+        ? { queued: true, position, queueId }
+        : { queued: false, queueId }
 
       if (this.hasPendingQuestionUi()) {
         this.maybeHandoffQueuedItemForPendingQuestion({
@@ -3513,6 +3578,11 @@ export class ThreadSessionRuntime {
   /** Remove a queued message by its 1-based position. */
   removeQueuePosition(position: number): threadState.QueuedMessage | undefined {
     return threadState.removeQueueItemAtPosition(this.threadId, position)
+  }
+
+  /** Remove a queued message by stable queue id. */
+  removeQueueItemById(queueId: string): threadState.QueuedMessage | undefined {
+    return threadState.removeQueueItemById(this.threadId, queueId)
   }
 
   /**
@@ -4036,6 +4106,12 @@ export class ThreadSessionRuntime {
       }
 
       logger.log(`[DISPATCH] Successfully ran command for session ${session.id}`)
+      trackTurnStarted({
+        inputKind: 'command',
+        ingressMode: 'local_queue',
+        source: resolveTurnSource(input),
+        agent: earlyAgentPreference,
+      })
       return
     }
 
@@ -4083,6 +4159,12 @@ export class ThreadSessionRuntime {
     logger.log(
       `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
     )
+    trackTurnStarted({
+      inputKind: 'prompt',
+      ingressMode: 'local_queue',
+      source: resolveTurnSource(input),
+      agent: earlyAgentPreference,
+    })
   }
 
   // ── Session Ensure ──────────────────────────────────────────
@@ -4242,6 +4324,11 @@ export class ThreadSessionRuntime {
             scanPatterns: injectionGuardPatterns,
           })
         }
+        const worktree = await getThreadWorktreeOrWorkspace(this.thread.id)
+        trackEvent('session_created', {
+          has_worktree: Boolean(worktree),
+          source: sessionStartScheduleKind ? 'scheduled' : 'discord',
+        })
       }
       createdNewSession = true
     }
@@ -4534,6 +4621,7 @@ export class ThreadSessionRuntime {
       mode: 'opencode',
       resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
+      analyticsSource: 'retry',
     })
 
     if (this.state?.sessionId !== sessionId) {

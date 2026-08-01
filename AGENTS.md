@@ -620,7 +620,7 @@ at assistant message normal completion we also display a footer message like `ki
 
 we also support voice user messages, these are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
 
-we also support a /queue command to queue user messages to be sent at current session end. and a /clear-queue command to clear the queue. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
+we also support a /queue command to queue user messages to be sent at current session end. each queue confirmation has a Remove button to drop that item. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
 
 this information is useful for your tests. you can use this knowledge to write tests, tests should use expect and find messages that match a specific pattern.
 

@@ -1,6 +1,8 @@
 // /model command - Set the preferred model for this channel or session.
 
 import {
+  ButtonBuilder,
+  ButtonStyle,
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
   StringSelectMenuBuilder,
@@ -29,6 +31,11 @@ import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { getDefaultModel } from '../session-handler/model-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
+import {
+  buildHtmlActionCustomId,
+  cancelHtmlActionsForOwner,
+  registerHtmlAction,
+} from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
@@ -464,24 +471,31 @@ export async function handleModelCommand({
       })
     }
 
-    // Parallelize: fetch providers, current model info, and variant cascade at the same time.
+    // Parallelize: fetch providers, current model info, variant cascade, and overrides.
     // getCurrentModelInfo does DB lookups first (fast) and only hits provider.list as fallback.
-    const [providersResponse, currentModelInfo, cascadeVariant] =
-      await Promise.all([
-        getClient().provider.list({ directory: projectDirectory }),
-        getCurrentModelInfo({
-          sessionId,
-          channelId: targetChannelId,
-          appId: effectiveAppId,
-          getClient,
-          directory: projectDirectory,
-        }),
-        getVariantCascade({
-          sessionId,
-          channelId: targetChannelId,
-          appId: effectiveAppId,
-        }),
-      ])
+    const [
+      providersResponse,
+      currentModelInfo,
+      cascadeVariant,
+      sessionPref,
+      channelPref,
+    ] = await Promise.all([
+      getClient().provider.list({ directory: projectDirectory }),
+      getCurrentModelInfo({
+        sessionId,
+        channelId: targetChannelId,
+        appId: effectiveAppId,
+        getClient,
+        directory: projectDirectory,
+      }),
+      getVariantCascade({
+        sessionId,
+        channelId: targetChannelId,
+        appId: effectiveAppId,
+      }),
+      sessionId ? getSessionModel(sessionId) : Promise.resolve(undefined),
+      getChannelModel(targetChannelId),
+    ])
 
     if (!providersResponse.data) {
       await interaction.editReply({
@@ -570,9 +584,112 @@ export async function handleModelCommand({
     const actionRow =
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
+    const shortcutButtons: ButtonBuilder[] = []
+    const ownerKey = `model-actions:${interaction.user.id}:${interaction.channelId}`
+    cancelHtmlActionsForOwner(ownerKey)
+
+    const hasThinkingVariants =
+      currentModelInfo.type !== 'none'
+      && getThinkingValuesForModel({
+        providers: allProviders,
+        providerId: currentModelInfo.providerID,
+        modelId: currentModelInfo.modelID,
+      }).length > 0
+
+    if (hasThinkingVariants) {
+      const variantActionId = registerHtmlAction({
+        ownerKey,
+        threadId: sessionId ?? targetChannelId,
+        run: async ({ interaction: buttonInteraction }) => {
+          const buttonChannel = buttonInteraction.channel
+          if (!buttonChannel) {
+            await buttonInteraction.editReply({
+              content: 'This action can only be used in a channel',
+              components: [],
+            })
+            return
+          }
+          // Lazy import avoids a circular dependency with model-variant.ts.
+          const { showModelVariantPicker } = await import('./model-variant.js')
+          await showModelVariantPicker({
+            channel: buttonChannel,
+            appId,
+            editReply: (options) => buttonInteraction.editReply(options),
+          })
+        },
+      })
+      shortcutButtons.push(
+        new ButtonBuilder()
+          .setCustomId(buildHtmlActionCustomId(variantActionId))
+          .setLabel('Change thinking level')
+          .setStyle(ButtonStyle.Secondary),
+      )
+    }
+
+    const hasClearableOverride = Boolean(sessionPref || channelPref)
+    if (hasClearableOverride) {
+      const clearLabel = sessionPref
+        ? 'Clear session override'
+        : 'Clear channel override'
+      const clearActionId = registerHtmlAction({
+        ownerKey,
+        threadId: sessionId ?? targetChannelId,
+        run: async ({ interaction: buttonInteraction }) => {
+          const buttonChannel = buttonInteraction.channel
+          if (!buttonChannel) {
+            await buttonInteraction.editReply({
+              content: 'This action can only be used in a channel',
+              components: [],
+            })
+            return
+          }
+          // Lazy import avoids a circular dependency with unset-model.ts.
+          const { clearModelOverride } = await import('./unset-model.js')
+          if (!buttonChannel.isTextBased() || buttonChannel.isDMBased()) {
+            await buttonInteraction.editReply({
+              content: 'This action can only be used in a server channel',
+              components: [],
+            })
+            return
+          }
+          if (
+            buttonChannel.type !== ChannelType.GuildText
+            && !buttonChannel.isThread()
+          ) {
+            await buttonInteraction.editReply({
+              content: 'This action can only be used in text channels or threads',
+              components: [],
+            })
+            return
+          }
+          await clearModelOverride({
+            channel: buttonChannel,
+            appId,
+            editReply: (options) => buttonInteraction.editReply(options),
+          })
+        },
+      })
+      shortcutButtons.push(
+        new ButtonBuilder()
+          .setCustomId(buildHtmlActionCustomId(clearActionId))
+          .setLabel(clearLabel)
+          .setStyle(ButtonStyle.Danger),
+      )
+    }
+
+    const components: Array<
+      | ActionRowBuilder<StringSelectMenuBuilder>
+      | ActionRowBuilder<ButtonBuilder>
+    > = [actionRow]
+    if (shortcutButtons.length > 0) {
+      components.push(
+        new ActionRowBuilder<ButtonBuilder>().addComponents(...shortcutButtons),
+      )
+    }
+
     await interaction.editReply({
       content: providerSelectHeader,
-      components: [actionRow],
+      components,
     })
   } catch (error) {
     modelLogger.error('Error loading providers:', error)

@@ -172,15 +172,12 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('toggle-worktrees')
-      .setDescription(
-        truncateCommandDescription('Toggle automatic git worktree creation for new sessions in this channel'),
-      )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('worktrees')
-      .setDescription(truncateCommandDescription('List all active worktree sessions'))
+      .setDescription(
+        truncateCommandDescription(
+          'List worktrees and toggle automatic worktree creation for this channel',
+        ),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -310,19 +307,11 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('model')
-      .setDescription(truncateCommandDescription('Set the preferred model for this channel or session'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('model-variant')
       .setDescription(
-        truncateCommandDescription('Change thinking level for current model. Tied to the model; lost when you switch models'),
+        truncateCommandDescription(
+          'Set model preference, change thinking level, or clear overrides',
+        ),
       )
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('unset-model-override')
-      .setDescription(truncateCommandDescription('Remove model override and use default instead'))
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
@@ -340,28 +329,15 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('queue')
       .setDescription(
-        truncateCommandDescription('Queue a message to be sent after the current response finishes'),
+        truncateCommandDescription(
+          'Queue a message after the current response (use Remove button to unqueue)',
+        ),
       )
       .addStringOption((option) => {
         option
           .setName('message')
           .setDescription(truncateCommandDescription('The message to queue'))
           .setRequired(true)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('clear-queue')
-      .setDescription(truncateCommandDescription('Clear all queued messages in this thread'))
-      .addIntegerOption((option) => {
-        option
-          .setName('position')
-          .setDescription(
-            truncateCommandDescription('1-based queued message position to clear (default: all)'),
-          )
-          .setMinValue(1)
 
         return option
       })
@@ -461,26 +437,29 @@ export async function registerCommands({
       .toJSON(),
     new SlashCommandBuilder()
       .setName('screenshare')
-      .setDescription(truncateCommandDescription('Start screen sharing via VNC tunnel (auto-stops after 30 minutes)'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
-      .setName('screenshare-stop')
-      .setDescription(truncateCommandDescription('Stop screen sharing'))
+      .setDescription(
+        truncateCommandDescription(
+          'Start screen sharing via VNC tunnel (auto-stops after 30 minutes; Stop button on reply)',
+        ),
+      )
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
       .setName('vscode')
       .setDescription(
-        truncateCommandDescription('Open VS Code in the browser for this project or worktree (auto-stops after 30 minutes)'),
+        truncateCommandDescription(
+          'Open VS Code in the browser (auto-stops after 30 minutes; Stop button on reply)',
+        ),
       )
       .setDMPermission(false)
       .toJSON(),
   ]
 
-  // Dynamic commands are registered in priority order: agents → user commands → skills → MCP prompts.
+  // Dynamic commands are registered in priority order:
+  // agents → user config commands → MCP prompts → skills.
   // This ordering matters because we slice to MAX_DISCORD_COMMANDS (100) at the end,
   // so lower-priority dynamic commands get trimmed first if the total exceeds the limit.
+  // Skills are last because they are the largest/most disposable set under the cap.
 
   // 1. Agent-specific quick commands like /plan-agent, /build-agent
   // Filter to primary/all mode agents (same as /agent command shows), excluding hidden agents
@@ -519,11 +498,11 @@ export async function registerCommands({
     )
   }
 
-  // 2. User-defined commands, skills, and MCP prompts (ordered by priority)
+  // 2. User-defined commands, MCP prompts, and skills (ordered by priority)
   // Also populate registeredUserCommands in the store for /queue-command autocomplete
   const newRegisteredCommands: RegisteredUserCommand[] = []
-  // Sort: regular commands first, then skills, then MCP prompts
-  const sourceOrder: Record<string, number> = { config: 0, skill: 1, mcp: 2 }
+  // Sort: regular commands first, then MCP prompts, then skills last
+  const sourceOrder: Record<string, number> = { config: 0, mcp: 1, skill: 2 }
   const sortedUserCommands = [...userCommands].sort((a, b) => {
     return (sourceOrder[a.source || ''] ?? 0) - (sourceOrder[b.source || ''] ?? 0)
   })
@@ -590,7 +569,7 @@ export async function registerCommands({
   store.setState({ registeredUserCommands: newRegisteredCommands })
 
   // Discord allows max 100 guild commands. Slice to stay within the limit,
-  // trimming lowest-priority dynamic commands (MCP prompts, then skills) first.
+  // trimming lowest-priority dynamic commands (skills, then MCP) first.
   const MAX_DISCORD_COMMANDS = 100
   if (commands.length > MAX_DISCORD_COMMANDS) {
     cliLogger.warn(

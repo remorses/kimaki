@@ -28,21 +28,18 @@ A complete reference of Kimaki's **Discord slash commands** and **CLI subcommand
 
 | Command | Description |
 |---|---|
-| `/model` | Change the model for this channel or session ([docs](../getting-started/model-switching)) |
+| `/model` | Change model, thinking level, or clear overrides ([docs](../getting-started/model-switching)) |
 | `/agent` | Change the agent for this channel or session |
 | `/<name>-agent` | Instantly switch to a named agent file |
 | `/login` | Authenticate a provider via OAuth or API key ([docs](../getting-started/subscriptions)) |
-| `/model-variant` | Change the thinking-level variant for the current model |
-| `/unset-model-override` | Remove model overrides and use the default |
 | `/verbosity` | Set how much tool output is shown ([docs](../configuration/verbosity)) |
 
 ## Queue slash commands
 
 | Command | Description |
 |---|---|
-| `/queue <message>` | Queue a message for after the current run ([docs](../features/queue)) |
-| `/queue-command <command>` | Queue a registered command |
-| `/clear-queue [position]` | Clear all queued messages, or one by position |
+| `/queue <message>` | Queue a message for after the current run; reply has a **Remove** button ([docs](../features/queue)) |
+| `/queue-command <command>` | Queue a registered command; reply has a **Remove** button |
 
 ## Project & worktree slash commands
 
@@ -53,15 +50,13 @@ A complete reference of Kimaki's **Discord slash commands** and **CLI subcommand
 | `/remove-project <project>` | Remove channels for a project |
 | `/new-worktree <name>` | Move the session into an isolated git worktree ([docs](../features/worktrees)) |
 | `/merge-worktree` | Merge the worktree branch into the default branch |
-| `/worktrees` | List all worktrees for the channel's project |
-| `/toggle-worktrees` | Toggle automatic worktree creation for new sessions |
+| `/worktrees` | List worktrees and toggle automatic worktree creation ([docs](../features/worktrees)) |
 
 ## Access & permissions slash commands
 
 | Command | Description |
 |---|---|
 | `/add-dir <directory>` | Grant the session access to an extra directory ([docs](../configuration/permissions)) |
-| `/toggle-mention-mode` | Only respond to @mentions in this channel ([docs](../configuration/access-control)) |
 | `/mcp` | List and toggle MCP servers for the project ([docs](../configuration/mcp)) |
 | `/transcription-key` | Set the API key used for voice transcription ([docs](../features/voice)) |
 
@@ -69,9 +64,8 @@ A complete reference of Kimaki's **Discord slash commands** and **CLI subcommand
 
 | Command | Description |
 |---|---|
-| `/vscode` | Open the project in browser VS Code ([docs](../remote-access/vscode)) |
-| `/screenshare` | Share your screen via VNC tunnel ([docs](../remote-access/screen-sharing)) |
-| `/screenshare-stop` | Stop screen sharing |
+| `/vscode` | Open browser VS Code; reply has a **Stop** button ([docs](../remote-access/vscode)) |
+| `/screenshare` | Share screen via VNC; reply has a **Stop** button ([docs](../remote-access/screen-sharing)) |
 | `/diff` | Generate a shareable diff URL ([docs](../features/diff-viewer)) |
 | `/run-shell-command <command>` | Run a shell command in the project dir ([docs](../features/shell-commands)) |
 

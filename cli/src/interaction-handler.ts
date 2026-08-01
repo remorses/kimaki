@@ -20,7 +20,6 @@ import {
   handleMergeWorktreeCommand,
   handleMergeWorktreeAutocomplete,
 } from './commands/merge-worktree.js'
-import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
 import { handleTasksCommand } from './commands/tasks.js'
 import { handleLastSessionsCommand } from './commands/last-sessions.js'
@@ -59,7 +58,6 @@ import {
   handleModelSelectMenu,
   handleModelScopeSelectMenu,
 } from './commands/model.js'
-import { handleUnsetModelCommand } from './commands/unset-model.js'
 import {
   handleLoginCommand,
   handleLoginSelect,
@@ -89,7 +87,6 @@ import { handleActionButton } from './commands/action-buttons.js'
 import { handleHtmlActionButton } from './html-actions.js'
 import {
   handleQueueCommand,
-  handleClearQueueCommand,
   handleQueueCommandCommand,
   handleQueueCommandAutocomplete,
 } from './commands/queue.js'
@@ -106,14 +103,10 @@ import { handleSessionIdCommand } from './commands/session-id.js'
 
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
-import {
-  handleScreenshareCommand,
-  handleScreenshareStopCommand,
-} from './commands/screenshare.js'
+import { handleScreenshareCommand } from './commands/screenshare.js'
 import { handleVscodeCommand } from './commands/vscode.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
-  handleModelVariantCommand,
   handleVariantQuickSelectMenu,
   handleVariantScopeSelectMenu,
 } from './commands/model-variant.js'
@@ -278,13 +271,6 @@ export function registerInteractionHandler({
               await handleMergeWorktreeCommand({ command: interaction, appId })
               return
 
-            case 'toggle-worktrees':
-              await handleToggleWorktreesCommand({
-                command: interaction,
-                appId,
-              })
-              return
-
             case 'worktrees':
               await handleWorktreesCommand({
                 command: interaction,
@@ -362,14 +348,6 @@ export function registerInteractionHandler({
               await handleModelCommand({ interaction, appId })
               return
 
-            case 'model-variant':
-              await handleModelVariantCommand({ interaction, appId })
-              return
-
-            case 'unset-model-override':
-              await handleUnsetModelCommand({ interaction, appId })
-              return
-
             case 'login':
               if (!hasKimakiAdminPermission(interaction.member, interaction.guild)) {
                 await interaction.reply({
@@ -387,10 +365,6 @@ export function registerInteractionHandler({
 
             case 'queue':
               await handleQueueCommand({ command: interaction, appId })
-              return
-
-            case 'clear-queue':
-              await handleClearQueueCommand({ command: interaction, appId })
               return
 
             case 'queue-command':
@@ -457,13 +431,6 @@ export function registerInteractionHandler({
 
             case 'screenshare':
               await handleScreenshareCommand({ command: interaction, appId })
-              return
-
-            case 'screenshare-stop':
-              await handleScreenshareStopCommand({
-                command: interaction,
-                appId,
-              })
               return
 
             case 'vscode':

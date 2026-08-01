@@ -2,6 +2,9 @@ import crypto from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   MessageFlags,
   type TextChannel,
@@ -13,6 +16,11 @@ import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
+import {
+  buildHtmlActionCustomId,
+  cancelHtmlActionsForOwner,
+  registerHtmlAction,
+} from '../html-actions.js'
 import { createLogger } from '../logger.js'
 
 const logger = createLogger('VSCODE')
@@ -296,13 +304,37 @@ export async function handleVscodeCommand({
   await command.deferReply({ flags: SECURE_REPLY_FLAGS })
 
   const sessionKey = channel.id
+  const ownerKey = `vscode:${sessionKey}`
+  const stopRow = (() => {
+    cancelHtmlActionsForOwner(ownerKey)
+    const actionId = registerHtmlAction({
+      ownerKey,
+      ttlMs: MAX_SESSION_MS,
+      run: async ({ interaction }) => {
+        const stopped = stopVscode({ sessionKey })
+        await interaction.editReply({
+          content: stopped ? 'VS Code stopped' : 'No active VS Code session to stop',
+          components: [],
+        })
+      },
+    })
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(buildHtmlActionCustomId(actionId))
+        .setLabel('Stop VS Code')
+        .setStyle(ButtonStyle.Danger),
+    )
+  })()
+
   const existing = getActiveVscodeSession({ sessionKey })
   if (existing) {
     await command.editReply({
       content:
         `VS Code is already running for this thread. ` +
-        `This unique tunnel auto-stops after ${MAX_SESSION_MINUTES} minutes from startup.\n` +
+        `This unique tunnel auto-stops after ${MAX_SESSION_MINUTES} minutes from startup. ` +
+        `Use the button below to stop sooner.\n` +
         `${existing.url}`,
+      components: [stopRow],
     })
     return
   }
@@ -316,13 +348,17 @@ export async function handleVscodeCommand({
     await command.editReply({
       content:
         `VS Code started for \`${session.workingDirectory}\`. ` +
-        `This unique tunnel auto-stops after ${MAX_SESSION_MINUTES} minutes, so open it before it expires.\n` +
+        `This unique tunnel auto-stops after ${MAX_SESSION_MINUTES} minutes, so open it before it expires. ` +
+        `Use the button below to stop sooner.\n` +
         `${session.url}`,
+      components: [stopRow],
     })
   } catch (error) {
     logger.error('Failed to start VS Code:', error)
+    cancelHtmlActionsForOwner(ownerKey)
     await command.editReply({
       content: `Failed to start VS Code: ${error instanceof Error ? error.message : String(error)}`,
+      components: [],
     })
   }
 }

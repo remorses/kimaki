@@ -947,7 +947,7 @@ e2eTest('thread message queue ordering', () => {
   )
 
   test(
-    '/clear-queue position clears only that queued message',
+    'Remove from queue button clears only that queued message',
     async () => {
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: clear-queue-setup',
@@ -1014,32 +1014,40 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(thirdQueueAckMessage.content).toContain('Queued message (position 2)')
 
-      const { id: clearInteractionId } = await th.user(TEST_USER_ID).runSlashCommand({
-        name: 'clear-queue',
-        options: [{ name: 'position', type: 4, value: 1 }],
-      })
-      const clearAck = await th.waitForInteractionAck({
-        interactionId: clearInteractionId,
-        timeout: 4_000,
-      })
-      if (!clearAck.messageId) {
-        throw new Error('Expected /clear-queue response message id')
+      const serializedComponents = JSON.stringify(secondQueueAckMessage.components)
+      const customIdMatch = serializedComponents.match(
+        /"custom_id"\s*:\s*"(html_action:[^"]+)"/,
+      )
+      if (!customIdMatch?.[1]) {
+        throw new Error(
+          `Expected Remove from queue button on queue ack: ${serializedComponents}`,
+        )
       }
 
-      const clearAckMessage = await waitForMessageById({
-        discord,
-        threadId: thread.id,
-        messageId: clearAck.messageId,
+      const removeInteraction = await th.user(TEST_USER_ID).clickButton({
+        messageId: secondQueueAckMessage.id,
+        customId: customIdMatch[1],
+      })
+      await th.waitForInteractionAck({
+        interactionId: removeInteraction.id,
         timeout: 4_000,
       })
-      expect(clearAckMessage.content).toBe('Cleared queued message at position 1')
+
+      const removeAckMessage = await waitForMessageById({
+        discord,
+        threadId: thread.id,
+        messageId: secondQueueAckMessage.id,
+        timeout: 4_000,
+      })
+      expect(removeAckMessage.content).toContain('Removed queued message')
+      expect(removeAckMessage.content).toContain('removed-queued-message')
 
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '» **queue-tester:** Reply with exactly: kept-queued-message',
-        afterMessageId: clearAckMessage.id,
+        afterMessageId: removeAckMessage.id,
         timeout: 8_000,
       })
 
@@ -1060,14 +1068,13 @@ e2eTest('thread message queue ordering', () => {
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
-        Queued message (position 1)
+        Removed queued message (was position 1): Reply with exactly: removed-queued-message
         Queued message (position 2)
-        Cleared queued message at position 1
         ⬥ race-final
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: kept-queued-message"
       `)
-      expect(threadText).not.toContain('removed-queued-message')
+      expect(threadText).not.toContain('» **queue-tester:** Reply with exactly: removed-queued-message')
       expect(threadText).toContain('kept-queued-message')
     },
     12_000,

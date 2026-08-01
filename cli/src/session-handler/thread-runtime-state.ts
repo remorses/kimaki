@@ -19,6 +19,9 @@ import { store } from '../store.js'
 // ── Shared types ─────────────────────────────────────────────────
 
 export type QueuedMessage = {
+  // Stable id for this queue entry. Used by Discord remove-queue buttons so
+  // position shifts after earlier drains do not remove the wrong item.
+  queueId?: string
   // The text content to send to the OpenCode session (user message or
   // transcribed voice message). Always present.
   prompt: string
@@ -66,6 +69,8 @@ export type QueuedMessage = {
   // list can show which sessions were started by scheduled tasks.
   sessionStartScheduleKind?: 'at' | 'cron'
   sessionStartScheduledTaskId?: number
+  // Product analytics turn source (discord/cli/scheduled/retry).
+  analyticsSource?: 'discord' | 'cli' | 'scheduled' | 'retry'
 }
 
 // ── Per-thread state (value inside the Map) ──────────────────────
@@ -259,6 +264,37 @@ export function removeQueueItemAtPosition(
       queueItems: t.queueItems.filter((_, itemIndex) => {
         return itemIndex !== index
       }),
+    })
+    return { threads: newThreads }
+  })
+  return removedItem
+}
+
+export function removeQueueItemById(
+  threadId: string,
+  queueId: string,
+): QueuedMessage | undefined {
+  if (!queueId) {
+    return undefined
+  }
+
+  let removedItem: QueuedMessage | undefined
+  store.setState((s) => {
+    const t = s.threads.get(threadId)
+    if (!t) {
+      return s
+    }
+
+    const index = t.queueItems.findIndex((item) => item.queueId === queueId)
+    if (index === -1) {
+      return s
+    }
+
+    removedItem = t.queueItems[index]
+    const newThreads = new Map(s.threads)
+    newThreads.set(threadId, {
+      ...t,
+      queueItems: t.queueItems.filter((_, itemIndex) => itemIndex !== index),
     })
     return { threads: newThreads }
   })

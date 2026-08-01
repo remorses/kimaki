@@ -17,6 +17,8 @@ import {
 } from 'discord.js'
 import {
   deleteThreadWorkspace,
+  getChannelWorktreesEnabled,
+  setChannelWorktreesEnabled,
   type ThreadWorkspace,
 } from '../database.js'
 import { getDb } from '../db.js'
@@ -29,7 +31,7 @@ import {
 import * as errore from 'errore'
 import crypto from 'node:crypto'
 import { GitCommandError, OpenCodeSdkError } from '../errors.js'
-import { resolveWorkingDirectory } from '../discord-utils.js'
+import { resolveTextChannel, resolveWorkingDirectory } from '../discord-utils.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   deleteWorktree,
@@ -106,6 +108,9 @@ type WorktreesReplyTarget = {
   guildId: string
   userId: string
   channelId: string
+  /** Text channel that owns the auto-worktrees setting (never a thread id). */
+  settingsChannelId: string
+  settingsChannelName?: string
   projectDirectory: string
   notice?: string
   editReply: (
@@ -412,16 +417,41 @@ function resolveWorktreesWorkingDirectory(
   }
 }
 
+function buildAutoWorktreesSettingsMarkdown({
+  enabled,
+  channelName,
+}: {
+  enabled: boolean
+  channelName?: string
+}): string {
+  const channelLabel = channelName ? `#${channelName}` : 'this channel'
+  const stateLabel = enabled ? 'On' : 'Off'
+  const buttonLabel = enabled ? 'Turn off' : 'Turn on'
+  return [
+    `| Auto worktrees (${channelLabel}) | |`,
+    `| --- | --- |`,
+    `| **${stateLabel}** for new sessions | <button id="toggle-auto-wt" variant="secondary">${buttonLabel}</button> |`,
+  ].join('\n')
+}
+
 async function renderWorktreesReply({
   guildId,
   userId,
   channelId,
+  settingsChannelId,
+  settingsChannelName,
   projectDirectory,
   notice,
   editReply,
 }: WorktreesReplyTarget): Promise<void> {
   const ownerKey = `worktrees:${userId}:${channelId}`
   cancelHtmlActionsForOwner(ownerKey)
+
+  const autoWorktreesEnabled = await getChannelWorktreesEnabled(settingsChannelId)
+  const settingsMarkdown = buildAutoWorktreesSettingsMarkdown({
+    enabled: autoWorktreesEnabled,
+    channelName: settingsChannelName,
+  })
 
   const gitWorktrees = await listGitWorktrees({
     projectDirectory,
@@ -436,26 +466,14 @@ async function renderWorktreesReply({
     row.guildId = guildId
   }
 
-  if (rows.length === 0) {
-    const message = notice
-      ? `${notice}\n\nNo worktrees found.`
-      : 'No worktrees found.'
-    const textDisplay: APITextDisplayComponent = {
-      type: ComponentType.TextDisplay,
-      content: message,
-    }
-    await editReply({
-      components: [textDisplay],
-      flags: MessageFlags.IsComponentsV2,
-    })
-    return
-  }
-
-  const gitStatuses = await resolveGitStatuses({
-    rows,
-    projectDirectory,
-    timeout: GLOBAL_TIMEOUT,
-  })
+  const gitStatuses =
+    rows.length === 0
+      ? []
+      : await resolveGitStatuses({
+          rows,
+          projectDirectory,
+          timeout: GLOBAL_TIMEOUT,
+        })
 
   // Map deletable worktrees by button ID for the HTML action resolver.
   // Uses the same worktreeButtonKey() as buildActionCell.
@@ -468,14 +486,35 @@ async function renderWorktreesReply({
     deletableRowsByButtonId.set(`del-wt-${worktreeButtonKey(row.directory)}`, row)
   })
 
-  const tableMarkdown = buildWorktreeTable({
-    rows,
-    gitStatuses,
-    guildId,
-  })
-  const markdown = notice ? `${notice}\n\n${tableMarkdown}` : tableMarkdown
+  const tableMarkdown =
+    rows.length === 0
+      ? 'No worktrees found.'
+      : buildWorktreeTable({
+          rows,
+          gitStatuses,
+          guildId,
+        })
+  const markdown = [notice, settingsMarkdown, tableMarkdown]
+    .filter(Boolean)
+    .join('\n\n')
   const segments = splitTablesFromMarkdown(markdown, {
     resolveButtonCustomId: ({ button }) => {
+      if (button.id === 'toggle-auto-wt') {
+        const actionId = registerHtmlAction({
+          ownerKey,
+          threadId: settingsChannelId,
+          run: async ({ interaction }) => {
+            await handleToggleAutoWorktreesAction({
+              interaction,
+              settingsChannelId,
+              settingsChannelName,
+              projectDirectory,
+            })
+          },
+        })
+        return buildHtmlActionCustomId(actionId)
+      }
+
       const row = deletableRowsByButtonId.get(button.id)
       if (!row) {
         return new Error(`No worktree registered for button ${button.id}`)
@@ -489,6 +528,8 @@ async function renderWorktreesReply({
             interaction,
             row,
             projectDirectory,
+            settingsChannelId,
+            settingsChannelName,
           })
         },
       })
@@ -529,14 +570,63 @@ async function renderWorktreesReply({
   })
 }
 
+async function handleToggleAutoWorktreesAction({
+  interaction,
+  settingsChannelId,
+  settingsChannelName,
+  projectDirectory,
+}: {
+  interaction: ButtonInteraction
+  settingsChannelId: string
+  settingsChannelName?: string
+  projectDirectory: string
+}): Promise<void> {
+  const guildId = interaction.guildId
+  if (!guildId) {
+    await interaction.editReply({
+      components: [
+        {
+          type: ComponentType.TextDisplay,
+          content: 'This action can only be used in a server.',
+        },
+      ],
+      flags: MessageFlags.IsComponentsV2,
+    })
+    return
+  }
+
+  const wasEnabled = await getChannelWorktreesEnabled(settingsChannelId)
+  const nextEnabled = !wasEnabled
+  await setChannelWorktreesEnabled(settingsChannelId, nextEnabled)
+  const nextLabel = nextEnabled ? 'enabled' : 'disabled'
+  const channelLabel = settingsChannelName ? `#${settingsChannelName}` : 'this channel'
+
+  await renderWorktreesReply({
+    guildId,
+    userId: interaction.user.id,
+    channelId: interaction.channelId,
+    settingsChannelId,
+    settingsChannelName,
+    projectDirectory,
+    notice: `Automatic worktrees **${nextLabel}** for ${channelLabel}.`,
+    editReply: (options) => {
+      return interaction.editReply(options)
+    },
+  })
+}
+
 async function handleDeleteWorktreeAction({
   interaction,
   row,
   projectDirectory,
+  settingsChannelId,
+  settingsChannelName,
 }: {
   interaction: ButtonInteraction
   row: WorktreeRow
   projectDirectory: string
+  settingsChannelId: string
+  settingsChannelName?: string
 }): Promise<void> {
   const guildId = interaction.guildId
   if (!guildId) {
@@ -587,6 +677,8 @@ async function handleDeleteWorktreeAction({
     guildId,
     userId: interaction.user.id,
     channelId: interaction.channelId,
+    settingsChannelId,
+    settingsChannelName,
     projectDirectory,
     notice: `Deleted \`${displayName}\`.`,
     editReply: (options) => {
@@ -647,10 +739,28 @@ export async function handleWorktreesCommand({
   }
 
   await command.deferReply({ flags: MessageFlags.Ephemeral })
+
+  const textChannel =
+    channel.type === ChannelType.GuildText
+      ? channel
+      : await resolveTextChannel(
+          channel as Extract<
+            typeof channel,
+            { type: ChannelType.PublicThread | ChannelType.PrivateThread | ChannelType.AnnouncementThread }
+          >,
+        )
+  const settingsChannelId =
+    textChannel?.id
+    ?? ('parentId' in channel ? channel.parentId : undefined)
+    ?? command.channelId
+  const settingsChannelName = textChannel?.name
+
   await renderWorktreesReply({
     guildId,
     userId: command.user.id,
     channelId: command.channelId,
+    settingsChannelId,
+    settingsChannelName,
     projectDirectory: resolved.projectDirectory,
     editReply: (options) => {
       return command.editReply(options)

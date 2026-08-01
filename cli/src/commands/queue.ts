@@ -1,22 +1,77 @@
-// Queue commands - /queue, /queue-command, /clear-queue
+// Queue commands - /queue, /queue-command
+// Clear/remove actions live as buttons on each queue confirmation message.
 
-import { ChannelType, MessageFlags, type ThreadChannel } from 'discord.js'
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  MessageFlags,
+  type ThreadChannel,
+} from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
 import { getThreadSession } from '../database.js'
 import {
   resolveWorkingDirectory,
-  sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import {
-  getRuntime,
   getOrCreateRuntime,
+  getRuntime,
 } from '../session-handler/thread-session-runtime.js'
+import {
+  buildHtmlActionCustomId,
+  registerHtmlAction,
+} from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { notifyError } from '../sentry.js'
 import { store } from '../store.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
+
+function buildQueueRemoveRow({
+  threadId,
+  queueId,
+  position,
+}: {
+  threadId: string
+  queueId: string
+  position?: number
+}) {
+  const actionId = registerHtmlAction({
+    ownerKey: `queue-remove:${threadId}:${queueId}`,
+    threadId,
+    run: async ({ interaction }) => {
+      const removed = getRuntime(threadId)?.removeQueueItemById(queueId)
+      if (!removed) {
+        await interaction.editReply({
+          content: position
+            ? `Queued message at position ${position} is no longer in the queue`
+            : 'Queued message is no longer in the queue',
+          components: [],
+        })
+        return
+      }
+
+      const label = removed.command
+        ? `/${removed.command.name}`
+        : removed.prompt.slice(0, 120)
+      await interaction.editReply({
+        content: `Removed queued message${position ? ` (was position ${position})` : ''}: ${label}`,
+        components: [],
+      })
+      logger.log(
+        `[QUEUE] User ${interaction.user.displayName} removed queued item ${queueId} in thread ${threadId}`,
+      )
+    },
+  })
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(buildHtmlActionCustomId(actionId))
+      .setLabel('Remove from queue')
+      .setStyle(ButtonStyle.Secondary),
+  )
+}
 
 export async function handleQueueCommand({
   command,
@@ -86,97 +141,27 @@ export async function handleQueueCommand({
     mode: 'local-queue',
   })
 
-  const responseText = enqueueResult.queued
-    ? `Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`
-    : `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`
+  if (enqueueResult.queued && enqueueResult.queueId) {
+    const responseText = `Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`
+    await command.reply({
+      content: responseText,
+      components: [
+        buildQueueRemoveRow({
+          threadId: thread.id,
+          queueId: enqueueResult.queueId,
+          position: enqueueResult.position,
+        }),
+      ],
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
 
+  const responseText = `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`
   await command.reply({
     content: responseText,
     flags: SILENT_MESSAGE_FLAGS,
   })
-}
-
-export async function handleClearQueueCommand({
-  command,
-}: CommandContext): Promise<void> {
-  const channel = command.channel
-  const position = command.options.getInteger('position') ?? undefined
-
-  if (!channel) {
-    await command.reply({
-      content: 'This command can only be used in a channel',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
-
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
-
-  if (!isThread) {
-    await command.reply({
-      content: 'This command can only be used in a thread',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
-
-  const runtime = getRuntime(channel.id)
-  const queueLength = runtime?.getQueueLength() ?? 0
-
-  if (queueLength === 0) {
-    await command.reply({
-      content: 'No messages in queue',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
-
-  if (position !== undefined) {
-    const removed = runtime?.removeQueuePosition(position)
-    if (!removed) {
-      await command.reply({
-        content: `No queued message at position ${position}`,
-        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-      })
-      return
-    }
-
-    await command.reply({
-      content: `Cleared queued message at position ${position}`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
-
-    logger.log(
-      `[QUEUE] User ${command.user.displayName} cleared queued position ${position} in thread ${channel.id}`,
-    )
-    return
-  }
-
-  const cleared = runtime?.clearQueue() ?? []
-
-  const lines = cleared.map((item, i) => {
-    const label = item.command
-      ? `/${item.command.name}`
-      : item.prompt
-    return `${i + 1}. ${label}`
-  })
-  let list = lines.join('\n')
-  if (list.length > 600) {
-    list = list.slice(0, 597) + '...'
-  }
-
-  await command.reply({
-    content: `Cleared ${cleared.length} queued message${cleared.length > 1 ? 's' : ''}:\n${list}`,
-    flags: SILENT_MESSAGE_FLAGS,
-  })
-
-  logger.log(
-    `[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`,
-  )
 }
 
 export async function handleQueueCommandCommand({
@@ -265,10 +250,26 @@ export async function handleQueueCommandCommand({
     mode: 'local-queue',
   })
 
-  const responseText = enqueueResult.queued
-    ? `Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`
-    : `» **${command.user.displayName}:** ${displayText}`
+  if (enqueueResult.queued && enqueueResult.queueId) {
+    const responseText = `Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`
+    await command.reply({
+      content: responseText,
+      components: [
+        buildQueueRemoveRow({
+          threadId: thread.id,
+          queueId: enqueueResult.queueId,
+          position: enqueueResult.position,
+        }),
+      ],
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+    logger.log(
+      `[QUEUE] User ${command.user.displayName} queued command /${commandName} in thread ${channel.id}`,
+    )
+    return
+  }
 
+  const responseText = `» **${command.user.displayName}:** ${displayText}`
   await command.reply({
     content: responseText,
     flags: SILENT_MESSAGE_FLAGS,

@@ -65,11 +65,8 @@ You can queue a registered slash command, not just text:
 
 This validates that the command exists and queues it. When sent, it shows as `» Tommy: /command-name`.
 
-## Clearing the queue
+## Removing a queued message
 
-```
-/clear-queue              clear all queued messages
-/clear-queue <position>   remove only the message at that position
-```
+Each `/queue` and `/queue-command` confirmation includes a **Remove from queue** button. Click it to drop that one entry without affecting other queued messages.
 
-With no argument it empties the queue and reports how many were removed. With a position it removes just that one entry.
+You can also delete the original Discord message when the queue item came from a normal thread message (not a slash command).

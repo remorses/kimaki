@@ -3,16 +3,25 @@
 // On Linux: spawns x11vnc against the current $DISPLAY.
 // Exposes the VNC stream via an in-process websockify bridge and a traforo tunnel,
 // then sends the user a noVNC URL they can open in a browser.
-//
-// /screenshare-stop command - Stops the active screen share for this guild.
+// Stop is a button on the start reply (no separate slash command).
 
-import { MessageFlags } from 'discord.js'
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  MessageFlags,
+} from 'discord.js'
 import crypto from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
 import { TunnelClient } from 'traforo/client'
 import type { CommandContext } from './types.js'
 import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  buildHtmlActionCustomId,
+  cancelHtmlActionsForOwner,
+  registerHtmlAction,
+} from '../html-actions.js'
 import { startWebsockify } from '../websockify.js'
 import { createLogger } from '../logger.js'
 import { execAsync } from '../worktrees.js'
@@ -289,6 +298,38 @@ export function stopScreenshare({ sessionKey }: { sessionKey: string }): boolean
   return true
 }
 
+function buildStopButtonRow({
+  ownerKey,
+  sessionKey,
+  stoppedLabel,
+  missingLabel,
+}: {
+  ownerKey: string
+  sessionKey: string
+  stoppedLabel: string
+  missingLabel: string
+}) {
+  cancelHtmlActionsForOwner(ownerKey)
+  const actionId = registerHtmlAction({
+    ownerKey,
+    ttlMs: MAX_SESSION_MS,
+    run: async ({ interaction }) => {
+      const stopped = stopScreenshare({ sessionKey })
+      await interaction.editReply({
+        content: stopped ? stoppedLabel : missingLabel,
+        components: [],
+      })
+    },
+  })
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(buildHtmlActionCustomId(actionId))
+      .setLabel('Stop screen share')
+      .setStyle(ButtonStyle.Danger),
+  )
+}
+
 export async function handleScreenshareCommand({
   command,
 }: CommandContext): Promise<void> {
@@ -308,45 +349,26 @@ export async function handleScreenshareCommand({
       sessionKey: guildId,
       startedBy: command.user.tag,
     })
+    const stopRow = buildStopButtonRow({
+      ownerKey: `screenshare:${guildId}`,
+      sessionKey: guildId,
+      stoppedLabel: 'Screen sharing stopped',
+      missingLabel: 'No active screen share to stop',
+    })
     await command.editReply({
       content:
         `Screen sharing started. This reply is private and the URL uses a high-entropy tunnel id. ` +
-        `It will auto-stop after ${MAX_SESSION_MINUTES} minutes. Use /screenshare-stop to stop sooner.\n` +
+        `It will auto-stop after ${MAX_SESSION_MINUTES} minutes. Use the button below to stop sooner.\n` +
         `${session.noVncUrl}`,
+      components: [stopRow],
     })
   } catch (err) {
     logger.error('Failed to start screen share:', err)
     await command.editReply({
       content: `Failed to start screen share: ${err instanceof Error ? err.message : String(err)}`,
+      components: [],
     })
   }
-}
-
-export async function handleScreenshareStopCommand({
-  command,
-}: CommandContext): Promise<void> {
-  const guildId = command.guildId
-  if (!guildId) {
-    await command.reply({
-      content: 'This command can only be used in a server',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
-
-  const stopped = stopScreenshare({ sessionKey: guildId })
-  if (!stopped) {
-    await command.reply({
-      content: 'No active screen share to stop',
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-    return
-  }
-
-  await command.reply({
-    content: 'Screen sharing stopped',
-    flags: SILENT_MESSAGE_FLAGS,
-  })
 }
 
 /** Cleanup all sessions on bot shutdown */
