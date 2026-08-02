@@ -6,8 +6,11 @@ import {
   areAllQuestionsAnswered,
   deletePendingQuestionContextsForRequest,
   pendingQuestionContexts,
+  resolveSelectedOptionCommand,
   showAskUserQuestionDropdowns,
+  type AskUserQuestionInput,
 } from './ask-question.js'
+import type { RegisteredUserCommand } from '../store.js'
 
 function createFakeThread(): ThreadChannel {
   const send = vi.fn(async () => {
@@ -126,5 +129,93 @@ describe('ask-question', () => {
         2: ['Gamma'],
       },
     })).toBe(true)
+  })
+})
+
+describe('resolveSelectedOptionCommand', () => {
+  const registered: RegisteredUserCommand[] = [
+    {
+      name: 'start-work',
+      discordCommandName: 'start-work',
+      description: 'start a work session',
+      source: 'command',
+    },
+  ]
+
+  const handoffQuestions: AskUserQuestionInput['questions'] = [
+    {
+      question: 'Plan ready. What next?',
+      header: 'Handoff',
+      options: [
+        {
+          label: 'Start Work',
+          description: 'Execute now with `/start-work {name}`. Plan looks solid.',
+        },
+        {
+          label: 'High Accuracy Review',
+          description: 'Run an extra review pass before executing.',
+        },
+      ],
+    },
+  ]
+
+  test('returns the command for a command-bearing option', () => {
+    expect(
+      resolveSelectedOptionCommand({
+        questions: handoffQuestions,
+        totalQuestions: 1,
+        questionIndex: 0,
+        selectedValues: ['0'],
+        registered,
+      }),
+    ).toEqual({ name: 'start-work', arguments: '' })
+  })
+
+  test('returns null for an option without a command', () => {
+    expect(
+      resolveSelectedOptionCommand({
+        questions: handoffQuestions,
+        totalQuestions: 1,
+        questionIndex: 0,
+        selectedValues: ['1'],
+        registered,
+      }),
+    ).toBeNull()
+  })
+
+  test('ignores multi-question forms', () => {
+    expect(
+      resolveSelectedOptionCommand({
+        questions: handoffQuestions,
+        totalQuestions: 2,
+        questionIndex: 0,
+        selectedValues: ['0'],
+        registered,
+      }),
+    ).toBeNull()
+  })
+
+  test('ignores multi-select answers', () => {
+    expect(
+      resolveSelectedOptionCommand({
+        questions: handoffQuestions,
+        totalQuestions: 1,
+        questionIndex: 0,
+        selectedValues: ['0', '1'],
+        registered,
+      }),
+    ).toBeNull()
+  })
+
+  test('ignores the free-text "Other" choice', () => {
+    expect(
+      resolveSelectedOptionCommand({
+        questions: handoffQuestions,
+        totalQuestions: 1,
+        questionIndex: 0,
+        selectedValues: ['other'],
+        registered,
+      }),
+    ).toBeNull()
   })
 })

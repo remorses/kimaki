@@ -74,3 +74,26 @@ export function extractLeadingOpencodeCommand(
   }
   return null
 }
+
+// Like extractLeadingOpencodeCommand, but finds a registered `/command` token
+// anywhere in a short UI label/description (not just line-leading), e.g.
+// "Execute now with `/start-work {name}`." Arguments are dropped on purpose:
+// descriptions hold prose/placeholders, not real args, so it mirrors typing the
+// bare command. Only registered commands match, ignoring casual prose slashes.
+export function extractOpencodeCommandReference(
+  text: string,
+  registered: RegisteredUserCommand[] = store.getState().registeredUserCommands,
+): { command: { name: string; arguments: string } } | null {
+  if (!text) return null
+
+  const slashTokenRegex = /\/([A-Za-z0-9:_-]+)/g
+  let match: RegExpExecArray | null
+  while ((match = slashTokenRegex.exec(text)) !== null) {
+    const token = match[1]
+    if (!token) continue
+    const name = resolveCommandName({ token, registered })
+    if (!name) continue
+    return { command: { name, arguments: '' } }
+  }
+  return null
+}
