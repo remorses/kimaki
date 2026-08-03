@@ -443,15 +443,18 @@ export type TranscriptionProvider = 'openai' | 'gemini'
 export function createTranscriptionModel({
   apiKey,
   provider,
+  baseURL,
 }: {
   apiKey: string
   provider?: TranscriptionProvider
+  /** Custom OpenAI-compatible base URL (e.g. a local Whisper service). OpenAI provider only. */
+  baseURL?: string
 }): LanguageModelV3 {
   const resolvedProvider: TranscriptionProvider =
     provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
 
   if (resolvedProvider === 'openai') {
-    const openai = createOpenAI({ apiKey })
+    const openai = createOpenAI({ apiKey, ...(baseURL && { baseURL }) })
     return openai.chat('gpt-audio')
   }
 
@@ -467,6 +470,7 @@ export async function transcribeAudio({
   apiKey: apiKeyParam,
   model,
   provider,
+  baseURL,
   mediaType: mediaTypeParam,
   currentSessionContext,
   lastSessionContext,
@@ -479,6 +483,8 @@ export async function transcribeAudio({
   apiKey?: string
   model?: LanguageModelV3
   provider?: TranscriptionProvider
+  /** Custom OpenAI-compatible base URL (e.g. a local Whisper service). */
+  baseURL?: string
   /** MIME type of the audio data (e.g. 'audio/ogg'). Defaults to 'audio/mpeg'. */
   mediaType?: string
   currentSessionContext?: string
@@ -504,7 +510,7 @@ export async function transcribeAudio({
   })()
 
   const languageModel: LanguageModelV3 =
-    model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
+    model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider, baseURL })
 
   // Convert audio to Buffer for potential format conversion
   const audioBuffer: Buffer = (() => {

@@ -29,8 +29,10 @@ import {
   getVoiceChannelDirectory,
   getGeminiApiKey,
   getTranscriptionApiKey,
+  getLocalWhisperModel,
   findTextChannelByVoiceChannel,
 } from './database.js'
+import { transcribeLocalWhisper } from './whisper-local.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
@@ -603,14 +605,20 @@ export async function processVoiceAttachment({
     }
   }
 
+  // Built-in local whisper model takes priority: no API key, service, or URL
+  // needed — the model runs in-process (configured via /whisper-setup).
+  const localWhisperModel = appId ? await getLocalWhisperModel(appId) : null
+
   // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars.
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
+  let transcriptionBaseUrl: string | undefined
   if (appId) {
     const stored = await getTranscriptionApiKey(appId)
     if (stored) {
       transcriptionApiKey = stored.apiKey
       transcriptionProvider = stored.provider
+      transcriptionBaseUrl = stored.baseUrl
     }
   }
   if (!transcriptionApiKey && process.env.OPENAI_API_KEY) {
@@ -622,7 +630,8 @@ export async function processVoiceAttachment({
     transcriptionProvider = 'gemini'
   }
 
-  if (!transcriptionApiKey) {
+  // A configured local model needs no API key at all — skip the key prompt.
+  if (!transcriptionApiKey && !localWhisperModel) {
     if (!appId) {
       await sendThreadMessage(
         thread,
@@ -641,16 +650,23 @@ export async function processVoiceAttachment({
     transcriptionProvider = requested.provider
   }
 
-  const transcription = await transcribeAudio({
-    audio: audioBuffer,
-    prompt: transcriptionPrompt,
-    apiKey: transcriptionApiKey,
-    provider: transcriptionProvider,
-    mediaType: audioAttachment.contentType || undefined,
-    currentSessionContext,
-    lastSessionContext,
-    agents,
-  })
+  const transcription = localWhisperModel
+    ? await transcribeLocalWhisper({
+        audio: audioBuffer,
+        mediaType: audioAttachment.contentType || 'audio/ogg',
+        modelId: localWhisperModel,
+      })
+    : await transcribeAudio({
+        audio: audioBuffer,
+        prompt: transcriptionPrompt,
+        apiKey: transcriptionApiKey,
+        provider: transcriptionProvider,
+        baseURL: transcriptionBaseUrl,
+        mediaType: audioAttachment.contentType || undefined,
+        currentSessionContext,
+        lastSessionContext,
+        agents,
+      })
 
   if (transcription instanceof Error) {
     const errMsg = errore.matchError(transcription, {
@@ -660,6 +676,7 @@ export async function processVoiceAttachment({
       EmptyTranscriptionError: (e) => e.message,
       NoResponseContentError: (e) => e.message,
       NoToolResponseError: (e) => e.message,
+      LocalWhisperError: (e) => e.message,
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)

@@ -453,6 +453,72 @@ export async function registerCommands({
       )
       .setDMPermission(false)
       .toJSON(),
+    new SlashCommandBuilder()
+      .setName('whisper-setup')
+      .setDescription(
+        truncateCommandDescription('Set up local voice transcription — pick a model and Kimaki handles the rest'),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('model')
+          .setDescription('Built-in local model — downloads and runs automatically, zero setup (recommended)')
+          .setRequired(false)
+          .addChoices(
+            { name: 'Auto — pick the best model for this machine (recommended)', value: 'auto' },
+            { name: 'Fast — quickest, ~110 MB download', value: 'fast' },
+            { name: 'Balanced — good accuracy, ~200 MB download', value: 'balanced' },
+            { name: 'Accurate — better accuracy, ~600 MB download', value: 'accurate' },
+            { name: 'Best — large-v3-turbo, ~1 GB, needs 16 GB+ RAM', value: 'best' },
+            { name: 'Off — go back to cloud transcription', value: 'off' },
+          ),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('backend')
+          .setDescription('Advanced: manage a self-hosted transcription backend instead')
+          .setRequired(false)
+          .addChoices(
+            { name: 'Kimaki Whisper shim (chat-audio bridge)', value: 'shim' },
+            { name: 'speaches (faster-whisper, GPU)', value: 'speaches' },
+            { name: 'whisper.cpp server (Metal/CPU)', value: 'whisper-cpp' },
+            { name: 'Custom command', value: 'custom' },
+          ),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('command')
+          .setDescription('Custom launch command (required when backend is Custom)')
+          .setRequired(false),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('health-url')
+          .setDescription('Health-check URL for the service (default per backend)')
+          .setRequired(false),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('transcription-url')
+          .setDescription('OpenAI-compatible /v1 base URL to route voice notes to (stored, no env vars needed)')
+          .setRequired(false),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('whisper-start')
+      .setDescription(truncateCommandDescription('Start the local voice-transcription service'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('whisper-stop')
+      .setDescription(truncateCommandDescription('Stop the local voice-transcription service (frees GPU/RAM)'))
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('whisper-status')
+      .setDescription(truncateCommandDescription('Report whether the local voice-transcription service is running'))
+      .setDMPermission(false)
+      .toJSON(),
   ]
 
   // Dynamic commands are registered in priority order:
