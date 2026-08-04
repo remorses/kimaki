@@ -36,6 +36,7 @@ import {
   unregisterEventListener,
   waitForGlobalEventListener,
 } from './global-event-listener.js'
+import { shouldRouteEventToRuntime } from './event-routing.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   sendThreadMessage,
@@ -764,6 +765,10 @@ export class ThreadSessionRuntime {
     // directory are demuxed and dispatched through our action queue.
     registerEventListener(this.threadId, (event) => {
       if (this.disposed) return
+      // Filter BEFORE enqueueing: the global listener broadcasts every event to
+      // every registered runtime, so queueing first lets one busy session build
+      // a backlog in unrelated threads' serialized queues.
+      if (!this.shouldRouteEvent(event)) return
       void this.dispatchAction(async () => {
         await this.sentPartIdsBootstrap
         await this.handleEvent(event)
@@ -1014,6 +1019,28 @@ export class ThreadSessionRuntime {
       events: this.eventBuffer,
       sessionId,
       upToIndex: normalizedIndex,
+    })
+  }
+
+  /**
+   * Whether a global-listener event belongs to this runtime. Used both before
+   * enqueueing (to keep other sessions' traffic out of this thread's queue)
+   * and again after dequeue (session ownership can change while queued).
+   */
+  private shouldRouteEvent(event: OpenCodeEvent): boolean {
+    const eventSessionId = getOpencodeEventSessionId(event)
+    const toastSessionId = event.type === 'tui.toast.show'
+      ? extractToastSessionId({ message: event.properties.message })
+      : undefined
+    const scopedSessionId = toastSessionId ?? eventSessionId
+    return shouldRouteEventToRuntime({
+      eventType: event.type,
+      eventSessionId,
+      toastSessionId,
+      activeSessionId: this.state?.sessionId,
+      isSubtaskSession: scopedSessionId
+        ? Boolean(this.getSubtaskInfoForSession(scopedSessionId))
+        : false,
     })
   }
 
@@ -1405,20 +1432,11 @@ export class ThreadSessionRuntime {
       )
     }
 
-    const isGlobalEvent = event.type === 'tui.toast.show'
-    const isScopedToastEvent = Boolean(toastSessionId)
-
-    // Drop events that don't match current session (stale events from
-    // previous sessions), unless it's a global event or a subtask session.
-    if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
-      if (!this.getSubtaskInfoForSession(eventSessionId)) {
-        return // stale event from previous session
-      }
-    }
-    if (isScopedToastEvent && toastSessionId !== sessionId) {
-      if (!this.getSubtaskInfoForSession(toastSessionId!)) {
-        return
-      }
+    // Re-check routing: session ownership can change while an event waits in
+    // the action queue (e.g. the thread switched sessions), so an event that
+    // was routable at enqueue time may be stale by the time it is processed.
+    if (!this.shouldRouteEvent(event)) {
+      return
     }
 
     if (isOpencodeSessionEventLogEnabled()) {
