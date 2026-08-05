@@ -36,6 +36,7 @@ import {
   unregisterEventListener,
   waitForGlobalEventListener,
 } from './global-event-listener.js'
+import { shouldRouteEventToRuntime } from './event-routing.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   sendThreadMessage,
@@ -97,12 +98,6 @@ import {
   type WorktreeInfo,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
-import {
-  trackEvent,
-  type AnalyticsIngressMode,
-  type AnalyticsTurnInputKind,
-  type AnalyticsTurnSource,
-} from '../analytics.js'
 import { resolveValidatedAgentPreference } from './agent-utils.js'
 import {
   appendOpencodeSessionEventLog,
@@ -587,11 +582,6 @@ export type IngressInput = {
    */
   noReply?: boolean
   /**
-   * Product-analytics turn source. Defaults to discord. Set retry/cli/scheduled
-   * at the ingress site so DAU queries can exclude non-user activity.
-   */
-  analyticsSource?: AnalyticsTurnSource
-  /**
    * Lazy preprocessing callback. When set, the runtime serializes it via a
    * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
    * from the raw Discord message. This replaces the threadIngressQueue in
@@ -603,37 +593,6 @@ export type IngressInput = {
    * runtime stays platform-agnostic — it just awaits the callback.
    */
   preprocess?: () => Promise<PreprocessResult>
-}
-
-function resolveTurnSource(input: {
-  analyticsSource?: AnalyticsTurnSource
-  sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
-  sessionStartScheduleKind?: 'at' | 'cron'
-}): AnalyticsTurnSource {
-  if (input.analyticsSource) return input.analyticsSource
-  if (input.sessionStartSource || input.sessionStartScheduleKind) {
-    return 'scheduled'
-  }
-  return 'discord'
-}
-
-function trackTurnStarted({
-  inputKind,
-  ingressMode,
-  source,
-  agent,
-}: {
-  inputKind: AnalyticsTurnInputKind
-  ingressMode: AnalyticsIngressMode
-  source: AnalyticsTurnSource
-  agent?: string
-}) {
-  trackEvent('turn_started', {
-    input_kind: inputKind,
-    ingress_mode: ingressMode,
-    source,
-    uses_custom_agent: Boolean(agent && agent !== 'build'),
-  })
 }
 
 // Rewrite `{ prompt: "/build foo" }` → `{ prompt: "", command: { name, arguments }, mode: "local-queue" }`
@@ -764,6 +723,7 @@ export class ThreadSessionRuntime {
     // directory are demuxed and dispatched through our action queue.
     registerEventListener(this.threadId, (event) => {
       if (this.disposed) return
+      if (!this.shouldRouteEvent(event)) return
       void this.dispatchAction(async () => {
         await this.sentPartIdsBootstrap
         await this.handleEvent(event)
@@ -1350,11 +1310,33 @@ export class ThreadSessionRuntime {
   // Global events (tui.toast.show) bypass the guard.
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
+  private shouldRouteEvent(event: OpenCodeEvent): boolean {
+    const eventSessionId = getOpencodeEventSessionId(event)
+    const toastSessionId = event.type === 'tui.toast.show'
+      ? extractToastSessionId({ message: event.properties.message })
+      : undefined
+    const scopedSessionId = toastSessionId ?? eventSessionId
+    return shouldRouteEventToRuntime({
+      eventType: event.type,
+      eventSessionId,
+      toastSessionId,
+      activeSessionId: this.state?.sessionId,
+      isSubtaskSession: scopedSessionId
+        ? Boolean(this.getSubtaskInfoForSession(scopedSessionId))
+        : false,
+    })
+  }
+
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
     // session.diff can carry repeated full-file before/after snapshots and is
     // not used by event-derived runtime state, queueing, typing, or UI routing.
     // Drop it at ingress so large diff payloads never hit memory buffers.
     if (event.type === 'session.diff') {
+      return
+    }
+
+    // Session ownership can change while an event waits in the action queue.
+    if (!this.shouldRouteEvent(event)) {
       return
     }
 
@@ -1403,22 +1385,6 @@ export class ThreadSessionRuntime {
       logger.log(
         `[EVENT] type=${event.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}${eventDetails}`,
       )
-    }
-
-    const isGlobalEvent = event.type === 'tui.toast.show'
-    const isScopedToastEvent = Boolean(toastSessionId)
-
-    // Drop events that don't match current session (stale events from
-    // previous sessions), unless it's a global event or a subtask session.
-    if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
-      if (!this.getSubtaskInfoForSession(eventSessionId)) {
-        return // stale event from previous session
-      }
-    }
-    if (isScopedToastEvent && toastSessionId !== sessionId) {
-      if (!this.getSubtaskInfoForSession(toastSessionId!)) {
-        return
-      }
     }
 
     if (isOpencodeSessionEventLogEnabled()) {
@@ -2382,15 +2348,6 @@ export class ThreadSessionRuntime {
       sessionId,
     })
     if (turnStartTime !== undefined) {
-      // Track before Discord footer side effects so successful turns are
-      // counted even when footer delivery fails.
-      const durationSec = Math.max(
-        0,
-        Math.round((completedAt - turnStartTime) / 1000),
-      )
-      trackEvent('turn_completed', {
-        duration_sec: durationSec,
-      })
       await this.emitFooter({
         completedAt,
         runStartTime: turnStartTime,
@@ -3188,15 +3145,6 @@ export class ThreadSessionRuntime {
         `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
       )
 
-      if (!input.noReply) {
-        trackTurnStarted({
-          inputKind: input.command ? 'command' : 'prompt',
-          ingressMode: 'direct',
-          source: resolveTurnSource(input),
-          agent: resolvedAgent,
-        })
-      }
-
       // noReply messages don't trigger the agent loop, so don't mark as busy
       if (!input.noReply) {
         this.markQueueDispatchBusy(session.id)
@@ -3234,7 +3182,6 @@ export class ThreadSessionRuntime {
       repliedMessage: input.repliedMessage,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
-      analyticsSource: resolveTurnSource(input),
     }
 
     let result: EnqueueResult = { queued: false, queueId }
@@ -4106,12 +4053,6 @@ export class ThreadSessionRuntime {
       }
 
       logger.log(`[DISPATCH] Successfully ran command for session ${session.id}`)
-      trackTurnStarted({
-        inputKind: 'command',
-        ingressMode: 'local_queue',
-        source: resolveTurnSource(input),
-        agent: earlyAgentPreference,
-      })
       return
     }
 
@@ -4159,12 +4100,6 @@ export class ThreadSessionRuntime {
     logger.log(
       `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
     )
-    trackTurnStarted({
-      inputKind: 'prompt',
-      ingressMode: 'local_queue',
-      source: resolveTurnSource(input),
-      agent: earlyAgentPreference,
-    })
   }
 
   // ── Session Ensure ──────────────────────────────────────────
@@ -4324,11 +4259,6 @@ export class ThreadSessionRuntime {
             scanPatterns: injectionGuardPatterns,
           })
         }
-        const worktree = await getThreadWorktreeOrWorkspace(this.thread.id)
-        trackEvent('session_created', {
-          has_worktree: Boolean(worktree),
-          source: sessionStartScheduleKind ? 'scheduled' : 'discord',
-        })
       }
       createdNewSession = true
     }
@@ -4621,7 +4551,6 @@ export class ThreadSessionRuntime {
       mode: 'opencode',
       resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
-      analyticsSource: 'retry',
     })
 
     if (this.state?.sessionId !== sessionId) {
