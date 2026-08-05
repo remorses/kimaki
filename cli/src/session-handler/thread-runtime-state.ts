@@ -69,8 +69,6 @@ export type QueuedMessage = {
   // list can show which sessions were started by scheduled tasks.
   sessionStartScheduleKind?: 'at' | 'cron'
   sessionStartScheduledTaskId?: number
-  // Product analytics turn source (discord/cli/scheduled/retry).
-  analyticsSource?: 'discord' | 'cli' | 'scheduled' | 'retry'
 }
 
 // ── Per-thread state (value inside the Map) ──────────────────────
