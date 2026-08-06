@@ -10,7 +10,12 @@
 
 import { waitUntil } from 'cloudflare:workers'
 
-const CACHE_BASE = 'https://0.0.0.0/'
+// LESSON: never use an IP-literal host for cache keys. The Cache API
+// silently DROPS keys like https://0.0.0.0/... — cache.put() resolves
+// without error but stores nothing, and match() always misses, so every
+// memoized call is a permanent cache miss. Cache keys never trigger DNS,
+// so any syntactic hostname is safe.
+const CACHE_BASE = 'https://memoize-cache.internal.example.com/'
 
 interface CacheEnvelope<T> {
   value: T
