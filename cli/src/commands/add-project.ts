@@ -73,6 +73,7 @@ export async function handleAddProjectCommand({
         guild,
         projectDirectory: directory,
         botName: command.client.user?.username,
+        analyticsSource: 'discord_command',
       })
 
     const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''

@@ -95,9 +95,13 @@ import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
+import { trackEvent, flushAnalytics } from './analytics.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
-import { getDefaultKimakiDirectory } from './channel-management.js'
+import {
+  getDefaultKimakiDirectory,
+  getUserProjectCount,
+} from './channel-management.js'
 import { store } from './store.js'
 import {
   startExternalOpencodeSessionSync,
@@ -323,6 +327,17 @@ export async function startDiscordBot({
 
     voiceLogger.log('[READY] Bot is ready')
     markDiscordGatewayReady()
+
+    void (async () => {
+      const userProjectCount = await getUserProjectCount()
+      const props: Record<string, string | number | boolean> = {
+        guild_count: c.guilds.cache.size,
+      }
+      if (userProjectCount !== null) {
+        props.user_project_count = userProjectCount
+      }
+      trackEvent('bot_started', props)
+    })()
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
@@ -1526,6 +1541,8 @@ export async function startDiscordBot({
           error instanceof Error ? error.stack : String(error),
         )
       })
+
+      await flushAnalytics()
 
       // Cancel pending IPC requests so plugin tools don't hang
       await cancelAllPendingIpcRequests().catch((e) => {

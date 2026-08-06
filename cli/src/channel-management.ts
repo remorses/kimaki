@@ -14,10 +14,55 @@ import {
   getChannelDirectory,
   setChannelDirectory,
   findChannelsByDirectory,
+  listTrackedTextChannels,
 } from './database.js'
 import { getProjectsDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { createLogger, LogPrefix } from './logger.js'
+import {
+  trackEvent,
+  type AnalyticsProjectKind,
+  type AnalyticsProjectSource,
+  type AnalyticsProps,
+} from './analytics.js'
+
+/**
+ * Distinct non-default project directories mapped as text channels.
+ * Returns null on query failure so callers omit the field instead of
+ * emitting a fabricated zero.
+ */
+export async function getUserProjectCount(): Promise<number | null> {
+  try {
+    const channels = await listTrackedTextChannels()
+    const defaultDir = path.resolve(getDefaultKimakiDirectory())
+    const dirs = new Set(
+      channels
+        .map((row) => path.resolve(row.directory))
+        .filter((directory) => directory !== defaultDir),
+    )
+    return dirs.size
+  } catch {
+    return null
+  }
+}
+
+async function trackProjectRegistered({
+  projectKind,
+  source,
+}: {
+  projectKind: AnalyticsProjectKind
+  source: AnalyticsProjectSource
+}) {
+  const userProjectCount = await getUserProjectCount()
+  const props: AnalyticsProps = {
+    project_kind: projectKind,
+    source,
+  }
+  if (userProjectCount !== null) {
+    props.user_project_count = userProjectCount
+  }
+  trackEvent('project_registered', props)
+}
 
 const logger = createLogger(LogPrefix.CHANNEL)
 
@@ -83,11 +128,13 @@ export async function createProjectChannels({
   projectDirectory,
   botName,
   enableVoiceChannels = false,
+  analyticsSource = 'cli',
 }: {
   guild: Guild
   projectDirectory: string
   botName?: string
   enableVoiceChannels?: boolean
+  analyticsSource?: AnalyticsProjectSource
 }): Promise<{
   textChannelId: string
   voiceChannelId: string | null
@@ -112,6 +159,10 @@ export async function createProjectChannels({
     channelId: textChannel.id,
     directory: projectDirectory,
     channelType: 'text',
+  })
+  await trackProjectRegistered({
+    projectKind: 'user',
+    source: analyticsSource,
   })
 
   let voiceChannelId: string | null = null
@@ -347,6 +398,10 @@ export async function createDefaultKimakiChannel({
     directory: projectDirectory,
     channelType: 'text',
     guildId: guild.id,
+  })
+  await trackProjectRegistered({
+    projectKind: 'default',
+    source: 'onboarding',
   })
 
   logger.log(`Created default kimaki channel: #${channelName} (${textChannel.id})`)
