@@ -10,6 +10,7 @@ export type DiscordFileAttachment = FilePartInput & {
   sourceUrl?: string
 }
 
+import { extractNonXmlContent } from './xml.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { FetchError } from './errors.js'
 import { processImage } from './image-utils.js'
@@ -516,16 +517,18 @@ export function getToolSummaryText(part: Part): string {
 
 export function formatTodoList(part: Part): string {
   if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
-  const todos =
-    (part.state.input?.todos as {
-      content: string
-      status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-    }[]) || []
+  const todosRaw = part.state.input?.todos
+  const todos = Array.isArray(todosRaw)
+    ? (todosRaw as {
+        content: string
+        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+      }[])
+    : []
   const activeIndex = todos.findIndex((todo) => {
     return todo.status === 'in_progress'
   })
   const activeTodo = todos[activeIndex]
-  if (activeIndex === -1 || !activeTodo) return ''
+  if (activeIndex === -1 || !activeTodo?.content?.trim()) return ''
   // digit-with-period ⒈-⒛ for 1-20, fallback to regular number for 21+
   const digitWithPeriod = '⒈⒉⒊⒋⒌⒍⒎⒏⒐⒑⒒⒓⒔⒕⒖⒗⒘⒙⒚⒛'
   const todoNumber = activeIndex + 1
@@ -536,11 +539,128 @@ export function formatTodoList(part: Part): string {
   return `${num} **${escapeInlineMarkdown(content)}**`
 }
 
+/**
+ * Transform tool-call XML tags from assistant text output into readable formats.
+ *
+ * Models sometimes emit tool invocations as raw XML in text parts instead of
+ * structured tool-call parts. Instead of just stripping these, we transform
+ * known tool-call XML into Discord-friendly callout formatting:
+ *
+ *   <todowrite> → callout with todo list (✅ ⏳ ☐ ✘)
+ *   <skill name="…" /> → callout with skill name
+ *   <think>/<thinking> → silently stripped (internal reasoning)
+ *   Other tool XML → stripped cleanly
+ *
+ * Preserves intentional formatting tags like <callout> and <details>.
+ */
+
+// Self-closing tool tags: <skill name="…" />
+const SELF_CLOSING_TOOL_RE =
+  /<skill\s+name\s*=\s*["']([^"']*?)["']\s*\/>/gi
+
+// Paired tags we want to transform (not just strip)
+// todowrite block with nested todo items
+const TODOWRITE_BLOCK_RE =
+  /<todowrite>\s*<todos>\s*((?:<todo\s+[^>]*>\s*<\/todo>\s*)*)<\/todos>\s*<\/todowrite>/gi
+const TODO_ITEM_RE =
+  /<todo\s+content\s*=\s*["']([^"']*?)["']\s+status\s*=\s*["']([^"']*?)["'][^>]*>/gi
+
+// Internal reasoning tags — always stripped with no visual output
+const THINKING_TAG_RE =
+  /<\/?(?:think|thought|thinking|reasoning)[^>]*>/gi
+const THINKING_BLOCK_RE =
+  /<(?:think|thought|thinking|reasoning)[^>]*>[\s\S]*?<\/(?:think|thought|thinking|reasoning)>/gi
+
+// Other tool-call tags — stripped cleanly
+const OTHER_TOOL_XML_RE =
+  /<\/?(?:invoke|function_call|tool_call|tool_result|function_results|antml|attribution|todowrite|todos|todo)[^>]*>/gi
+
+const STATUS_ICONS: Record<string, string> = {
+  completed: '✅',
+  in_progress: '⏳',
+  pending: '☐',
+  cancelled: '✘',
+}
+
+function formatTodoItems(todosBlock: string): string {
+  const items: string[] = []
+  let match: RegExpExecArray | null
+  const re = new RegExp(TODO_ITEM_RE.source, 'gi')
+  while ((match = re.exec(todosBlock)) !== null) {
+    const content = match[1]!
+    const status = match[2]!
+    const icon = STATUS_ICONS[status] ?? '☐'
+    const lowerContent =
+      content.charAt(0).toLowerCase() + content.slice(1)
+    items.push(`${icon} ${lowerContent}`)
+  }
+  return items.join('\n')
+}
+
+export function stripToolCallXml(text: string): string {
+  // Fast path: if there are no '<' characters, nothing to transform
+  if (!text.includes('<')) return text
+
+  const fragments: Array<{ text: string; isTransformed: boolean }> = []
+  let remaining = text
+
+  // 1. Transform todowrite blocks into callout-formatted todo lists
+  remaining = remaining.replace(TODOWRITE_BLOCK_RE, (_match, todosContent: string) => {
+    const formatted = formatTodoItems(todosContent)
+    if (!formatted) return ''
+    const callout = `<callout accent="#3b82f6">\n## Todo\n${formatted}\n</callout>`
+    fragments.push({ text: callout, isTransformed: true })
+    // Use a placeholder that won't conflict with other regexes
+    return `\x00TODOWRITE_${fragments.length - 1}\x00`
+  })
+
+  // 2. Transform self-closing skill tags into callout
+  remaining = remaining.replace(SELF_CLOSING_TOOL_RE, (_match, name: string) => {
+    const callout = `<callout accent="#8b5cf6">\nLoaded skill: **${escapeInlineMarkdown(name)}**\n</callout>`
+    fragments.push({ text: callout, isTransformed: true })
+    return `\x00SKILL_${fragments.length - 1}\x00`
+  })
+
+  // 3. Remove thinking blocks entirely (internal reasoning, never shown)
+  remaining = remaining.replace(THINKING_BLOCK_RE, '')
+
+  // 4. Remove remaining thinking tags (unpaired / self-closing)
+  remaining = remaining.replace(THINKING_TAG_RE, '')
+
+  // 5. Remove other tool-call XML tags
+  remaining = remaining.replace(OTHER_TOOL_XML_RE, '')
+
+  // 6. If the result still has XML-like tags and no <callout>,
+  // strip all remaining XML so raw tags don't leak to Discord.
+  // Preserve <callout>, <details>, <summary>, and HTML formatting tags.
+  if (remaining.includes('<') && !remaining.includes('<callout')) {
+    const nonXmlText = extractNonXmlContent(remaining).trim()
+    if (nonXmlText) {
+      remaining = nonXmlText
+    }
+  }
+
+  // 7. Restore transformed fragments
+  remaining = remaining.replace(/\x00(TODOWRITE|SKILL)_\d+\x00/g, (placeholder) => {
+    const idxMatch = placeholder.match(/_(\d+)/)
+    if (!idxMatch) return ''
+    const idx = Number.parseInt(idxMatch[1]!, 10)
+    return fragments[idx]?.text ?? ''
+  })
+
+  // 8. Collapse multiple spaces and excessive blank lines
+  remaining = remaining.replace(/  +/g, ' ')
+  remaining = remaining.replace(/\n{3,}/g, '\n\n')
+  return remaining.trim()
+}
+
 export function formatPart(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
-    const text = part.text?.trim()
+    const rawText = part.text?.trim()
+    if (!rawText) return ''
+    const text = stripToolCallXml(rawText)
     if (!text) return ''
     // For subtask text, always use bullet with prefix
     if (prefix) {
