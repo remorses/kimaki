@@ -17,6 +17,7 @@ import { createAuthMiddleware, getOAuthState } from 'better-auth/api'
 import { createPrisma } from 'db/src'
 import type { Env } from './env.js'
 import { upsertGatewayClientAndRefreshKv } from './gateway-client-kv.js'
+import { reportWebsiteError } from './strada-init.js'
 
 // Same permissions list used in cli/src/utils.ts generateBotInstallUrl.
 // Hardcoded to avoid importing discord-api-types/v10 barrel which adds ~204 KiB
@@ -206,6 +207,9 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
         })
         if (upsertResult instanceof Error) {
           console.error('gateway onboarding upsert failed:', upsertResult)
+          reportWebsiteError(upsertResult, {
+            route: 'discord-oauth-upsert',
+          })
           return failOnboarding(
             kimakiClientId,
             'Kimaki could not save the bot installation. Please try again.',

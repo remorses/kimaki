@@ -79,6 +79,16 @@ directly to Cloudflare or wrangler.json.
 - **Push to Cloudflare:** `pnpm secrets:prod`
 - **Local dev:** `pnpm dev` (injects doppler dev secrets automatically)
 
+# strada error tracking
+
+Website errors go to Strada (`@strada.sh/sdk`). Server init is in
+`src/strada-init.ts` (reads `STRADA_PROJECT_ID` + `STRADA_TOKEN` from env).
+Browser init is `src/strada-browser.tsx`.
+
+When an error is handled inline (returned early, logged, status response)
+and never reaches `.onError`, call `reportWebsiteError(error, { route: '…' })`
+from `strada-init.ts`. Do not swallow errors with only `console.error`.
+
 # split with gateway-proxy
 
 `gateway-proxy` handles Discord Gateway **WebSocket** traffic and Discord REST

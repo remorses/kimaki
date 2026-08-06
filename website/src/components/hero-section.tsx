@@ -21,6 +21,7 @@ function GithubIcon({ size = 14 }: { size?: number }) {
   )
 }
 import { InstallCommand } from './install-command.tsx'
+import { StradaBrowser } from '../strada-browser.tsx'
 import { VideoBackgroundShader } from '@holocron.so/vite/mdx'
 
 const GITHUB_URL = 'https://github.com/remorses/kimaki'
@@ -29,6 +30,7 @@ const DISCORD_URL = 'https://discord.gg/qz3hapKcMM'
 export function HeroSection() {
   return (
     <div className='relative mt-2 lg:mt-4 mb-4 lg:mb-6 w-screen ml-[calc(-50vw+50%)] flex flex-col items-center overflow-hidden'>
+      <StradaBrowser />
       <VideoBackgroundShader
         src='/assets/hero-bg.mp4'
         className='absolute inset-0 w-full h-full'

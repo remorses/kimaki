@@ -5,6 +5,7 @@
 // Each request gets a fresh PrismaClient and betterAuth instance
 // because CF Workers cannot reuse connections across requests.
 
+import './strada-init.js'
 import { z } from 'zod'
 import { Spiceflow } from 'spiceflow'
 import { Head } from 'spiceflow/react'
@@ -22,6 +23,8 @@ import {
 import { createAuth, GUILD_ID_HEADER, onboardingErrorKvKey, parseAllowedCallbackUrl } from './auth.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
+import { reportWebsiteError, websiteTracer } from './strada-init.js'
+import { StradaBrowser } from './strada-browser.tsx'
 import type { Env } from './env.js'
 
 export { SlackBridgeDO }
@@ -41,7 +44,9 @@ const SLACK_INSTALL_SCOPES = [
   'files:write',
 ]
 
-export const app = new Spiceflow()
+export const app = new Spiceflow({
+  ...(websiteTracer ? { tracer: websiteTracer } : {}),
+})
   .state('env', {} as Env)
 
   // Redirect kimaki.xyz → kimaki.dev, preserving path and subdomains
@@ -70,6 +75,7 @@ export const app = new Spiceflow()
           className="min-h-screen bg-white text-neutral-900 antialiased"
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
         >
+          <StradaBrowser />
           {children}
         </body>
       </html>
@@ -78,6 +84,7 @@ export const app = new Spiceflow()
 
   .onError(({ error }) => {
     console.error(error)
+    reportWebsiteError(error, { route: 'onError' })
     const message = error instanceof Error ? error.message : String(error)
     return new Response(message, { status: 500 })
   })
@@ -308,6 +315,7 @@ export const app = new Spiceflow()
           <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
         </Head>
         <body className="min-h-screen bg-white font-sans text-stone-900 antialiased">
+          <StradaBrowser />
           <div className="flex min-h-screen items-center justify-center">
             {children}
           </div>
