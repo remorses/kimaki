@@ -10,6 +10,8 @@ icon: cpu
 
 **OpenCode Servers** — When you message a channel, Kimaki spawns (or reuses) an OpenCode server for that project directory. The server handles the actual AI coding session.
 
+**Tool Attribution** — Shell commands started by a Discord-backed OpenCode session receive `KIMAKI_THREAD_ID` with the owning Discord thread ID. The value is resolved for each tool invocation, so concurrent sessions cannot overwrite each other's attribution. Manual OpenCode sessions omit it.
+
 **Channel Metadata** — Each channel's topic contains XML metadata linking it to a directory and bot:
 
 ```xml
