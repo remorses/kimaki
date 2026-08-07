@@ -1,11 +1,20 @@
-import type { Plugin } from '@opencode-ai/plugin'
+import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import { setDataDir } from './config.js'
+
+type SessionAwareHooks = Awaited<ReturnType<Plugin>> & {
+  'shell.env': (
+    input: { cwd: string; sessionID?: string; callID?: string },
+    output: { env: Record<string, string> },
+  ) => Promise<void>
+}
 
 async function loadDatabaseModule() {
   return import('./database.js')
 }
 
-export const sessionAttributionPlugin: Plugin = async () => {
+export const sessionAttributionPlugin = (async (
+  _input: PluginInput,
+): Promise<SessionAwareHooks> => {
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (dataDir) setDataDir(dataDir)
   let databaseModule: ReturnType<typeof loadDatabaseModule> | undefined
@@ -24,4 +33,4 @@ export const sessionAttributionPlugin: Plugin = async () => {
       }
     },
   }
-}
+}) satisfies Plugin

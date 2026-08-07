@@ -66,11 +66,11 @@ importers:
         specifier: ^0.17.2
         version: 0.17.4
       '@opencode-ai/plugin':
-        specifier: ^1.18.15
-        version: 1.18.15
+        specifier: ^1.16.2
+        version: 1.17.8
       '@opencode-ai/sdk':
-        specifier: ^1.18.15
-        version: 1.18.15
+        specifier: ^1.16.2
+        version: 1.17.8
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -106,7 +106,7 @@ importers:
         version: 12.0.0
       kitty-graphics-agent:
         specifier: ^0.0.5
-        version: 0.0.5(@opencode-ai/plugin@1.18.15)
+        version: 0.0.5(@opencode-ai/plugin@1.17.8)
       libsql:
         specifier: ^0.5.22
         version: 0.5.29
@@ -717,10 +717,6 @@ packages:
 
   '@ai-sdk/provider@3.0.10':
     resolution: {integrity: sha512-Q3BZ27qfpYqnCYGvE3vt+Qi6LGOF9R5Nmzn+9JoM1lCRsD9mYaIhfJLkSunN48nfGXJ6n+XNV0J/XVpqGQl7Dw==}
-    engines: {node: '>=18'}
-
-  '@ai-sdk/provider@3.0.8':
-    resolution: {integrity: sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ==}
     engines: {node: '>=18'}
 
   '@antfu/install-pkg@1.1.0':
@@ -2084,25 +2080,8 @@ packages:
       '@opentui/solid':
         optional: true
 
-  '@opencode-ai/plugin@1.18.15':
-    resolution: {integrity: sha512-AY10RtFbzLkf951dbLkSGJdBeddeS6ojbjvqCpWnINedqlj2cK/GF91xWjWnlHpqQZ4GABLPCuoSJx8mGmKvCw==}
-    peerDependencies:
-      '@opentui/core': '>=0.4.5'
-      '@opentui/keymap': '>=0.4.5'
-      '@opentui/solid': '>=0.4.5'
-    peerDependenciesMeta:
-      '@opentui/core':
-        optional: true
-      '@opentui/keymap':
-        optional: true
-      '@opentui/solid':
-        optional: true
-
   '@opencode-ai/sdk@1.17.8':
     resolution: {integrity: sha512-6MKmsj2ujZyL44jy+12dpwWYDYKPS9fUr+0wVQxaIlPYQ/eAt8T8T3QrybplJ5ZtHfZUX+esXZ02x2UYYm7oEw==}
-
-  '@opencode-ai/sdk@1.18.15':
-    resolution: {integrity: sha512-8sfo9nGiVwesAZW9Wqkvynyn7w4wYaHx1O9qOHpYL65+Bs2XUpHP3kBbZe58gjQydFgk6I74kUF7sqCiPu2arQ==}
 
   '@opentelemetry/api-logs@0.214.0':
     resolution: {integrity: sha512-40lSJeqYO8Uz2Yj7u94/SJWE/wONa7rmMKjI1ZcIjgf3MHNHv1OZUCrCETGuaRF62d5pQD1wKIW+L4lmSMTzZA==}
@@ -4289,9 +4268,6 @@ packages:
 
   effect@4.0.0-beta.74:
     resolution: {integrity: sha512-Yx+Kh12U+i2FmjwEfKs+ePFmpMd43RPD1oGqc/VraSS9bYzvF0Ff3PojwEFEVEewp8xc92Uxu28gTspU4qyvHA==}
-
-  effect@4.0.0-beta.83:
-    resolution: {integrity: sha512-0wsak8RtgGAr9UWSbVDgJHZcUqMSvicHcvaZv1MbMM7MCGgW4Rn/137J1MHQbwYPcwYGxT/IqehFd+UbYuj78w==}
 
   empathic@2.0.0:
     resolution: {integrity: sha512-i6UzDscO/XfAcNYD75CfICkmfLedpyPDdozrLMmQc5ORaQcdMoc21OnlEylMIqI7U8eniKrPMxxtj8k0vhmJhA==}
@@ -6647,10 +6623,6 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/provider@3.0.8':
-    dependencies:
-      json-schema: 0.4.0
-
   '@antfu/install-pkg@1.1.0':
     dependencies:
       package-manager-detector: 1.6.0
@@ -7887,18 +7859,7 @@ snapshots:
       effect: 4.0.0-beta.74
       zod: 4.1.8
 
-  '@opencode-ai/plugin@1.18.15':
-    dependencies:
-      '@ai-sdk/provider': 3.0.8
-      '@opencode-ai/sdk': 1.18.15
-      effect: 4.0.0-beta.83
-      zod: 4.1.8
-
   '@opencode-ai/sdk@1.17.8':
-    dependencies:
-      cross-spawn: 7.0.6
-
-  '@opencode-ai/sdk@1.18.15':
     dependencies:
       cross-spawn: 7.0.6
 
@@ -9954,19 +9915,6 @@ snapshots:
       uuid: 14.0.0
       yaml: 2.9.0
 
-  effect@4.0.0-beta.83:
-    dependencies:
-      '@standard-schema/spec': 1.1.0
-      fast-check: 4.8.0
-      find-my-way-ts: 0.1.6
-      ini: 7.0.0
-      kubernetes-types: 1.30.0
-      msgpackr: 2.0.4
-      multipasta: 0.2.7
-      toml: 4.1.1
-      uuid: 14.0.0
-      yaml: 2.9.0
-
   empathic@2.0.0: {}
 
   enabled@2.0.0: {}
@@ -10680,9 +10628,9 @@ snapshots:
 
   khroma@2.1.0: {}
 
-  kitty-graphics-agent@0.0.5(@opencode-ai/plugin@1.18.15):
+  kitty-graphics-agent@0.0.5(@opencode-ai/plugin@1.17.8):
     optionalDependencies:
-      '@opencode-ai/plugin': 1.18.15
+      '@opencode-ai/plugin': 1.17.8
 
   kleur@4.1.5: {}
 
