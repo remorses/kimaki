@@ -7,6 +7,7 @@
 // involves real git operations — 10s timeout there).
 
 import fs from 'node:fs'
+import os from 'node:os'
 
 import path from 'node:path'
 import url from 'node:url'
@@ -72,8 +73,9 @@ function normalizeWorktreeLifecycleText(text: string): string {
 }
 
 function createRunDirectories() {
-  const root = path.resolve(process.cwd(), 'tmp', 'worktree-lifecycle-e2e')
-  fs.mkdirSync(root, { recursive: true })
+  const root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-worktree-lifecycle-e2e-')),
+  )
   const dataDir = fs.mkdtempSync(path.join(root, 'data-'))
   const projectDirectory = path.join(root, 'project')
   const nonGitDirectory = path.join(root, 'non-git-project')
@@ -355,7 +357,7 @@ describe('worktree lifecycle', () => {
           ).catch(() => { return })
         }
       }).catch(() => { return })
-      fs.rmSync(directories.dataDir, {
+      fs.rmSync(directories.root, {
         recursive: true,
         force: true,
         maxRetries: 3,
@@ -782,7 +784,7 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *non-git-project ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⬥ ok"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
