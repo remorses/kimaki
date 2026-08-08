@@ -638,6 +638,20 @@ export async function sendThreadMessage(
   return firstMessage!
 }
 
+export function isThreadChannelType(type: number): boolean {
+  return [
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(type)
+}
+
+/** True for guild text channels and for threads inside them. Commands that
+ * only need a guild context should accept both so they also work from threads. */
+export function isTextChannelOrThread(type: number): boolean {
+  return type === ChannelType.GuildText || isThreadChannelType(type)
+}
+
 export async function resolveTextChannel(
   channel: TextChannel | ThreadChannel | null | undefined,
 ): Promise<TextChannel | null> {

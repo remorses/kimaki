@@ -61,7 +61,11 @@ import os from 'node:os'
 import { spawn } from 'node:child_process'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
-import { uploadFilesToDiscord, stripMentions } from './discord-utils.js'
+import {
+  uploadFilesToDiscord,
+  stripMentions,
+  isThreadChannelType,
+} from './discord-utils.js'
 import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { backgroundUpgradeKimaki } from './upgrade.js'
@@ -200,13 +204,7 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
   process.exit(EXIT_NO_RESTART)
 }
 
-export function isThreadChannelType(type: number): boolean {
-  return [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(type)
-}
+export { isThreadChannelType }
 
 export async function sendDiscordMessageWithOptionalAttachment({
   channelId,
