@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.24.0
+
+1. **Anonymous usage analytics via Strada** — Kimaki now measures install activity, projects, sessions, and turns without collecting personal data. A random install id is stored in `~/.kimaki/install-id` (or your `--data-dir`), and only these product events are emitted:
+
+   - `bot_started` when the Discord bot is ready
+   - `project_registered` when a project channel is mapped (`user` vs `default`)
+   - `session_created` when a new OpenCode session is created
+   - `turn_started` when OpenCode accepts a prompt or command (with `source` so retries can be excluded from DAU)
+   - `turn_completed` on natural visible completions
+
+   No Discord IDs, paths, prompts, or secrets are sent. Metrics are **active installs**, not people. Disable with `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`.
+
+2. **`KIMAKI_NO_DEFAULT_CHANNEL` env var for managed deployments** — disable automatic creation of the default Kimaki channel, welcome message, and tutorial thread when your deployment provisions project channels itself:
+
+   ```bash
+   KIMAKI_NO_DEFAULT_CHANNEL=1 kimaki
+   ```
+
+   Fixes [#175](https://github.com/remorses/kimaki/issues/175).
+
+3. **Fewer Discord slash commands, same functionality** — secondary actions moved onto parent message buttons to free up command slots:
+
+   | Removed | Replacement |
+   |---|---|
+   | `/screenshare-stop` | **Stop screen share** button on `/screenshare` reply |
+   | `/model-variant` | **Change thinking level** button on `/model` |
+   | `/unset-model-override` | **Clear session/channel override** button on `/model` |
+   | `/toggle-worktrees` | **Turn on/off** auto-worktrees control in `/worktrees` |
+   | `/clear-queue` | **Remove from queue** button on each `/queue` confirmation |
+
+   `/vscode` also gained a **Stop VS Code** button. When Discord's 100-command limit is hit, registration priority is now: built-ins → agents (`*-agent`) → user commands → MCP prompts → skills (trimmed first).
+
+4. **Scheduled tasks show who gets notified** — `kimaki task list` now prints `userId`, `agent`, and `model` columns, so you can spot tasks that notify nobody:
+
+   ```
+   id | status | message | channelId | userId | projectName | folderName | agent | model | ...
+   5  | planned | Reply to unread emails | 1422... | - | my-project | GitHub | - | -
+   19 | planned | Run daily news desk | 1532... | 5359... | chiavarinews | GitHub | - | opencode-go/deepseek-v4-flash
+   ```
+
+   A `-` in `userId` means no thread member gets added when the task fires, so it may go unseen.
+
+   `kimaki task edit` can now set user, model, and agent on an existing task instead of delete + recreate:
+
+   ```bash
+   kimaki task edit 5 --user '535922349652836367'
+   kimaki task edit 19 --model 'opencode-go/deepseek-v4-flash' --send-at '0 4 * * *'
+   # empty string clears the override
+   kimaki task edit 19 --agent ''
+   ```
+
+   `kimaki send --user` also now works with `--thread` and `--session`, re-adding the user as a thread member so scheduled thread reminders resurface a thread you left, even if it auto-archived.
+
+5. **`/create-new-project` works from inside a thread** — previously it only worked from a text channel and replied with `This command can only be used in a text channel` when run from a thread. Now `/create-new-project name: my-new-app` works from either place, without interrupting the thread you're currently working in.
+
+6. **Voice notes resume automatically after saving an API key** — if Kimaki needs an OpenAI or Gemini API key to transcribe your first voice note, saving the key now transcribes and sends that same note instead of asking you to record it again.
+
+7. **`/abort` is easier to find** — its searchable description now includes stop, terminate, and cancel. Fixes [#176](https://github.com/remorses/kimaki/issues/176).
+
+8. **Fixed missing system prompt on the first turn of OpenCode commands** — slash commands and leading `/command` messages now correctly get the Discord context Kimaki injects on normal turns (session/thread IDs, upload helpers, etc), since OpenCode's `session.command` API has no `system` field on its own.
+
+9. **Fixed source builds failing due to a missing file** — `cli/src/analytics.ts` was referenced but never committed, breaking `pnpm --filter kimaki build` and `pnpm tsc` on a clean checkout. Published npm builds were unaffected since they ship a prebuilt `dist/`. Fixes [#182](https://github.com/remorses/kimaki/issues/182), fixes [#183](https://github.com/remorses/kimaki/issues/183).
+
 ## 0.23.1
 
 1. **Removed retired skills from the npm package** — the bundled `batch`, `security-review`, and `simplify` skills no longer remain in fresh installs after being removed from Kimaki's skill set.
