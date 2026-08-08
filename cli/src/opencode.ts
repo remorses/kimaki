@@ -5,17 +5,32 @@
 // specific project. The server lazily creates and caches an Instance per unique
 // directory path internally.
 //
-// Per-directory permissions (external_directory rules for worktrees, tmpdir,
-// etc.) are passed via session.create({ permission }) at session creation time,
-// NOT via the server config. The server config has permissive defaults
-// (edit: allow, bash: allow, external_directory: allow) and session-level rules
-// override them via opencode's findLast() evaluation (last matching rule wins).
+// Permission layering — READ THIS BEFORE ADDING A PERMISSION RULE.
 //
-// external_directory defaults to `allow` for every path. opencode's own default
+// opencode evaluates permissions with findLast() over a flattened list, so the
+// last matching rule wins. The order is:
+//
+//   opencode built-in defaults
+//     ▼
+//   merged config files  ── kimaki's generated config, THEN the user's
+//     ▼                     project opencode.json (deep-merged on top)
+//   config.agent.<name>.permission
+//     ▼
+//   session.permission   ── buildSessionPermissions(), always wins
+//
+// Directory ALLOW rules therefore belong in the generated server config, never
+// in session rules or an agent block: a project opencode.json must still be
+// able to `deny` or `ask` for specific folders. Anything placed in
+// session.permission silently overrides the user.
+//
+// external_directory is `{ '*': 'allow' }` by default. opencode's own default
 // is `ask`, which meant the agent had to interrupt the user for ordinary reads
-// outside the project. Users who want stricter behaviour either add `deny`/`ask`
-// rules to their own opencode.json (loaded after the kimaki config, so it wins)
-// or start kimaki with --restrict-directories to get the old allow-list.
+// outside the project, and an unanswered prompt was auto-rejected on TTL. Users
+// who want stricter behaviour add `deny`/`ask` rules to their own
+// opencode.json, or start kimaki with --restrict-directories.
+//
+// session.permission carries exactly one thing: the worktree original-checkout
+// deny, which must beat user config on purpose.
 //
 // Uses errore for type-safe error handling.
 
@@ -560,8 +575,8 @@ async function waitForServer({
 
 // ── Single server lifecycle ──────────────────────────────────────
 // The server is started lazily on first initializeOpencodeForDirectory() call.
-// It uses permissive defaults (edit: allow, bash: allow, external_directory: ask).
-// Per-directory permissions are applied at session creation time instead.
+// It uses permissive defaults (edit: allow, bash: allow, webfetch: allow, and
+// external_directory: '*' allow unless --restrict-directories is set).
 
 // In-flight promise to prevent concurrent startups from racing
 let startingServer: Promise<ServerStartError | SingleServer> | null = null
@@ -781,7 +796,11 @@ async function startSingleServer({
           webfetch: 'allow',
           websearch: 'allow',
           codesearch: 'allow',
-          external_directory: externalDirectoryPermissions,
+          // No external_directory here on purpose. opencode composes agents as
+          // merge(defaults, agentSpecific, userConfig) and then appends
+          // config.agent.<name>.permission LAST, so anything set here would beat
+          // the user's own top-level opencode.json rules. The top-level
+          // permission block above already covers this agent.
         },
       },
     },
@@ -1101,16 +1120,23 @@ function knownSafeExternalDirectories(): string[] {
 /**
  * Build the server-level `permission.external_directory` value.
  *
- * Default: a plain 'allow' — no prompt for any directory.
+ * Default: `{ '*': 'allow' }` — no prompt for any directory.
  * With --restrict-directories: an allow-list of known-safe paths only. There is
- * deliberately no catch-all '*': 'ask' entry so the user's own opencode.json
- * default still applies to everything else.
+ * deliberately no catch-all '*': 'ask' entry so opencode's own 'ask' default
+ * still applies to everything else.
+ *
+ * Always an object, never the plain string 'allow'. opencode deep-merges config
+ * files (remeda mergeDeep) and this file is loaded before the project's
+ * opencode.json, so object keys from the project merge on top of these and win
+ * via findLast(). A plain string would instead be replaced wholesale by the
+ * project object, dropping allow-all for every unmatched path.
  */
-function buildServerExternalDirectoryPermissions():
-  | 'allow'
-  | Record<string, 'ask' | 'allow' | 'deny'> {
+function buildServerExternalDirectoryPermissions(): Record<
+  string,
+  'ask' | 'allow' | 'deny'
+> {
   if (!getRestrictExternalDirectories()) {
-    return 'allow'
+    return { [ALL_EXTERNAL_DIRECTORIES_PATTERN]: 'allow' }
   }
 
   const permissions: Record<string, 'ask' | 'allow' | 'deny'> = {}
@@ -1122,13 +1148,25 @@ function buildServerExternalDirectoryPermissions():
 }
 
 /**
- * Build per-session permission rules for external_directory access.
- * These rules are passed to session.create({ permission }) and override
- * the server-level defaults via opencode's findLast() evaluation.
+ * Build the per-session permission ruleset passed to session.create/update.
  *
- * By default this is a single allow-everything rule. The worktree deny rule is
- * always appended: it is directory isolation (keep the agent out of the main
- * checkout once the thread moved to a worktree), not prompt avoidance.
+ * Keep this list minimal. Session rules are the LAST ruleset opencode
+ * evaluates — `Permission.merge(agent.permission, session.permission)` in
+ * session/tools.ts, then `findLast()` in permission/index.ts — so every rule
+ * here silently overrides the user's own opencode.json. Only rules that must
+ * beat user config belong here.
+ *
+ * In particular, directory *allow* rules must NOT go here. They live in the
+ * server config so a project opencode.json can still deny or ask for specific
+ * folders. Putting an `external_directory: '*' allow` rule here would make
+ * every user `deny` rule a no-op.
+ *
+ * The session's own working directory never needs a rule either: opencode skips
+ * the external_directory gate entirely for paths inside the active instance
+ * (`containsPath` in tool/external-directory.ts).
+ *
+ * That leaves one rule: worktree isolation. Once a thread moves to a managed
+ * worktree, deny the original checkout so the agent stops editing the main repo.
  */
 export function buildSessionPermissions({
   directory,
@@ -1141,41 +1179,14 @@ export function buildSessionPermissions({
   const normalizedDirectory = directory.replaceAll('\\', '/')
   const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
 
-  const rules: PermissionRuleset = getRestrictExternalDirectories()
-    ? [
-        ...knownSafeExternalDirectories().flatMap((safeDirectory) => {
-          return buildExternalDirectoryPermissionRules({
-            resolvedPattern: safeDirectory,
-            action: 'allow',
-          })
-        }),
-        ...buildExternalDirectoryPermissionRules({
-          resolvedPattern: normalizedDirectory,
-          action: 'allow',
-        }),
-      ]
-    : [
-        {
-          permission: 'external_directory',
-          pattern: ALL_EXTERNAL_DIRECTORIES_PATTERN,
-          action: 'allow',
-        },
-      ]
-
-  // For worktree sessions: explicitly deny the original checkout so agents do
-  // not keep editing the main repo after the thread has moved to a managed
-  // worktree. Deny rules are appended last so they override earlier allow
-  // rules via opencode's findLast() evaluation.
-  if (originalRepo && originalRepo !== normalizedDirectory) {
-    rules.push(
-      ...buildExternalDirectoryPermissionRules({
-        resolvedPattern: originalRepo,
-        action: 'deny',
-      }),
-    )
+  if (!originalRepo || originalRepo === normalizedDirectory) {
+    return []
   }
 
-  return rules
+  return buildExternalDirectoryPermissionRules({
+    resolvedPattern: originalRepo,
+    action: 'deny',
+  })
 }
 
 const ALL_EXTERNAL_DIRECTORIES_PATTERN = '*'

@@ -6,8 +6,8 @@
 import { describe, expect, test } from 'vitest'
 import fs from 'node:fs'
 import {
-  EXTERNAL_DIRECTORY_ALLOWED_DIR,
-  EXTERNAL_DIRECTORY_ALLOWED_FILE,
+  EXTERNAL_DIRECTORY_PROBE_DIR,
+  EXTERNAL_DIRECTORY_PROBE_FILE,
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
@@ -27,17 +27,17 @@ describe('external directory permissions', () => {
   })
 
   test('reads outside the project without a permission prompt', async () => {
-    fs.mkdirSync(EXTERNAL_DIRECTORY_ALLOWED_DIR, { recursive: true })
-    fs.writeFileSync(EXTERNAL_DIRECTORY_ALLOWED_FILE, 'external directory file')
+    fs.mkdirSync(EXTERNAL_DIRECTORY_PROBE_DIR, { recursive: true })
+    fs.writeFileSync(EXTERNAL_DIRECTORY_PROBE_FILE, 'external directory file')
 
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-      content: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER first',
+      content: 'EXTERNAL_DIRECTORY_PROBE_MARKER first',
     })
 
     const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
       timeout: 4_000,
       predicate: (t) => {
-        return t.name?.includes('EXTERNAL_DIRECTORY_ALLOWED_MARKER') ?? false
+        return t.name?.includes('EXTERNAL_DIRECTORY_PROBE_MARKER') ?? false
       },
     })
     const th = ctx.discord.thread(thread.id)
@@ -46,25 +46,25 @@ describe('external directory permissions', () => {
       discord: ctx.discord,
       threadId: thread.id,
       userId: TEST_USER_ID,
-      text: 'external-directory-read-done',
+      text: 'external-directory-probe-done',
       timeout: 8_000,
     })
     await waitForFooterMessage({
       discord: ctx.discord,
       threadId: thread.id,
       timeout: 4_000,
-      afterMessageIncludes: 'external-directory-read-done',
+      afterMessageIncludes: 'external-directory-probe-done',
       afterAuthorId: ctx.discord.botUserId,
     })
 
     await th.user(TEST_USER_ID).sendMessage({
-      content: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER followup',
+      content: 'EXTERNAL_DIRECTORY_PROBE_MARKER followup',
     })
     await waitForBotMessageContaining({
       discord: ctx.discord,
       threadId: thread.id,
       userId: TEST_USER_ID,
-      text: 'external-directory-read-done',
+      text: 'external-directory-probe-done',
       afterUserMessageIncludes: 'followup',
       timeout: 8_000,
     })
@@ -72,26 +72,26 @@ describe('external directory permissions', () => {
       discord: ctx.discord,
       threadId: thread.id,
       timeout: 4_000,
-      afterMessageIncludes: 'external-directory-read-done',
+      afterMessageIncludes: 'external-directory-probe-done',
       afterAuthorId: ctx.discord.botUserId,
     })
 
     const text = await th.text()
     expect(text).toMatchInlineSnapshot(`
       "--- from: user (external-directory-tester)
-      EXTERNAL_DIRECTORY_ALLOWED_MARKER first
+      EXTERNAL_DIRECTORY_PROBE_MARKER first
       --- from: assistant (TestBot)
       *using deterministic-provider/deterministic-v2*
       ⬥ reading external directory
-      ┣ read *allowed.txt*
-      ⬥ external-directory-read-done
+      ┣ read *probe.txt*
+      ⬥ external-directory-probe-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
       --- from: user (external-directory-tester)
-      EXTERNAL_DIRECTORY_ALLOWED_MARKER followup
+      EXTERNAL_DIRECTORY_PROBE_MARKER followup
       --- from: assistant (TestBot)
       ⬥ reading external directory
-      ┣ read *allowed.txt*
-      ⬥ external-directory-read-done
+      ┣ read *probe.txt*
+      ⬥ external-directory-probe-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)
     expect(text).not.toContain('Permission Required')

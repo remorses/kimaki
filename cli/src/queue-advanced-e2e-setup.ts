@@ -54,12 +54,12 @@ export function chooseLockPort({ channelId }: { channelId: string }): number {
   return 51_000 + (Math.abs(hash) % 2_000)
 }
 
-export const EXTERNAL_DIRECTORY_ALLOWED_DIR = path.resolve(
+export const EXTERNAL_DIRECTORY_PROBE_DIR = path.resolve(
   process.cwd(),
   'tmp',
-  'kimaki-external-directory-allowed',
+  'kimaki-external-directory-probe',
 )
-export const EXTERNAL_DIRECTORY_ALLOWED_FILE = `${EXTERNAL_DIRECTORY_ALLOWED_DIR}/allowed.txt`
+export const EXTERNAL_DIRECTORY_PROBE_FILE = `${EXTERNAL_DIRECTORY_PROBE_DIR}/probe.txt`
 
 export function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   return new Client({
@@ -300,28 +300,28 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const externalDirectoryAllowedMatcher: DeterministicMatcher = {
-    id: 'external-directory-allowed-marker',
+  const externalDirectoryProbeMatcher: DeterministicMatcher = {
+    id: 'external-directory-probe-marker',
     priority: 106,
     when: {
       lastMessageRole: 'user',
-      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER',
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
     },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'external-directory-allowed-start' },
+        { type: 'text-start', id: 'external-directory-probe-start' },
         {
           type: 'text-delta',
-          id: 'external-directory-allowed-start',
+          id: 'external-directory-probe-start',
           delta: 'reading external directory',
         },
-        { type: 'text-end', id: 'external-directory-allowed-start' },
+        { type: 'text-end', id: 'external-directory-probe-start' },
         {
           type: 'tool-call',
           toolCallId: 'external-directory-read-call',
           toolName: 'read',
-          input: JSON.stringify({ filePath: EXTERNAL_DIRECTORY_ALLOWED_FILE }),
+          input: JSON.stringify({ filePath: EXTERNAL_DIRECTORY_PROBE_FILE }),
         },
         {
           type: 'finish',
@@ -332,23 +332,53 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const externalDirectoryAllowedFollowupMatcher: DeterministicMatcher = {
-    id: 'external-directory-allowed-followup',
+  // Fires only when the read above was rejected by a permission rule. Scoped to
+  // the probe marker so it cannot cascade into unrelated turns. This is what
+  // makes a project-level `deny` visible in Discord: without it an allowed read
+  // and a denied read produce identical thread output.
+  const externalDirectoryProbeDeniedMatcher: DeterministicMatcher = {
+    id: 'external-directory-probe-denied',
+    priority: 107,
+    when: {
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
+      rawPromptIncludes: 'prevents you from using this specific tool call',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'external-directory-probe-denied' },
+        {
+          type: 'text-delta',
+          id: 'external-directory-probe-denied',
+          delta: 'external-directory-probe-denied',
+        },
+        { type: 'text-end', id: 'external-directory-probe-denied' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  const externalDirectoryProbeFollowupMatcher: DeterministicMatcher = {
+    id: 'external-directory-probe-followup',
     priority: 105,
     when: {
-      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER',
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
       rawPromptIncludes: 'reading external directory',
     },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'external-directory-allowed-followup' },
+        { type: 'text-start', id: 'external-directory-probe-followup' },
         {
           type: 'text-delta',
-          id: 'external-directory-allowed-followup',
-          delta: 'external-directory-read-done',
+          id: 'external-directory-probe-followup',
+          delta: 'external-directory-probe-done',
         },
-        { type: 'text-end', id: 'external-directory-allowed-followup' },
+        { type: 'text-end', id: 'external-directory-probe-followup' },
         {
           type: 'finish',
           finishReason: 'stop',
@@ -785,8 +815,9 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     questionSelectQueueMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
-    externalDirectoryAllowedMatcher,
-    externalDirectoryAllowedFollowupMatcher,
+    externalDirectoryProbeMatcher,
+    externalDirectoryProbeDeniedMatcher,
+    externalDirectoryProbeFollowupMatcher,
 
     multiToolMatcher,
     multiToolFollowupMatcher,
@@ -825,6 +856,7 @@ export function setupQueueAdvancedSuite({
   dirName,
   username,
   restrictExternalDirectories = false,
+  projectPermission,
 }: {
   channelId: string
   channelName: string
@@ -834,6 +866,10 @@ export function setupQueueAdvancedSuite({
   // still raise an external_directory permission prompt. Off by default, which
   // matches the shipped default of allowing every directory.
   restrictExternalDirectories?: boolean
+  // Extra `permission` block written into the project's opencode.json, as a
+  // real user would. Used to prove user rules still beat kimaki's generated
+  // config instead of being overridden by session-level rules.
+  projectPermission?: Record<string, unknown>
 }): QueueAdvancedContext {
   const ctx: QueueAdvancedContext = {
     directories: undefined as unknown as ReturnType<typeof createRunDirectories>,
@@ -892,7 +928,13 @@ export function setupQueueAdvancedSuite({
     })
     fs.writeFileSync(
       path.join(ctx.directories.projectDirectory, 'opencode.json'),
-      JSON.stringify(opencodeConfig, null, 2),
+      JSON.stringify(
+        projectPermission
+          ? { ...opencodeConfig, permission: projectPermission }
+          : opencodeConfig,
+        null,
+        2,
+      ),
     )
 
     const dbPath = path.join(ctx.directories.dataDir, 'discord-sessions.db')

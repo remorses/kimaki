@@ -49,6 +49,7 @@ type RenderedTableRow = {
     APITextDisplayComponent | APIActionRowComponent<APIButtonComponent>
   >
   componentCost: number
+  textSize: number
 }
 
 type CalloutDescriptor = {
@@ -625,15 +626,17 @@ function buildTextRow({
     const value = cell ? getRenderedCellText({ cell }) : ''
     return `**${key}** ${value}`
   })
+  const content = lines.join('\n')
 
   return {
     components: [
       {
         type: ComponentType.TextDisplay,
-        content: lines.join('\n'),
+        content,
       },
     ],
     componentCost: 1,
+    textSize: content.length,
   }
 }
 
@@ -678,15 +681,21 @@ function buildButtonRow({
     components: buttons,
   }
 
+  const content = lines.join('\n')
+  const buttonLabelSize = buttons.reduce((sum, button) => {
+    return sum + (button.label?.length ?? 0)
+  }, 0)
+
   return {
     components: [
       {
         type: ComponentType.TextDisplay,
-        content: lines.join('\n'),
+        content,
       },
       actionRow,
     ],
     componentCost: 2 + buttons.length,
+    textSize: content.length + buttonLabelSize,
   }
 }
 

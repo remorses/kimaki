@@ -143,11 +143,17 @@ names from thread titles/prompts). Worktrees now live under
 
 The v1 SDK `Event` union has `permission.updated` but the bus actually emits `permission.asked`. Plugin `event` hooks receive the real bus event types, not the v1 SDK names. Cast `event.type as string` and compare against the actual runtime type. Also, `getEventSessionId()` won't handle unknown event types and returns `undefined`, so any code for stale-typed events must run before the `getEventSessionId()` early return.
 
-## external_directory is allow-all by default
+## session.permission overrides the user's opencode.json
 
-Kimaki sets `external_directory: 'allow'` at the server config level and a
-single `'*': allow` session rule. Do not reintroduce per-directory allow-lists
-(tmpdir, `~/.config/opencode`, toolchain caches) into the default path; that
-list only applies when `--restrict-directories` is set. The worktree
-original-repo `deny` rule is always appended regardless of the flag, because it
-is directory isolation and not prompt avoidance.
+opencode evaluates `merge(agent.permission, session.permission)` with
+`findLast()`, so **anything in `session.create({ permission })` beats the user's
+own config**. Never put allow rules there. Kimaki's `external_directory` allow
+lives in the generated server config (as `{ '*': 'allow' }`, an object so a
+project opencode.json deep-merges on top instead of replacing a plain string).
+`buildSessionPermissions()` returns only the worktree original-checkout deny,
+which must beat user config on purpose. Same trap for
+`config.agent.<name>.permission`: opencode appends it after the user ruleset, so
+do not set `external_directory` inside the generated `agent.explore` block.
+A session never needs an allow rule for its own working directory —
+`containsPath` in `tool/external-directory.ts` skips the gate for paths inside
+the active instance.
