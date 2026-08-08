@@ -2,6 +2,7 @@
 
 import { type REST, Routes } from 'discord.js'
 import { createDiscordRest } from './discord-urls.js'
+import { ensureThreadMember } from './discord-utils.js'
 import YAML from 'yaml'
 import {
   claimScheduledTaskRunning,
@@ -77,6 +78,23 @@ async function executeThreadScheduledTask({
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
   const prefixedPrompt = `» **kimaki-cli:**\n${payload.prompt}`
+
+  // Re-join the user before posting, so the message they get notified about is
+  // in a thread they are already a member of. Works on archived threads too;
+  // the post below auto-unarchives.
+  if (payload.userId) {
+    const addMemberResult = await ensureThreadMember({
+      rest,
+      threadId: payload.threadId,
+      userId: payload.userId,
+    })
+    if (addMemberResult instanceof Error) {
+      return new Error(
+        `Failed to add user to scheduled thread for task ${task.id}`,
+        { cause: addMemberResult },
+      )
+    }
+  }
 
   const postResult = await rest
     .post(Routes.channelMessages(payload.threadId), {
@@ -178,15 +196,17 @@ async function executeChannelScheduledTask({
     })
   }
 
-  const addMemberResult = await rest
-    .put(Routes.threadMembers(threadIdResult, payload.userId))
-    .catch((error) => {
-      return new Error(
-        `Failed to add user to scheduled thread for task ${task.id}`,
-        { cause: error },
-      )
-    })
-  if (addMemberResult instanceof Error) return addMemberResult
+  const addMemberResult = await ensureThreadMember({
+    rest,
+    threadId: threadIdResult,
+    userId: payload.userId,
+  })
+  if (addMemberResult instanceof Error) {
+    return new Error(
+      `Failed to add user to scheduled thread for task ${task.id}`,
+      { cause: addMemberResult },
+    )
+  }
 }
 
 async function executeScheduledTask({

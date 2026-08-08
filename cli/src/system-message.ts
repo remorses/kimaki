@@ -652,6 +652,8 @@ Use \`--send-at\` to schedule a one-time or recurring task:
 kimaki send --channel ${channelId} --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent>${parentSessionArg}${userArg}
 kimaki send --channel ${channelId} --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent>${parentSessionArg}${userArg}
 
+**ALWAYS pass \`--user\` when scheduling a task.** Discord only shows a thread in the left sidebar to its members. Without \`--user\`, kimaki does not ensure anyone is a member, so the task can fire completely unnoticed if the user never joined the thread or already left it. This applies to \`--channel\` and \`--thread\` scheduling alike.
+
 ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday).
 When the user specifies a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
 
@@ -660,7 +662,7 @@ When the user specifies a time without a timezone, ask them to confirm their tim
 - \`--worktree\` to create the scheduled thread as a worktree session (only if the user explicitly asks for a worktree)
 - \`--agent\` and \`--model\` to control scheduled session behavior
 - \`--parent-session\` to pass this session as parent of the scheduled child
-- \`--user\` to add a specific user to the scheduled thread
+- \`--user\` to add a specific user to the scheduled thread (always pass this)
 
 \`--wait\` is incompatible with \`--send-at\` because scheduled tasks run in the future.
 
@@ -692,8 +694,10 @@ Notification strategy:
 Manage scheduled tasks with:
 
 kimaki task list
-kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"]
+kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] [--user "<discord-user-id>"] [--model "provider/model"] [--agent "<agent>"]
 kimaki task delete <id>
+
+\`kimaki task list\` prints \`userId\`, \`agent\`, and \`model\` columns. A \`-\` in \`userId\` means nobody is added to the thread when that task fires, so the user may never see it. Fix it with \`kimaki task edit <id> --user '<discord-user-id>'\` instead of deleting and recreating the task. Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
 
 \`kimaki session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.
 
@@ -708,11 +712,11 @@ Use case patterns:
 - Reminder flows: create deadline reminders with one-time \`--send-at\` and \`--notify-only\`; mention only if action is required.
 - Proactive reminders: when you encounter time-sensitive information (API key expiration, certificate renewal, trial ending), schedule a \`--notify-only\` reminder before the deadline. Always tell the user you scheduled the reminder so they know.
 - Weekly QA / recurring maintenance: write the full task spec in \`tasks/\` and schedule a short prompt pointing to it.
-- Thread reminders: when the user says "remind me about this in 2 hours", use \`--send-at\` with \`--thread\` to resurface the current thread:
+- Thread reminders: when the user says "remind me about this in 2 hours", use \`--send-at\` with \`--thread\` to resurface the current thread. \`--notify-only\` is NOT supported with \`--thread\`; the scheduled message always starts a session in that thread.
 
-kimaki send ${sendToSelfTarget} --prompt 'Reminder: <@USER_ID> you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --notify-only --agent <current_agent>
+kimaki send ${sendToSelfTarget} --prompt 'Reminder: you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --agent <current_agent>${userArg}
 
-Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp.
+Replace \`<future_UTC_time>\` with the computed UTC ISO timestamp. \`--user\` re-adds the user to the thread when the reminder fires, which is what pops it back into their sidebar.
 
 Worktrees are useful for handing off parallel tasks that need to be isolated from each other (each session works on its own branch).
 

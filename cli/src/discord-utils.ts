@@ -275,6 +275,43 @@ export async function archiveThread({
   })
 }
 
+/**
+ * Add a user as a thread member so the thread shows up in their Discord left
+ * sidebar. Discord only lists threads you are a member of, so a scheduled
+ * reminder posted into a thread the user never joined (or already left) can
+ * fire completely unnoticed.
+ *
+ * Do NOT add unarchive logic here. The Discord docs imply archived threads
+ * reject member changes with `50083: Thread is archived`, but that was verified
+ * against the real API and it is wrong for unlocked threads:
+ *   - PUT thread-members on an archived unlocked thread succeeds
+ *   - POST message to an archived unlocked thread succeeds and auto-unarchives
+ * So callers that add the member and then post get an active thread for free.
+ * Locked threads fail either way without MANAGE_THREADS, and unarchiving them
+ * needs that same permission, so a pre-emptive PATCH buys nothing but latency.
+ *
+ * PUT returns 204 both when the user is newly added and when they were already
+ * a member, so calling this repeatedly is safe.
+ */
+export async function ensureThreadMember({
+  rest,
+  threadId,
+  userId,
+}: {
+  rest: RESTType
+  threadId: string
+  userId: string
+}): Promise<void | Error> {
+  const addMemberResult = await rest
+    .put(Routes.threadMembers(threadId, userId))
+    .catch((error) => {
+      return new Error(`Failed to add user ${userId} to thread ${threadId}`, {
+        cause: error,
+      })
+    })
+  if (addMemberResult instanceof Error) return addMemberResult
+}
+
 /** Remove Discord mentions from text so they don't appear in thread titles */
 export function stripMentions(text: string): string {
   return text

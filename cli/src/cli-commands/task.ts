@@ -30,6 +30,7 @@ import {
   formatMemberLookupUnavailableMessage,
   formatRelativeTime,
   formatTaskScheduleLine,
+  getDiscordUserIdFromUserOption,
   isDiscordMemberLookupUnavailable,
   isGuildMemberSearchResult,
   isThreadChannelType,
@@ -59,10 +60,17 @@ cli
       }
 
       console.log(
-        'id | status | message | channelId | projectName | folderName | timeRemaining | firesAt | cron',
+        'id | status | message | channelId | userId | projectName | folderName | agent | model | timeRemaining | firesAt | cron',
       )
 
       tasks.forEach((task) => {
+        // Surfacing userId makes it obvious which tasks will never show up in
+        // the user's Discord sidebar (no thread member is ever added for them).
+        // agent/model live only in payload_json; list them so edits don't need SQLite.
+        const payload = parseScheduledTaskPayload(task.payload_json)
+        const userId = payload instanceof Error ? '?' : payload.userId || '-'
+        const agent = payload instanceof Error ? '?' : payload.agent || '-'
+        const model = payload instanceof Error ? '?' : payload.model || '-'
         const projectDirectory = task.project_directory || ''
         const projectName = projectDirectory
           ? path.basename(projectDirectory)
@@ -78,7 +86,7 @@ cli
           task.schedule_kind === 'cron' ? task.cron_expr || '-' : '-'
 
         console.log(
-          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${projectName} | ${folderName} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
+          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${userId} | ${projectName} | ${folderName} | ${agent} | ${model} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
         )
       })
 
@@ -120,17 +128,90 @@ cli
     }
   })
 
+// Resolving a Discord user needs a guild only for username lookups. Raw IDs and
+// mentions resolve offline, which keeps `task edit --user <id>` usable without
+// a bot token or Server Members Intent.
+async function resolveTaskUser({
+  user,
+  channelId,
+}: {
+  user: string
+  channelId: string | null
+}): Promise<{ id: string; username: string } | Error> {
+  const directUserId = getDiscordUserIdFromUserOption(user)
+  if (directUserId) {
+    return { id: directUserId, username: directUserId }
+  }
+
+  if (!channelId) {
+    return new Error(
+      `Cannot look up username "${user}": task has no channel to resolve a guild from. Pass a Discord user ID instead.`,
+    )
+  }
+
+  const { token } = await resolveBotCredentials()
+  const rest = createDiscordRest(token)
+  const channel = await rest
+    .get(Routes.channel(channelId))
+    .catch((error) => new Error('Failed to fetch task channel', { cause: error }))
+  if (channel instanceof Error) return channel
+
+  const guildId = (channel as { guild_id?: string }).guild_id
+  if (!guildId) {
+    return new Error(`Channel ${channelId} has no guild ID`)
+  }
+
+  const resolved = await resolveDiscordUserOption({ user, guildId, rest })
+  if (resolved instanceof Error) return resolved
+  if (!resolved) {
+    return new Error(`Could not resolve user: ${user}`)
+  }
+  return resolved
+}
+
 cli
-  .command('task edit <id>', 'Edit prompt or schedule of a planned task')
+  .command(
+    'task edit <id>',
+    'Edit prompt, schedule, model, agent, or notified user of a planned task',
+  )
   .option('--prompt <prompt>', 'New prompt text')
   .option('--send-at <sendAt>', 'New schedule (UTC ISO date or cron expression)')
-  .action(async (id: string, options: { prompt?: string; sendAt?: string }) => {
+  .option('--agent <agent>', 'Agent for the scheduled session (empty string clears)')
+  .option(
+    '--model <model>',
+    'Model for the scheduled session, format provider/model (empty string clears)',
+  )
+  .option(
+    '-u, --user <user>',
+    'Discord user ID, mention, or username added to the task thread',
+  )
+  .action(
+    async (
+      id: string,
+      options: {
+        prompt?: string
+        sendAt?: string
+        user?: string
+        agent?: string
+        model?: string
+      },
+    ) => {
     try {
       const trimmedPrompt =
         options.prompt === undefined ? undefined : options.prompt.trim()
+      const hasAgent = options.agent !== undefined
+      const hasModel = options.model !== undefined
 
-      if (!trimmedPrompt && !options.sendAt) {
-        cliLogger.error('Provide at least --prompt or --send-at')
+      if (
+        !trimmedPrompt &&
+        !options.sendAt &&
+        !options.user &&
+        !hasAgent &&
+        !hasModel
+      ) {
+        cliLogger.error(
+          'Provide at least --prompt, --send-at, --user, --agent or --model',
+        )
         process.exit(EXIT_NO_RESTART)
       }
       if (trimmedPrompt !== undefined && trimmedPrompt.length === 0) {
@@ -167,10 +248,27 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
+      const resolvedUser = options.user
+        ? await resolveTaskUser({
+            user: options.user,
+            channelId: task.channel_id,
+          })
+        : undefined
+      if (resolvedUser instanceof Error) {
+        cliLogger.error(resolvedUser.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
       const newPrompt = trimmedPrompt ?? existingPayload.prompt
+      // Match send --model/--agent: empty string clears the override (null).
       const updatedPayload: ScheduledTaskPayload = {
         ...existingPayload,
         prompt: newPrompt,
+        ...(resolvedUser
+          ? { userId: resolvedUser.id, username: resolvedUser.username }
+          : {}),
+        ...(hasAgent ? { agent: options.agent!.trim() || null } : {}),
+        ...(hasModel ? { model: options.model!.trim() || null } : {}),
       }
 
       const updateData: Parameters<typeof updateScheduledTask>[0] = {
@@ -180,6 +278,7 @@ cli
       }
 
       if (options.sendAt) {
+        // Same as send: cron is always UTC so schedule does not depend on host TZ.
         const parsed = parseSendAtValue({
           value: options.sendAt,
           now: new Date(),
@@ -202,7 +301,17 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      cliLogger.log(`Updated task ${taskId}`)
+      const parts: string[] = [`Updated task ${taskId}`]
+      if (resolvedUser) {
+        parts.push(`user ${resolvedUser.username} will be added to the thread`)
+      }
+      if (hasAgent) {
+        parts.push(`agent=${updatedPayload.agent || '-'}`)
+      }
+      if (hasModel) {
+        parts.push(`model=${updatedPayload.model || '-'}`)
+      }
+      cliLogger.log(parts.join(' | '))
       process.exit(0)
     } catch (error) {
       cliLogger.error(

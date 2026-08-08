@@ -29,7 +29,7 @@ import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
-import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
+import { archiveThread, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, resolveSessionWorkingDirectory, isGitRepositoryRoot } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -267,9 +267,6 @@ cli
           if (name) {
             incompatibleFlags.push('--name')
           }
-          if (options.user) {
-            incompatibleFlags.push('--user')
-          }
 
           if (incompatibleFlags.length > 0) {
             cliLogger.error(
@@ -455,6 +452,20 @@ cli
             throw new Error(`Thread has no parent channel: ${targetThreadId}`)
           }
 
+          // Adding the user as a thread member is what makes the thread appear
+          // in their Discord left sidebar. Without it a scheduled reminder posts
+          // into a thread the user may have already left or never joined, so
+          // they never see it.
+          const threadTargetUser = await resolveDiscordUserOption({
+            user: options.user,
+            guildId: threadData.guild_id,
+            rest,
+          })
+          if (threadTargetUser instanceof Error) {
+            cliLogger.error(threadTargetUser.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+
           // channelConfig is optional: in CI/headless environments the local DB
           // has no channel_directories rows because the bot hasn't synced yet.
           // The running bot on the other end resolves the directory from its own DB.
@@ -479,8 +490,8 @@ cli
               prompt,
               agent: options.agent || null,
               model: options.model || null,
-              username: null,
-              userId: null,
+              username: threadTargetUser?.username || null,
+              userId: threadTargetUser?.id || null,
               permissions: options.permission?.length ? options.permission : null,
               injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
               parentSessionId: options.parentSession || null,
@@ -528,6 +539,21 @@ cli
           // Use a newline between prefix and prompt so leading /command
           // detection can find the command on its own line.
           const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
+
+          if (threadTargetUser) {
+            cliLogger.log(
+              `Adding user ${threadTargetUser.username} to thread...`,
+            )
+            const addMemberResult = await ensureThreadMember({
+              rest,
+              threadId: targetThreadId,
+              userId: threadTargetUser.id,
+            })
+            if (addMemberResult instanceof Error) {
+              cliLogger.error(addMemberResult.message)
+              process.exit(EXIT_NO_RESTART)
+            }
+          }
 
           await sendDiscordMessageWithOptionalAttachment({
             channelId: targetThreadId,
