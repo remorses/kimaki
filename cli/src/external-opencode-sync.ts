@@ -257,6 +257,46 @@ function sortSessionsByRecency<T extends SessionWithTime>(sessions: T[]): T[] {
   })
 }
 
+// Minimal structural view of a session for sync-candidate checks. Kept narrow
+// (instead of importing the full SDK Session type) so the helper stays a pure,
+// easily unit-testable function with no heavy coupling.
+export type ExternalSyncSession = {
+  title?: string | null
+  parentID?: string
+}
+
+// Whether a session should be mirrored into a Discord "Sync:" thread by the
+// external-opencode-sync poller.
+//
+// Excludes:
+//   (a) untitled placeholder sessions ("new session -…"),
+//   (b) internal sub-agent sessions that follow the "(subagent)" title
+//       convention,
+//   (c) sub-sessions that carry a parentID — i.e. forks created by plugins or
+//       agents (memory recall, memory extraction, research sub-agents, …).
+//
+// (c) is the important one: those sub-sessions are internal machinery, not user
+// conversations, so they must never get their own Discord thread. The parentID
+// check is structural, so it catches sub-sessions even when the spawning plugin
+// does not follow the "(subagent)" title convention — every plugin would
+// otherwise have to know about that convention to avoid leaking a junk "Sync:"
+// thread per sub-session. The title checks above are kept only as a fallback
+// for sessions whose parentID is not exposed. Top-level CLI/TUI sessions (no
+// parentID) are mirrored exactly as before.
+export function isExternalSyncCandidate(session: ExternalSyncSession): boolean {
+  const title = session.title || ''
+  if (/^new session\s*-/i.test(title)) {
+    return false
+  }
+  if (/subagent\)\s*$/i.test(title)) {
+    return false
+  }
+  if (session.parentID) {
+    return false
+  }
+  return true
+}
+
 function groupTrackedChannelsByDirectory(
   trackedChannels: TrackedTextChannelRow[],
 ): DirectorySyncTarget[] {
@@ -646,11 +686,7 @@ async function syncDirectoryInner({
   if (signal.aborted) return
 
   const sessions = (sessionsResponse.data || []).filter((session) => {
-    const title = session.title || ''
-    if (/^new session\s*-/i.test(title)) {
-      return false
-    }
-    return !/subagent\)\s*$/i.test(title)
+    return isExternalSyncCandidate(session)
   })
   const sorted = sortSessionsByRecency(sessions)
 
@@ -758,6 +794,7 @@ export const externalOpencodeSyncInternals = {
   getSessionThreadName,
   groupTrackedChannelsByDirectory,
   sortSessionsByRecency,
+  isExternalSyncCandidate,
   parseDiscordOriginMetadata,
   getDiscordOriginMetadataFromMessage,
   isLatestUserTurnFromDiscord,
