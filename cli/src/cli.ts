@@ -8,7 +8,6 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
-import { initSentry } from './sentry.js'
 import {
   setDataDir,
   setProjectsDir,
@@ -90,7 +89,10 @@ cli
     '--disable-sync',
     'Disable background sync of external OpenCode sessions into Discord',
   )
-  .option('--no-sentry', 'Disable Sentry error reporting')
+  .option(
+    '--no-analytics',
+    'Disable anonymous product analytics (Strada). Same as KIMAKI_STRADA_ENABLED=0',
+  )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
     '--gateway',
@@ -143,7 +145,7 @@ cli
       permissionTimeoutMinutes?: string
       disableSync?: boolean
       autoRestart?: boolean
-      noSentry?: boolean
+      noAnalytics?: boolean
       noAutoUpgrade?: boolean
       gateway?: boolean
       gatewayCallbackUrl?: string
@@ -320,11 +322,11 @@ cli
             'Background sync disabled: external OpenCode sessions will not appear in Discord',
           )
         }
-        if (options.noSentry) {
-          process.env.KIMAKI_SENTRY_DISABLED = '1'
-          cliLogger.log('Sentry error reporting disabled (--no-sentry)')
-        } else {
-          initSentry()
+        if (options.noAnalytics) {
+          process.env.KIMAKI_STRADA_ENABLED = '0'
+          cliLogger.log(
+            'Anonymous product analytics disabled (--no-analytics)',
+          )
         }
 
         if (options.installUrl) {

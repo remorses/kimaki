@@ -19,6 +19,7 @@ const logger = createLogger(LogPrefix.CLI)
 
 // Public Strada project for production kimaki usage (write-only ingest token).
 // Override with KIMAKI_STRADA_* for local/dev against kimaki-local.
+// Disable with --no-analytics or KIMAKI_STRADA_ENABLED=0.
 const DEFAULT_STRADA_PROJECT_ID = '01KYX3X6FEBBV5JV6Q8M97988C'
 const DEFAULT_STRADA_TOKEN =
   'str_9eee60d24a444da78107f8780fe965c5f8cae422def44dcb9ee94d8035a5a14f'

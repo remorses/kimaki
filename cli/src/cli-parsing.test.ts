@@ -51,6 +51,25 @@ async function getHelpOutput() {
   return stdout
 }
 
+async function parseRootBotOptions(argv: string[]) {
+  const script = [
+    "import { goke } from 'goke'",
+    'const cli = goke(\'kimaki\')',
+    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics')",
+    `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
+    'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
+  ].join(';')
+
+  const { stdout } = await execAsync(`node --input-type=module -e ${JSON.stringify(script)}`, {
+    cwd: import.meta.dirname,
+    timeout: 10_000,
+  })
+  return JSON.parse(stdout) as {
+    args: string[]
+    options: Record<string, unknown>
+  }
+}
+
 describe('goke CLI ID parsing', () => {
   test('keeps large Discord IDs as strings', async () => {
     const channelId = '1234567890123456789'
@@ -173,5 +192,15 @@ describe('goke CLI ID parsing', () => {
 
     expect(stdout).toContain('send')
     expect(stdout).toContain('multioauth')
+  })
+
+  test('parses --no-analytics as a boolean flag on the root bot command', async () => {
+    const result = await parseRootBotOptions([
+      'node',
+      'kimaki',
+      '--no-analytics',
+    ])
+
+    expect(result.options.noAnalytics).toBe(true)
   })
 })

@@ -41,7 +41,14 @@ strada analytics events -p kimaki-local --since 7d
 ```
 
 Override local ingest with `KIMAKI_STRADA_PROJECT_ID` / `KIMAKI_STRADA_TOKEN` / `KIMAKI_STRADA_ENVIRONMENT`.
-Disable with `KIMAKI_STRADA_ENABLED=0`.
+
+**Disable analytics** (no events leave the machine):
+
+```bash
+kimaki --no-analytics
+# or
+KIMAKI_STRADA_ENABLED=0 kimaki
+```
 
 ## Login and setup
 

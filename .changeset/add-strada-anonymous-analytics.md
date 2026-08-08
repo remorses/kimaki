@@ -14,6 +14,6 @@ Kimaki stores a random install id in `~/.kimaki/install-id` (or your `--data-dir
 
 No Discord IDs, paths, prompts, or secrets are sent. Metrics are **active installs**, not people.
 
-Disable with `KIMAKI_STRADA_ENABLED=0`. Override the default project with `KIMAKI_STRADA_PROJECT_ID` / `KIMAKI_STRADA_TOKEN` for local debugging.
+Disable with `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`. Override the default project with `KIMAKI_STRADA_PROJECT_ID` / `KIMAKI_STRADA_TOKEN` for local debugging.
 
 The website also reports server and browser errors to the same Strada project.

@@ -473,6 +473,7 @@ anonymous install-level product events go to Strada via `cli/src/analytics.ts` (
 
 - prod project slug: `kimaki`
 - local/dev bot (this repo `cli/.env`): `kimaki-local`
+- disable: `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`
 - query with `strada` CLI; login as the org owner (t.de Google account)
 
 full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-paste SQL: see `docs/strada-product-analytics.md`.

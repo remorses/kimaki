@@ -62,6 +62,23 @@ describe('analytics', () => {
     }).not.toThrow()
   })
 
+  it('KIMAKI_STRADA_ENABLED=0 keeps initAnalytics from throwing', () => {
+    const prev = process.env.KIMAKI_STRADA_ENABLED
+    process.env.KIMAKI_STRADA_ENABLED = '0'
+    try {
+      initAnalytics()
+      expect(() => {
+        trackEvent('bot_started', { guild_count: 1 })
+      }).not.toThrow()
+    } finally {
+      if (prev === undefined) {
+        delete process.env.KIMAKI_STRADA_ENABLED
+      } else {
+        process.env.KIMAKI_STRADA_ENABLED = prev
+      }
+    }
+  })
+
   it('builds common props and install_id always wins', () => {
     setAnalyticsBotMode('gateway')
     const captured = _enableAnalyticsTestCapture({
