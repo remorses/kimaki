@@ -467,6 +467,16 @@ jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_x
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
+## product analytics (Strada)
+
+anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people.
+
+- prod project slug: `kimaki`
+- local/dev bot (this repo `cli/.env`): `kimaki-local`
+- query with `strada` CLI; login as the org owner (t.de Google account)
+
+full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-paste SQL: see `docs/strada-product-analytics.md`.
+
 ## kimaki command shim (`~/.kimaki/bin/kimaki`)
 
 `ensureKimakiCommandShim()` in `cli/src/opencode-command.ts` generates a shell script at `~/.kimaki/bin/kimaki` (or `kimaki.cmd` on Windows) every time the bot starts. it captures `process.execPath`, `process.execArgv`, and `process.argv[1]` into an `exec` one-liner so the shim always mirrors the current process.
