@@ -16,6 +16,8 @@ import {
   deleteSlackInstallStateInKv,
   getSlackInstallStateFromKv,
   getTeamClientIdsFromKv,
+  incrementTranscribeDailyCount,
+  resolveGatewayClientFromCacheOrDb,
   setSlackInstallStateInKv,
   setTeamClientIdsInKv,
   upsertGatewayClientAndRefreshKv,
@@ -28,6 +30,10 @@ import { StradaBrowser } from './strada-browser.tsx'
 import type { Env } from './env.js'
 
 export { SlackBridgeDO }
+
+// /api/transcribe limits (see also TRANSCRIBE_RATE_LIMITER binding for burst control).
+const TRANSCRIBE_MAX_AUDIO_BYTES = 15 * 1024 * 1024
+const TRANSCRIBE_DAILY_REQUEST_LIMIT = 100
 
 const SLACK_OAUTH_CALLBACK_PATH = '/slack/oauth/callback'
 const SLACK_INSTALL_SCOPES = [
@@ -894,6 +900,98 @@ export const app = new Spiceflow({
         discord_user_id: discordUserId,
         slack_user_id: slackUserId,
       }
+    },
+  })
+
+  // Free Whisper transcription for gateway-mode CLI installs that have no
+  // OpenAI/Gemini transcription API key configured. Auth is the same
+  // clientId:clientSecret pair the CLI already uses for gateway-proxy REST
+  // calls, sent as `Authorization: Bearer <clientId>:<clientSecret>`.
+  // Runs @cf/openai/whisper on Cloudflare's own Workers AI account
+  // ($0.0005/audio minute), so this only costs Kimaki, never the user.
+  // Rate-limited per client_id: TRANSCRIBE_RATE_LIMITER (burst, 20 req/min)
+  // plus a KV daily request counter (TRANSCRIBE_DAILY_REQUEST_LIMIT).
+  .route({
+    method: 'POST',
+    path: '/api/transcribe',
+    async handler({ request, state }) {
+      const jsonError = (message: string, status: number) => {
+        return new Response(JSON.stringify({ error: message }), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      const authHeader = request.headers.get('Authorization') ?? ''
+      const token = authHeader.replace(/^Bearer\s+/i, '')
+      const separatorIndex = token.indexOf(':')
+      if (separatorIndex <= 0 || separatorIndex >= token.length - 1) {
+        return jsonError('Missing or malformed Authorization header', 401)
+      }
+      const clientId = token.slice(0, separatorIndex)
+      const clientSecret = token.slice(separatorIndex + 1)
+
+      const gatewayClient = await resolveGatewayClientFromCacheOrDb({
+        clientId,
+        env: state.env,
+      })
+      if (gatewayClient instanceof Error) {
+        reportWebsiteError(gatewayClient, { route: '/api/transcribe' })
+        return jsonError('Failed to validate client', 500)
+      }
+      if (!gatewayClient || gatewayClient.secret !== clientSecret) {
+        return jsonError('Invalid client credentials', 401)
+      }
+
+      const burstOutcome = await state.env.TRANSCRIBE_RATE_LIMITER.limit({
+        key: clientId,
+      })
+      if (!burstOutcome.success) {
+        return jsonError('Rate limited, try again shortly', 429)
+      }
+
+      const dailyCount = await incrementTranscribeDailyCount({
+        kv: state.env.GATEWAY_CLIENT_KV,
+        clientId,
+      }).catch((cause) => {
+        // Fail open on KV errors — this is an abuse guard, not a billing gate.
+        console.warn('Failed to increment transcribe daily count', cause)
+        return 0
+      })
+      if (dailyCount > TRANSCRIBE_DAILY_REQUEST_LIMIT) {
+        return jsonError('Daily free transcription limit reached', 429)
+      }
+
+      const contentLength = Number(request.headers.get('Content-Length') ?? '0')
+      if (contentLength > TRANSCRIBE_MAX_AUDIO_BYTES) {
+        return jsonError('Audio file too large', 413)
+      }
+
+      const audioBuffer = await request.arrayBuffer().catch((cause) => {
+        return new Error('Failed to read audio body', { cause })
+      })
+      if (audioBuffer instanceof Error) {
+        reportWebsiteError(audioBuffer, { route: '/api/transcribe' })
+        return jsonError('Failed to read audio body', 400)
+      }
+      if (audioBuffer.byteLength === 0) {
+        return jsonError('Empty audio body', 400)
+      }
+      if (audioBuffer.byteLength > TRANSCRIBE_MAX_AUDIO_BYTES) {
+        return jsonError('Audio file too large', 413)
+      }
+
+      const result = await state.env.AI.run('@cf/openai/whisper', {
+        audio: [...new Uint8Array(audioBuffer)],
+      }).catch((cause) => {
+        return new Error('Workers AI transcription failed', { cause })
+      })
+      if (result instanceof Error) {
+        reportWebsiteError(result, { route: '/api/transcribe' })
+        return jsonError('Transcription failed', 502)
+      }
+
+      return { text: result.text }
     },
   })
 

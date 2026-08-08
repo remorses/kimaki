@@ -25,6 +25,9 @@ export type SlackInstallStateRecord = {
 const GATEWAY_CLIENT_KV_TTL_SECONDS = 60
 const TEAM_CLIENT_IDS_KV_TTL_SECONDS = 30
 const SLACK_INSTALL_STATE_KV_TTL_SECONDS = 600
+// Slightly over 24h so a key created late in the day doesn't expire before
+// midnight UTC rolls it over to a fresh date-keyed counter.
+const TRANSCRIBE_DAILY_KV_TTL_SECONDS = 60 * 60 * 26
 
 function gatewayClientKvKey({ clientId }: { clientId: string }): string {
   return `gateway-client:v1:${clientId}`
@@ -36,6 +39,29 @@ function teamClientIdsKvKey({ teamId }: { teamId: string }): string {
 
 function slackInstallStateKvKey({ state }: { state: string }): string {
   return `slack-install-state:v1:${state}`
+}
+
+function transcribeDailyKvKey({ clientId, date }: { clientId: string; date: string }): string {
+  return `transcribe-daily:v1:${clientId}:${date}`
+}
+
+// Counts /api/transcribe requests per client_id per UTC day. This is a coarse
+// abuse guard (request count, not audio minutes) — KV writes are eventually
+// consistent so concurrent requests can under-count slightly, which is fine
+// for this purpose. See TRANSCRIBE_DAILY_REQUEST_LIMIT in server.tsx.
+export async function incrementTranscribeDailyCount({
+  kv,
+  clientId,
+}: {
+  kv: KVNamespace
+  clientId: string
+}): Promise<number> {
+  const date = new Date().toISOString().slice(0, 10)
+  const key = transcribeDailyKvKey({ clientId, date })
+  const current = Number(await kv.get(key)) || 0
+  const next = current + 1
+  await kv.put(key, String(next), { expirationTtl: TRANSCRIBE_DAILY_KV_TTL_SECONDS })
+  return next
 }
 
 export async function getGatewayClientFromKv({

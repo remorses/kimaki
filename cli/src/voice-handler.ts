@@ -29,8 +29,10 @@ import {
   getVoiceChannelDirectory,
   getGeminiApiKey,
   getTranscriptionApiKey,
+  getBotTokenWithMode,
   findTextChannelByVoiceChannel,
 } from './database.js'
+import { transcribeViaKimakiGateway } from './cloudflare-transcription.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
@@ -622,7 +624,29 @@ export async function processVoiceAttachment({
     transcriptionProvider = 'gemini'
   }
 
+  // No user-configured key: gateway-mode installs get one free transcription
+  // via the kimaki.dev Whisper fallback before we bother the user with the
+  // "add API key" dialog. This fallback has no tool-calling, so it can't
+  // detect queueMessage/agent hints spoken in the voice message the way the
+  // OpenAI/Gemini path can.
+  let gatewayTranscription: string | undefined
   if (!transcriptionApiKey) {
+    const botRow = await getBotTokenWithMode().catch(() => undefined)
+    if (botRow?.mode === 'gateway' && botRow.clientId && botRow.clientSecret) {
+      const result = await transcribeViaKimakiGateway({
+        audio: audioBuffer,
+        clientId: botRow.clientId,
+        clientSecret: botRow.clientSecret,
+      })
+      if (result instanceof Error) {
+        voiceLogger.log(`Kimaki gateway transcription fallback failed:`, result)
+      } else {
+        gatewayTranscription = result
+      }
+    }
+  }
+
+  if (!transcriptionApiKey && !gatewayTranscription) {
     if (!appId) {
       await sendThreadMessage(
         thread,
@@ -641,16 +665,18 @@ export async function processVoiceAttachment({
     transcriptionProvider = requested.provider
   }
 
-  const transcription = await transcribeAudio({
-    audio: audioBuffer,
-    prompt: transcriptionPrompt,
-    apiKey: transcriptionApiKey,
-    provider: transcriptionProvider,
-    mediaType: audioAttachment.contentType || undefined,
-    currentSessionContext,
-    lastSessionContext,
-    agents,
-  })
+  const transcription = gatewayTranscription
+    ? { transcription: gatewayTranscription, queueMessage: false, agent: undefined }
+    : await transcribeAudio({
+        audio: audioBuffer,
+        prompt: transcriptionPrompt,
+        apiKey: transcriptionApiKey!,
+        provider: transcriptionProvider!,
+        mediaType: audioAttachment.contentType || undefined,
+        currentSessionContext,
+        lastSessionContext,
+        agents,
+      })
 
   if (transcription instanceof Error) {
     const errMsg = errore.matchError(transcription, {
