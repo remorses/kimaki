@@ -71,6 +71,14 @@ import {
   selectResolvedCommand,
 } from './opencode-command.js'
 import { computeSkillPermission } from './skill-filter.js'
+import {
+  startClaudeCodeRouter,
+  CLAUDE_BACKEND_HEADER,
+  CLAUDE_BACKEND_VALUE,
+  type ClaudeCodeRouter,
+} from './claude-code/server.js'
+import { isClaudeCodeModel } from './claude-code/models.js'
+import { getChannelModel, getAnyGlobalModel } from './database.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -303,6 +311,85 @@ let processCleanupHandlersRegistered = false
 let startingServerProcess: ChildProcess | null = null
 const clientCache = new Map<string, OpencodeClient>()
 
+// ── Claude Code backend router ───────────────────────────────────
+// A local HTTP server that speaks the opencode protocol: claude-code
+// sessions are handled in-process by the Claude Agent SDK, everything else
+// is proxied to the opencode server above. All kimaki clients point at the
+// router so both backends share one wire protocol.
+
+let claudeRouter: ClaudeCodeRouter | null = null
+let claudeRouterStarting: Promise<ClaudeCodeRouter> | null = null
+
+async function ensureClaudeRouter(): Promise<ClaudeCodeRouter> {
+  if (claudeRouter) {
+    return claudeRouter
+  }
+  if (!claudeRouterStarting) {
+    claudeRouterStarting = startClaudeCodeRouter({
+      getUpstreamBaseUrl: () => {
+        return singleServer?.baseUrl ?? null
+      },
+      getUpstreamHeaders: getOpencodeServerAuthHeaders,
+      expectedAuthorization: () => {
+        return getOpencodeServerAuthHeaders().Authorization
+      },
+    }).then(
+      (router) => {
+        claudeRouter = router
+        claudeRouterStarting = null
+        return router
+      },
+      (error: unknown) => {
+        // Don't cache the rejection — the next call retries the startup.
+        claudeRouterStarting = null
+        throw error
+      },
+    )
+  }
+  return claudeRouterStarting
+}
+
+/** The claude-code router base URL, if the router is running. */
+export function getClaudeCodeRouterBaseUrl(): string | null {
+  return claudeRouter?.baseUrl ?? null
+}
+
+export async function stopClaudeCodeRouter(): Promise<void> {
+  const router = claudeRouter
+  claudeRouter = null
+  claudeRouterStarting = null
+  if (router) {
+    await router.close().catch((error) => {
+      opencodeLogger.warn(
+        `Failed to close claude-code router: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    })
+  }
+}
+
+export type AgentBackendKind = 'opencode' | 'claude-code'
+
+/**
+ * Backend for new sessions in a channel, derived from the model preference
+ * cascade (channel override, then global default): picking a claude-code/*
+ * model in /model routes new sessions to the Claude Code backend.
+ */
+export async function resolveChannelBackend({
+  channelId,
+}: {
+  channelId?: string
+}): Promise<AgentBackendKind> {
+  const channelPreference = channelId ? await getChannelModel(channelId) : undefined
+  if (channelPreference) {
+    return isClaudeCodeModel(channelPreference.modelId) ? 'claude-code' : 'opencode'
+  }
+  const globalPreference = await getAnyGlobalModel()
+  if (globalPreference) {
+    return isClaudeCodeModel(globalPreference.modelId) ? 'claude-code' : 'opencode'
+  }
+  return 'opencode'
+}
+
 function notifyServerLifecycle(event: ServerLifecycleEvent): void {
   for (const listener of serverLifecycleListeners) {
     listener(event)
@@ -407,9 +494,18 @@ function ensureProcessCleanupHandlersRegistered(): void {
 
   opencodeLogger.log('Registering process cleanup handlers for opencode server')
 
+  // disposeAll aborts each live Claude Code subprocess synchronously before
+  // awaiting cleanup, so calling it without awaiting is safe in exit paths.
+  const killClaudeSessionsNow = () => {
+    if (claudeRouter) {
+      void claudeRouter.manager.disposeAll()
+    }
+  }
+
   process.on('exit', () => {
     killSingleServerProcessNow({ reason: 'process-exit' })
     killStartingServerProcessNow({ reason: 'process-exit' })
+    killClaudeSessionsNow()
   })
 
   // Fallback for short-lived CLI subcommands that call process.exit without
@@ -417,10 +513,12 @@ function ensureProcessCleanupHandlersRegistered(): void {
   process.on('SIGINT', () => {
     killSingleServerProcessNow({ reason: 'sigint' })
     killStartingServerProcessNow({ reason: 'sigint' })
+    killClaudeSessionsNow()
   })
   process.on('SIGTERM', () => {
     killSingleServerProcessNow({ reason: 'sigterm' })
     killStartingServerProcessNow({ reason: 'sigterm' })
+    killClaudeSessionsNow()
   })
 }
 
@@ -1008,11 +1106,14 @@ async function startSingleServer({
 function getOrCreateClient({
   baseUrl,
   directory,
+  backend,
 }: {
   baseUrl: string
   directory: string
+  backend?: AgentBackendKind
 }): OpencodeClient {
-  const cached = clientCache.get(directory)
+  const cacheKey = `${backend ?? 'opencode'}:${baseUrl}:${directory}`
+  const cached = clientCache.get(cacheKey)
   if (cached) {
     return cached
   }
@@ -1027,9 +1128,16 @@ function getOrCreateClient({
     baseUrl,
     directory,
     fetch: fetchWithTimeout as typeof fetch,
-    headers: getOpencodeServerAuthHeaders(),
+    headers: {
+      ...getOpencodeServerAuthHeaders(),
+      // The router creates sessions on the Claude Code backend when this
+      // header is present; every other request routes by session id.
+      ...(backend === 'claude-code'
+        ? { [CLAUDE_BACKEND_HEADER]: CLAUDE_BACKEND_VALUE }
+        : {}),
+    },
   })
-  clientCache.set(directory, client)
+  clientCache.set(cacheKey, client)
   return client
 }
 
@@ -1048,7 +1156,7 @@ function getOrCreateClient({
  */
 export async function initializeOpencodeForDirectory(
   directory: string,
-  _options?: { originalRepoDirectory?: string; channelId?: string },
+  options?: { originalRepoDirectory?: string; channelId?: string },
 ): Promise<OpenCodeErrors | (() => OpencodeClient)> {
   // Verify directory exists and is accessible
   const accessCheck = errore.tryFn({
@@ -1064,17 +1172,24 @@ export async function initializeOpencodeForDirectory(
   const server = await ensureSingleServer({ directory })
   if (server instanceof Error) return server
 
+  const router = await ensureClaudeRouter()
+
   if (!initializedDirectories.has(directory)) {
     initializedDirectories.add(directory)
   }
+
+  // Session-create backend is chosen by the channel's model preference;
+  // everything after creation routes by session id inside the router.
+  const backend = await resolveChannelBackend({ channelId: options?.channelId })
 
   return () => {
     if (!singleServer) {
       throw new ServerNotReadyError({ directory })
     }
     return getOrCreateClient({
-      baseUrl: singleServer.baseUrl,
+      baseUrl: router.baseUrl,
       directory,
+      ...(backend === 'claude-code' ? { backend } : {}),
     })
   }
 }
@@ -1322,6 +1437,11 @@ export function getOpencodeServerPort(_directory?: string): number | null {
 }
 
 export function getOpencodeServerBaseUrl(): string | null {
+  // Prefer the router: it serves both backends and proxies everything else
+  // to the opencode server. Falls back to the raw server URL during startup.
+  if (singleServer && claudeRouter) {
+    return claudeRouter.baseUrl
+  }
   return singleServer?.baseUrl ?? null
 }
 
@@ -1330,7 +1450,7 @@ export function getOpencodeClient(directory: string): OpencodeClient | null {
     return null
   }
   return getOrCreateClient({
-    baseUrl: singleServer.baseUrl,
+    baseUrl: claudeRouter?.baseUrl ?? singleServer.baseUrl,
     directory,
   })
 }
