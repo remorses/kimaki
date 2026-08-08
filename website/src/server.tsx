@@ -911,8 +911,12 @@ export const app = new Spiceflow({
   // OpenAI/Gemini transcription API key configured. Auth is the same
   // clientId:clientSecret pair the CLI already uses for gateway-proxy REST
   // calls, sent as `Authorization: Bearer <clientId>:<clientSecret>`.
-  // Runs @cf/openai/whisper on Cloudflare's own Workers AI account
-  // ($0.0005/audio minute), so this only costs Kimaki, never the user.
+  // Runs @cf/openai/whisper-large-v3-turbo on Cloudflare's own Workers AI
+  // account ($0.00051/audio minute), so this only costs Kimaki, never the
+  // user. Chosen over the plain @cf/openai/whisper model after a manual
+  // side-by-side comparison: turbo caught words the base model missed and
+  // matched the reference OpenAI gpt-audio transcription of the same clip
+  // exactly, for effectively the same price.
   // Rate-limited per client_id: TRANSCRIBE_RATE_LIMITER (burst, 20 req/min)
   // plus a KV daily request counter (TRANSCRIBE_DAILY_REQUEST_LIMIT).
   .route({
@@ -995,8 +999,15 @@ export const app = new Spiceflow({
         return jsonError('Audio file too large', 413)
       }
 
-      const result = await state.env.AI.run('@cf/openai/whisper', {
-        audio: [...new Uint8Array(audioBuffer)],
+      // whisper-large-v3-turbo's typed input is `audio: string | { body, contentType }`.
+      // The plain base64 string form needs a data: URI prefix — passing a bare
+      // base64 string returns "8001: Invalid input". Discord voice messages are
+      // always audio/ogg (Opus), but the CLI forwards the real attachment
+      // Content-Type here too (mp3/wav/m4a for regular audio file uploads).
+      const contentType = request.headers.get('Content-Type') || 'audio/ogg'
+      const base64Audio = Buffer.from(audioBuffer).toString('base64')
+      const result = await state.env.AI.run('@cf/openai/whisper-large-v3-turbo', {
+        audio: `data:${contentType};base64,${base64Audio}`,
       }).catch((cause) => {
         return new Error('Workers AI transcription failed', { cause })
       })

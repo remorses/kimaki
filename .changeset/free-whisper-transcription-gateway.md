@@ -4,7 +4,7 @@
 
 Voice message transcription now works out of the box for gateway-mode installs, even with no OpenAI or Gemini API key configured.
 
-When a gateway-mode bot has no transcription key set, the CLI falls back to a free Whisper transcription endpoint on `kimaki.dev`, backed by Cloudflare Workers AI (`@cf/openai/whisper`). This is authenticated with the same `clientId:clientSecret` credentials already used for gateway-proxy calls, so no extra setup is needed.
+When a gateway-mode bot has no transcription key set, the CLI falls back to a free Whisper transcription endpoint on `kimaki.dev`, backed by Cloudflare Workers AI (`@cf/openai/whisper-large-v3-turbo`). This is authenticated with the same `clientId:clientSecret` credentials already used for gateway-proxy calls, so no extra setup is needed.
 
 ```
 gateway-mode bot, no API key

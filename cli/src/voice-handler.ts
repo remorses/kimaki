@@ -635,6 +635,7 @@ export async function processVoiceAttachment({
     if (botRow?.mode === 'gateway' && botRow.clientId && botRow.clientSecret) {
       const result = await transcribeViaKimakiGateway({
         audio: audioBuffer,
+        mediaType: audioAttachment.contentType || undefined,
         clientId: botRow.clientId,
         clientSecret: botRow.clientSecret,
       })

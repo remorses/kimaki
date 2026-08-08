@@ -2,10 +2,11 @@
 // Only usable in gateway mode: the worker authenticates the request against
 // the shared gateway_clients Postgres table using the CLI's own
 // clientId:clientSecret pair (the same credentials already used for
-// gateway-proxy REST/WebSocket calls), then runs @cf/openai/whisper on
-// Cloudflare's own Workers AI account. This means transcription costs
-// Kimaki, never the user, so voice messages work out of the box for
-// gateway-mode installs with no OpenAI/Gemini key configured.
+// gateway-proxy REST/WebSocket calls), then runs
+// @cf/openai/whisper-large-v3-turbo on Cloudflare's own Workers AI account.
+// This means transcription costs Kimaki, never the user, so voice messages
+// work out of the box for gateway-mode installs with no OpenAI/Gemini key
+// configured.
 //
 // See website/src/server.tsx POST /api/transcribe for the server side.
 // Rate limits (per-client burst + daily request cap) are enforced there,
@@ -22,10 +23,14 @@ const KIMAKI_TRANSCRIBE_URL =
 
 export async function transcribeViaKimakiGateway({
   audio,
+  mediaType,
   clientId,
   clientSecret,
 }: {
   audio: Buffer
+  /** Discord attachment content-type (e.g. audio/ogg, audio/mpeg). Defaults
+   *  to audio/ogg (Discord voice messages) when not provided. */
+  mediaType?: string
   clientId: string
   clientSecret: string
 }): Promise<string | TranscriptionError> {
@@ -33,7 +38,7 @@ export async function transcribeViaKimakiGateway({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${clientId}:${clientSecret}`,
-      'Content-Type': 'application/octet-stream',
+      'Content-Type': mediaType || 'audio/ogg',
     },
     body: audio,
   }).catch((cause) => {
