@@ -8,8 +8,14 @@
 // Per-directory permissions (external_directory rules for worktrees, tmpdir,
 // etc.) are passed via session.create({ permission }) at session creation time,
 // NOT via the server config. The server config has permissive defaults
-// (edit: allow, bash: allow, external_directory: ask) and session-level rules
+// (edit: allow, bash: allow, external_directory: allow) and session-level rules
 // override them via opencode's findLast() evaluation (last matching rule wins).
+//
+// external_directory defaults to `allow` for every path. opencode's own default
+// is `ask`, which meant the agent had to interrupt the user for ordinary reads
+// outside the project. Users who want stricter behaviour either add `deny`/`ask`
+// rules to their own opencode.json (loaded after the kimaki config, so it wins)
+// or start kimaki with --restrict-directories to get the old allow-list.
 //
 // Uses errore for type-safe error handling.
 
@@ -37,6 +43,7 @@ import {
 import {
   getDataDir,
   getLockPort,
+  getRestrictExternalDirectories,
 } from './config.js'
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
@@ -680,37 +687,15 @@ async function startSingleServer({
     baseArgs: serveArgs,
   })
 
-  // Server config uses permissive defaults. Per-directory external_directory
-  // permissions are set at session creation time via session.create({ permission }).
-  // Common directories (tmpdir, ~/.config/opencode, ~/.kimaki) are pre-allowed
-  // at the server level so they never trigger permission prompts regardless of
-  // whether session-level rules compose correctly.
-  const tmpdir = os.tmpdir().replaceAll('\\', '/')
-  const opencodeConfigDir = path
-    .join(os.homedir(), '.config', 'opencode')
-    .replaceAll('\\', '/')
-  const opensrcDir = path
-    .join(os.homedir(), '.opensrc')
-    .replaceAll('\\', '/')
-  const kimakiDataDir = path
-    .join(os.homedir(), '.kimaki')
-    .replaceAll('\\', '/')
-  // No catch-all '*': 'ask' here — the user's opencode.json default is respected.
-  // Only allowlist specific known-safe directories at the server level.
-  const externalDirectoryPermissions: Record<string, 'ask' | 'allow' | 'deny'> = {
-    '/tmp': 'allow',
-    '/tmp/*': 'allow',
-    '/private/tmp': 'allow',
-    '/private/tmp/*': 'allow',
-    [tmpdir]: 'allow',
-    [`${tmpdir}/*`]: 'allow',
-    [opencodeConfigDir]: 'allow',
-    [`${opencodeConfigDir}/*`]: 'allow',
-    [opensrcDir]: 'allow',
-    [`${opensrcDir}/*`]: 'allow',
-    [kimakiDataDir]: 'allow',
-    [`${kimakiDataDir}/*`]: 'allow',
-  }
+  // Server config uses permissive defaults. By default every external directory
+  // is allowed: opencode's own 'ask' default produced constant permission
+  // prompts for ordinary reads, and users who want protection can add their own
+  // `deny`/`ask` rules in opencode.json (project config is loaded after this
+  // file, so it wins).
+  // With --restrict-directories the old behaviour comes back: only a small set
+  // of known-safe paths is pre-allowed and everything else falls through to the
+  // user's opencode.json default (which is 'ask' unless they changed it).
+  const externalDirectoryPermissions = buildServerExternalDirectoryPermissions()
   const kimakiShimDirectory = ensureKimakiCommandShim({
     dataDir: getDataDir(),
     execPath: process.execPath,
@@ -1080,12 +1065,70 @@ export async function initializeOpencodeForDirectory(
 }
 
 /**
+ * Known-safe paths that never need an external_directory prompt, used only when
+ * --restrict-directories is active. Without the flag every path is allowed and
+ * this list is irrelevant.
+ */
+function knownSafeExternalDirectories(): string[] {
+  const tmpdir = os.tmpdir().replaceAll('\\', '/')
+  const homeDirectory = ({ relativePath }: { relativePath: string }) => {
+    return path.resolve(os.homedir(), relativePath.replaceAll('\\', '/'))
+  }
+  return [
+    '/tmp',
+    '/private/tmp',
+    tmpdir,
+    // The agent can read the global AGENTS.md and opencode config; the path is
+    // visible in the system prompt so models routinely try to open it.
+    homeDirectory({ relativePath: '.config/opencode' }),
+    // The Anthropic plugin rewrites the name in the system prompt, so some
+    // models try this misspelled path instead.
+    homeDirectory({ relativePath: '.config/openc0de' }),
+    // Cached opensrc checkouts.
+    homeDirectory({ relativePath: '.opensrc' }),
+    // Kimaki data dir (logs, db, etc).
+    homeDirectory({ relativePath: '.kimaki' }),
+    // Prior opencode tool outputs.
+    homeDirectory({ relativePath: '.local/share/opencode/tool-output' }),
+    // Language toolchain caches, so builds can inspect downloaded modules.
+    homeDirectory({ relativePath: '.cache/zig' }),
+    homeDirectory({ relativePath: '.cargo' }),
+    homeDirectory({ relativePath: '.cache/go-build' }),
+    homeDirectory({ relativePath: 'go/pkg' }),
+  ]
+}
+
+/**
+ * Build the server-level `permission.external_directory` value.
+ *
+ * Default: a plain 'allow' — no prompt for any directory.
+ * With --restrict-directories: an allow-list of known-safe paths only. There is
+ * deliberately no catch-all '*': 'ask' entry so the user's own opencode.json
+ * default still applies to everything else.
+ */
+function buildServerExternalDirectoryPermissions():
+  | 'allow'
+  | Record<string, 'ask' | 'allow' | 'deny'> {
+  if (!getRestrictExternalDirectories()) {
+    return 'allow'
+  }
+
+  const permissions: Record<string, 'ask' | 'allow' | 'deny'> = {}
+  for (const directory of knownSafeExternalDirectories()) {
+    permissions[directory] = 'allow'
+    permissions[`${directory}/*`] = 'allow'
+  }
+  return permissions
+}
+
+/**
  * Build per-session permission rules for external_directory access.
  * These rules are passed to session.create({ permission }) and override
  * the server-level defaults via opencode's findLast() evaluation.
  *
- * This replaces the old per-server OPENCODE_CONFIG_CONTENT external_directory
- * permissions — now each session carries its own directory-scoped rules.
+ * By default this is a single allow-everything rule. The worktree deny rule is
+ * always appended: it is directory isolation (keep the agent out of the main
+ * checkout once the thread moved to a worktree), not prompt avoidance.
  */
 export function buildSessionPermissions({
   directory,
@@ -1095,66 +1138,34 @@ export function buildSessionPermissions({
   originalRepoDirectory?: string
 }): PermissionRuleset {
   // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
-  const tmpdir = os.tmpdir().replaceAll('\\', '/')
   const normalizedDirectory = directory.replaceAll('\\', '/')
   const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
 
-  const rules: PermissionRuleset = [
-    // Allow tmpdir access
-    { permission: 'external_directory', pattern: '/tmp', action: 'allow' },
-    { permission: 'external_directory', pattern: '/tmp/*', action: 'allow' },
-    { permission: 'external_directory', pattern: '/private/tmp', action: 'allow' },
-    { permission: 'external_directory', pattern: '/private/tmp/*', action: 'allow' },
-    { permission: 'external_directory', pattern: tmpdir, action: 'allow' },
-    { permission: 'external_directory', pattern: `${tmpdir}/*`, action: 'allow' },
-    // Allow the project directory itself
-    { permission: 'external_directory', pattern: normalizedDirectory, action: 'allow' },
-    { permission: 'external_directory', pattern: `${normalizedDirectory}/*`, action: 'allow' },
-  ]
-
-  const homeDirectoryRules = ({ relativePath }: { relativePath: string }) => {
-    const normalizedRelativePath = relativePath.replaceAll('\\', '/')
-    const basePattern = path.resolve(os.homedir(), normalizedRelativePath)
-    return [
-      { permission: 'external_directory', pattern: basePattern, action: 'allow' },
-      { permission: 'external_directory', pattern: `${basePattern}/*`, action: 'allow' },
-    ] satisfies PermissionRuleset
-  }
-
-  // Allow ~/.config/opencode so the agent doesn't get permission prompts when
-  // it tries to read the global AGENTS.md or opencode config (the path is
-  // visible in the system prompt, so models sometimes try to read it).
-  rules.push(...homeDirectoryRules({ relativePath: '.config/opencode' }))
-
-  // Allow ~/.config/openc0de too because the Anthropic plugin rewrites the
-  // name in the system prompt and some models may try to inspect that path.
-  rules.push(...homeDirectoryRules({ relativePath: '.config/openc0de' }))
-
-  // Allow ~/.opensrc so agents can inspect cached opensrc checkouts without
-  // permission prompts.
-  rules.push(...homeDirectoryRules({ relativePath: '.opensrc' }))
-
-  // Allow ~/.kimaki so the agent can access kimaki data dir (logs, db, etc.)
-  // without permission prompts.
-  rules.push(...homeDirectoryRules({ relativePath: '.kimaki' }))
-
-  // Allow opencode tool output artifacts under XDG data so agents can inspect
-  // prior tool outputs without interactive permission prompts.
-  rules.push(...homeDirectoryRules({ relativePath: '.local/share/opencode/tool-output' }))
-
-  // Allow common language caches under the user's home directory so toolchains
-  // can inspect downloaded modules and artifacts without external_directory prompts.
-  rules.push(
-    ...homeDirectoryRules({ relativePath: '.cache/zig' }),
-    ...homeDirectoryRules({ relativePath: '.cargo' }),
-    ...homeDirectoryRules({ relativePath: '.cache/go-build' }),
-    ...homeDirectoryRules({ relativePath: 'go/pkg' }),
-  )
+  const rules: PermissionRuleset = getRestrictExternalDirectories()
+    ? [
+        ...knownSafeExternalDirectories().flatMap((safeDirectory) => {
+          return buildExternalDirectoryPermissionRules({
+            resolvedPattern: safeDirectory,
+            action: 'allow',
+          })
+        }),
+        ...buildExternalDirectoryPermissionRules({
+          resolvedPattern: normalizedDirectory,
+          action: 'allow',
+        }),
+      ]
+    : [
+        {
+          permission: 'external_directory',
+          pattern: ALL_EXTERNAL_DIRECTORIES_PATTERN,
+          action: 'allow',
+        },
+      ]
 
   // For worktree sessions: explicitly deny the original checkout so agents do
   // not keep editing the main repo after the thread has moved to a managed
-  // worktree. Deny rules are appended last so they override earlier allow/
-  // ask defaults via opencode's findLast() evaluation.
+  // worktree. Deny rules are appended last so they override earlier allow
+  // rules via opencode's findLast() evaluation.
   if (originalRepo && originalRepo !== normalizedDirectory) {
     rules.push(
       ...buildExternalDirectoryPermissionRules({
@@ -1164,13 +1175,12 @@ export function buildSessionPermissions({
     )
   }
 
-
   return rules
 }
 
 const ALL_EXTERNAL_DIRECTORIES_PATTERN = '*'
 
-export function buildExternalDirectoryPermissionRules({
+function buildExternalDirectoryPermissionRules({
   resolvedPattern,
   action,
 }: {

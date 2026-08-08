@@ -44,6 +44,10 @@ describe('queue advanced: typing around permissions', () => {
     channelName: 'qa-permission-typing-e2e',
     dirName: 'qa-permission-typing-e2e',
     username: 'queue-permission-tester',
+    // These tests are about the permission button + typing lifecycle, so they
+    // need a permission prompt to actually fire. The shipped default allows
+    // every directory, so opt into the --restrict-directories behaviour here.
+    restrictExternalDirectories: true,
   })
 
   test(

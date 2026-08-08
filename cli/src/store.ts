@@ -96,6 +96,15 @@ export type KimakiState = {
   // Read by: discord-utils.ts hasKimakiBotPermission().
   allowAllUsers: boolean
 
+  // When true, the agent may only touch the session working directory and a
+  // small set of known-safe paths; anything else triggers an external_directory
+  // permission prompt. When false (default), every directory is allowed and the
+  // user is expected to add their own `deny`/`ask` rules in opencode.json for
+  // folders they want to protect.
+  // Changes: set once at startup from --restrict-directories CLI flag.
+  // Read by: opencode.ts (server config default + buildSessionPermissions).
+  restrictExternalDirectories: boolean
+
   // Permission button TTL in milliseconds. When a permission prompt is shown
   // in Discord, buttons remain active for this duration before auto-rejecting.
   // Defaults to 10 minutes. With continue_loop_on_deny enabled in the opencode
@@ -180,6 +189,7 @@ export const store = createStore<KimakiState>(() => ({
   disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
+  restrictExternalDirectories: false,
   permissionTimeoutMs: 10 * 60 * 1000,
   useWorktrees: false,
   autoUpgradeEnabled: true,

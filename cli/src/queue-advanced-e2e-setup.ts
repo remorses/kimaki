@@ -54,12 +54,12 @@ export function chooseLockPort({ channelId }: { channelId: string }): number {
   return 51_000 + (Math.abs(hash) % 2_000)
 }
 
-export const CHANNEL_REFERENCE_EXTERNAL_DIR = path.resolve(
+export const EXTERNAL_DIRECTORY_ALLOWED_DIR = path.resolve(
   process.cwd(),
   'tmp',
-  'kimaki-channel-reference-external',
+  'kimaki-external-directory-allowed',
 )
-export const CHANNEL_REFERENCE_EXTERNAL_FILE = `${CHANNEL_REFERENCE_EXTERNAL_DIR}/allowed.txt`
+export const EXTERNAL_DIRECTORY_ALLOWED_FILE = `${EXTERNAL_DIRECTORY_ALLOWED_DIR}/allowed.txt`
 
 export function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   return new Client({
@@ -300,28 +300,28 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const channelReferencePermissionMatcher: DeterministicMatcher = {
-    id: 'channel-reference-permission-marker',
+  const externalDirectoryAllowedMatcher: DeterministicMatcher = {
+    id: 'external-directory-allowed-marker',
     priority: 106,
     when: {
       lastMessageRole: 'user',
-      latestUserTextIncludes: 'CHANNEL_REFERENCE_PERMISSION_MARKER',
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER',
     },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'channel-reference-permission-start' },
+        { type: 'text-start', id: 'external-directory-allowed-start' },
         {
           type: 'text-delta',
-          id: 'channel-reference-permission-start',
-          delta: 'reading referenced channel directory',
+          id: 'external-directory-allowed-start',
+          delta: 'reading external directory',
         },
-        { type: 'text-end', id: 'channel-reference-permission-start' },
+        { type: 'text-end', id: 'external-directory-allowed-start' },
         {
           type: 'tool-call',
-          toolCallId: 'channel-reference-read-call',
+          toolCallId: 'external-directory-read-call',
           toolName: 'read',
-          input: JSON.stringify({ filePath: CHANNEL_REFERENCE_EXTERNAL_FILE }),
+          input: JSON.stringify({ filePath: EXTERNAL_DIRECTORY_ALLOWED_FILE }),
         },
         {
           type: 'finish',
@@ -332,23 +332,23 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const channelReferencePermissionFollowupMatcher: DeterministicMatcher = {
-    id: 'channel-reference-permission-followup',
+  const externalDirectoryAllowedFollowupMatcher: DeterministicMatcher = {
+    id: 'external-directory-allowed-followup',
     priority: 105,
     when: {
-      latestUserTextIncludes: 'CHANNEL_REFERENCE_PERMISSION_MARKER',
-      rawPromptIncludes: 'reading referenced channel directory',
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER',
+      rawPromptIncludes: 'reading external directory',
     },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'channel-reference-permission-followup' },
+        { type: 'text-start', id: 'external-directory-allowed-followup' },
         {
           type: 'text-delta',
-          id: 'channel-reference-permission-followup',
-          delta: 'channel-reference-read-done',
+          id: 'external-directory-allowed-followup',
+          delta: 'external-directory-read-done',
         },
-        { type: 'text-end', id: 'channel-reference-permission-followup' },
+        { type: 'text-end', id: 'external-directory-allowed-followup' },
         {
           type: 'finish',
           finishReason: 'stop',
@@ -785,8 +785,8 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     questionSelectQueueMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
-    channelReferencePermissionMatcher,
-    channelReferencePermissionFollowupMatcher,
+    externalDirectoryAllowedMatcher,
+    externalDirectoryAllowedFollowupMatcher,
 
     multiToolMatcher,
     multiToolFollowupMatcher,
@@ -822,15 +822,18 @@ export const TEST_USER_ID = '200000000000000991'
 export function setupQueueAdvancedSuite({
   channelId,
   channelName,
-  extraChannels = [],
   dirName,
   username,
+  restrictExternalDirectories = false,
 }: {
   channelId: string
   channelName: string
-  extraChannels?: Array<{ id: string; name: string }>
   dirName: string
   username: string
+  // Opt into the --restrict-directories behaviour so reads outside the project
+  // still raise an external_directory permission prompt. Off by default, which
+  // matches the shipped default of allowing every directory.
+  restrictExternalDirectories?: boolean
 }): QueueAdvancedContext {
   const ctx: QueueAdvancedContext = {
     directories: undefined as unknown as ReturnType<typeof createRunDirectories>,
@@ -840,6 +843,7 @@ export function setupQueueAdvancedSuite({
   }
 
   let previousDefaultVerbosity: VerbosityLevel | null = null
+  let previousRestrictExternalDirectories: boolean | null = null
 
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
@@ -854,7 +858,8 @@ export function setupQueueAdvancedSuite({
     process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
+    previousRestrictExternalDirectories = store.getState().restrictExternalDirectories
+    store.setState({ defaultVerbosity: 'tools_and_text', restrictExternalDirectories })
 
     const digitalDiscordDbPath = path.join(
       ctx.directories.dataDir,
@@ -865,9 +870,6 @@ export function setupQueueAdvancedSuite({
       guild: { name: `${dirName} Guild`, ownerId: TEST_USER_ID },
       channels: [
         { id: channelId, name: channelName, type: ChannelType.GuildText },
-        ...extraChannels.map((channel) => {
-          return { id: channel.id, name: channel.name, type: ChannelType.GuildText }
-        }),
       ],
       users: [{ id: TEST_USER_ID, username }],
       dbUrl: `file:${digitalDiscordDbPath}`,
@@ -950,6 +952,11 @@ export function setupQueueAdvancedSuite({
     delete process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
+    }
+    if (previousRestrictExternalDirectories !== null) {
+      store.setState({
+        restrictExternalDirectories: previousRestrictExternalDirectories,
+      })
     }
     if (ctx.directories) {
       fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true })

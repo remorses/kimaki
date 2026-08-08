@@ -1,48 +1,43 @@
-// E2e tests for granting external_directory permissions from #channel references.
+// E2e test for the default external_directory permission: every directory is
+// allowed, so reading a file outside the project never shows a permission
+// prompt. The old behaviour (allow-list + prompt) is now opt-in behind the
+// --restrict-directories CLI flag.
 
 import { describe, expect, test } from 'vitest'
 import fs from 'node:fs'
 import {
-  CHANNEL_REFERENCE_EXTERNAL_DIR,
-  CHANNEL_REFERENCE_EXTERNAL_FILE,
+  EXTERNAL_DIRECTORY_ALLOWED_DIR,
+  EXTERNAL_DIRECTORY_ALLOWED_FILE,
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import { setChannelDirectory } from './database.js'
 import {
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001021'
-const EXTERNAL_CHANNEL_ID = '200000000000001022'
 
-describe('channel reference permissions', () => {
+describe('external directory permissions', () => {
   const ctx = setupQueueAdvancedSuite({
     channelId: TEXT_CHANNEL_ID,
-    channelName: 'qa-channel-reference-e2e',
-    extraChannels: [{ id: EXTERNAL_CHANNEL_ID, name: 'external-project' }],
-    dirName: 'qa-channel-reference-e2e',
-    username: 'channel-reference-tester',
+    channelName: 'qa-external-directory-e2e',
+    dirName: 'qa-external-directory-e2e',
+    username: 'external-directory-tester',
   })
 
-  test('allows referenced project channel directories on new and existing sessions', async () => {
-    fs.mkdirSync(CHANNEL_REFERENCE_EXTERNAL_DIR, { recursive: true })
-    fs.writeFileSync(CHANNEL_REFERENCE_EXTERNAL_FILE, 'referenced channel file')
-    await setChannelDirectory({
-      channelId: EXTERNAL_CHANNEL_ID,
-      directory: CHANNEL_REFERENCE_EXTERNAL_DIR,
-      channelType: 'text',
-    })
+  test('reads outside the project without a permission prompt', async () => {
+    fs.mkdirSync(EXTERNAL_DIRECTORY_ALLOWED_DIR, { recursive: true })
+    fs.writeFileSync(EXTERNAL_DIRECTORY_ALLOWED_FILE, 'external directory file')
 
     await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-      content: `Use <#${EXTERNAL_CHANNEL_ID}> CHANNEL_REFERENCE_PERMISSION_MARKER first`,
+      content: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER first',
     })
 
     const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
       timeout: 4_000,
       predicate: (t) => {
-        return t.name?.includes('CHANNEL_REFERENCE_PERMISSION_MARKER') ?? false
+        return t.name?.includes('EXTERNAL_DIRECTORY_ALLOWED_MARKER') ?? false
       },
     })
     const th = ctx.discord.thread(thread.id)
@@ -51,25 +46,25 @@ describe('channel reference permissions', () => {
       discord: ctx.discord,
       threadId: thread.id,
       userId: TEST_USER_ID,
-      text: 'channel-reference-read-done',
+      text: 'external-directory-read-done',
       timeout: 8_000,
     })
     await waitForFooterMessage({
       discord: ctx.discord,
       threadId: thread.id,
       timeout: 4_000,
-      afterMessageIncludes: 'channel-reference-read-done',
+      afterMessageIncludes: 'external-directory-read-done',
       afterAuthorId: ctx.discord.botUserId,
     })
 
     await th.user(TEST_USER_ID).sendMessage({
-      content: `Use <#${EXTERNAL_CHANNEL_ID}> CHANNEL_REFERENCE_PERMISSION_MARKER followup`,
+      content: 'EXTERNAL_DIRECTORY_ALLOWED_MARKER followup',
     })
     await waitForBotMessageContaining({
       discord: ctx.discord,
       threadId: thread.id,
       userId: TEST_USER_ID,
-      text: 'channel-reference-read-done',
+      text: 'external-directory-read-done',
       afterUserMessageIncludes: 'followup',
       timeout: 8_000,
     })
@@ -77,26 +72,26 @@ describe('channel reference permissions', () => {
       discord: ctx.discord,
       threadId: thread.id,
       timeout: 4_000,
-      afterMessageIncludes: 'channel-reference-read-done',
+      afterMessageIncludes: 'external-directory-read-done',
       afterAuthorId: ctx.discord.botUserId,
     })
 
     const text = await th.text()
     expect(text).toMatchInlineSnapshot(`
-      "--- from: user (channel-reference-tester)
-      Use <#200000000000001022> CHANNEL_REFERENCE_PERMISSION_MARKER first
+      "--- from: user (external-directory-tester)
+      EXTERNAL_DIRECTORY_ALLOWED_MARKER first
       --- from: assistant (TestBot)
       *using deterministic-provider/deterministic-v2*
-      ⬥ reading referenced channel directory
+      ⬥ reading external directory
       ┣ read *allowed.txt*
-      ⬥ channel-reference-read-done
+      ⬥ external-directory-read-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-      --- from: user (channel-reference-tester)
-      Use <#200000000000001022> CHANNEL_REFERENCE_PERMISSION_MARKER followup
+      --- from: user (external-directory-tester)
+      EXTERNAL_DIRECTORY_ALLOWED_MARKER followup
       --- from: assistant (TestBot)
-      ⬥ reading referenced channel directory
+      ⬥ reading external directory
       ┣ read *allowed.txt*
-      ⬥ channel-reference-read-done
+      ⬥ external-directory-read-done
       *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)
     expect(text).not.toContain('Permission Required')

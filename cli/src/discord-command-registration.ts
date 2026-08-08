@@ -246,21 +246,6 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
-      .setName('add-dir')
-      .setDescription(
-        truncateCommandDescription('Allow the current session to access an extra directory or * for all folders'),
-      )
-      .addStringOption((option) => {
-        option
-          .setName('directory')
-          .setDescription(truncateCommandDescription('Directory to allow, resolved from the current worktree. Use * for all folders'))
-          .setRequired(false)
-
-        return option
-      })
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('abort')
       .setDescription(truncateCommandDescription('Abort, stop, terminate, or cancel the current OpenCode request in this thread'))
       .setDMPermission(false)

@@ -82,6 +82,10 @@ cli
     'Allow all Discord users to start sessions without needing Kimaki role or admin permissions (no-kimaki role still blocks)',
   )
   .option(
+    '--restrict-directories',
+    'Only allow the agent to access the session working directory and a few known-safe paths. Any other folder asks for permission. By default every directory is allowed and you protect folders with deny/ask rules in opencode.json',
+  )
+  .option(
     '--permission-timeout-minutes <minutes>',
     'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
   )
@@ -142,6 +146,7 @@ cli
       mentionMode?: boolean
       noCritique?: boolean
       allowAllUsers?: boolean
+      restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
       disableSync?: boolean
       autoRestart?: boolean
@@ -271,6 +276,7 @@ cli
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
+          ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.disableSync && { syncEnabled: false }),
@@ -293,6 +299,11 @@ cli
         if (options.allowAllUsers) {
           cliLogger.log(
             'Allow all users: any Discord member can start sessions (no-kimaki role still blocks)',
+          )
+        }
+        if (options.restrictDirectories) {
+          cliLogger.log(
+            'Restricted directories: the agent asks before reading outside the working directory',
           )
         }
         if (permissionTimeoutMs !== undefined) {

@@ -31,16 +31,38 @@ OpenCode fixes a permission's scope when it asks. A reply can allow or deny, but
 </Note>
 </Aside>
 
-## Granting extra directories with `/add-dir`
+## Directory access
 
-By default a session can only touch its project directory. To let it access another folder, run **`/add-dir <directory>`**:
+**Every directory is allowed by default.** The agent can read and edit files outside the project without asking. OpenCode's own default is to ask for each external folder, which turned ordinary reads into a stream of approval prompts.
 
+To protect specific folders, add `deny` or `ask` rules to your `opencode.json`. Your project config is loaded after Kimaki's defaults, so it wins:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "~/.ssh": "deny",
+      "~/.ssh/*": "deny",
+      "~/Documents/*": "ask"
+    }
+  }
+}
 ```
-/add-dir ../shared-lib      grant access to a sibling directory
-/add-dir *                  grant access to all folders
+
+To flip the default back to a strict allow-list, start the bot with **`--restrict-directories`**:
+
+```bash
+kimaki --restrict-directories
 ```
 
-The path is resolved against the current working directory (or worktree). If the session is busy, Kimaki briefly aborts and resumes it so the new permission takes effect.
+The agent is then limited to the session working directory plus a few known-safe paths (`/tmp`, `~/.config/opencode`, `~/.opensrc`, `~/.kimaki`, and common toolchain caches). Anything else raises an approval prompt in the thread.
+
+<Aside>
+<Note>
+Worktree threads always deny the original checkout, with or without the flag. This keeps the agent from editing the main repo after the thread moved to a worktree.
+</Note>
+</Aside>
 
 ## Default permissions in opencode.json
 

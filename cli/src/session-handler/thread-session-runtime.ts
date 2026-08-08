@@ -11,7 +11,6 @@ import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
   Event as OpenCodeEvent,
   Part,
-  PermissionRuleset,
   PermissionRequest,
   QuestionRequest,
   Message as OpenCodeMessage,
@@ -525,7 +524,6 @@ export type PreprocessResult = {
   prompt: string
   images?: DiscordFileAttachment[]
   repliedMessage?: RepliedMessageContext
-  permissionRules?: PermissionRuleset
   /** Resolved mode based on voice transcription result. */
   mode: 'opencode' | 'local-queue'
   /** When true, preprocessing determined the message should be silently dropped. */
@@ -568,7 +566,6 @@ export type IngressInput = {
    * session creation (first dispatch).
    */
   permissions?: string[]
-  permissionRules?: PermissionRuleset
   injectionGuardPatterns?: string[]
   /**
    * Parent OpenCode session ID from explicit `kimaki send --parent-session` only.
@@ -2955,7 +2952,6 @@ export class ThreadSessionRuntime {
         prompt: input.prompt,
         agent: input.agent,
         permissions: input.permissions,
-        permissionRules: input.permissionRules,
         injectionGuardPatterns: input.injectionGuardPatterns,
         sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
         sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
@@ -2972,7 +2968,6 @@ export class ThreadSessionRuntime {
         sessionId: session.id,
         createdNewSession,
         permissions: input.permissions,
-        permissionRules: input.permissionRules,
       })
       if (updatePermissionsResult instanceof Error) {
         await cleanupOnError(`Failed to update session permissions: ${updatePermissionsResult.message}`)
@@ -3226,7 +3221,6 @@ export class ThreadSessionRuntime {
       agent: input.agent,
       model: input.model,
       permissions: input.permissions,
-      permissionRules: input.permissionRules,
       injectionGuardPatterns: input.injectionGuardPatterns,
       parentSessionId: input.parentSessionId,
       sourceMessageId: input.sourceMessageId,
@@ -3383,10 +3377,6 @@ export class ThreadSessionRuntime {
           // no explicit agent was already set (CLI --agent flag wins).
           agent: input.agent || result.agent,
           repliedMessage: result.repliedMessage,
-          permissionRules: [
-            ...(input.permissionRules ?? []),
-            ...(result.permissionRules ?? []),
-          ],
           preprocess: undefined,
         })
 
@@ -3711,7 +3701,6 @@ export class ThreadSessionRuntime {
       prompt: input.prompt,
       agent: input.agent,
       permissions: input.permissions,
-      permissionRules: input.permissionRules,
       injectionGuardPatterns: input.injectionGuardPatterns,
       sessionStartScheduleKind: input.sessionStartScheduleKind,
       sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
@@ -3735,7 +3724,6 @@ export class ThreadSessionRuntime {
       sessionId: session.id,
       createdNewSession,
       permissions: input.permissions,
-      permissionRules: input.permissionRules,
     })
     if (updatePermissionsResult instanceof Error) {
       this.stopTyping()
@@ -4175,22 +4163,17 @@ export class ThreadSessionRuntime {
     sessionId,
     createdNewSession,
     permissions,
-    permissionRules,
   }: {
     client: OpencodeClient
     sessionId: string
     createdNewSession: boolean
     permissions?: string[]
-    permissionRules?: PermissionRuleset
   }) {
     if (createdNewSession) {
       return null
     }
 
-    const rules = [
-      ...(permissionRules ?? []),
-      ...parsePermissionRules(permissions ?? []),
-    ]
+    const rules = parsePermissionRules(permissions ?? [])
     if (rules.length === 0) {
       return null
     }
@@ -4210,7 +4193,6 @@ export class ThreadSessionRuntime {
     prompt,
     agent,
     permissions,
-    permissionRules,
     injectionGuardPatterns,
     sessionStartScheduleKind,
     sessionStartScheduledTaskId,
@@ -4219,7 +4201,6 @@ export class ThreadSessionRuntime {
     agent?: string
     /** Raw "tool:action" strings from --permission flag */
     permissions?: string[]
-    permissionRules?: PermissionRuleset
     injectionGuardPatterns?: string[]
     sessionStartScheduleKind?: 'at' | 'cron'
     sessionStartScheduledTaskId?: number
@@ -4279,10 +4260,8 @@ export class ThreadSessionRuntime {
     }
 
     if (!session) {
-      // Pass per-session external_directory permissions so this session can
-      // access its own project directory (and worktree origin if applicable)
-      // without prompts. These override the server-level 'ask' default via
-      // opencode's findLast() rule evaluation.
+      // Pass per-session external_directory permissions. By default this is a
+      // single allow-everything rule plus the worktree-origin deny rule.
       // CLI --permission rules are appended after base rules so they win
       // via opencode's findLast() evaluation.
       const sessionPermissions = [
@@ -4290,7 +4269,6 @@ export class ThreadSessionRuntime {
           directory: this.sdkDirectory,
           originalRepoDirectory,
         }),
-        ...(permissionRules ?? []),
         ...parsePermissionRules(permissions ?? []),
       ]
       // Omit title so OpenCode auto-generates a summary from the conversation

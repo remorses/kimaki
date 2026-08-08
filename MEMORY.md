@@ -142,3 +142,12 @@ names from thread titles/prompts). Worktrees now live under
 ## v1 SDK plugin Event types are stale
 
 The v1 SDK `Event` union has `permission.updated` but the bus actually emits `permission.asked`. Plugin `event` hooks receive the real bus event types, not the v1 SDK names. Cast `event.type as string` and compare against the actual runtime type. Also, `getEventSessionId()` won't handle unknown event types and returns `undefined`, so any code for stale-typed events must run before the `getEventSessionId()` early return.
+
+## external_directory is allow-all by default
+
+Kimaki sets `external_directory: 'allow'` at the server config level and a
+single `'*': allow` session rule. Do not reintroduce per-directory allow-lists
+(tmpdir, `~/.config/opencode`, toolchain caches) into the default path; that
+list only applies when `--restrict-directories` is set. The worktree
+original-repo `deny` rule is always appended regardless of the flag, because it
+is directory isolation and not prompt avoidance.

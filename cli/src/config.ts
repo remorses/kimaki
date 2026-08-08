@@ -82,6 +82,16 @@ export function getPermissionTimeoutMs(): number {
   return store.getState().permissionTimeoutMs
 }
 
+/**
+ * Whether external directory access is restricted to the session working
+ * directory plus a few known-safe paths.
+ * Defaults to false: every directory is allowed and users protect specific
+ * folders with their own `deny`/`ask` rules in opencode.json.
+ */
+export function getRestrictExternalDirectories(): boolean {
+  return store.getState().restrictExternalDirectories
+}
+
 export type { RegisteredUserCommand } from './store.js'
 
 const DEFAULT_LOCK_PORT = 29988

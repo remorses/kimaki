@@ -61,7 +61,6 @@ import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
   extractQueueSuffix,
-  getChannelReferencePermissionRules,
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
@@ -1426,12 +1425,8 @@ export async function startDiscordBot({
             }
           : undefined,
         preprocess: async () => {
-          const permissionRules = await getChannelReferencePermissionRules({
-            message: starterMessage,
-          })
           return {
             prompt,
-            permissionRules,
             mode: 'opencode',
             ...(fileAttachments.length > 0 && { images: fileAttachments }),
           }
