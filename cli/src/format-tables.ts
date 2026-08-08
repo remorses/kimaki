@@ -626,7 +626,7 @@ function buildTextRow({
     const value = cell ? getRenderedCellText({ cell }) : ''
     return `**${key}** ${value}`
   })
-  const content = lines.join('\n')
+  const content = clampTextDisplayContent(lines.join('\n'))
 
   return {
     components: [
@@ -638,6 +638,17 @@ function buildTextRow({
     componentCost: 1,
     textSize: content.length,
   }
+}
+
+// Discord's TextDisplay component enforces the same 4000-char content limit
+// as the overall message text budget. A single row with one huge cell value
+// (e.g. a long stack trace) could otherwise exceed it on its own, which no
+// amount of row-level chunking can fix.
+function clampTextDisplayContent(content: string): string {
+  if (content.length <= MAX_TEXT_SIZE) {
+    return content
+  }
+  return content.slice(0, MAX_TEXT_SIZE - 1) + '…'
 }
 
 function buildButtonRow({
@@ -681,9 +692,9 @@ function buildButtonRow({
     components: buttons,
   }
 
-  const content = lines.join('\n')
-  const buttonLabelSize = buttons.reduce((sum, button) => {
-    return sum + (button.label?.length ?? 0)
+  const content = clampTextDisplayContent(lines.join('\n'))
+  const buttonLabelSize = buttonCells.reduce((sum, cell) => {
+    return sum + (cell.type === 'button' ? cell.label.length : 0)
   }, 0)
 
   return {
@@ -699,6 +710,10 @@ function buildButtonRow({
   }
 }
 
+// Splits rows into chunks that fit both the 40-component budget and the
+// 4000-char displayable text budget. Wide/long tables (many long cell values)
+// can stay under the component count while still exceeding Discord's text
+// limit, which previously caused sendMessage to fail with a 400 error.
 function chunkRowsByComponentLimit({
   rows,
 }: {
@@ -707,20 +722,27 @@ function chunkRowsByComponentLimit({
   const chunks: RenderedTableRow[][] = []
   let currentChunk: RenderedTableRow[] = []
   let currentCost = 1
+  let currentText = 0
 
   for (const row of rows) {
     const separatorCost = currentChunk.length > 0 ? 1 : 0
     const nextCost = currentCost + separatorCost + row.componentCost
+    const nextText = currentText + row.textSize
 
-    if (currentChunk.length > 0 && nextCost > MAX_COMPONENTS) {
+    if (
+      currentChunk.length > 0 &&
+      (nextCost > MAX_COMPONENTS || nextText > MAX_TEXT_SIZE)
+    ) {
       chunks.push(currentChunk)
       currentChunk = [row]
       currentCost = 1 + row.componentCost
+      currentText = row.textSize
       continue
     }
 
     currentChunk.push(row)
     currentCost = nextCost
+    currentText = nextText
   }
 
   if (currentChunk.length > 0) {

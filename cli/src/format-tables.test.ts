@@ -230,6 +230,52 @@ describe('buildTableComponents', () => {
     `)
   })
 
+  test('splits table into multiple containers when text size exceeds 4000 chars even though component count fits', () => {
+    // 10 rows well under the 40-component budget (1 container + 10 TDs + 9 seps = 20),
+    // but each row has a long cell value so total text exceeds MAX_TEXT_SIZE (4000).
+    const header = '| Name | Description |'
+    const sep = '| --- | --- |'
+    const longValue = 'x'.repeat(500)
+    const rows = Array.from({ length: 10 }, (_, i) => {
+      return `| row-${i} | ${longValue} |`
+    }).join('\n')
+    const table = parseTable(`${header}\n${sep}\n${rows}`)
+    const result = buildTableComponents(table)
+
+    // Total text across all rows (~5000+ chars) must not fit in a single
+    // container; it should be split across multiple component segments.
+    expect(result.length).toBeGreaterThan(1)
+
+    for (const segment of result) {
+      if (segment.type !== 'components') continue
+      const container = segment.components[0]
+      if (!container || container.type !== ComponentType.Container) continue
+      const totalText = container.components.reduce((sum, child) => {
+        if ('content' in child && typeof child.content === 'string') {
+          return sum + child.content.length
+        }
+        return sum
+      }, 0)
+      expect(totalText).toBeLessThanOrEqual(4000)
+    }
+  })
+
+  test('clamps a single row whose own content exceeds the 4000-char text limit', () => {
+    const header = '| Name | Description |'
+    const sep = '| --- | --- |'
+    const hugeValue = 'y'.repeat(5000)
+    const table = parseTable(`${header}\n${sep}\n| row | ${hugeValue} |`)
+    const result = buildTableComponents(table)
+    expect(result).toHaveLength(1)
+    const segment = result[0]!
+    if (segment.type !== 'components') throw new Error('expected components segment')
+    const container = segment.components[0]!
+    if (container.type !== ComponentType.Container) throw new Error('expected container')
+    const textDisplay = container.components[0]!
+    if (textDisplay.type !== ComponentType.TextDisplay) throw new Error('expected text display')
+    expect(textDisplay.content.length).toBeLessThanOrEqual(4000)
+  })
+
   test('renders wide rows with buttons without using sections', () => {
     const table = parseTable(`| Thread | Name | Status | Created | Folder | Action |
 | --- | --- | --- | --- | --- | --- |
