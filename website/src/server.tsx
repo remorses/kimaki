@@ -32,7 +32,11 @@ import type { Env } from './env.js'
 export { SlackBridgeDO }
 
 // /api/transcribe limits (see also TRANSCRIBE_RATE_LIMITER binding for burst control).
-const TRANSCRIBE_MAX_AUDIO_BYTES = 15 * 1024 * 1024
+// Kept small: the route expands every byte into a JS number array for the
+// Workers AI whisper input (`[...new Uint8Array(buf)]`), so a 15MB file was
+// creating ~15M array elements and risking the Worker's 128MB isolate memory
+// limit. Voice messages are normally well under 2MB, so this is generous.
+const TRANSCRIBE_MAX_AUDIO_BYTES = 2 * 1024 * 1024
 const TRANSCRIBE_DAILY_REQUEST_LIMIT = 100
 
 const SLACK_OAUTH_CALLBACK_PATH = '/slack/oauth/callback'
@@ -950,9 +954,13 @@ export const app = new Spiceflow({
         return jsonError('Rate limited, try again shortly', 429)
       }
 
+      // Keyed by user_id (stable across a Discord user's gateway installs)
+      // rather than client_id, so re-onboarding to mint a fresh client_id
+      // doesn't reset the daily quota. Falls back to client_id for the rare
+      // row with no linked user_id.
       const dailyCount = await incrementTranscribeDailyCount({
         kv: state.env.GATEWAY_CLIENT_KV,
-        clientId,
+        quotaKey: gatewayClient.user_id ?? clientId,
       }).catch((cause) => {
         // Fail open on KV errors — this is an abuse guard, not a billing gate.
         console.warn('Failed to increment transcribe daily count', cause)
@@ -962,7 +970,13 @@ export const app = new Spiceflow({
         return jsonError('Daily free transcription limit reached', 429)
       }
 
-      const contentLength = Number(request.headers.get('Content-Length') ?? '0')
+      // Content-Length is required (not just checked when present) so we
+      // never buffer an oversized body before knowing its size — Cloudflare
+      // accepts request bodies well past TRANSCRIBE_MAX_AUDIO_BYTES.
+      const contentLength = Number(request.headers.get('Content-Length'))
+      if (!Number.isFinite(contentLength) || contentLength <= 0) {
+        return jsonError('Missing or invalid Content-Length header', 411)
+      }
       if (contentLength > TRANSCRIBE_MAX_AUDIO_BYTES) {
         return jsonError('Audio file too large', 413)
       }

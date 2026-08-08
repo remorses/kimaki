@@ -41,23 +41,26 @@ function slackInstallStateKvKey({ state }: { state: string }): string {
   return `slack-install-state:v1:${state}`
 }
 
-function transcribeDailyKvKey({ clientId, date }: { clientId: string; date: string }): string {
-  return `transcribe-daily:v1:${clientId}:${date}`
+function transcribeDailyKvKey({ quotaKey, date }: { quotaKey: string; date: string }): string {
+  return `transcribe-daily:v1:${quotaKey}:${date}`
 }
 
-// Counts /api/transcribe requests per client_id per UTC day. This is a coarse
-// abuse guard (request count, not audio minutes) — KV writes are eventually
-// consistent so concurrent requests can under-count slightly, which is fine
-// for this purpose. See TRANSCRIBE_DAILY_REQUEST_LIMIT in server.tsx.
+// Counts /api/transcribe requests per quotaKey per UTC day. Callers should
+// pass the gateway client's user_id (stable across re-onboarding, which
+// mints a fresh client_id) and fall back to client_id only when no user_id
+// is linked. This is a coarse abuse guard (request count, not audio
+// minutes), not an exact billing gate: KV reads/writes are eventually
+// consistent and not atomic, so concurrent requests can under-count. See
+// TRANSCRIBE_DAILY_REQUEST_LIMIT in server.tsx.
 export async function incrementTranscribeDailyCount({
   kv,
-  clientId,
+  quotaKey,
 }: {
   kv: KVNamespace
-  clientId: string
+  quotaKey: string
 }): Promise<number> {
   const date = new Date().toISOString().slice(0, 10)
-  const key = transcribeDailyKvKey({ clientId, date })
+  const key = transcribeDailyKvKey({ quotaKey, date })
   const current = Number(await kv.get(key)) || 0
   const next = current + 1
   await kv.put(key, String(next), { expirationTtl: TRANSCRIBE_DAILY_KV_TTL_SECONDS })
