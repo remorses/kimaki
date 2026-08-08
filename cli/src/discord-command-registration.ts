@@ -315,6 +315,13 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
     new SlashCommandBuilder()
+      .setName('model-variant')
+      .setDescription(
+        truncateCommandDescription('Change thinking level for current model. Tied to the model; lost when you switch models'),
+      )
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
       .setName('login')
       .setDescription(
         truncateCommandDescription('Authenticate with an AI provider (OAuth or API key). Use this instead of /connect'),
@@ -338,6 +345,21 @@ export async function registerCommands({
           .setName('message')
           .setDescription(truncateCommandDescription('The message to queue'))
           .setRequired(true)
+
+        return option
+      })
+      .setDMPermission(false)
+      .toJSON(),
+    new SlashCommandBuilder()
+      .setName('clear-queue')
+      .setDescription(truncateCommandDescription('Clear all queued messages in this thread'))
+      .addIntegerOption((option) => {
+        option
+          .setName('position')
+          .setDescription(
+            truncateCommandDescription('1-based queued message position to clear (default: all)'),
+          )
+          .setMinValue(1)
 
         return option
       })

@@ -87,6 +87,7 @@ import { handleActionButton } from './commands/action-buttons.js'
 import { handleHtmlActionButton } from './html-actions.js'
 import {
   handleQueueCommand,
+  handleClearQueueCommand,
   handleQueueCommandCommand,
   handleQueueCommandAutocomplete,
 } from './commands/queue.js'
@@ -107,6 +108,7 @@ import { handleScreenshareCommand } from './commands/screenshare.js'
 import { handleVscodeCommand } from './commands/vscode.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
+  handleModelVariantCommand,
   handleVariantQuickSelectMenu,
   handleVariantScopeSelectMenu,
 } from './commands/model-variant.js'
@@ -348,6 +350,10 @@ export function registerInteractionHandler({
               await handleModelCommand({ interaction, appId })
               return
 
+            case 'model-variant':
+              await handleModelVariantCommand({ interaction, appId })
+              return
+
             case 'login':
               if (!hasKimakiAdminPermission(interaction.member, interaction.guild)) {
                 await interaction.reply({
@@ -365,6 +371,10 @@ export function registerInteractionHandler({
 
             case 'queue':
               await handleQueueCommand({ command: interaction, appId })
+              return
+
+            case 'clear-queue':
+              await handleClearQueueCommand({ command: interaction, appId })
               return
 
             case 'queue-command':

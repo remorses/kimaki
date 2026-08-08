@@ -8,6 +8,7 @@
 // Map. Whichever menu fires second sees the first selection stored and applies.
 
 import {
+  ChatInputCommandInteraction,
   StringSelectMenuInteraction,
   StringSelectMenuBuilder,
   ActionRowBuilder,
@@ -85,6 +86,31 @@ function formatSourceLabel(info: CurrentModelInfo): string {
     case 'none':
       return 'none'
   }
+}
+
+/** /model-variant slash command entrypoint — defers reply then delegates to the shared picker. */
+export async function handleModelVariantCommand({
+  interaction,
+  appId,
+}: {
+  interaction: ChatInputCommandInteraction
+  appId: string
+}): Promise<void> {
+  await interaction.deferReply()
+
+  const channel = interaction.channel
+  if (!channel) {
+    await interaction.editReply({
+      content: 'This command can only be used in a channel',
+    })
+    return
+  }
+
+  await showModelVariantPicker({
+    channel,
+    appId,
+    editReply: (options) => interaction.editReply(options),
+  })
 }
 
 export async function showModelVariantPicker({

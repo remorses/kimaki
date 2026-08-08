@@ -164,6 +164,89 @@ export async function handleQueueCommand({
   })
 }
 
+export async function handleClearQueueCommand({
+  command,
+}: CommandContext): Promise<void> {
+  const channel = command.channel
+  const position = command.options.getInteger('position') ?? undefined
+
+  if (!channel) {
+    await command.reply({
+      content: 'This command can only be used in a channel',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
+
+  const isThread = [
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(channel.type)
+
+  if (!isThread) {
+    await command.reply({
+      content: 'This command can only be used in a thread',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
+
+  const runtime = getRuntime(channel.id)
+  const queueLength = runtime?.getQueueLength() ?? 0
+
+  if (queueLength === 0) {
+    await command.reply({
+      content: 'No messages in queue',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
+
+  if (position !== undefined) {
+    const removed = runtime?.removeQueuePosition(position)
+    if (!removed) {
+      await command.reply({
+        content: `No queued message at position ${position}`,
+        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+      })
+      return
+    }
+
+    await command.reply({
+      content: `Cleared queued message at position ${position}`,
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+
+    logger.log(
+      `[QUEUE] User ${command.user.displayName} cleared queued position ${position} in thread ${channel.id}`,
+    )
+    return
+  }
+
+  const cleared = runtime?.clearQueue() ?? []
+
+  const lines = cleared.map((item, i) => {
+    const label = item.command
+      ? `/${item.command.name}`
+      : item.prompt
+    return `${i + 1}. ${label}`
+  })
+  let list = lines.join('\n')
+  if (list.length > 600) {
+    list = list.slice(0, 597) + '...'
+  }
+
+  await command.reply({
+    content: `Cleared ${cleared.length} queued message${cleared.length > 1 ? 's' : ''}:\n${list}`,
+    flags: SILENT_MESSAGE_FLAGS,
+  })
+
+  logger.log(
+    `[QUEUE] User ${command.user.displayName} cleared queue in thread ${channel.id}`,
+  )
+}
+
 export async function handleQueueCommandCommand({
   command,
   appId,
