@@ -29,6 +29,7 @@ import {
 } from './database.js'
 import {
   stopOpencodeServer,
+  stopClaudeCodeRouter,
 } from './opencode.js'
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
@@ -1566,6 +1567,9 @@ export async function startDiscordBot({
       voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
       stopExternalOpencodeSessionSync()
       await stopOpencodeServer()
+
+      voiceLogger.log('[SHUTDOWN] Stopping Claude Code router')
+      await stopClaudeCodeRouter()
 
       discordLogger.log('Closing database...')
       await closeDatabase()

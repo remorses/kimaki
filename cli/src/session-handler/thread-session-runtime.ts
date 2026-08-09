@@ -146,6 +146,8 @@ import {
   getThinkingValuesForModel,
   matchThinkingValue,
 } from '../thinking-utils.js'
+import { isClaudeCodeSessionId } from '../claude-code/ids.js'
+import { CLAUDE_CODE_PROVIDER_ID } from '../claude-code/models.js'
 import { execAsync } from '../worktrees.js'
 import {
   DiscordOperationError,
@@ -3051,9 +3053,24 @@ export class ThreadSessionRuntime {
         return
       }
 
+      // Cross-backend guard: a session created on one backend can't run a
+      // model from the other. When the preference cascade resolves to a
+      // mismatched model (e.g. a claude-code model selected mid-thread in an
+      // opencode session), drop the model and let the session keep its own
+      // default — new sessions pick the right backend from the same cascade.
+      const sessionIsClaudeCode = isClaudeCodeSessionId(session.id)
+      const modelMatchesBackend =
+        (modelField.providerID === CLAUDE_CODE_PROVIDER_ID) === sessionIsClaudeCode
+      const effectiveModelField = modelMatchesBackend ? modelField : undefined
+      if (!modelMatchesBackend) {
+        logger.log(
+          `[INGRESS] Model ${modelField.providerID}/${modelField.modelID} does not match backend of session ${session.id}; using the session's current model instead`,
+        )
+      }
+
       // Resolve thinking variant
       const thinkingValue = await (async (): Promise<string | undefined> => {
-        if (!preferredVariant) {
+        if (!preferredVariant || !effectiveModelField) {
           return undefined
         }
         const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
@@ -3063,8 +3080,8 @@ export class ThreadSessionRuntime {
         }
         const availableValues = getThinkingValuesForModel({
           providers: providersResponse.data.all,
-          providerId: modelField.providerID,
-          modelId: modelField.modelID,
+          providerId: effectiveModelField.providerID,
+          modelId: effectiveModelField.modelID,
         })
         if (availableValues.length === 0) {
           return undefined
@@ -3160,7 +3177,7 @@ export class ThreadSessionRuntime {
           parentSessionId: this.state?.parentSessionId || input.parentSessionId,
         }),
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
-        ...(modelField ? { model: modelField } : {}),
+        ...(effectiveModelField ? { model: effectiveModelField } : {}),
         ...variantField,
         ...(input.noReply ? { noReply: true } : {}),
       }
@@ -3831,9 +3848,21 @@ export class ThreadSessionRuntime {
       return
     }
 
+    // Cross-backend guard: don't send a model that belongs to the other
+    // backend (see submitViaOpencodeQueue for details).
+    const earlySessionIsClaudeCode = isClaudeCodeSessionId(session.id)
+    const earlyModelMatchesBackend =
+      (earlyModelParam.providerID === CLAUDE_CODE_PROVIDER_ID) === earlySessionIsClaudeCode
+    const earlyEffectiveModelParam = earlyModelMatchesBackend ? earlyModelParam : undefined
+    if (!earlyModelMatchesBackend) {
+      logger.log(
+        `[DISPATCH] Model ${earlyModelParam.providerID}/${earlyModelParam.modelID} does not match backend of session ${session.id}; using the session's current model instead`,
+      )
+    }
+
     // Resolve thinking variant
     const earlyThinkingValue = await (async (): Promise<string | undefined> => {
-      if (!preferredVariant) {
+      if (!preferredVariant || !earlyEffectiveModelParam) {
         return undefined
       }
       const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
@@ -3843,8 +3872,8 @@ export class ThreadSessionRuntime {
       }
       const availableValues = getThinkingValuesForModel({
         providers: providersResponse.data.all,
-        providerId: earlyModelParam.providerID,
-        modelId: earlyModelParam.modelID,
+        providerId: earlyEffectiveModelParam.providerID,
+        modelId: earlyEffectiveModelParam.modelID,
       })
       if (availableValues.length === 0) {
         return undefined
@@ -4018,7 +4047,11 @@ export class ThreadSessionRuntime {
           command: queuedCommand.name,
           arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
           agent: earlyAgentPreference,
-          model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
+          ...(earlyEffectiveModelParam
+            ? {
+                model: `${earlyEffectiveModelParam.providerID}/${earlyEffectiveModelParam.modelID}`,
+              }
+            : {}),
           ...variantField,
         },
         { signal: commandSignal },
@@ -4119,7 +4152,7 @@ export class ThreadSessionRuntime {
         userId: this.state?.sessionUserId || input.userId,
         parentSessionId: this.state?.parentSessionId || input.parentSessionId,
       }),
-      model: earlyModelParam,
+      ...(earlyEffectiveModelParam ? { model: earlyEffectiveModelParam } : {}),
       agent: earlyAgentPreference,
       ...variantField,
     }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))

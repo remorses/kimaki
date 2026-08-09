@@ -1,0 +1,61 @@
+---
+title: Claude Code Backend
+description: Run threads on Claude Code instead of OpenCode by picking a claude-code model, using your existing Claude subscription and .claude configuration.
+icon: lucide:sparkles
+---
+
+Kimaki can drive **Claude Code** as an alternative agent backend, powered by the official [Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk/overview). Each Discord thread becomes a real Claude Code session on your machine — the same agent you get in the `claude` terminal, with your `CLAUDE.md`, settings, skills, and subagents.
+
+## Switching a channel to Claude Code
+
+Claude Code appears as a regular provider in the model picker:
+
+1. Run **`/model`** in a channel (or thread).
+2. Pick the **Claude Code** provider.
+3. Pick a model (e.g. Claude Opus 4.8) and, optionally, an effort level.
+4. Choose the scope: this session, this channel, or global default.
+
+```diagram
+  /model ──▶ Claude Code ──▶ claude-opus-4-8 ──▶ high ──▶ channel
+                                                          │
+            new threads in this channel now run Claude Code
+```
+
+New sessions follow the model preference cascade (session → channel → global): if the effective model is a `claude-code/*` model, the thread runs on Claude Code; otherwise it runs on OpenCode. Existing threads keep their original backend — a session lives on one backend for its whole life.
+
+## Authentication
+
+Kimaki uses the same credentials as the `claude` CLI, in this order:
+
+- Your **Claude Pro/Max subscription** — run `claude` once in a terminal and log in.
+- An **`ANTHROPIC_API_KEY`** environment variable.
+
+No extra setup inside Kimaki: if Claude Code works in your terminal, it works in Discord. If authentication is missing, the first message in a Claude thread replies with an error explaining what to configure.
+
+## What works
+
+Claude Code threads support the full Kimaki feature set:
+
+- **Streaming replies** — text, thinking, and tool calls render live, exactly like OpenCode threads.
+- **Permissions** — bash/edit/web requests show the usual **Accept / Accept Always / Deny** buttons. *Accept Always* persists an allow rule for the session (e.g. `git *`).
+- **Questions** — Claude's `AskUserQuestion` renders as Discord dropdowns.
+- **Model & effort switching** — `/model` mid-thread switches between Claude models; effort levels (`low` → `max`) map to Kimaki's model variants.
+- **Queue, interrupts, btw** — messages interrupt after ~3s like always; `. queue` waits for the run to finish.
+- **Images & PDFs** — attachments are sent as native content blocks.
+- **`/compact`** — compacts the Claude session context.
+- **`/fork`**, **`/abort`**, **`/undo`** (file rewind via Claude Code checkpointing).
+- **Resume** — session transcripts persist under `~/.claude`; threads reconnect after a bot restart.
+- **Worktrees** — `/new-worktree` and `/merge-worktree` work unchanged.
+- **Diff summaries and cost footers** — per-turn diffs and token/cost usage.
+- **Discord tools** — Claude can call `kimaki_file_upload` and `kimaki_action_buttons`, served over an in-process MCP server.
+- **`CLAUDE.md` & project settings** — user, project, and local setting sources load exactly like the terminal `claude`.
+
+## What's different from OpenCode threads
+
+- **`/login` is not needed** — authentication comes from the Claude Code CLI login or the environment.
+- **Custom slash commands** from `.claude/commands` aren't registered as Discord commands yet; type them as a normal message (e.g. `/review`) and Claude Code picks them up from the prompt text.
+- **Agent selection** (`/agent`) currently applies to OpenCode threads; Claude Code subagents are used automatically by the model via its Task tool.
+
+## How it works
+
+Kimaki routes all agent traffic through a small local router that speaks the OpenCode protocol. OpenCode sessions are proxied to the `opencode` server as before; Claude Code sessions are served in-process by the Claude Agent SDK, with messages translated onto the same wire format. That is why every existing feature — formatting, permissions, the queue, diff footers — behaves identically on both backends.
