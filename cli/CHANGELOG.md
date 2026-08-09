@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.25.0
+
+1. **Allow every directory by default, remove `/add-dir`** — OpenCode's `external_directory` permission defaulted to `ask`, so reading anything outside the project put an approval prompt in the thread. That prompt fired constantly for ordinary work (reading a sibling repo, a config file, a cached dependency), and if nobody clicked it within the permission timeout the tool call was rejected. Kimaki worked around it with a growing allow-list, an `/add-dir` command, and auto-granting directories from `#channel` mentions.
+
+   All of that is gone. **External directory access is now `allow` for every path.**
+
+   Kimaki writes `"external_directory": { "*": "allow" }` into its generated config. To protect specific folders, put `deny` or `ask` rules in your own `opencode.json`. Project config merges on top of that wildcard and the last matching rule wins, so your rules take priority while unlisted paths stay allowed:
+
+   ```json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "permission": {
+       "external_directory": {
+         "~/.ssh": "deny",
+         "~/.ssh/*": "deny",
+         "~/Documents/*": "ask"
+       }
+     }
+   }
+   ```
+
+   **New `--restrict-directories` flag** restores the old behaviour if you want it globally:
+
+   ```bash
+   kimaki --restrict-directories
+   ```
+
+   The agent is then limited to the session working directory plus a few known-safe paths (`/tmp`, `~/.config/opencode`, `~/.opensrc`, `~/.kimaki`, and common toolchain caches). Everything else asks for approval in the thread.
+
+   **Removed:**
+
+   - `/add-dir` slash command. It only existed to widen a session past the `ask` default, which no longer applies.
+   - Auto-granting a referenced project's directory when you mention `#channel` in a message. Mentions still resolve normally; they just no longer carry permission side effects.
+
+   Worktree threads still deny the original checkout with or without the flag. That rule is directory isolation, not prompt avoidance: it keeps the agent from editing the main repo after the thread moved to a worktree. It is applied at session level so it also beats your `opencode.json`; only an explicit `--permission 'external_directory:allow'` on that session can override it.
+
+2. **Free Whisper transcription fallback for gateway-mode installs** — voice message transcription now works out of the box, even with no OpenAI or Gemini API key configured.
+
+   When a gateway-mode bot has no transcription key set, the CLI falls back to a free Whisper transcription endpoint on `kimaki.dev`, backed by Cloudflare Workers AI (`@cf/openai/whisper-large-v3-turbo`). This is authenticated with the same `clientId:clientSecret` credentials already used for gateway-proxy calls, so no extra setup is needed.
+
+   ```
+   gateway-mode bot, no API key
+           │
+           ▼
+   kimaki.dev /api/transcribe  ──►  Cloudflare Workers AI (Whisper)  ──►  transcription text
+   ```
+
+   If this free fallback is rate-limited or unavailable, the CLI still falls back to the existing "add API key" button so you can bring your own OpenAI/Gemini key for full context-aware transcription (which supports detecting `/queue` and agent hints spoken in the voice message — the free fallback does not).
+
+   Self-hosted bot installs are unaffected; this only applies to gateway mode, since it requires a registered `client_id`.
+
+3. **Restored `/model-variant` and `/clear-queue` slash commands** — they were removed in favor of buttons attached to `/model` and `/queue` replies, but a direct command is still handy when you already know what you want to change without waiting for a reply message:
+
+   ```bash
+   /model-variant          # pick a thinking level for the current model
+   /clear-queue             # clear all queued messages in this thread
+   /clear-queue position:2  # clear only the message at queue position 2
+   ```
+
+   The button-based flows on `/model` ("Change thinking level") and `/queue` ("Remove from queue") still work as before.
+
+4. **Fixed `sendMessage` failing with a Discord 400 error when rendering long markdown tables.** Tables with many rows and long cell values (for example `/worktrees` or `/tasks` output with long paths) could stay under Discord's 40-component budget while still exceeding the 4000-character total text limit for Components V2 messages. That combination silently failed to send. Table rows are now chunked by both the component count budget and the text size budget, splitting large tables across multiple messages when needed. A single row whose own content exceeds 4000 characters is also clamped instead of being sent as-is.
+
 ## 0.24.0
 
 1. **Anonymous usage analytics via Strada** — Kimaki now measures install activity, projects, sessions, and turns without collecting personal data. A random install id is stored in `~/.kimaki/install-id` (or your `--data-dir`), and only these product events are emitted:
