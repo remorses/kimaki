@@ -206,7 +206,7 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
 export { isThreadChannelType }
 
 /** Wrap long lines so prompt.md is readable in Discord's attachment preview. */
-export function wrapPromptAttachmentText(prompt: string): string {
+function wrapPromptAttachmentText(prompt: string): string {
   return prompt
     .split('\n')
     .flatMap((line) => {
