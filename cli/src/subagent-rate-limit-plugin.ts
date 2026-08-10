@@ -20,6 +20,9 @@ const RATE_LIMIT_TEXT_PATTERNS = [
   'retry after',
   'too many requests',
   'quota exceeded',
+  'balance exhausted',
+  'spending-limit',
+  'run out of credits',
 ] as const
 
 type PluginEvent = Parameters<NonNullable<Hooks['event']>>[0]['event']
@@ -89,7 +92,7 @@ function extractRateLimitReason(event: PluginEvent): string | undefined {
 
   if (event.type === 'message.part.updated' && event.properties.part.type === 'retry') {
     const retryError = event.properties.part.error
-    if (retryError.data.statusCode === 429) {
+    if (retryError.data.statusCode === 429 || retryError.data.statusCode === 402) {
       return retryError.data.message
     }
     if (isRateLimitText(retryError.data.responseBody)) {
@@ -117,8 +120,15 @@ function extractRateLimitReason(event: PluginEvent): string | undefined {
   if (!apiError) {
     return undefined
   }
-  if (apiError.statusCode === 429) {
+  if (apiError.statusCode === 429 || apiError.statusCode === 402) {
     return apiError.message
+  }
+  // xAI returns 403 with spending-limit or run out of credits text.
+  // Only treat 403 as a usage limit if the body matches specific patterns,
+  // not all 403s (which can be auth errors handled elsewhere).
+  if (apiError.statusCode === 403) {
+    const errorText = [apiError.message, apiError.responseBody].filter(Boolean).join(' ')
+    if (isRateLimitText(errorText)) return apiError.message
   }
   if (isRateLimitText(apiError.responseBody)) {
     return apiError.responseBody

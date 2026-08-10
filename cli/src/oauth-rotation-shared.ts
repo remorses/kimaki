@@ -245,6 +245,8 @@ export function shouldRotateAuth(status: number, bodyText: string) {
   const haystack = bodyText.toLowerCase()
   if (status === 429) return true
   if (status === 401 || status === 403) return true
+  // xAI returns 402 Payment Required when Grok Build usage balance is exhausted
+  if (status === 402) return true
   return (
     haystack.includes('rate_limit') ||
     haystack.includes('rate limit') ||
@@ -252,6 +254,7 @@ export function shouldRotateAuth(status: number, bodyText: string) {
     haystack.includes('usage_limit') ||
     haystack.includes('usage_limit_reached') ||
     haystack.includes('usage_not_included') ||
+    haystack.includes('balance exhausted') ||
     haystack.includes('invalid api key') ||
     haystack.includes('authentication_error') ||
     haystack.includes('permission_error')
@@ -262,11 +265,13 @@ export function isRateLimitRetryMessage(message: string) {
   const haystack = message.toLowerCase()
   return (
     haystack.includes('429') ||
+    haystack.includes('402') ||
     haystack.includes('usage limit') ||
     haystack.includes('rate limit') ||
     haystack.includes('rate_limit') ||
     haystack.includes('usage_limit_reached') ||
-    haystack.includes('usage_not_included')
+    haystack.includes('usage_not_included') ||
+    haystack.includes('balance exhausted')
   )
 }
 

@@ -1,11 +1,14 @@
 /**
- * OpenAI OAuth account store and rotation.
- * Mirrors anthropic-auth-state.ts but for OpenAI/Codex OAuth accounts.
- * Piggybacks on opencode's built-in CodexAuthPlugin for auth; this module
+ * xAI OAuth account store and rotation.
+ * Mirrors openai-auth-state.ts but for xAI/Grok OAuth accounts.
+ * Piggybacks on opencode's built-in XaiAuthPlugin for auth; this module
  * only manages the rotation pool and account switching.
  *
- * Store file: ~/.local/share/opencode/openai-oauth-accounts.json
- * Migration: on first load, copies from multicodex-accounts.json if present.
+ * Store file: ~/.local/share/opencode/xai-oauth-accounts.json
+ *
+ * xAI returns 402 Payment Required with "Grok Build usage balance exhausted"
+ * when the account's usage balance is depleted. This is the primary trigger
+ * for rotation (unlike Anthropic/OpenAI which use 429).
  */
 
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
@@ -33,24 +36,19 @@ export { accountLabel, upsertAccount }
 // --- JWT identity extraction ---
 
 /**
- * Extract email and accountId from an OpenAI OAuth access token JWT.
- * The JWT payload contains:
- *   "https://api.openai.com/profile": { "email": "..." }
- *   "https://api.openai.com/auth": { "chatgpt_account_id": "..." }
+ * Extract email and accountId from an xAI OAuth access token JWT.
+ * xAI JWTs follow OIDC conventions with standard claims:
+ *   "email": "user@example.com"
+ *   "sub": "user_id_string"
  * Falls back to top-level auth entry fields if JWT decoding fails.
  */
-export function extractOpenAIIdentity(auth: OAuthStored & Record<string, unknown>): AccountIdentity {
-  // Try JWT first
+export function extractXAIIdentity(auth: OAuthStored & Record<string, unknown>): AccountIdentity {
   try {
     const parts = auth.access.split('.')
     if (parts.length >= 2 && parts[1]) {
       const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString()) as Record<string, unknown>
-      const profile = payload['https://api.openai.com/profile'] as Record<string, unknown> | undefined
-      const authClaims = payload['https://api.openai.com/auth'] as Record<string, unknown> | undefined
-      const email = typeof profile?.email === 'string' ? profile.email : undefined
-      const accountId = typeof authClaims?.chatgpt_account_id === 'string'
-        ? authClaims.chatgpt_account_id
-        : undefined
+      const email = typeof payload.email === 'string' ? payload.email : undefined
+      const accountId = typeof payload.sub === 'string' ? payload.sub : undefined
       if (email || accountId) {
         return { email, accountId }
       }
@@ -59,7 +57,6 @@ export function extractOpenAIIdentity(auth: OAuthStored & Record<string, unknown
     // JWT decode failed, fall through
   }
 
-  // Fallback: check if auth entry has fields directly
   return {
     email: typeof auth.email === 'string' ? auth.email : undefined,
     accountId: typeof auth.accountId === 'string' ? auth.accountId : undefined,
@@ -68,40 +65,40 @@ export function extractOpenAIIdentity(auth: OAuthStored & Record<string, unknown
 
 // --- Store file path ---
 
-export function openaiAccountsFilePath() {
+export function xaiAccountsFilePath() {
   if (process.env.XDG_DATA_HOME) {
-    return path.join(process.env.XDG_DATA_HOME, 'opencode', 'openai-oauth-accounts.json')
+    return path.join(process.env.XDG_DATA_HOME, 'opencode', 'xai-oauth-accounts.json')
   }
-  return path.join(homedir(), '.local', 'share', 'opencode', 'openai-oauth-accounts.json')
+  return path.join(homedir(), '.local', 'share', 'opencode', 'xai-oauth-accounts.json')
 }
 
 // --- Store I/O ---
 
-export async function loadOpenAIAccountStore(): Promise<AccountStore> {
-  const raw = await readJson<Partial<AccountStore> | null>(openaiAccountsFilePath(), null)
+export async function loadXAIAccountStore(): Promise<AccountStore> {
+  const raw = await readJson<Partial<AccountStore> | null>(xaiAccountsFilePath(), null)
   return normalizeAccountStore(raw)
 }
 
-export async function saveOpenAIAccountStore(store: AccountStore) {
-  await writeJson(openaiAccountsFilePath(), normalizeAccountStore(store))
+export async function saveXAIAccountStore(store: AccountStore) {
+  await writeJson(xaiAccountsFilePath(), normalizeAccountStore(store))
 }
 
 // --- Current account ---
 
-export type CurrentOpenAIAccount = {
+export type CurrentXAIAccount = {
   auth: OAuthStored
   account?: OAuthStored & AccountIdentity
   index?: number
 }
 
-export async function getCurrentOpenAIAccount(): Promise<CurrentOpenAIAccount | null> {
+export async function getCurrentXAIAccount(): Promise<CurrentXAIAccount | null> {
   const authJson = await readJson<Record<string, unknown>>(authFilePath(), {})
-  const auth = authJson.openai
+  const auth = authJson.xai
   if (!isOAuthStored(auth)) {
     return null
   }
 
-  const store = await loadOpenAIAccountStore()
+  const store = await loadXAIAccountStore()
   const index = findCurrentAccountIndex(store, auth)
   const account = store.accounts[index]
   if (!account) {
@@ -117,52 +114,51 @@ export async function getCurrentOpenAIAccount(): Promise<CurrentOpenAIAccount | 
 
 // --- Auth file write + SDK sync ---
 
-async function writeOpenAIAuthFile(auth: OAuthStored | undefined) {
+async function writeXAIAuthFile(auth: OAuthStored | undefined) {
   const file = authFilePath()
   const data = await readJson<Record<string, unknown>>(file, {})
   if (auth) {
-    data.openai = auth
+    data.xai = auth
   } else {
-    delete data.openai
+    delete data.xai
   }
   await writeJson(file, data)
 }
 
-export async function setOpenAIAuth(
+export async function setXAIAuth(
   auth: OAuthStored,
   client: OpencodeClient,
 ) {
-  await writeOpenAIAuthFile(auth)
-  await client.auth.set({ providerID: 'openai', auth })
+  await writeXAIAuthFile(auth)
+  await client.auth.set({ providerID: 'xai', auth })
 }
 
 // --- Remember new login ---
 
-export async function rememberOpenAIOAuth(
+export async function rememberXAIOAuth(
   auth: OAuthStored,
   identity?: AccountIdentity,
 ) {
   await withAuthStateLock(async () => {
-    const store = await loadOpenAIAccountStore()
+    const store = await loadXAIAccountStore()
     upsertAccount(store, { ...auth, ...identity })
-    await saveOpenAIAccountStore(store)
+    await saveXAIAccountStore(store)
   })
 }
 
 /**
- * Detect if the current auth.json openai entry is a new account not yet in
+ * Detect if the current auth.json xai entry is a new account not yet in
  * our rotation pool. If so, upsert it. Returns the identity if a new account
  * was added, undefined otherwise.
  */
-export async function detectAndRememberNewOpenAIAccount(): Promise<AccountIdentity | undefined> {
+export async function detectAndRememberNewXAIAccount(): Promise<AccountIdentity | undefined> {
   const authJson = await readJson<Record<string, unknown>>(authFilePath(), {})
-  const auth = authJson.openai
+  const auth = authJson.xai
   if (!isOAuthStored(auth)) return undefined
 
-  // Extract identity from JWT access token claims
-  const identity = extractOpenAIIdentity(auth)
+  const identity = extractXAIIdentity(auth)
 
-  const store = await loadOpenAIAccountStore()
+  const store = await loadXAIAccountStore()
   const existingIndex = store.accounts.findIndex(
     (account) => account.refresh === auth.refresh || account.access === auth.access,
   )
@@ -172,12 +168,12 @@ export async function detectAndRememberNewOpenAIAccount(): Promise<AccountIdenti
     const existing = store.accounts[existingIndex]
     if (existing && (!existing.email || !existing.accountId) && (identity.email || identity.accountId)) {
       await withAuthStateLock(async () => {
-        const freshStore = await loadOpenAIAccountStore()
+        const freshStore = await loadXAIAccountStore()
         const account = freshStore.accounts[existingIndex]
         if (!account) return
         if (!account.email && identity.email) account.email = identity.email
         if (!account.accountId && identity.accountId) account.accountId = identity.accountId
-        await saveOpenAIAccountStore(freshStore)
+        await saveXAIAccountStore(freshStore)
       })
     }
     return undefined
@@ -193,10 +189,11 @@ export async function detectAndRememberNewOpenAIAccount(): Promise<AccountIdenti
       return false
     })
     if (matchesByIdentity) {
+      // Update the stored tokens for this known account
       await withAuthStateLock(async () => {
-        const freshStore = await loadOpenAIAccountStore()
+        const freshStore = await loadXAIAccountStore()
         upsertAccount(freshStore, { ...auth, ...identity })
-        await saveOpenAIAccountStore(freshStore)
+        await saveXAIAccountStore(freshStore)
       })
       return undefined
     }
@@ -204,13 +201,13 @@ export async function detectAndRememberNewOpenAIAccount(): Promise<AccountIdenti
 
   // New account: upsert with identity
   await withAuthStateLock(async () => {
-    const freshStore = await loadOpenAIAccountStore()
+    const freshStore = await loadXAIAccountStore()
     const alreadyKnown = freshStore.accounts.some(
       (account) => account.refresh === auth.refresh || account.access === auth.access,
     )
     if (alreadyKnown) return
     upsertAccount(freshStore, { ...auth, ...identity })
-    await saveOpenAIAccountStore(freshStore)
+    await saveXAIAccountStore(freshStore)
   })
 
   return identity
@@ -218,12 +215,12 @@ export async function detectAndRememberNewOpenAIAccount(): Promise<AccountIdenti
 
 // --- Rotation ---
 
-export async function rotateOpenAIAccount(
+export async function rotateXAIAccount(
   auth: OAuthStored,
   client: OpencodeClient,
 ): Promise<RotationResult | undefined> {
   return withAuthStateLock(async () => {
-    const store = await loadOpenAIAccountStore()
+    const store = await loadXAIAccountStore()
     if (store.accounts.length < 2) return undefined
 
     const currentIndex = findCurrentAccountIndex(store, auth)
@@ -238,7 +235,7 @@ export async function rotateOpenAIAccount(
 
     nextAccount.lastUsed = Date.now()
     store.activeIndex = nextIndex
-    await saveOpenAIAccountStore(store)
+    await saveXAIAccountStore(store)
 
     const nextAuth: OAuthStored = {
       type: 'oauth',
@@ -246,7 +243,7 @@ export async function rotateOpenAIAccount(
       access: nextAccount.access,
       expires: nextAccount.expires,
     }
-    await setOpenAIAuth(nextAuth, client)
+    await setXAIAuth(nextAuth, client)
     return {
       auth: nextAuth,
       fromLabel,
@@ -259,9 +256,9 @@ export async function rotateOpenAIAccount(
 
 // --- Remove account ---
 
-export async function removeOpenAIAccount(index: number) {
+export async function removeXAIAccount(index: number) {
   return withAuthStateLock(async () => {
-    const store = await loadOpenAIAccountStore()
+    const store = await loadXAIAccountStore()
     if (!Number.isInteger(index) || index < 0 || index >= store.accounts.length) {
       throw new Error(`Account ${index + 1} does not exist`)
     }
@@ -269,8 +266,8 @@ export async function removeOpenAIAccount(index: number) {
     store.accounts.splice(index, 1)
     if (store.accounts.length === 0) {
       store.activeIndex = 0
-      await saveOpenAIAccountStore(store)
-      await writeOpenAIAuthFile(undefined)
+      await saveXAIAccountStore(store)
+      await writeXAIAuthFile(undefined)
       return { store, active: undefined }
     }
 
@@ -281,16 +278,16 @@ export async function removeOpenAIAccount(index: number) {
     }
 
     const active = store.accounts[store.activeIndex]
-    if (!active) throw new Error('Active OpenAI account disappeared during removal')
+    if (!active) throw new Error('Active xAI account disappeared during removal')
     active.lastUsed = Date.now()
-    await saveOpenAIAccountStore(store)
+    await saveXAIAccountStore(store)
     const nextAuth: OAuthStored = {
       type: 'oauth',
       refresh: active.refresh,
       access: active.access,
       expires: active.expires,
     }
-    await writeOpenAIAuthFile(nextAuth)
+    await writeXAIAuthFile(nextAuth)
     return { store, active: nextAuth }
   })
 }
