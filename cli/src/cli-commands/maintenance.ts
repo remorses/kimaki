@@ -11,10 +11,34 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
-import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import {
+  createDiscordClient,
+  initDatabase,
+  getChannelDirectory,
+  initializeOpencodeForDirectory,
+  createProjectChannels,
+} from '../discord-bot.js'
+import {
+  getBotTokenWithMode,
+  getThreadSession,
+  getThreadIdBySessionId,
+  getSessionEventSnapshot,
+  createScheduledTask,
+  listScheduledTasks,
+  cancelScheduledTask,
+  getScheduledTask,
+  updateScheduledTask,
+  getSessionStartSourcesBySessionIds,
+  deleteChannelDirectoryById,
+  findChannelsByDirectory,
+} from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
-import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
+import {
+  parseSessionSearchPattern,
+  findFirstSessionSearchHit,
+  buildSessionSearchSnippet,
+  getPartSearchTexts,
+} from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
@@ -24,7 +48,22 @@ import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-u
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
-import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
+import {
+  getPromptPreview,
+  parseSendAtValue,
+  parseScheduledTaskPayload,
+  serializeScheduledTaskPayload,
+  type ScheduledTaskPayload,
+} from '../task-schedule.js'
+import {
+  ARCHIVE_AFTER_DAYS,
+  PURGE_EVENTS_AFTER_DAYS,
+  getDiscordSnowflakeTimestamp,
+  getHousekeepingPlan,
+  getThreadLastActivity,
+  purgeSessionEventsBefore,
+  vacuumDatabase,
+} from '../housekeeping.js'
 import {
   EXIT_NO_RESTART,
   formatMemberLookupUnavailableMessage,
@@ -44,9 +83,126 @@ const cli = goke()
 
 cli
   .command(
-    'upgrade',
-    'Upgrade kimaki to the latest version and restart the running bot',
+    'housekeeping',
+    'Preview or apply retention housekeeping for threads and persisted events',
   )
+  .option('--apply', 'Archive old threads and purge old persisted events')
+  .action(async (options: { apply?: boolean }) => {
+    try {
+      await initDatabase()
+      const plan = await getHousekeepingPlan()
+      const mode = options.apply ? 'apply' : 'dry-run'
+
+      note(
+        [
+          `Mode: ${mode}`,
+          `Threads inactive for ${ARCHIVE_AFTER_DAYS}+ days: ${plan.archiveCandidates.length}`,
+          `Persisted events older than ${PURGE_EVENTS_AFTER_DAYS} days: ${plan.purgeEventCount}`,
+          `Referenced Kimaki worktrees to verify manually: ${plan.worktreeCandidates.length}`,
+          '',
+          'Archive candidates:',
+          ...plan.archiveCandidates.map(
+            (candidate) =>
+              `${candidate.threadId} (${candidate.lastActivityAt === null ? 'unknown activity time' : new Date(candidate.lastActivityAt).toISOString()})`,
+          ),
+          'Referenced worktrees:',
+          ...plan.worktreeCandidates.map(
+            (workspace) =>
+              `${workspace.thread_id}: ${workspace.workspace_directory ?? 'no directory recorded'}`,
+          ),
+          '',
+          options.apply
+            ? 'Applying thread archival and event retention. Worktrees are report-only.'
+            : 'No changes made. Re-run with --apply to archive threads and purge events.',
+        ].join('\n'),
+        'Housekeeping',
+      )
+
+      if (!options.apply) {
+        process.exit(0)
+      }
+
+      const { token: botToken } = await resolveBotCredentials()
+      const rest = createDiscordRest(botToken)
+      let archived = 0
+      let skippedForNewActivity = 0
+      const archiveFailures: string[] = []
+      for (const candidate of plan.archiveCandidates) {
+        const threadResult = await rest
+          .get(Routes.channel(candidate.threadId))
+          .catch((error) => (error instanceof Error ? error : new Error(String(error))))
+        if (threadResult instanceof Error) {
+          archiveFailures.push(`${candidate.threadId}: ${threadResult.message}`)
+          continue
+        }
+        const thread = threadResult as {
+          id: string
+          type: number
+          archived?: boolean
+          last_message_id?: string | null
+        }
+        if (!isThreadChannelType(thread.type) || thread.archived) {
+          skippedForNewActivity++
+          continue
+        }
+        const discordLastActivityAt = getDiscordSnowflakeTimestamp(
+          thread.last_message_id ?? thread.id,
+        )
+        if (discordLastActivityAt !== null && discordLastActivityAt >= plan.archiveBefore) {
+          skippedForNewActivity++
+          continue
+        }
+        const lastActivityAt = await getThreadLastActivity(candidate.threadId)
+        if (lastActivityAt === null || lastActivityAt >= plan.archiveBefore) {
+          skippedForNewActivity++
+          continue
+        }
+        const result = await rest
+          .patch(Routes.channel(candidate.threadId), {
+            body: { archived: true },
+          })
+          .catch((error) => (error instanceof Error ? error : new Error(String(error))))
+        if (result instanceof Error) {
+          archiveFailures.push(`${candidate.threadId}: ${result.message}`)
+        } else {
+          archived++
+        }
+      }
+
+      const failedThreadIds = archiveFailures.map((failure) => failure.split(':', 1)[0] ?? '')
+      const purged = await purgeSessionEventsBefore(plan.purgeEventsBefore, failedThreadIds)
+      let vacuumError: Error | undefined
+      if (purged > 0) {
+        const result = await vacuumDatabase().catch((error) =>
+          error instanceof Error ? error : new Error(String(error)),
+        )
+        if (result instanceof Error) vacuumError = result
+      }
+
+      note(
+        [
+          `Archived threads: ${archived}`,
+          `Skipped due to new activity: ${skippedForNewActivity}`,
+          `Archive failures: ${archiveFailures.length}`,
+          `Purged persisted events: ${purged}`,
+          purged > 0
+            ? vacuumError
+              ? `Database vacuum: failed (${vacuumError.message})`
+              : 'Database vacuum: complete'
+            : 'Database vacuum: not needed',
+          ...archiveFailures,
+        ].join('\n'),
+        'Housekeeping complete',
+      )
+      process.exit(archiveFailures.length === 0 && !vacuumError ? 0 : EXIT_NO_RESTART)
+    } catch (error) {
+      cliLogger.error('Housekeeping failed:', error instanceof Error ? error.stack : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command('upgrade', 'Upgrade kimaki to the latest version and restart the running bot')
   .option('--skip-restart', 'Only upgrade, do not restart the running bot')
   .action(async (options) => {
     try {
@@ -77,10 +233,7 @@ cli
       cliLogger.log('Restarting bot with new version...')
       process.exit(0)
     } catch (error) {
-      cliLogger.error(
-        'Upgrade failed:',
-        error instanceof Error ? error.stack : String(error),
-      )
+      cliLogger.error('Upgrade failed:', error instanceof Error ? error.stack : String(error))
       process.exit(EXIT_NO_RESTART)
     }
   })
@@ -91,20 +244,9 @@ cli
     'Merge worktree branch into default branch using worktrunk-style pipeline',
   )
   .option('-d, --directory <path>', 'Worktree directory (defaults to cwd)')
-  .option(
-    '-m, --main-repo <path>',
-    'Main repository directory (auto-detected from worktree)',
-  )
-  .option(
-    '-n, --name <name>',
-    'Worktree/branch name (auto-detected from branch)',
-  )
-  .action(
-    async (options: {
-      directory?: string
-      mainRepo?: string
-      name?: string
-    }) => {
+  .option('-m, --main-repo <path>', 'Main repository directory (auto-detected from worktree)')
+  .option('-n, --name <name>', 'Worktree/branch name (auto-detected from branch)')
+  .action(async (options: { directory?: string; mainRepo?: string; name?: string }) => {
       try {
         const { mergeWorktree } = await import('../worktrees.js')
         const worktreeDir = path.resolve(options.directory || '.')
@@ -118,9 +260,7 @@ cli
         if (!mainRepoDir) {
           try {
             // `git worktree list --porcelain` first line is always the main worktree
-            const { stdout } = await execAsync(
-              `git -C "${worktreeDir}" worktree list --porcelain`,
-            )
+          const { stdout } = await execAsync(`git -C "${worktreeDir}" worktree list --porcelain`)
             const firstLine = stdout.split('\n')[0] || ''
             // Format: "worktree /path/to/main"
             mainRepoDir = firstLine.replace(/^worktree\s+/, '').trim()
@@ -140,9 +280,7 @@ cli
         let worktreeName = options.name
         if (!worktreeName) {
           try {
-            const { stdout } = await execAsync(
-              `git -C "${worktreeDir}" symbolic-ref --short HEAD`,
-            )
+          const { stdout } = await execAsync(`git -C "${worktreeDir}" symbolic-ref --short HEAD`)
             worktreeName = stdout.trim()
           } catch {
             worktreeName = path.basename(worktreeDir)
@@ -167,9 +305,7 @@ cli
         if (result instanceof Error) {
           cliLogger.error(`Merge failed: ${result.message}`)
           if (result instanceof RebaseConflictError) {
-            cliLogger.log(
-              'Resolve the rebase conflicts, then run this command again.',
-            )
+          cliLogger.log('Resolve the rebase conflicts, then run this command again.')
           }
           process.exit(1)
         }
@@ -179,13 +315,9 @@ cli
         )
         process.exit(0)
       } catch (error) {
-        cliLogger.error(
-          'Merge failed:',
-          error instanceof Error ? error.stack : String(error),
-        )
+      cliLogger.error('Merge failed:', error instanceof Error ? error.stack : String(error))
         process.exit(EXIT_NO_RESTART)
       }
-    },
-  )
+  })
 
 export default cli
