@@ -542,7 +542,7 @@ cli
 
           if (threadTargetUser) {
             cliLogger.log(
-              `Adding user ${threadTargetUser.username} to thread...`,
+              `Adding user ${threadTargetUser.username || threadTargetUser.id} to thread...`,
             )
             const addMemberResult = await ensureThreadMember({
               rest,
@@ -722,8 +722,8 @@ cli
               ...(worktreeName && { worktree: worktreeName }),
               ...(resolvedCwd && { cwd: resolvedCwd }),
               ...(resolvedUser && {
-                username: resolvedUser.username,
                 userId: resolvedUser.id,
+                ...(resolvedUser.username && { username: resolvedUser.username }),
               }),
               ...(options.agent && { agent: options.agent }),
               ...(options.model && { model: options.model }),
@@ -773,7 +773,9 @@ cli
 
         // Add user to thread if specified
         if (resolvedUser) {
-          cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
+          cliLogger.log(
+            `Adding user ${resolvedUser.username || resolvedUser.id} to thread...`,
+          )
           await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
         }
 

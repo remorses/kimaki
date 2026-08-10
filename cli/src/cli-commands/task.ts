@@ -137,10 +137,10 @@ async function resolveTaskUser({
 }: {
   user: string
   channelId: string | null
-}): Promise<{ id: string; username: string } | Error> {
+}): Promise<{ id: string; username?: string } | Error> {
   const directUserId = getDiscordUserIdFromUserOption(user)
   if (directUserId) {
-    return { id: directUserId, username: directUserId }
+    return { id: directUserId }
   }
 
   if (!channelId) {
@@ -265,7 +265,7 @@ cli
         ...existingPayload,
         prompt: newPrompt,
         ...(resolvedUser
-          ? { userId: resolvedUser.id, username: resolvedUser.username }
+          ? { userId: resolvedUser.id, username: resolvedUser.username || null }
           : {}),
         ...(hasAgent ? { agent: options.agent!.trim() || null } : {}),
         ...(hasModel ? { model: options.model!.trim() || null } : {}),
@@ -303,7 +303,9 @@ cli
 
       const parts: string[] = [`Updated task ${taskId}`]
       if (resolvedUser) {
-        parts.push(`user ${resolvedUser.username} will be added to the thread`)
+        parts.push(
+          `user ${resolvedUser.username || resolvedUser.id} will be added to the thread`,
+        )
       }
       if (hasAgent) {
         parts.push(`agent=${updatedPayload.agent || '-'}`)

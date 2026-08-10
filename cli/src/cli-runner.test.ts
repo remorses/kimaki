@@ -1,5 +1,20 @@
 import { describe, expect, test } from 'vitest'
-import { getOpenUrlCommand, isTransientNetworkError } from './cli-runner.js'
+import { REST } from 'discord.js'
+import {
+  getOpenUrlCommand,
+  isTransientNetworkError,
+  resolveDiscordUserOption,
+} from './cli-runner.js'
+
+test('raw Discord user ID does not invent a username', async () => {
+  const user = await resolveDiscordUserOption({
+    user: '535922349652836367',
+    guildId: '1422625037164351591',
+    rest: new REST(),
+  })
+
+  expect(user).toEqual({ id: '535922349652836367' })
+})
 
 describe('getOpenUrlCommand', () => {
   const installUrl = 'https://kimaki.dev/discord-install?clientId=abc&clientSecret=def'

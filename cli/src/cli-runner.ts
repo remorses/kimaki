@@ -464,7 +464,7 @@ export type GuildMemberSearchResult = {
 
 export type DiscordUserTarget = {
   id: string
-  username: string
+  username?: string
 }
 
 export function isGuildMemberSearchResult(value: object | null): value is GuildMemberSearchResult {
@@ -614,7 +614,7 @@ export async function resolveDiscordUserOption({
   const directUserId = getDiscordUserIdFromUserOption(user)
   if (directUserId) {
     cliLogger.log(`Using Discord user ID: ${directUserId}`)
-    return { id: directUserId, username: directUserId }
+    return { id: directUserId }
   }
 
   cliLogger.log(`Searching for user "${user}" in guild...`)
