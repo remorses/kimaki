@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { formatBashToolTitle, formatPart, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
+import { formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
@@ -45,6 +45,31 @@ describe('formatPart', () => {
       ## Summary
       Done."
     `)
+  })
+})
+
+describe('formatTaskToolTitle', () => {
+  test('uses the completed task title when OpenAI omits the description', () => {
+    const part: Extract<Part, { type: 'tool' }> = {
+      id: 'prt_task',
+      type: 'tool',
+      tool: 'task',
+      callID: 'call_task',
+      sessionID: 'ses_parent',
+      messageID: 'msg_assistant',
+      state: {
+        status: 'completed',
+        input: { subagent_type: 'general' },
+        output: '',
+        title: 'Classify pending changes',
+        metadata: { sessionId: 'ses_child' },
+        time: { start: 1, end: 2 },
+      },
+    }
+
+    expect(formatTaskToolTitle(part)).toMatchInlineSnapshot(
+      `"┣ general **Classify pending changes**"`,
+    )
   })
 })
 

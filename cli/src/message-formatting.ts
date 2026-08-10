@@ -536,6 +536,28 @@ export function formatTodoList(part: Part): string {
   return `${num} **${escapeInlineMarkdown(content)}**`
 }
 
+export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
+  if (part.tool !== 'task' || part.state.status === 'pending') return ''
+
+  const childSessionId = part.state.metadata?.sessionId
+  if (typeof childSessionId !== 'string' || !childSessionId) return ''
+
+  const description = part.state.input?.description
+  const stateTitle = part.state.status === 'running' || part.state.status === 'completed'
+    ? part.state.title
+    : undefined
+  const title = typeof description === 'string' && description
+    ? description
+    : typeof stateTitle === 'string'
+      ? stateTitle
+      : ''
+  if (!title) return ''
+
+  const subagentType = part.state.input?.subagent_type
+  const agent = typeof subagentType === 'string' ? subagentType : 'task'
+  return `┣ ${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`
+}
+
 export function formatPart(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 

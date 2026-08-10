@@ -42,7 +42,7 @@ import {
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
-import { formatPart } from '../message-formatting.js'
+import { formatPart, formatTaskToolTitle } from '../message-formatting.js'
 import {
   getChannelVerbosity,
   getPartMessageIds,
@@ -2050,6 +2050,41 @@ export class ThreadSessionRuntime {
       return
     }
 
+    if (
+      part.type === 'tool' &&
+      part.tool === 'task' &&
+      !this.state?.sentPartIds.has(part.id)
+    ) {
+      const taskDisplay = formatTaskToolTitle(part)
+      if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
+        await this.flushBufferedParts({
+          messageID: part.messageID,
+          force: true,
+          skipPartId: part.id,
+        })
+        threadState.updateThread(this.threadId, (t) => {
+          const newIds = new Set(t.sentPartIds)
+          newIds.add(part.id)
+          return { ...t, sentPartIds: newIds }
+        })
+        const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+          .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+        if (sendResult instanceof Error) {
+          threadState.updateThread(this.threadId, (t) => {
+            const newIds = new Set(t.sentPartIds)
+            newIds.delete(part.id)
+            return { ...t, sentPartIds: newIds }
+          })
+          discordLogger.error(
+            `ERROR: Failed to send task part ${part.id}:`,
+            sendResult,
+          )
+          return
+        }
+        await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
+      }
+    }
+
     if (part.type === 'tool' && part.state.status === 'running') {
       await this.flushBufferedParts({
         messageID: part.messageID,
@@ -2057,47 +2092,6 @@ export class ThreadSessionRuntime {
         skipPartId: part.id,
       })
       await this.sendPartMessage({ part })
-
-      // Track task tool spawning subtask sessions
-      if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
-        const description =
-          typeof part.state.input?.description === 'string'
-            ? part.state.input.description
-            : ''
-        const agent =
-          typeof part.state.input?.subagent_type === 'string'
-            ? part.state.input.subagent_type
-            : 'task'
-        const childSessionId =
-          typeof part.state.metadata?.sessionId === 'string'
-            ? part.state.metadata.sessionId
-            : ''
-        if (description && childSessionId) {
-          if ((await this.getVerbosity()) !== 'text_only') {
-            const taskDisplay = `┣ ${agent} **${description}**`
-            threadState.updateThread(this.threadId, (t) => {
-              const newIds = new Set(t.sentPartIds)
-              newIds.add(part.id)
-              return { ...t, sentPartIds: newIds }
-            })
-            const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
-              .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-            if (sendResult instanceof Error) {
-              threadState.updateThread(this.threadId, (t) => {
-                const newIds = new Set(t.sentPartIds)
-                newIds.delete(part.id)
-                return { ...t, sentPartIds: newIds }
-              })
-              discordLogger.error(
-                `ERROR: Failed to send task part ${part.id}:`,
-                sendResult,
-              )
-              return
-            }
-            await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
-          }
-        }
-      }
       return
     }
 
