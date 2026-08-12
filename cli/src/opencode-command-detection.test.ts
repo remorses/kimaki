@@ -1,5 +1,8 @@
 import { describe, test, expect } from 'vitest'
-import { extractLeadingOpencodeCommand } from './opencode-command-detection.js'
+import {
+  extractLeadingOpencodeCommand,
+  extractOpencodeCommandReference,
+} from './opencode-command-detection.js'
 import type { RegisteredUserCommand } from './store.js'
 
 const fixtures: RegisteredUserCommand[] = [
@@ -303,5 +306,101 @@ describe('extractLeadingOpencodeCommand', () => {
         },
       }
     `)
+  })
+})
+
+const optionFixtures: RegisteredUserCommand[] = [
+  {
+    name: 'start-work',
+    discordCommandName: 'start-work',
+    description: 'start a work session',
+    source: 'command',
+  },
+  {
+    name: 'build',
+    discordCommandName: 'build-cmd',
+    description: 'build the project',
+    source: 'command',
+  },
+]
+
+describe('extractOpencodeCommandReference', () => {
+  test('detects a command in the middle of an option description', () => {
+    expect(
+      extractOpencodeCommandReference(
+        'Execute now with /start-work {name}. Plan looks solid.',
+        optionFixtures,
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "",
+          "name": "start-work",
+        },
+      }
+    `)
+  })
+
+  test('detects a backtick-wrapped command and drops placeholder args', () => {
+    expect(
+      extractOpencodeCommandReference(
+        'Execute now with `/start-work {name}`. Plan looks solid.',
+        optionFixtures,
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "",
+          "name": "start-work",
+        },
+      }
+    `)
+  })
+
+  test('resolves a discord-suffixed token mid-text', () => {
+    expect(
+      extractOpencodeCommandReference('Run /build-cmd to compile', optionFixtures),
+    ).toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "",
+          "name": "build",
+        },
+      }
+    `)
+  })
+
+  test('ignores unregistered slash tokens (URLs, prose)', () => {
+    expect(
+      extractOpencodeCommandReference(
+        'See https://example.com/start and/or the docs',
+        optionFixtures,
+      ),
+    ).toMatchInlineSnapshot(`null`)
+  })
+
+  test('returns the first registered command when several are referenced', () => {
+    expect(
+      extractOpencodeCommandReference('first /build then /start-work', optionFixtures),
+    ).toMatchInlineSnapshot(`
+      {
+        "command": {
+          "arguments": "",
+          "name": "build",
+        },
+      }
+    `)
+  })
+
+  test('empty string returns null', () => {
+    expect(extractOpencodeCommandReference('', optionFixtures)).toMatchInlineSnapshot(
+      `null`,
+    )
+  })
+
+  test('plain label with no slash returns null', () => {
+    expect(
+      extractOpencodeCommandReference('Start Work', optionFixtures),
+    ).toMatchInlineSnapshot(`null`)
   })
 })
