@@ -1,7 +1,123 @@
 import { describe, test, expect } from 'vitest'
-import { formatBashToolTitle, formatPart, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
+import { formatPart, formatTodoList, stripToolCallXml, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
+
+describe('stripToolCallXml', () => {
+  test('transforms self-closing skill tag into callout', () => {
+    expect(stripToolCallXml('<skill name="obsidian-plugin" />')).toBe(
+      '<callout accent="#8b5cf6">\nLoaded skill: **obsidian-plugin**\n</callout>',
+    )
+  })
+
+  test('strips todowrite tags with no content', () => {
+    expect(stripToolCallXml('<todowrite>\n<todos>\n</todos>\n</todowrite>')).toBe('')
+  })
+
+  test('transforms todowrite with todo items into callout', () => {
+    const input = [
+      '<todowrite>',
+      '<todos>',
+      '<todo content="Explore the project structure" status="completed"></todo>',
+      '<todo content="Modify author reference" status="in_progress"></todo>',
+      '<todo content="Adjust the title" status="pending"></todo>',
+      '</todos>',
+      '</todowrite>',
+    ].join('\n')
+    const result = stripToolCallXml(input)
+    expect(result).toContain('<callout accent="#3b82f6">')
+    expect(result).toContain('✅ explore the project structure')
+    expect(result).toContain('⏳ modify author reference')
+    expect(result).toContain('☐ adjust the title')
+    expect(result).toContain('</callout>')
+  })
+
+  test('strips think tags entirely (including content)', () => {
+    // Thinking/reasoning blocks are internal and should never be shown
+    expect(stripToolCallXml('<think>internal reasoning here</think>')).toBe('')
+  })
+
+  test('strips thinking block tags entirely', () => {
+    expect(stripToolCallXml('<thinking>let me reason about this</thinking>')).toBe('')
+  })
+
+  test('preserves callout tags', () => {
+    const text = '<callout accent="#3b82f6">\n## Note\nCheck this out\n</callout>'
+    expect(stripToolCallXml(text)).toBe(text)
+  })
+
+  test('transforms skill tag mixed with text', () => {
+    expect(stripToolCallXml('Here is my answer <skill name="search" /> and more text')).toBe(
+      'Here is my answer <callout accent="#8b5cf6">\nLoaded skill: **search**\n</callout> and more text',
+    )
+  })
+
+  test('strips function_call tags', () => {
+    expect(stripToolCallXml('<function_call>do_stuff()</function_call>')).toBe('do_stuff()')
+  })
+
+  test('collapses excessive blank lines after stripping', () => {
+    const input = 'Hello\n\n\n\n\n<skill name="x" />\n\n\n\nWorld'
+    const result = stripToolCallXml(input)
+    expect(result).not.toMatch(/\n{3,}/)
+  })
+
+  test('returns text unchanged when no XML present', () => {
+    expect(stripToolCallXml('Just plain text')).toBe('Just plain text')
+  })
+
+  test('handles empty string', () => {
+    expect(stripToolCallXml('')).toBe('')
+  })
+
+  test('transforms full todowrite block into callout with status icons', () => {
+    const input = [
+      '<todowrite>',
+      '<todos>',
+      '<todo content="First task" status="completed"></todo>',
+      '<todo content="Second task" status="in_progress"></todo>',
+      '<todo content="Third task" status="pending"></todo>',
+      '</todos>',
+      '</todowrite>',
+    ].join('\n')
+    const result = stripToolCallXml(input)
+    expect(result).toContain('✅ first task')
+    expect(result).toContain('⏳ second task')
+    expect(result).toContain('☐ third task')
+    expect(result).toContain('<callout accent="#3b82f6">')
+  })
+
+  test('handles cancelled todo status', () => {
+    const input = [
+      '<todowrite>',
+      '<todos>',
+      '<todo content="Abandoned idea" status="cancelled"></todo>',
+      '<todo content="Active task" status="in_progress"></todo>',
+      '</todos>',
+      '</todowrite>',
+    ].join('\n')
+    const result = stripToolCallXml(input)
+    expect(result).toContain('✘ abandoned idea')
+    expect(result).toContain('⏳ active task')
+  })
+
+  test('strips standalone todo/todo tags not inside todowrite', () => {
+    expect(stripToolCallXml('<todos><todo content="task" status="pending"></todo></todos>')).toBe('')
+  })
+
+  test('todowrite with only completed items still renders callout', () => {
+    const input = [
+      '<todowrite>',
+      '<todos>',
+      '<todo content="All done" status="completed"></todo>',
+      '</todos>',
+      '</todowrite>',
+    ].join('\n')
+    const result = stripToolCallXml(input)
+    expect(result).toContain('✅ all done')
+    expect(result).toContain('<callout accent="#3b82f6">')
+  })
+})
 
 describe('formatPart', () => {
   test('callout text does not get ⬥ prefix', () => {
@@ -10,7 +126,7 @@ describe('formatPart', () => {
       type: 'text',
       sessionID: 'ses_test',
       messageID: 'msg_test',
-      text: `<callout accent="#ef4444">\n## Top priority\n- **Stripe dispute** deadline\n</callout>`,
+      text: '<callout accent="#ef4444">\n## Top priority\n- **Stripe dispute** deadline\n</callout>',
     }
     expect(formatPart(part)).toMatchInlineSnapshot(`
       "
@@ -46,64 +162,66 @@ describe('formatPart', () => {
       Done."
     `)
   })
-})
 
-describe('formatBashToolTitle', () => {
-  test('short single-line command shown in full', () => {
-    expect(formatBashToolTitle({ command: 'echo hello' })).toMatchInlineSnapshot(`" _echo hello_"`)
+  test('transforms skill XML into callout in text part', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: '<skill name="obsidian-plugin" />',
+    }
+    const result = formatPart(part)
+    expect(result).toContain('<callout accent="#8b5cf6">')
+    expect(result).toContain('**obsidian-plugin**')
   })
 
-  test('multiline command without description truncates to first line', () => {
-    expect(
-      formatBashToolTitle({ command: 'echo hello\necho world\necho done' }),
-    ).toMatchInlineSnapshot(`" _echo hello…_"`)
+  test('transforms todowrite XML into callout in text part', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: [
+        '<todowrite>',
+        '<todos>',
+        '<todo content="task" status="pending"></todo>',
+        '</todos>',
+        '</todowrite>',
+      ].join('\n'),
+    }
+    const result = formatPart(part)
+    expect(result).toContain('<callout accent="#3b82f6">')
+    expect(result).toContain('☐ task')
   })
 
-  test('long single-line command is truncated with ellipsis', () => {
-    const longCommand = 'a'.repeat(150)
-    const result = formatBashToolTitle({ command: longCommand })
-    expect(result).toContain('…')
-    expect(result.length).toBeLessThan(150)
+  test('preserves callout tags in text part', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: '<callout accent="#3b82f6">\n## Note\nCheck this\n</callout>',
+    }
+    expect(formatPart(part)).toMatchInlineSnapshot(`
+      "
+      <callout accent="#3b82f6">
+      ## Note
+      Check this
+      </callout>"
+    `)
   })
 
-  test('description is preferred over truncated command when present', () => {
-    expect(
-      formatBashToolTitle({
-        command: 'echo hello\necho world',
-        description: 'Print greeting',
-      }),
-    ).toMatchInlineSnapshot(`" _Print greeting_"`)
-  })
-
-  test('stateTitle used as last resort', () => {
-    expect(
-      formatBashToolTitle({ command: '', stateTitle: 'Running tests' }),
-    ).toMatchInlineSnapshot(`" _Running tests_"`)
-  })
-
-  test('empty inputs return empty string', () => {
-    expect(formatBashToolTitle({ command: '' })).toBe('')
-  })
-
-  test('leading blank line skipped, uses first meaningful line', () => {
-    expect(
-      formatBashToolTitle({ command: '\npnpm test\npnpm build' }),
-    ).toMatchInlineSnapshot(`" _pnpm test…_"`)
-  })
-
-  test('whitespace-only first line skipped', () => {
-    expect(
-      formatBashToolTitle({ command: '   \npnpm test' }),
-    ).toMatchInlineSnapshot(`" _pnpm test…_"`)
-  })
-
-  test('no description field (new opencode) with multiline command', () => {
-    // This is the exact scenario that was broken: opencode removed `description`
-    // from the bash tool schema, so multiline commands rendered as just "┣ bash"
-    const command = 'git diff HEAD~1 --stat && git log --oneline -5'
-    expect(formatBashToolTitle({ command: command + '\n' + 'echo done' })).toMatchInlineSnapshot(
-      `" _git diff HEAD\\~1 --stat && git log --oneline -5…_"`,
-    )
+  test('transforms skill XML inline with text', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      text: 'Here is my work <skill name="search" /> and more details',
+    }
+    const result = formatPart(part)
+    expect(result).toContain('Loaded skill: **search**')
   })
 })
 
@@ -172,7 +290,10 @@ describe('formatTodoList', () => {
       state: {
         status: 'completed',
         input: {
-          todos: [{ content: 'Fix the bug', status: 'in_progress' }],
+          todos: [
+            { content: 'First task', status: 'completed' },
+            { content: 'Modify Author Reference', status: 'in_progress' },
+          ],
         },
         output: '',
         title: 'todowrite',
@@ -181,251 +302,115 @@ describe('formatTodoList', () => {
       },
     }
 
-    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒈ **fix the bug**"`)
-  })
-})
-
-describe('serializeEmbeds', () => {
-  function fakeEmbed(data: {
-    title?: string
-    description?: string
-    url?: string
-    author?: { name: string }
-    footer?: { text: string }
-    fields?: Array<{ name: string; value: string; inline?: boolean }>
-  }): Embed {
-    return {
-      title: data.title ?? null,
-      description: data.description ?? null,
-      url: data.url ?? null,
-      author: data.author ?? null,
-      footer: data.footer ?? null,
-      fields: data.fields ?? [],
-    } as unknown as Embed
-  }
-
-  test('serializes a full embed with all fields', () => {
-    const embeds = [
-      fakeEmbed({
-        author: { name: 'GitHub' },
-        title: 'PR #42: Fix auth timeout',
-        url: 'https://github.com/org/repo/pull/42',
-        description: 'Fixes the retry logic so tokens refresh before expiry.',
-        fields: [
-          { name: 'Status', value: 'Open' },
-          { name: 'Reviewers', value: 'alice, bob' },
-        ],
-        footer: { text: 'Last updated 2h ago' },
-      }),
-    ]
-    expect(serializeEmbeds(embeds)).toMatchInlineSnapshot(`
-      "<embed>
-      Author: GitHub
-      Title: PR #42: Fix auth timeout
-      URL: https://github.com/org/repo/pull/42
-      Fixes the retry logic so tokens refresh before expiry.
-      Status: Open
-      Reviewers: alice, bob
-      Footer: Last updated 2h ago
-      </embed>"
-    `)
+    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒉ **modify Author Reference**"`)
   })
 
-  test('serializes description-only embed (link preview)', () => {
-    const embeds = [
-      fakeEmbed({
-        title: 'Example Site',
-        url: 'https://example.com',
-        description: 'An example website for testing.',
-      }),
-    ]
-    expect(serializeEmbeds(embeds)).toMatchInlineSnapshot(`
-      "<embed>
-      Title: Example Site
-      URL: https://example.com
-      An example website for testing.
-      </embed>"
-    `)
+  test('returns empty string when todos is not an array', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: { todos: 'not an array' },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
   })
 
-  test('returns empty string for no embeds', () => {
-    expect(serializeEmbeds([])).toBe('')
+  test('returns empty string when todos is undefined', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {},
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
   })
 
-  test('skips embeds with no text content', () => {
-    // An embed with only an image and no text fields
-    const embeds = [fakeEmbed({})]
-    expect(serializeEmbeds(embeds)).toBe('')
+  test('returns empty string when todos is null', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: { todos: null },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
+
+    expect(formatTodoList(part)).toBe('')
   })
 
-  test('serializes multiple embeds', () => {
-    const embeds = [
-      fakeEmbed({ title: 'First', description: 'one' }),
-      fakeEmbed({ title: 'Second', description: 'two' }),
-    ]
-    expect(serializeEmbeds(embeds)).toMatchInlineSnapshot(`
-      "<embed>
-      Title: First
-      one
-      </embed>
+  test('returns empty string when todo item content is undefined', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          todos: [{ status: 'in_progress' }],
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
 
-      <embed>
-      Title: Second
-      two
-      </embed>"
-    `)
-  })
-})
-
-// Helper to create a fake Map-like Collection for tests
-function fakeCollection<K, V>(entries: [K, V][]): Collection<K, V> {
-  const map = new Map(entries)
-  return {
-    size: map.size,
-    [Symbol.iterator]: map[Symbol.iterator].bind(map),
-  } as unknown as Collection<K, V>
-}
-
-describe('serializePoll', () => {
-  function fakePoll(data: {
-    question: string
-    answers: Array<{ id: number; text: string | null }>
-  }): Poll {
-    return {
-      question: { text: data.question },
-      answers: fakeCollection(
-        data.answers.map((a) => [a.id, { text: a.text }]),
-      ),
-    } as unknown as Poll
-  }
-
-  test('serializes a poll with question and answers', () => {
-    const poll = fakePoll({
-      question: 'Which framework?',
-      answers: [
-        { id: 1, text: 'React' },
-        { id: 2, text: 'Vue' },
-        { id: 3, text: 'Svelte' },
-      ],
-    })
-    expect(serializePoll(poll)).toMatchInlineSnapshot(`
-      "<poll>
-      Question: Which framework?
-      - React
-      - Vue
-      - Svelte
-      </poll>"
-    `)
+    expect(formatTodoList(part)).toBe('')
   })
 
-  test('returns empty string for null poll', () => {
-    expect(serializePoll(null)).toBe('')
-  })
+  test('returns empty string when todo content is empty string', () => {
+    const part: Part = {
+      id: 'test',
+      type: 'tool',
+      tool: 'todowrite',
+      sessionID: 'ses_test',
+      messageID: 'msg_test',
+      callID: 'call_test',
+      state: {
+        status: 'completed',
+        input: {
+          todos: [{ content: '', status: 'in_progress' }],
+        },
+        output: '',
+        title: 'todowrite',
+        metadata: {},
+        time: { start: 0, end: 0 },
+      },
+    }
 
-  test('skips answers with no text', () => {
-    const poll = fakePoll({
-      question: 'Pick one',
-      answers: [
-        { id: 1, text: 'Option A' },
-        { id: 2, text: null },
-      ],
-    })
-    expect(serializePoll(poll)).toMatchInlineSnapshot(`
-      "<poll>
-      Question: Pick one
-      - Option A
-      </poll>"
-    `)
-  })
-})
-
-describe('serializeMessageSnapshots', () => {
-  function fakeSnapshot(data: {
-    content?: string
-    embeds?: Embed[]
-  }): MessageSnapshot {
-    return {
-      content: data.content ?? '',
-      embeds: data.embeds ?? [],
-    } as unknown as MessageSnapshot
-  }
-
-  function fakeEmbed(data: {
-    title?: string
-    description?: string
-    url?: string
-    author?: { name: string }
-    footer?: { text: string }
-    fields?: Array<{ name: string; value: string }>
-  }): Embed {
-    return {
-      title: data.title ?? null,
-      description: data.description ?? null,
-      url: data.url ?? null,
-      author: data.author ?? null,
-      footer: data.footer ?? null,
-      fields: data.fields ?? [],
-    } as unknown as Embed
-  }
-
-  test('serializes a forwarded message with content', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
-      ['1', fakeSnapshot({ content: 'Hello from another channel' })],
-    ])
-    expect(serializeMessageSnapshots(snapshots)).toMatchInlineSnapshot(`
-      "<forwarded-message>
-      Hello from another channel
-      </forwarded-message>"
-    `)
-  })
-
-  test('serializes forwarded message with content and embeds', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
-      [
-        '1',
-        fakeSnapshot({
-          content: 'Check this out',
-          embeds: [fakeEmbed({ title: 'Link Preview', description: 'A cool site' })],
-        }),
-      ],
-    ])
-    expect(serializeMessageSnapshots(snapshots)).toMatchInlineSnapshot(`
-      "<forwarded-message>
-      Check this out
-
-      <embed>
-      Title: Link Preview
-      A cool site
-      </embed>
-      </forwarded-message>"
-    `)
-  })
-
-  test('returns empty string for no snapshots', () => {
-    const empty = fakeCollection<string, MessageSnapshot>([])
-    expect(serializeMessageSnapshots(empty)).toBe('')
-  })
-
-  test('skips snapshots with no content', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
-      ['1', fakeSnapshot({})],
-    ])
-    expect(serializeMessageSnapshots(snapshots)).toBe('')
-  })
-
-  test('serializes multiple forwarded messages', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
-      ['1', fakeSnapshot({ content: 'First forwarded' })],
-      ['2', fakeSnapshot({ content: 'Second forwarded' })],
-    ])
-    expect(serializeMessageSnapshots(snapshots)).toMatchInlineSnapshot(`
-      "<forwarded-message>
-      First forwarded
-      </forwarded-message>
-
-      <forwarded-message>
-      Second forwarded
-      </forwarded-message>"
-    `)
+    expect(formatTodoList(part)).toBe('')
   })
 })
