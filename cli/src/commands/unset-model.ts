@@ -20,29 +20,10 @@ import * as schema from '../schema.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
-import { getCurrentModelInfo } from './model.js'
+import { formatModelSource, getCurrentModelInfo } from './model.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const unsetModelLogger = createLogger(LogPrefix.MODEL)
-
-function formatModelSource(type: string, agentName?: string): string {
-  switch (type) {
-    case 'session':
-      return 'session override'
-    case 'agent':
-      return `agent "${agentName}"`
-    case 'channel':
-      return 'channel override'
-    case 'global':
-      return 'global default'
-    case 'opencode-config':
-    case 'opencode-recent':
-    case 'opencode-provider-default':
-      return 'opencode default'
-    default:
-      return 'none'
-  }
-}
 
 /**
  * Clear the nearest model override for the current channel/thread.
@@ -144,7 +125,10 @@ export async function clearModelOverride({
     newModelText =
       newModelInfo.type === 'none'
         ? 'none'
-        : `\`${newModelInfo.model}\` (${formatModelSource(newModelInfo.type, agentName)})`
+        : `\`${newModelInfo.model}\` (${formatModelSource({
+            type: newModelInfo.type,
+            agentName,
+          })})`
   }
 
   // Check if there's a running request and abort+retry with new model (only for session changes in threads)

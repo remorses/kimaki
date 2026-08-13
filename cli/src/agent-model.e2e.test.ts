@@ -237,13 +237,13 @@ function createAgentFile({
 }: {
   projectDirectory: string
   agentName: string
-  model: string
+  model?: string
 }) {
   const agentDir = path.join(projectDirectory, '.opencode', 'agent')
   fs.mkdirSync(agentDir, { recursive: true })
   const content = [
     '---',
-    `model: ${model}`,
+    ...(model ? [`model: ${model}`] : []),
     'mode: primary',
     `description: Test agent with custom model`,
     '---',
@@ -369,6 +369,10 @@ describe('agent model resolution', () => {
       agentName: 'plan',
       model: `${PROVIDER_NAME}/${PLAN_AGENT_MODEL}`,
     })
+    createAgentFile({
+      projectDirectory: directories.projectDirectory,
+      agentName: 'plain',
+    })
 
     const dbPath = path.join(directories.dataDir, 'discord-sessions.db')
     const hranaResult = await startHranaServer({ dbPath })
@@ -395,7 +399,7 @@ describe('agent model resolution', () => {
 
     // Register quick agent slash commands so /plan-agent and /test-agent-agent
     // are resolvable by handleQuickAgentCommand via guild.commands.fetch().
-    const agentCommands = ['test-agent', 'plan'].map((agentName) => {
+    const agentCommands = ['test-agent', 'plan', 'plain'].map((agentName) => {
       return new SlashCommandBuilder()
         .setName(`${agentName}-agent`)
         .setDescription(
@@ -1252,7 +1256,7 @@ describe('agent model resolution', () => {
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
-        Model: *deterministic-provider/plan-model-v2*
+        Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
         --- from: user (agent-model-tester)
         Reply with exactly: after-switch-msg
@@ -1273,6 +1277,170 @@ describe('agent model resolution', () => {
       // After /plan-agent in the thread, model should switch to plan's model
       expect(secondFooter!.content).toContain(PLAN_AGENT_MODEL)
       expect(secondFooter!.content).not.toContain(AGENT_MODEL)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent on the same agent refreshes a stale session model',
+    async () => {
+      await setChannelAgent(TEXT_CHANNEL_ID, 'plan')
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: refresh-agent-model-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: refresh-agent-model-msg'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const sessionId = await getThreadSession(thread.id)
+      expect(sessionId).toBeDefined()
+      if (!sessionId) throw new Error('Expected session')
+
+      await setSessionModel({
+        sessionId,
+        modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      })
+
+      const th = discord.thread(thread.id)
+      const { id: interactionId } = await th
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'plan-agent' })
+
+      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: refresh-agent-model-msg
+        --- from: assistant (TestBot)
+        *using deterministic-provider/plan-model-v2 ⋅ plan*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***
+        Using **plan** agent for this session
+        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        The agent will change on the next message."
+      `)
+      expect(await th.text()).not.toContain('Already using')
+      expect(await getSessionModel(sessionId)).toBeUndefined()
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent shows the agent model when a channel model is also set',
+    async () => {
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+      await setChannelModel({
+        channelId: TEXT_CHANNEL_ID,
+        modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      })
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: channel-vs-agent-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: channel-vs-agent-msg'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const th = discord.thread(thread.id)
+      const { id: interactionId } = await th
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'plan-agent' })
+
+      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      const threadText = await th.text()
+      expect(threadText).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: channel-vs-agent-msg
+        --- from: assistant (TestBot)
+        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        Switched to **plan** agent for this session (was **test-agent**)
+        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        The agent will change on the next message."
+      `)
+      expect(threadText).toContain(
+        `Model: *${PROVIDER_NAME}/${PLAN_AGENT_MODEL}* (agent "plan")`,
+      )
+      expect(threadText).not.toContain('channel override')
+    },
+    20_000,
+  )
+
+  test(
+    '/plain-agent tells the user to clear a channel model override',
+    async () => {
+      const db = await getDb()
+      await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
+      await setChannelModel({
+        channelId: TEXT_CHANNEL_ID,
+        modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      })
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: plain-agent-override-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: plain-agent-override-msg'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const th = discord.thread(thread.id)
+      const { id: interactionId } = await th
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'plain-agent' })
+
+      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: plain-agent-override-msg
+        --- from: assistant (TestBot)
+        *using deterministic-provider/channel-model-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*
+        Switched to **plain** agent for this session
+        Model: *deterministic-provider/channel-model-v2* (channel override)
+        This model comes from a channel override. Use /model and press Clear override if you want this agent's model.
+        The agent will change on the next message."
+      `)
     },
     20_000,
   )

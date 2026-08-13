@@ -150,6 +150,31 @@ export type CurrentModelInfo =
     }
   | { type: 'none' }
 
+export function formatModelSource({
+  type,
+  agentName,
+}: {
+  type: CurrentModelInfo['type'] | string
+  agentName?: string
+}): string {
+  switch (type) {
+    case 'session':
+      return 'session override'
+    case 'agent':
+      return `agent "${agentName}"`
+    case 'channel':
+      return 'channel override'
+    case 'global':
+      return 'global default'
+    case 'opencode-config':
+    case 'opencode-recent':
+    case 'opencode-provider-default':
+      return 'opencode default'
+    default:
+      return 'none'
+  }
+}
+
 function parseModelId(
   modelString: string,
 ): { providerID: string; modelID: string } | undefined {
