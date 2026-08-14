@@ -23,6 +23,8 @@ session_created
 turn_started   ◄── main activity / DAU signal
      │
 turn_completed ◄── natural visible finish + duration
+     │
+tokens_used    ◄── billed tokens at session.idle (abort + subagents too)
 ```
 
 ## Projects
@@ -90,10 +92,12 @@ Per-event props:
 | `session_created` | `custom.has_worktree`, `custom.source` (`discord`/`scheduled`) |
 | `turn_started` | `custom.input_kind` (`prompt`/`command`), `custom.ingress_mode` (`direct`/`local_queue`), `custom.source` (`discord`/`cli`/`scheduled`/`retry`), `custom.uses_custom_agent` |
 | `turn_completed` | `custom.duration_sec` |
+| `tokens_used` | `custom.tokens_input`, `custom.tokens_output`, `custom.tokens_reasoning`, `custom.tokens_cache_read`, `custom.tokens_cache_write`, `custom.tokens_total`, `custom.cost`, `custom.assistant_message_count`, `custom.is_subagent`, optional `custom.model`, optional `custom.provider` |
 
 **Notes:**
 
 - `turn_completed` fires only on **natural visible** assistant completion (footer path). Aborts and empty runs do not complete.
+- `tokens_used` fires on **session.idle**. It reports the billed delta since the previous idle in the same user turn, so abort races and restarts do not double-count. `custom.tokens_total` uses OpenCode `tokens.total` when present; component fields are still sent for mix analysis. Reasoning is often already inside output, so do not sum components to get billed tokens. Subagent sessions emit their own event with `custom.is_subagent = "true"`. `custom.model` / `custom.provider` are the last assistant step in that delta, not a perfect mixed-model split. Empty / zero-token idles are skipped. Do not also sum `turn_completed` for tokens.
 - `custom.source = retry` on `turn_started` is internal resume traffic. Exclude it from pure product DAU if you want user-driven activity only.
 - Booleans land as strings (`"true"` / `"false"`) in ClickHouse map values.
 - Multiple `--data-dir` values = multiple installs.
@@ -334,6 +338,51 @@ LIMIT 20
 " -p kimaki
 ```
 
+### Total token usage
+
+`tokens_used` is the event to sum. Each row is one session run (main turn or subagent) becoming idle.
+
+```bash
+strada query "
+SELECT
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_input'])) AS input,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_output'])) AS output,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_reasoning'])) AS reasoning,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_cache_read'])) AS cache_read,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_cache_write'])) AS cache_write,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_total'])) AS total,
+  sum(toFloat64OrZero(LogAttributes['custom.cost'])) AS cost,
+  uniqExact(LogAttributes['custom.install_id']) AS installs
+FROM otel_logs
+WHERE Timestamp >= now() - INTERVAL 30 DAY
+  AND ServiceName = 'kimaki-cli'
+  AND LogAttributes['event.name'] = 'tokens_used'
+LIMIT 1
+" -p kimaki
+```
+
+### Token usage by model
+
+```bash
+strada query "
+SELECT
+  LogAttributes['custom.provider'] AS provider,
+  LogAttributes['custom.model'] AS model,
+  LogAttributes['custom.is_subagent'] AS is_subagent,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_total'])) AS tokens,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_input'])) AS input,
+  sum(toFloat64OrZero(LogAttributes['custom.tokens_output'])) AS output,
+  count() AS runs
+FROM otel_logs
+WHERE Timestamp >= now() - INTERVAL 30 DAY
+  AND ServiceName = 'kimaki-cli'
+  AND LogAttributes['event.name'] = 'tokens_used'
+GROUP BY provider, model, is_subagent
+ORDER BY tokens DESC
+LIMIT 30
+" -p kimaki
+```
+
 ## Retention
 
 Identity is `custom.install_id`. Cohort day = first day that install emitted any product event.
@@ -504,6 +553,8 @@ LIMIT 50
 
 - Active installs (DAU/WAU/MAU)
 - Turns per install and completion rate
+- Total billed tokens across all installs (`tokens_used`)
+- Token mix by model / provider / cache vs output
 - Gateway vs self-hosted share
 - OS / arch mix
 - Discord vs CLI vs scheduled traffic
@@ -512,7 +563,6 @@ LIMIT 50
 
 **Cannot answer yet**
 
-- Which model or provider users pick
 - Exact agent name (only `uses_custom_agent` boolean)
 - Why a turn failed (no abort/error product event)
 - Version-over-version comparisons (version is on the OTel resource, not always on event props)
@@ -525,6 +575,6 @@ LIMIT 50
 | Emit helpers | `cli/src/analytics.ts` |
 | `bot_started` | `cli/src/discord-bot.ts` |
 | `project_registered` | `cli/src/channel-management.ts` |
-| `session_created` / turns | `cli/src/session-handler/thread-session-runtime.ts` |
+| `session_created` / turns / `tokens_used` | `cli/src/session-handler/thread-session-runtime.ts` |
 | CLI short-path init/flush | `cli/src/cli-commands/project.ts`, `send.ts`, `cli-runner.ts` |
 | Website errors | `website/src/strada-init.ts`, `website/src/strada-browser.tsx` |

@@ -15,6 +15,8 @@ import {
   getDerivedSubtaskIndex,
   getLatestAssistantMessageIdForLatestUserTurn,
   getLatestRunInfo,
+  getLatestTurnTokenUsage,
+  getIdleTokenUsageDelta,
   hasAssistantMessageCompletedBefore,
   doesLatestUserTurnHaveNaturalCompletion,
   isAssistantMessageInLatestUserTurn,
@@ -832,5 +834,493 @@ describe('real-session-footer-suppressed-on-pre-idle-interrupt', () => {
       sessionId,
       messageId: latestAssistantId,
     })).toBe(true)
+  })
+})
+
+describe('getLatestTurnTokenUsage', () => {
+  function userEvent({
+    sessionId,
+    messageId,
+    created,
+  }: {
+    sessionId: string
+    messageId: string
+    created: number
+  }) {
+    return eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: messageId,
+          sessionID: sessionId,
+          role: 'user',
+          time: { created },
+          agent: 'build',
+          model: {
+            providerID: 'openai',
+            modelID: 'gpt-5.3-codex',
+          },
+        },
+      },
+    })
+  }
+
+  function assistantEvent({
+    sessionId,
+    messageId,
+    parentID,
+    created,
+    tokens,
+    cost = 0,
+    modelID = 'gpt-5.3-codex',
+    providerID = 'openai',
+  }: {
+    sessionId: string
+    messageId: string
+    parentID: string
+    created: number
+    tokens: {
+      total?: number
+      input: number
+      output: number
+      reasoning: number
+      cache: { read: number; write: number }
+    }
+    cost?: number
+    modelID?: string
+    providerID?: string
+  }) {
+    return eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: messageId,
+          sessionID: sessionId,
+          role: 'assistant',
+          time: { created, completed: created + 1 },
+          parentID,
+          modelID,
+          providerID,
+          mode: 'build',
+          agent: 'build',
+          path: { cwd: '/test', root: '/test' },
+          cost,
+          tokens,
+          finish: 'stop',
+        },
+      },
+    })
+  }
+
+  test('sums latest snapshot per assistant message in the latest turn', () => {
+    const sessionId = 'ses_tokens'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 20,
+          reasoning: 5,
+          cache: { read: 10, write: 2 },
+        },
+        cost: 1,
+      }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_1',
+        created: 3,
+        tokens: {
+          input: 50,
+          output: 8,
+          reasoning: 1,
+          cache: { read: 4, write: 0 },
+        },
+        cost: 2,
+      }),
+    ]
+
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
+      input: 150,
+      output: 28,
+      reasoning: 6,
+      cacheRead: 14,
+      cacheWrite: 2,
+      total: 200,
+      cost: 3,
+      model: 'gpt-5.3-codex',
+      providerID: 'openai',
+      assistantMessageCount: 2,
+      userMessageId: 'msg_user_1',
+    })
+  })
+
+  test('ignores previous-turn assistant messages', () => {
+    const sessionId = 'ses_tokens_turns'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 1000,
+          output: 100,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 7,
+          output: 3,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: 'gemini-2.5-flash',
+        providerID: 'google',
+      }),
+    ]
+
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
+      input: 7,
+      output: 3,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 10,
+      cost: 0,
+      model: 'gemini-2.5-flash',
+      providerID: 'google',
+      assistantMessageCount: 1,
+      userMessageId: 'msg_user_2',
+    })
+  })
+
+  test('returns zeros when the latest turn has no assistant tokens', () => {
+    const sessionId = 'ses_empty'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+    ]
+
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+      cost: 0,
+      model: undefined,
+      providerID: undefined,
+      assistantMessageCount: 0,
+      userMessageId: 'msg_user_1',
+    })
+  })
+
+  test('real-session-task-normal uses the completed assistant snapshot', () => {
+    const events = loadFixture('real-session-task-normal.jsonl')
+    const sessionId = getSessionId(events)
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
+      input: 39025,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 39025,
+      cost: 0,
+      model: 'gemini-2.5-flash',
+      providerID: 'cached-google-real-events',
+      assistantMessageCount: 1,
+      userMessageId: 'msg_cb9aae4c9001CxCOkoqgiXRsi1',
+    })
+  })
+
+  test('real-session-task-user-interruption sums both assistant steps', () => {
+    const events = loadFixture('real-session-task-user-interruption.jsonl')
+    const sessionId = getSessionId(events)
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
+      input: 82526,
+      output: 79,
+      reasoning: 115,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 82720,
+      cost: 0,
+      model: 'gemini-2.5-flash',
+      providerID: 'cached-google-real-events',
+      assistantMessageCount: 2,
+      userMessageId: 'msg_cb9b0ba6c001i3YH7bGffdB6BF',
+    })
+  })
+
+  test('uses tokens.total when it differs from the component sum', () => {
+    const sessionId = 'ses_canonical_total'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          total: 47319,
+          input: 1217,
+          output: 278,
+          reasoning: 54,
+          cache: { read: 45824, write: 0 },
+        },
+      }),
+    ]
+
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toMatchObject({
+      input: 1217,
+      output: 278,
+      reasoning: 54,
+      cacheRead: 45824,
+      cacheWrite: 0,
+      total: 47319,
+      assistantMessageCount: 1,
+    })
+  })
+
+  test('real-session-task-three-parallel-sleeps uses billed totals', () => {
+    const events = loadFixture('real-session-task-three-parallel-sleeps.jsonl')
+    const sessionId = getSessionId(events)
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toMatchObject({
+      input: 47139,
+      output: 1093,
+      reasoning: 472,
+      cacheRead: 45824,
+      cacheWrite: 0,
+      total: 94056,
+      model: 'gpt-5.3-codex',
+      providerID: 'openai',
+      assistantMessageCount: 2,
+    })
+  })
+
+  test('returns empty when the session has no user message', () => {
+    const sessionId = 'ses_no_user'
+    const events = [
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_missing',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+    ]
+
+    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+      cost: 0,
+      model: undefined,
+      providerID: undefined,
+      assistantMessageCount: 0,
+      userMessageId: undefined,
+    })
+  })
+})
+
+describe('getIdleTokenUsageDelta', () => {
+  function idleEvent(sessionId: string): EventBufferEntry {
+    return eventEntry({
+      type: 'session.idle',
+      properties: { sessionID: sessionId },
+    })
+  }
+
+  test('emits the first idle snapshot and skips a later idle with the same tokens', () => {
+    const sessionId = 'ses_delta'
+    const events = [
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: 'msg_user_1',
+            sessionID: sessionId,
+            role: 'user',
+            time: { created: 1 },
+            agent: 'build',
+            model: {
+              providerID: 'openai',
+              modelID: 'gpt-5.3-codex',
+            },
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: 'msg_asst_1',
+            sessionID: sessionId,
+            role: 'assistant',
+            time: { created: 2, completed: 3 },
+            parentID: 'msg_user_1',
+            modelID: 'gpt-5.3-codex',
+            providerID: 'openai',
+            mode: 'build',
+            agent: 'build',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0,
+            tokens: {
+              input: 10,
+              output: 5,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+            finish: 'stop',
+          },
+        },
+      }),
+      idleEvent(sessionId),
+      idleEvent(sessionId),
+    ]
+
+    const firstIdleIndex = events.length - 2
+    const secondIdleIndex = events.length - 1
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId,
+      idleEventIndex: firstIdleIndex,
+    })).toMatchObject({
+      total: 15,
+    })
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId,
+      idleEventIndex: secondIdleIndex,
+    })).toBeUndefined()
+  })
+
+  test('emits the growth after an early idle that saw zero tokens', () => {
+    const sessionId = 'ses_late_tokens'
+    const events = [
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: 'msg_user_1',
+            sessionID: sessionId,
+            role: 'user',
+            time: { created: 1 },
+            agent: 'build',
+            model: {
+              providerID: 'openai',
+              modelID: 'gpt-5.3-codex',
+            },
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: 'msg_asst_1',
+            sessionID: sessionId,
+            role: 'assistant',
+            time: { created: 2 },
+            parentID: 'msg_user_1',
+            modelID: 'gpt-5.3-codex',
+            providerID: 'openai',
+            mode: 'build',
+            agent: 'build',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0,
+            tokens: {
+              input: 0,
+              output: 0,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+          },
+        },
+      }),
+      idleEvent(sessionId),
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: 'msg_asst_1',
+            sessionID: sessionId,
+            role: 'assistant',
+            time: { created: 2, completed: 4 },
+            parentID: 'msg_user_1',
+            modelID: 'gpt-5.3-codex',
+            providerID: 'openai',
+            mode: 'build',
+            agent: 'build',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0,
+            tokens: {
+              total: 20,
+              input: 12,
+              output: 8,
+              reasoning: 3,
+              cache: { read: 0, write: 0 },
+            },
+            finish: 'stop',
+          },
+        },
+      }),
+      idleEvent(sessionId),
+    ]
+
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId,
+      idleEventIndex: 2,
+    })).toBeUndefined()
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId,
+      idleEventIndex: events.length - 1,
+    })).toMatchObject({
+      input: 12,
+      output: 8,
+      reasoning: 3,
+      total: 20,
+    })
   })
 })

@@ -307,6 +307,216 @@ function getTokenTotal(tokens: {
   return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
 }
 
+export type TurnTokenUsage = {
+  input: number
+  output: number
+  reasoning: number
+  cacheRead: number
+  cacheWrite: number
+  total: number
+  cost: number
+  model: string | undefined
+  providerID: string | undefined
+  assistantMessageCount: number
+  userMessageId: string | undefined
+}
+
+function emptyTurnTokenUsage(): TurnTokenUsage {
+  return {
+    input: 0,
+    output: 0,
+    reasoning: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+    cost: 0,
+    model: undefined,
+    providerID: undefined,
+    assistantMessageCount: 0,
+    userMessageId: undefined,
+  }
+}
+
+// Latest billed token snapshot for the current user turn.
+// Sums the last message.updated tokens per assistant message id so streaming
+// updates are not double-counted. Scoped to sessionId so subagent idles
+// report their own usage.
+export function getLatestTurnTokenUsage({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): TurnTokenUsage {
+  const latestUserMessage = getLatestUserMessage({
+    events,
+    sessionId,
+    upToIndex,
+  })
+  if (!latestUserMessage) {
+    return emptyTurnTokenUsage()
+  }
+  const end = upToIndex ?? events.length - 1
+  const latestByMessageId = new Map<string, AssistantMessage>()
+
+  for (let i = 0; i <= end; i++) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const event = entry.event
+    if (event.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+      continue
+    }
+    if (info.parentID !== latestUserMessage.id) {
+      continue
+    }
+    latestByMessageId.set(info.id, info)
+  }
+
+  if (latestByMessageId.size === 0) {
+    return {
+      ...emptyTurnTokenUsage(),
+      userMessageId: latestUserMessage?.id,
+    }
+  }
+
+  const usage = emptyTurnTokenUsage()
+  usage.userMessageId = latestUserMessage.id
+  usage.assistantMessageCount = latestByMessageId.size
+  for (const message of latestByMessageId.values()) {
+    if (message.tokens) {
+      usage.input += message.tokens.input
+      usage.output += message.tokens.output
+      usage.reasoning += message.tokens.reasoning
+      usage.cacheRead += message.tokens.cache.read
+      usage.cacheWrite += message.tokens.cache.write
+      usage.total += message.tokens.total ?? getTokenTotal(message.tokens)
+    }
+    usage.cost += message.cost
+    usage.model = message.modelID
+    usage.providerID = message.providerID
+  }
+  return usage
+}
+
+function findFirstUserMessageIndex({
+  events,
+  userMessageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  userMessageId: string
+  upToIndex: number
+}): number | undefined {
+  for (let i = 0; i <= upToIndex; i++) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.updated') {
+      continue
+    }
+    if (event.properties.info.id === userMessageId) {
+      return i
+    }
+  }
+  return undefined
+}
+
+function findPreviousIdleIndexInTurn({
+  events,
+  sessionId,
+  firstUserMessageIndex,
+  beforeIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  firstUserMessageIndex: number
+  beforeIndex: number
+}): number | undefined {
+  for (let i = beforeIndex - 1; i > firstUserMessageIndex; i--) {
+    const event = events[i]?.event
+    if (event?.type === 'session.idle' && event.properties.sessionID === sessionId) {
+      return i
+    }
+  }
+  return undefined
+}
+
+function subtractTokenUsage({
+  current,
+  previous,
+}: {
+  current: TurnTokenUsage
+  previous: TurnTokenUsage
+}): TurnTokenUsage {
+  return {
+    input: current.input - previous.input,
+    output: current.output - previous.output,
+    reasoning: current.reasoning - previous.reasoning,
+    cacheRead: current.cacheRead - previous.cacheRead,
+    cacheWrite: current.cacheWrite - previous.cacheWrite,
+    total: current.total - previous.total,
+    cost: current.cost - previous.cost,
+    model: current.model,
+    providerID: current.providerID,
+    assistantMessageCount: current.assistantMessageCount,
+    userMessageId: current.userMessageId,
+  }
+}
+
+// Tokens billed since the previous session.idle in this user turn.
+// Survives process restart because both idles stay in the event buffer.
+export function getIdleTokenUsageDelta({
+  events,
+  sessionId,
+  idleEventIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  idleEventIndex: number
+}): TurnTokenUsage | undefined {
+  const current = getLatestTurnTokenUsage({
+    events,
+    sessionId,
+    upToIndex: idleEventIndex,
+  })
+  if (!current.userMessageId) {
+    return undefined
+  }
+  const firstUserMessageIndex = findFirstUserMessageIndex({
+    events,
+    userMessageId: current.userMessageId,
+    upToIndex: idleEventIndex,
+  })
+  if (firstUserMessageIndex === undefined) {
+    return undefined
+  }
+  const previousIdleIndex = findPreviousIdleIndexInTurn({
+    events,
+    sessionId,
+    firstUserMessageIndex,
+    beforeIndex: idleEventIndex,
+  })
+  if (previousIdleIndex === undefined) {
+    return current.total > 0 ? current : undefined
+  }
+  const previous = getLatestTurnTokenUsage({
+    events,
+    sessionId,
+    upToIndex: previousIdleIndex,
+  })
+  const delta = subtractTokenUsage({ current, previous })
+  if (delta.total <= 0) {
+    return undefined
+  }
+  return delta
+}
+
 // Scans backward for most recent message.updated with role=assistant for sessionId.
 // Extracts model, providerID, agent, tokensUsed.
 export function getLatestRunInfo({

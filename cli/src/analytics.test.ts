@@ -118,7 +118,7 @@ describe('analytics', () => {
     })
   })
 
-  it('emits project_registered session_created turn_completed shapes', () => {
+  it('emits project_registered session_created turn_completed tokens_used shapes', () => {
     const captured = _enableAnalyticsTestCapture({
       installId: '33333333-3333-4333-8333-333333333333',
       botMode: 'self_hosted',
@@ -136,11 +136,25 @@ describe('analytics', () => {
     trackEvent('turn_completed', {
       duration_sec: 42,
     })
+    trackEvent('tokens_used', {
+      tokens_input: 100,
+      tokens_output: 20,
+      tokens_reasoning: 5,
+      tokens_cache_read: 10,
+      tokens_cache_write: 2,
+      tokens_total: 137,
+      cost: 0,
+      assistant_message_count: 2,
+      is_subagent: false,
+      model: 'gpt-5.3-codex',
+      provider: 'openai',
+    })
 
     expect(captured.map((e) => e.name)).toEqual([
       'project_registered',
       'session_created',
       'turn_completed',
+      'tokens_used',
     ])
     expect(captured[0]!.properties).toMatchObject({
       project_kind: 'user',
@@ -155,6 +169,21 @@ describe('analytics', () => {
     })
     expect(captured[2]!.properties).toMatchObject({
       duration_sec: 42,
+    })
+    expect(captured[3]!.properties).toMatchObject({
+      tokens_input: 100,
+      tokens_output: 20,
+      tokens_reasoning: 5,
+      tokens_cache_read: 10,
+      tokens_cache_write: 2,
+      tokens_total: 137,
+      cost: 0,
+      assistant_message_count: 2,
+      is_subagent: false,
+      model: 'gpt-5.3-codex',
+      provider: 'openai',
+      install_id: '33333333-3333-4333-8333-333333333333',
+      schema_version: 1,
     })
   })
 })

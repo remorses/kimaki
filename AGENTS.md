@@ -469,7 +469,7 @@ for checkout validation requests, prefer non-recursive checks unless the user as
 
 ## product analytics (Strada)
 
-anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people.
+anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` fires on `session.idle` (each turn end, including abort and subagents) with billed token breakdowns so total Kimaki token usage can be summed.
 
 - prod project slug: `kimaki`
 - local/dev bot (this repo `cli/.env`): `kimaki-local`

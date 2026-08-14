@@ -46,6 +46,7 @@ export type AnalyticsEventName =
   | 'session_created'
   | 'turn_started'
   | 'turn_completed'
+  | 'tokens_used'
 
 export type AnalyticsBotMode = 'gateway' | 'self_hosted'
 

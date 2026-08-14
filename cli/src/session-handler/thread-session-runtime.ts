@@ -99,6 +99,7 @@ import { getDataDir } from '../config.js'
 import {
   trackEvent,
   type AnalyticsIngressMode,
+  type AnalyticsProps,
   type AnalyticsTurnInputKind,
   type AnalyticsTurnSource,
 } from '../analytics.js'
@@ -115,6 +116,7 @@ import {
   getCurrentTurnStartTime,
   isSessionBusy,
   getLatestRunInfo,
+  getIdleTokenUsageDelta,
   getDerivedSubtaskIndex,
   getDerivedSubtaskAgentType,
   getLatestAssistantMessageIdForLatestUserTurn,
@@ -2285,7 +2287,50 @@ export class ThreadSessionRuntime {
     this.requestTypingRepulse()
   }
 
+  private trackIdleTokenUsage(idleSessionId: string): void {
+    let idleEventIndex: number | undefined
+    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
+      const event = this.eventBuffer[i]?.event
+      if (event?.type === 'session.idle' && event.properties.sessionID === idleSessionId) {
+        idleEventIndex = i
+        break
+      }
+    }
+    if (idleEventIndex === undefined) {
+      return
+    }
+    const usage = getIdleTokenUsageDelta({
+      events: this.eventBuffer,
+      sessionId: idleSessionId,
+      idleEventIndex,
+    })
+    if (!usage) {
+      return
+    }
+
+    const properties: AnalyticsProps = {
+      tokens_input: usage.input,
+      tokens_output: usage.output,
+      tokens_reasoning: usage.reasoning,
+      tokens_cache_read: usage.cacheRead,
+      tokens_cache_write: usage.cacheWrite,
+      tokens_total: usage.total,
+      cost: usage.cost,
+      assistant_message_count: usage.assistantMessageCount,
+      is_subagent: Boolean(this.getSubtaskInfoForSession(idleSessionId)),
+    }
+    if (usage.model) {
+      properties.model = usage.model
+    }
+    if (usage.providerID) {
+      properties.provider = usage.providerID
+    }
+    trackEvent('tokens_used', properties)
+  }
+
   private async handleSessionIdle(idleSessionId: string): Promise<void> {
+    this.trackIdleTokenUsage(idleSessionId)
+
     const sessionId = this.state?.sessionId
 
     // ── Subtask idle ──────────────────────────────────────────
