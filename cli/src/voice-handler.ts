@@ -30,9 +30,13 @@ import {
   getGeminiApiKey,
   getTranscriptionApiKey,
   getBotTokenWithMode,
+  getLocalWhisperModel,
+  getTranscriptionEndpoint,
   findTextChannelByVoiceChannel,
 } from './database.js'
 import { transcribeViaKimakiGateway } from './cloudflare-transcription.js'
+import { transcribeLocalWhisper } from './whisper-local.js'
+import { transcribeViaEndpoint } from './whisper-pro.js'
 import {
   sendThreadMessage,
   escapeDiscordFormatting,
@@ -605,14 +609,22 @@ export async function processVoiceAttachment({
     }
   }
 
+  // Built-in local whisper model takes priority: no API key, service, or URL
+  // needed — the model runs in-process (configured via /whisper-setup).
+  const localWhisperModel = appId ? await getLocalWhisperModel(appId) : null
+  // A direct transcription endpoint (auto-provisioned Pro server) outranks all.
+  const transcriptionEndpoint = appId ? await getTranscriptionEndpoint(appId) : null
+
   // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars.
   let transcriptionApiKey: string | undefined
   let transcriptionProvider: 'openai' | 'gemini' | undefined
+  let transcriptionBaseUrl: string | undefined
   if (appId) {
     const stored = await getTranscriptionApiKey(appId)
     if (stored) {
       transcriptionApiKey = stored.apiKey
       transcriptionProvider = stored.provider
+      transcriptionBaseUrl = stored.baseUrl
     }
   }
   if (!transcriptionApiKey && process.env.OPENAI_API_KEY) {
@@ -628,9 +640,10 @@ export async function processVoiceAttachment({
   // via the kimaki.dev Whisper fallback before we bother the user with the
   // "add API key" dialog. This fallback has no tool-calling, so it can't
   // detect queueMessage/agent hints spoken in the voice message the way the
-  // OpenAI/Gemini path can.
+  // OpenAI/Gemini path can. Skipped when a built-in local model or Pro
+  // endpoint is configured — those paths need neither keys nor the gateway.
   let gatewayTranscription: string | undefined
-  if (!transcriptionApiKey) {
+  if (!transcriptionApiKey && !localWhisperModel && !transcriptionEndpoint) {
     const botRow = await getBotTokenWithMode().catch(() => undefined)
     if (botRow?.mode === 'gateway' && botRow.clientId && botRow.clientSecret) {
       const result = await transcribeViaKimakiGateway({
@@ -647,7 +660,8 @@ export async function processVoiceAttachment({
     }
   }
 
-  if (!transcriptionApiKey && !gatewayTranscription) {
+  // A configured local model or Pro endpoint needs no API key — skip the prompt.
+  if (!transcriptionApiKey && !gatewayTranscription && !localWhisperModel && !transcriptionEndpoint) {
     if (!appId) {
       await sendThreadMessage(
         thread,
@@ -666,18 +680,31 @@ export async function processVoiceAttachment({
     transcriptionProvider = requested.provider
   }
 
-  const transcription = gatewayTranscription
-    ? { transcription: gatewayTranscription, queueMessage: false, agent: undefined }
-    : await transcribeAudio({
+  const transcription = transcriptionEndpoint
+    ? await transcribeViaEndpoint({
         audio: audioBuffer,
-        prompt: transcriptionPrompt,
-        apiKey: transcriptionApiKey!,
-        provider: transcriptionProvider!,
-        mediaType: audioAttachment.contentType || undefined,
-        currentSessionContext,
-        lastSessionContext,
-        agents,
+        mediaType: audioAttachment.contentType || 'audio/ogg',
+        endpointUrl: transcriptionEndpoint,
       })
+    : localWhisperModel
+    ? await transcribeLocalWhisper({
+        audio: audioBuffer,
+        mediaType: audioAttachment.contentType || 'audio/ogg',
+        modelId: localWhisperModel,
+      })
+    : gatewayTranscription
+      ? { transcription: gatewayTranscription, queueMessage: false, agent: undefined }
+      : await transcribeAudio({
+          audio: audioBuffer,
+          prompt: transcriptionPrompt,
+          apiKey: transcriptionApiKey!,
+          provider: transcriptionProvider!,
+          baseURL: transcriptionBaseUrl,
+          mediaType: audioAttachment.contentType || undefined,
+          currentSessionContext,
+          lastSessionContext,
+          agents,
+        })
 
   if (transcription instanceof Error) {
     const errMsg = errore.matchError(transcription, {
@@ -687,6 +714,8 @@ export async function processVoiceAttachment({
       EmptyTranscriptionError: (e) => e.message,
       NoResponseContentError: (e) => e.message,
       NoToolResponseError: (e) => e.message,
+      LocalWhisperError: (e) => e.message,
+      WhisperProError: (e) => e.message,
       Error: (e) => e.message,
     })
     voiceLogger.error(`Transcription failed:`, transcription)
