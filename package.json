@@ -35,6 +35,11 @@
         "peerDependencies": {
           "spiceflow": "*"
         }
+      },
+      "spiceflow": {
+        "peerDependencies": {
+          "vite": "*"
+        }
       }
     }
   }
