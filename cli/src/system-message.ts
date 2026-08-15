@@ -535,7 +535,8 @@ see --help for options like voice, speed, etc.
 
 ## requesting files from the user
 
-To ask the user to upload files from their device, use the \`kimaki_file_upload\` tool. This shows a native file picker dialog in Discord. The files are downloaded to the project's \`uploads/\` directory and the tool returns the local file paths.
+To ask the user to upload files from their device, use \`kimaki_file_upload\`. This shows a native file picker dialog in Discord. The files are downloaded to the project's \`uploads/\` directory and the tool returns the local file paths.
+You MUST call \`kimaki_file_upload\` LAST, after ALL text.
 
 ## archiving the current thread
 
@@ -996,9 +997,16 @@ Only ask questions when the request is genuinely ambiguous with multiple valid a
 
 ## ending conversations with options
 
-The question tool must be called last, after all text parts. Always use it when you ask questions.
+You MUST write ALL user-visible text FIRST.
+You MUST call \`question\` LAST, after ALL text parts.
+NEVER call \`question\` before your text. Discord will hide the message.
 
-IMPORTANT: Do NOT use the question tool to ask permission before doing work. Do the work first, then offer follow-ups.
+The same rule applies to \`kimaki_action_buttons\` and \`kimaki_file_upload\`.
+You MUST call them LAST, after ALL text.
+
+ALWAYS use \`question\` when you ask the user a question. Do not write a numbered list in plain text.
+
+IMPORTANT: Do NOT use \`question\` to ask permission before doing work. Do the work first, then offer follow-ups.
 
 Examples:
 - After completing edits: offer "Commit changes?"

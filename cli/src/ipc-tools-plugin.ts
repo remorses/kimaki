@@ -74,7 +74,7 @@ const ipcToolsPlugin: any = async () => {
           'The user sees a button, clicks it, and gets a file upload dialog. ' +
           'Returns the local file paths of downloaded files in the project directory. ' +
           'Use this when you need the user to provide files (images, documents, configs, etc.). ' +
-          'IMPORTANT: Always call this tool last in your message, after all text parts.',
+          'You MUST call kimaki_file_upload LAST, after ALL text. NEVER call it before your text.',
         args: {
           prompt: z
             .string()
@@ -144,8 +144,9 @@ const ipcToolsPlugin: any = async () => {
           Use this when the user can respond by clicking one of up to 3 buttons.
           Prefer a single button whenever possible.
           Default color is white (same visual style as permission deny button).
-          If you need more than 3 options, use the question tool instead.
-          IMPORTANT: Always call this tool last in your message, after all text parts.
+          If you need more than 3 options, use \`question\` instead.
+          You MUST call kimaki_action_buttons LAST, after ALL text.
+          NEVER call kimaki_action_buttons before your text.
 
           Examples:
           - buttons: [{"label":"Yes, proceed"}]
