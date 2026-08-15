@@ -20,6 +20,7 @@ export type DefaultModelSource =
 export type SessionStartSourceContext = {
   scheduleKind: ScheduledTaskScheduleKind
   scheduledTaskId?: number
+  scheduledTaskRunId?: number
 }
 
 /**

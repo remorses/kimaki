@@ -306,6 +306,12 @@ async function handleRunTaskAction({
     if (result.kind === 'skipped') {
       return `Task #${taskId} is already running or was claimed elsewhere.`
     }
+    if (result.kind === 'condition-not-met') {
+      return `Task #${taskId} pre-run condition did not pass.`
+    }
+    if (result.kind === 'concurrency-blocked') {
+      return `Task #${taskId} still has an active session.`
+    }
     if (result.kind === 'failed') {
       return `Task #${taskId} failed: ${result.error.message}`
     }

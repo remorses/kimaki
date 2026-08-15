@@ -57,6 +57,9 @@ import {
   clearSessionModel,
   getVariantCascade,
   setSessionStartSource,
+  completeScheduledTaskRunsForSession,
+  failScheduledTaskRunsForSession,
+  startScheduledTaskRunSession,
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
 } from '../database.js'
@@ -575,7 +578,7 @@ export type IngressInput = {
    * Never set for /btw, /fork, or task/subagent children (keeps system prompt cache).
    */
   parentSessionId?: string
-  sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
+  sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number; scheduledTaskRunId?: number }
   /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
   /**
@@ -606,7 +609,7 @@ export type IngressInput = {
 
 function resolveTurnSource(input: {
   analyticsSource?: AnalyticsTurnSource
-  sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number }
+  sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number; scheduledTaskRunId?: number }
   sessionStartScheduleKind?: 'at' | 'cron'
 }): AnalyticsTurnSource {
   if (input.analyticsSource) return input.analyticsSource
@@ -1442,9 +1445,20 @@ export class ThreadSessionRuntime {
         await this.handlePartUpdated(event.properties.part)
         break
       case 'session.idle':
+        await completeScheduledTaskRunsForSession(event.properties.sessionID)
         await this.handleSessionIdle(event.properties.sessionID)
         break
       case 'session.error':
+        if (event.properties.sessionID) {
+          const sessionError = event.properties.error
+          const errorMessage = sessionError && typeof sessionError === 'object'
+            ? String(sessionError.data?.message || sessionError.name || 'Session failed')
+            : 'Session failed'
+          await failScheduledTaskRunsForSession({
+            sessionId: event.properties.sessionID,
+            error: errorMessage,
+          })
+        }
         await this.handleSessionError(event.properties)
         break
       case 'permission.asked':
@@ -3216,6 +3230,14 @@ export class ThreadSessionRuntime {
         void notifyError(errObj, 'promptAsync failed in submitViaOpencodeQueue')
         await cleanupOnError(`✗ OpenCode API error: ${errorMessage}`)
         return
+      }
+
+      if (input.sessionStartSource?.scheduledTaskRunId) {
+        await startScheduledTaskRunSession({
+          runId: input.sessionStartSource.scheduledTaskRunId,
+          sessionId: session.id,
+          projectDirectory: this.sdkDirectory,
+        })
       }
 
       logger.log(

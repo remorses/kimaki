@@ -254,11 +254,15 @@ function parseSessionStartSourceFromMarker(
     !Number.isInteger(marker.scheduledTaskId) ||
     marker.scheduledTaskId < 1
   ) {
-    return { scheduleKind: marker.scheduledKind }
+    return {
+      scheduleKind: marker.scheduledKind,
+      scheduledTaskRunId: marker.scheduledTaskRunId,
+    }
   }
   return {
     scheduleKind: marker.scheduledKind,
     scheduledTaskId: marker.scheduledTaskId,
+    scheduledTaskRunId: marker.scheduledTaskRunId,
   }
 }
 
@@ -860,6 +864,7 @@ export async function startDiscordBot({
             ? {
                 scheduleKind: sessionStartSource.scheduleKind,
                 scheduledTaskId: sessionStartSource.scheduledTaskId,
+                scheduledTaskRunId: sessionStartSource.scheduledTaskRunId,
               }
             : undefined,
           preprocess: () => {
@@ -1422,6 +1427,7 @@ export async function startDiscordBot({
           ? {
               scheduleKind: botThreadStartSource.scheduleKind,
               scheduledTaskId: botThreadStartSource.scheduledTaskId,
+              scheduledTaskRunId: botThreadStartSource.scheduledTaskRunId,
             }
           : undefined,
         preprocess: async () => {

@@ -3,7 +3,10 @@
 import { CronExpressionParser } from 'cron-parser'
 import * as errore from 'errore'
 
-export type ScheduledTaskPayload =
+export type ScheduledTaskPayload = {
+  preRunCommand: string | null
+  allowConcurrency: boolean
+} & (
   | {
       kind: 'thread'
       threadId: string
@@ -31,7 +34,7 @@ export type ScheduledTaskPayload =
       permissions: string[] | null
       injectionGuardPatterns: string[] | null
       parentSessionId: string | null
-    }
+    })
 
 export type ParsedSendAt =
   | {
@@ -205,6 +208,18 @@ export function serializeScheduledTaskPayload(
   return JSON.stringify(payload)
 }
 
+export function appendTaskCommandOutput({
+  prompt,
+  stdout,
+}: {
+  prompt: string
+  stdout: string
+}): string {
+  const output = stdout.trim()
+  if (!output) return prompt
+  return `${prompt}\n\n## Pre-run command output\n\n${output}`
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -242,6 +257,8 @@ export function parseScheduledTaskPayload(
   }
 
   const kind = asString(parsed.kind)
+  const preRunCommand = asString(parsed.preRunCommand)
+  const allowConcurrency = parsed.allowConcurrency === true
   if (kind === 'thread') {
     const threadId = asString(parsed.threadId)
     const prompt = asString(parsed.prompt)
@@ -266,6 +283,8 @@ export function parseScheduledTaskPayload(
       permissions,
       injectionGuardPatterns,
       parentSessionId,
+      preRunCommand,
+      allowConcurrency,
     }
   }
 
@@ -302,6 +321,8 @@ export function parseScheduledTaskPayload(
       permissions,
       injectionGuardPatterns,
       parentSessionId,
+      preRunCommand,
+      allowConcurrency,
     }
   }
 

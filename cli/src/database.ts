@@ -40,6 +40,7 @@ export type ThreadWorktree = typeof schema.thread_worktrees.$inferSelect
 export type ScheduledTaskStatus = typeof schema.scheduled_tasks.$inferSelect.status
 export type ScheduledTaskScheduleKind = typeof schema.scheduled_tasks.$inferSelect.schedule_kind
 export type ScheduledTask = typeof schema.scheduled_tasks.$inferSelect
+export type ScheduledTaskRun = typeof schema.scheduled_task_runs.$inferSelect
 export type SessionStartSource = typeof schema.session_start_sources.$inferSelect
 export type ModelPreference = { modelId: string; variant: string | null }
 export type { BotMode }
@@ -179,6 +180,129 @@ export async function claimScheduledTaskRunning({ taskId, startedAt }: { taskId:
     ))
     .returning({ id: schema.scheduled_tasks.id })
   return countRows(rows) > 0
+}
+
+export async function releaseScheduledTaskClaim(taskId: number) {
+  const db = await getDb()
+  await db.update(schema.scheduled_tasks)
+    .set({ status: 'planned', running_started_at: null })
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'running'),
+    ))
+}
+
+export async function createScheduledTaskRun({
+  taskId,
+  startedAt,
+}: {
+  taskId: number
+  startedAt: Date
+}) {
+  const db = await getDb()
+  const [run] = await db.insert(schema.scheduled_task_runs)
+    .values({ scheduled_task_id: taskId, started_at: startedAt })
+    .returning({ id: schema.scheduled_task_runs.id })
+  if (!run) throw new Error(`Failed to create run for scheduled task ${taskId}`)
+  return run.id
+}
+
+export async function getActiveScheduledTaskRuns(taskId: number) {
+  const db = await getDb()
+  return db.query.scheduled_task_runs.findMany({
+    where: {
+      scheduled_task_id: taskId,
+      status: { in: ['pending', 'running'] },
+    },
+    orderBy: { started_at: 'desc' },
+  })
+}
+
+export async function setScheduledTaskRunThread({
+  runId,
+  threadId,
+}: {
+  runId: number
+  threadId: string
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ thread_id: threadId })
+    .where(orm.eq(schema.scheduled_task_runs.id, runId))
+}
+
+export async function startScheduledTaskRunSession({
+  runId,
+  sessionId,
+  projectDirectory,
+}: {
+  runId: number
+  sessionId: string
+  projectDirectory: string
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ status: 'running', session_id: sessionId, project_directory: projectDirectory })
+    .where(orm.and(
+      orm.eq(schema.scheduled_task_runs.id, runId),
+      orm.eq(schema.scheduled_task_runs.status, 'pending'),
+    ))
+}
+
+export async function completeScheduledTaskRunsForSession(sessionId: string) {
+  const db = await getDb()
+  const rows = await db.update(schema.scheduled_task_runs)
+    .set({ status: 'completed', completed_at: new Date() })
+    .where(orm.and(
+      orm.eq(schema.scheduled_task_runs.session_id, sessionId),
+      orm.inArray(schema.scheduled_task_runs.status, ['pending', 'running']),
+    ))
+    .returning({ id: schema.scheduled_task_runs.id })
+  return rows.length
+}
+
+export async function failScheduledTaskRunsForSession({
+  sessionId,
+  error,
+}: {
+  sessionId: string
+  error: string
+}) {
+  const db = await getDb()
+  const rows = await db.update(schema.scheduled_task_runs)
+    .set({ status: 'failed', completed_at: new Date(), error })
+    .where(orm.and(
+      orm.eq(schema.scheduled_task_runs.session_id, sessionId),
+      orm.inArray(schema.scheduled_task_runs.status, ['pending', 'running']),
+    ))
+    .returning({ id: schema.scheduled_task_runs.id })
+  return rows.length
+}
+
+export async function failScheduledTaskRun({
+  runId,
+  error,
+}: {
+  runId: number
+  error: string
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ status: 'failed', completed_at: new Date(), error })
+    .where(orm.eq(schema.scheduled_task_runs.id, runId))
+}
+
+export async function finishScheduledTaskRun({
+  runId,
+  status,
+}: {
+  runId: number
+  status: 'completed' | 'skipped'
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ status, completed_at: new Date() })
+    .where(orm.eq(schema.scheduled_task_runs.id, runId))
 }
 
 export async function recoverStaleRunningScheduledTasks({ staleBefore }: { staleBefore: Date }) {

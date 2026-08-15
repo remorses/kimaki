@@ -187,6 +187,21 @@ export const scheduled_tasks = sqliteCore.sqliteTable('scheduled_tasks', {
   sqliteCore.index('scheduled_tasks_thread_id_status_idx').on(table.thread_id, table.status),
 ])
 
+export const scheduled_task_runs = sqliteCore.sqliteTable('scheduled_task_runs', {
+  id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
+  scheduled_task_id: sqliteCore.integer('scheduled_task_id', { mode: 'number' }).notNull().references(() => scheduled_tasks.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+  status: sqliteCore.text('status', { enum: ['pending', 'running', 'completed', 'skipped', 'failed'] }).notNull().default('pending'),
+  thread_id: sqliteCore.text('thread_id'),
+  session_id: sqliteCore.text('session_id'),
+  project_directory: sqliteCore.text('project_directory'),
+  started_at: datetime('started_at').notNull(),
+  completed_at: datetime('completed_at'),
+  error: sqliteCore.text('error'),
+}, (table) => [
+  sqliteCore.index('scheduled_task_runs_task_status_idx').on(table.scheduled_task_id, table.status),
+  sqliteCore.index('scheduled_task_runs_session_status_idx').on(table.session_id, table.status),
+])
+
 export const session_start_sources = sqliteCore.sqliteTable('session_start_sources', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
   schedule_kind: sqliteCore.text('schedule_kind', { enum: ['at', 'cron'] }).notNull(),
@@ -241,6 +256,7 @@ export const relations = defineRelations({
   channel_mention_mode,
   global_models,
   scheduled_tasks,
+  scheduled_task_runs,
   session_start_sources,
   forum_sync_configs,
   ipc_requests,
@@ -304,7 +320,11 @@ export const relations = defineRelations({
   scheduled_tasks: {
     channel: r.one.channel_directories({ from: r.scheduled_tasks.channel_id, to: r.channel_directories.channel_id }),
     thread: r.one.thread_sessions({ from: r.scheduled_tasks.thread_id, to: r.thread_sessions.thread_id }),
+    runs: r.many.scheduled_task_runs(),
     session_start_sources: r.many.session_start_sources(),
+  },
+  scheduled_task_runs: {
+    scheduled_task: r.one.scheduled_tasks({ from: r.scheduled_task_runs.scheduled_task_id, to: r.scheduled_tasks.id }),
   },
   session_start_sources: {
     scheduled_task: r.one.scheduled_tasks({ from: r.session_start_sources.scheduled_task_id, to: r.scheduled_tasks.id }),

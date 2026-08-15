@@ -60,7 +60,7 @@ cli
       }
 
       console.log(
-        'id | status | message | channelId | userId | projectName | folderName | agent | model | timeRemaining | firesAt | cron',
+        'id | status | message | channelId | userId | projectName | folderName | agent | model | preRun | allowConcurrency | timeRemaining | firesAt | cron',
       )
 
       tasks.forEach((task) => {
@@ -71,6 +71,10 @@ cli
         const userId = payload instanceof Error ? '?' : payload.userId || '-'
         const agent = payload instanceof Error ? '?' : payload.agent || '-'
         const model = payload instanceof Error ? '?' : payload.model || '-'
+        const preRun = payload instanceof Error ? '?' : payload.preRunCommand || '-'
+        const allowConcurrency = payload instanceof Error
+          ? '?'
+          : String(payload.allowConcurrency)
         const projectDirectory = task.project_directory || ''
         const projectName = projectDirectory
           ? path.basename(projectDirectory)
@@ -86,7 +90,7 @@ cli
           task.schedule_kind === 'cron' ? task.cron_expr || '-' : '-'
 
         console.log(
-          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${userId} | ${projectName} | ${folderName} | ${agent} | ${model} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
+          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${userId} | ${projectName} | ${folderName} | ${agent} | ${model} | ${preRun} | ${allowConcurrency} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
         )
       })
 
@@ -181,36 +185,35 @@ cli
     '--model <model>',
     'Model for the scheduled session, format provider/model (empty string clears)',
   )
+  .option('--pre-run <command>', 'New pre-run command (empty string clears)')
+  .option(
+    '--allow-concurrency <enabled>',
+    z.enum(['true', 'false']).describe('Allow concurrent sessions: true or false'),
+  )
   .option(
     '-u, --user <user>',
     'Discord user ID, mention, or username added to the task thread',
   )
-  .action(
-    async (
-      id: string,
-      options: {
-        prompt?: string
-        sendAt?: string
-        user?: string
-        agent?: string
-        model?: string
-      },
-    ) => {
+  .action(async (id, options) => {
     try {
       const trimmedPrompt =
         options.prompt === undefined ? undefined : options.prompt.trim()
       const hasAgent = options.agent !== undefined
       const hasModel = options.model !== undefined
+      const hasPreRun = options.preRun !== undefined
+      const hasAllowConcurrency = options.allowConcurrency !== undefined
 
       if (
         !trimmedPrompt &&
         !options.sendAt &&
         !options.user &&
         !hasAgent &&
-        !hasModel
+        !hasModel &&
+        !hasPreRun &&
+        !hasAllowConcurrency
       ) {
         cliLogger.error(
-          'Provide at least --prompt, --send-at, --user, --agent or --model',
+          'Provide at least --prompt, --send-at, --user, --agent, --model, --pre-run or --allow-concurrency',
         )
         process.exit(EXIT_NO_RESTART)
       }
@@ -269,6 +272,10 @@ cli
           : {}),
         ...(hasAgent ? { agent: options.agent!.trim() || null } : {}),
         ...(hasModel ? { model: options.model!.trim() || null } : {}),
+        ...(hasPreRun ? { preRunCommand: options.preRun!.trim() || null } : {}),
+        ...(hasAllowConcurrency
+          ? { allowConcurrency: options.allowConcurrency === 'true' }
+          : {}),
       }
 
       const updateData: Parameters<typeof updateScheduledTask>[0] = {
@@ -312,6 +319,10 @@ cli
       }
       if (hasModel) {
         parts.push(`model=${updatedPayload.model || '-'}`)
+      }
+      if (hasPreRun) parts.push(`preRun=${updatedPayload.preRunCommand || '-'}`)
+      if (hasAllowConcurrency) {
+        parts.push(`allowConcurrency=${updatedPayload.allowConcurrency}`)
       }
       cliLogger.log(parts.join(' | '))
       process.exit(0)

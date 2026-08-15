@@ -6,26 +6,37 @@ import { ensureThreadMember } from './discord-utils.js'
 import YAML from 'yaml'
 import {
   claimScheduledTaskRunning,
+  createScheduledTaskRun,
+  failScheduledTaskRun,
+  finishScheduledTaskRun,
   getDuePlannedScheduledTasks,
   getScheduledTask,
+  getActiveScheduledTaskRuns,
   markScheduledTaskCronRescheduled,
   markScheduledTaskCronRetry,
   markScheduledTaskFailed,
   deleteScheduledTask,
   recoverStaleRunningScheduledTasks,
+  releaseScheduledTaskClaim,
+  setScheduledTaskRunThread,
   type ScheduledTask,
 } from './database.js'
+import { execAsync } from './exec-async.js'
+import { initializeOpencodeForDirectory } from './opencode.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import type { ThreadStartMarker } from './system-message.js'
 import {
   type ScheduledTaskPayload,
+  appendTaskCommandOutput,
   getNextCronRun,
   getPromptPreview,
   parseScheduledTaskPayload,
 } from './task-schedule.js'
 
 const taskLogger = createLogger(LogPrefix.TASK)
+const MAX_SCHEDULED_PROMPT_LENGTH = 1_900
+const PENDING_RUN_TIMEOUT_MS = 120_000
 
 type StartTaskRunnerOptions = {
   token: string
@@ -52,11 +63,15 @@ async function executeThreadScheduledTask({
   rest,
   task,
   payload,
+  prompt,
+  runId,
 }: {
   rest: REST
   task: ScheduledTask
   payload: Extract<ScheduledTaskPayload, { kind: 'thread' }>
-}): Promise<void | Error> {
+  prompt: string
+  runId?: number
+}): Promise<string | Error> {
   const marker: ThreadStartMarker = {
     start: true,
     scheduledKind: task.schedule_kind,
@@ -64,6 +79,7 @@ async function executeThreadScheduledTask({
     // after execution, so the ID would be stale by the time the bot processes
     // the Discord event and tries to insert a session_start_sources row.
     ...(task.schedule_kind === 'cron' ? { scheduledTaskId: task.id } : {}),
+    ...(runId ? { scheduledTaskRunId: runId } : {}),
     ...(payload.agent ? { agent: payload.agent } : {}),
     ...(payload.model ? { model: payload.model } : {}),
     ...(payload.username ? { username: payload.username } : {}),
@@ -77,7 +93,7 @@ async function executeThreadScheduledTask({
   const embed = [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
-  const prefixedPrompt = `» **kimaki-cli:**\n${payload.prompt}`
+  const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
 
   // Re-join the user before posting, so the message they get notified about is
   // in a thread they are already a member of. Works on archived threads too;
@@ -110,17 +126,22 @@ async function executeThreadScheduledTask({
     })
 
   if (postResult instanceof Error) return postResult
+  return payload.threadId
 }
 
 async function executeChannelScheduledTask({
   rest,
   task,
   payload,
+  prompt,
+  runId,
 }: {
   rest: REST
   task: ScheduledTask
   payload: Extract<ScheduledTaskPayload, { kind: 'channel' }>
-}): Promise<void | Error> {
+  prompt: string
+  runId?: number
+}): Promise<string | null | Error> {
   const marker: ThreadStartMarker | undefined = payload.notifyOnly
     ? undefined
     : {
@@ -128,6 +149,7 @@ async function executeChannelScheduledTask({
         scheduledKind: task.schedule_kind,
         // Only include scheduledTaskId for cron tasks (see thread variant comment)
         ...(task.schedule_kind === 'cron' ? { scheduledTaskId: task.id } : {}),
+        ...(runId ? { scheduledTaskRunId: runId } : {}),
         ...(payload.worktreeName ? { worktree: payload.worktreeName } : {}),
         ...(payload.cwd ? { cwd: payload.cwd } : {}),
         ...(payload.agent ? { agent: payload.agent } : {}),
@@ -147,7 +169,7 @@ async function executeChannelScheduledTask({
   const starterResult = await rest
     .post(Routes.channelMessages(payload.channelId), {
       body: {
-        content: payload.prompt,
+        content: prompt,
         embeds,
       },
     })
@@ -166,7 +188,7 @@ async function executeChannelScheduledTask({
     })
   }
 
-  const threadName = (payload.name || getPromptPreview(payload.prompt)).slice(
+  const threadName = (payload.name || getPromptPreview(prompt)).slice(
     0,
     100,
   )
@@ -185,16 +207,14 @@ async function executeChannelScheduledTask({
 
   if (threadResult instanceof Error) return threadResult
 
-  if (!payload.userId) {
-    return
-  }
-
   const threadIdResult = parseMessageId(threadResult)
   if (threadIdResult instanceof Error) {
     return new Error(`Invalid thread response for task ${task.id}`, {
       cause: threadIdResult,
     })
   }
+
+  if (!payload.userId) return threadIdResult
 
   const addMemberResult = await ensureThreadMember({
     rest,
@@ -207,15 +227,101 @@ async function executeChannelScheduledTask({
       { cause: addMemberResult },
     )
   }
+  return threadIdResult
+}
+
+export async function runTaskCommand({
+  task,
+  payload,
+}: {
+  task: ScheduledTask
+  payload: ScheduledTaskPayload
+}): Promise<{ kind: 'run'; prompt: string } | { kind: 'skip' } | Error> {
+  if (!payload.preRunCommand) return { kind: 'run', prompt: payload.prompt }
+  if (!task.project_directory) {
+    return new Error(`Task ${task.id} has a pre-run command but no project directory`)
+  }
+
+  const command = payload.preRunCommand
+  const result = await execAsync(command, { cwd: task.project_directory }).catch(
+    (error) => error instanceof Error ? error : new Error(String(error)),
+  )
+  const stdout = isRecord(result) && typeof result.stdout === 'string'
+    ? result.stdout
+    : ''
+  const stderr = isRecord(result) && typeof result.stderr === 'string'
+    ? result.stderr
+    : ''
+  const exitCode = result instanceof Error && isRecord(result)
+    ? result.code ?? 1
+    : 0
+  if (stdout) taskLogger.log(`[task-runner] task ${task.id} pre-run stdout:\n${stdout}`)
+  if (stderr) taskLogger.log(`[task-runner] task ${task.id} pre-run stderr:\n${stderr}`)
+  taskLogger.log(`[task-runner] task ${task.id} pre-run exited with ${exitCode}`)
+  if (result instanceof Error) return { kind: 'skip' }
+
+  const prompt = appendTaskCommandOutput({ prompt: payload.prompt, stdout })
+  if (prompt.length > MAX_SCHEDULED_PROMPT_LENGTH) {
+    return new Error(
+      `Task ${task.id} prompt and pre-run stdout exceed ${MAX_SCHEDULED_PROMPT_LENGTH} characters`,
+    )
+  }
+  return { kind: 'run', prompt }
+}
+
+async function hasRunningSession(task: ScheduledTask): Promise<boolean | Error> {
+  const runs = await getActiveScheduledTaskRuns(task.id)
+  if (runs.length === 0) return false
+
+  let active = false
+  for (const run of runs) {
+    if (!run.session_id) {
+      if (Date.now() - run.started_at.getTime() < PENDING_RUN_TIMEOUT_MS) {
+        active = true
+        continue
+      }
+      await failScheduledTaskRun({
+        runId: run.id,
+        error: 'Timed out waiting for scheduled session to start',
+      })
+      continue
+    }
+    if (!run.project_directory) {
+      active = true
+      continue
+    }
+    const getClient = await initializeOpencodeForDirectory(run.project_directory)
+    if (getClient instanceof Error) return getClient
+    const statusResponse = await getClient().session.status({
+      directory: run.project_directory,
+    }).catch((error) => new Error('Failed to check scheduled session status', {
+      cause: error,
+    }))
+    if (statusResponse instanceof Error) return statusResponse
+    if (statusResponse.error) return new Error('Failed to check scheduled session status')
+    const status = statusResponse.data?.[run.session_id]
+    if (status && status.type !== 'idle') {
+      active = true
+      continue
+    }
+    if (!status && Date.now() - run.started_at.getTime() < PENDING_RUN_TIMEOUT_MS) {
+      active = true
+      continue
+    }
+    await finishScheduledTaskRun({ runId: run.id, status: 'completed' })
+  }
+  return active
 }
 
 async function executeScheduledTask({
   rest,
   task,
+  runId,
 }: {
   rest: REST
   task: ScheduledTask
-}): Promise<void | Error> {
+  runId?: number
+}): Promise<string | null | Error | { kind: 'condition-not-met' }> {
   const payloadResult = parseScheduledTaskPayload(task.payload_json)
   if (payloadResult instanceof Error) {
     return new Error(`Task ${task.id} has invalid payload`, {
@@ -223,11 +329,17 @@ async function executeScheduledTask({
     })
   }
 
+  const commandResult = await runTaskCommand({ task, payload: payloadResult })
+  if (commandResult instanceof Error) return commandResult
+  if (commandResult.kind === 'skip') return { kind: 'condition-not-met' }
+
   if (payloadResult.kind === 'thread') {
     return executeThreadScheduledTask({
       rest,
       task,
       payload: payloadResult,
+      prompt: commandResult.prompt,
+      runId,
     })
   }
 
@@ -235,6 +347,8 @@ async function executeScheduledTask({
     rest,
     task,
     payload: payloadResult,
+    prompt: commandResult.prompt,
+    runId,
   })
 }
 
@@ -319,6 +433,8 @@ async function finalizeFailedTask({
 
 export type ProcessDueTaskResult =
   | { kind: 'skipped' }
+  | { kind: 'condition-not-met' }
+  | { kind: 'concurrency-blocked' }
   | { kind: 'success' }
   | { kind: 'failed'; error: Error }
 
@@ -338,7 +454,35 @@ async function processDueTask({
     return { kind: 'skipped' }
   }
 
-  const executeResult = await executeScheduledTask({ rest, task })
+  const payload = parseScheduledTaskPayload(task.payload_json)
+  if (payload instanceof Error) {
+    await finalizeFailedTask({ task, failedAt: new Date(), error: payload })
+    return { kind: 'failed', error: payload }
+  }
+  const activeSession = payload.allowConcurrency
+    ? false
+    : await hasRunningSession(task)
+  if (activeSession instanceof Error) {
+    await releaseScheduledTaskClaim(task.id)
+    taskLogger.warn(
+      `[task-runner] could not check concurrency for task ${task.id}: ${formatErrorWithStack(activeSession)}`,
+    )
+    return { kind: 'failed', error: activeSession }
+  }
+  if (activeSession) {
+    if (task.schedule_kind === 'cron') {
+      await finalizeSuccessfulTask({ task, completedAt: new Date() })
+    } else {
+      await releaseScheduledTaskClaim(task.id)
+    }
+    return { kind: 'concurrency-blocked' }
+  }
+
+  const runId = task.schedule_kind === 'cron'
+    ? await createScheduledTaskRun({ taskId: task.id, startedAt })
+    : undefined
+
+  const executeResult = await executeScheduledTask({ rest, task, runId })
   const finishedAt = new Date()
 
   if (executeResult instanceof Error) {
@@ -350,7 +494,20 @@ async function processDueTask({
       failedAt: finishedAt,
       error: executeResult,
     })
+    if (runId) await failScheduledTaskRun({ runId, error: executeResult.message })
     return { kind: 'failed', error: executeResult }
+  }
+
+  if (!(typeof executeResult === 'string' || executeResult === null)) {
+    if (runId) await finishScheduledTaskRun({ runId, status: 'skipped' })
+    await finalizeSuccessfulTask({ task, completedAt: finishedAt })
+    return executeResult
+  }
+
+  if (executeResult && runId) {
+    await setScheduledTaskRunThread({ runId, threadId: executeResult })
+  } else if (runId) {
+    await finishScheduledTaskRun({ runId, status: 'completed' })
   }
 
   await finalizeSuccessfulTask({ task, completedAt: finishedAt })

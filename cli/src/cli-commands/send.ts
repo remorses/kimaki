@@ -111,6 +111,14 @@ cli
     '--send-at <schedule>',
     'Schedule send for future (UTC ISO date/time ending in Z, or cron expression)',
   )
+  .option(
+    '--pre-run <command>',
+    'Run a shell command in the project before starting a scheduled task',
+  )
+  .option(
+    '--allow-concurrency',
+    'Allow concurrent sessions from the same scheduled task',
+  )
   .option('--thread <threadId>', 'Post prompt to an existing thread')
   .option(
     '--session <sessionId>',
@@ -142,6 +150,11 @@ cli
         const sendAt = options.sendAt
 
         const existingThreadMode = Boolean(threadId || sessionId)
+
+        if ((options.preRun || options.allowConcurrency) && !sendAt) {
+          cliLogger.error('--pre-run and --allow-concurrency require --send-at')
+          process.exit(EXIT_NO_RESTART)
+        }
 
         if (threadId && sessionId) {
           cliLogger.error('Use either --thread or --session, not both')
@@ -495,6 +508,8 @@ cli
               permissions: options.permission?.length ? options.permission : null,
               injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
               parentSessionId: options.parentSession || null,
+              preRunCommand: options.preRun || null,
+              allowConcurrency: Boolean(options.allowConcurrency),
             }
             const taskId = await createScheduledTask({
               scheduleKind: parsedSchedule.scheduleKind,
@@ -691,6 +706,8 @@ cli
             permissions: options.permission?.length ? options.permission : null,
             injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
             parentSessionId: options.parentSession || null,
+            preRunCommand: options.preRun || null,
+            allowConcurrency: Boolean(options.allowConcurrency),
           }
           const taskId = await createScheduledTask({
             scheduleKind: parsedSchedule.scheduleKind,
