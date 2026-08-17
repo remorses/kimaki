@@ -1,5 +1,8 @@
-import { describe, test, expect } from 'vitest'
-import { formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { afterEach, describe, test, expect } from 'vitest'
+import { formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, serializeEmbeds, serializePoll, serializeMessageSnapshots, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
@@ -451,6 +454,173 @@ describe('serializeMessageSnapshots', () => {
       <forwarded-message>
       Second forwarded
       </forwarded-message>"
+    `)
+  })
+})
+
+describe('getTextAttachments', () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  function stubFetch(impl: (url: string) => Promise<Response>) {
+    const fetchFn = async (input: string | URL | Request) => impl(String(input))
+    fetchFn.preconnect = () => {}
+    globalThis.fetch = fetchFn
+  }
+
+  function messageWithAttachments(
+    attachments: Array<{
+      id: string
+      name: string
+      contentType: string
+      url: string
+      size: number
+    }>,
+  ) {
+    return {
+      attachments: new Map(attachments.map((attachment) => {
+        return [attachment.id, attachment]
+      })),
+    } as unknown as Message
+  }
+
+  function snapshotAttachments(result: string) {
+    return result.replaceAll(getDataDir(), '<dataDir>')
+  }
+
+  test('inlines small text files and saves them locally', async () => {
+    stubFetch(async () => {
+      return new Response('hello from file', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att1',
+          name: 'notes.txt',
+          contentType: 'text/plain',
+          url: 'https://cdn.example/notes.txt',
+          size: 16,
+        },
+      ]),
+    )
+
+    const savedPath = path.join(getDataDir(), 'attachments', 'att1-notes.txt')
+    expect(fs.readFileSync(savedPath, 'utf8')).toBe('hello from file')
+    expect(result).toContain('https://cdn.example/notes.txt')
+    expect(result).toContain(savedPath)
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="notes.txt" mime="text/plain" size="16" url="https://cdn.example/notes.txt" path="<dataDir>/attachments/att1-notes.txt">
+      hello from file
+      </attachment>"
+    `)
+  })
+
+  test('saves large text files locally without inlining contents', async () => {
+    stubFetch(async () => {
+      return new Response('SHOULD NOT BE INLINED', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att2',
+          name: 'huge.log',
+          contentType: 'text/plain',
+          url: 'https://cdn.discordapp.com/attachments/1/2/huge.log',
+          size: TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 1,
+        },
+      ]),
+    )
+
+    const savedPath = path.join(getDataDir(), 'attachments', 'att2-huge.log')
+    expect(fs.readFileSync(savedPath, 'utf8')).toBe('SHOULD NOT BE INLINED')
+    expect(result).not.toContain('SHOULD NOT BE INLINED')
+    expect(result).toContain('https://cdn.discordapp.com/attachments/1/2/huge.log')
+    expect(result).toContain(savedPath)
+    expect(result).toContain('text/plain')
+    expect(result).toContain(String(TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 1))
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="huge.log" mime="text/plain" size="65537" url="https://cdn.discordapp.com/attachments/1/2/huge.log" path="<dataDir>/attachments/att2-huge.log" large="true">
+      This file is large (64 KB, text/plain). Contents were not inlined to save context. Read the local path.
+      </attachment>"
+    `)
+  })
+
+  test('still inlines large prompt.md attachments from kimaki send', async () => {
+    stubFetch(async () => {
+      return new Response('the actual long prompt', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att3',
+          name: 'prompt.md',
+          contentType: 'text/markdown',
+          url: 'https://cdn.example/prompt.md',
+          size: TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 1,
+        },
+      ]),
+    )
+
+    const savedPath = path.join(getDataDir(), 'attachments', 'att3-prompt.md')
+    expect(fs.readFileSync(savedPath, 'utf8')).toBe('the actual long prompt')
+    expect(result).toContain('the actual long prompt')
+    expect(result).toContain('https://cdn.example/prompt.md')
+    expect(result).toContain(savedPath)
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="prompt.md" mime="text/markdown" size="65537" url="https://cdn.example/prompt.md" path="<dataDir>/attachments/att3-prompt.md">
+      the actual long prompt
+      </attachment>"
+    `)
+  })
+
+  test('keeps small files inlined next to large file references', async () => {
+    stubFetch(async (url) => {
+      if (url.includes('small.txt')) {
+        return new Response('tiny', { status: 200 })
+      }
+      return new Response('SHOULD NOT BE INLINED', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att4',
+          name: 'small.txt',
+          contentType: 'text/plain',
+          url: 'https://cdn.example/small.txt',
+          size: 4,
+        },
+        {
+          id: 'att5',
+          name: 'dump.json',
+          contentType: 'application/json',
+          url: 'https://cdn.example/dump.json',
+          size: TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 50,
+        },
+      ]),
+    )
+
+    expect(result).toContain('tiny')
+    expect(result).not.toContain('SHOULD NOT BE INLINED')
+    expect(result).toContain('https://cdn.example/small.txt')
+    expect(result).toContain('https://cdn.example/dump.json')
+    expect(result).toContain(path.join(getDataDir(), 'attachments', 'att4-small.txt'))
+    expect(result).toContain(path.join(getDataDir(), 'attachments', 'att5-dump.json'))
+    expect(result).toContain('application/json')
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="small.txt" mime="text/plain" size="4" url="https://cdn.example/small.txt" path="<dataDir>/attachments/att4-small.txt">
+      tiny
+      </attachment>
+
+      <attachment filename="dump.json" mime="application/json" size="65586" url="https://cdn.example/dump.json" path="<dataDir>/attachments/att5-dump.json" large="true">
+      This file is large (64 KB, application/json). Contents were not inlined to save context. Read the local path.
+      </attachment>"
     `)
   })
 })
