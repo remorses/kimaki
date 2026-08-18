@@ -147,9 +147,8 @@ import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
 import { startTaskRunner } from './task-runner.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
-// regular HTTP requests (question.reply, session.prompt) get blocked → deadlock.
-// undici is a transitive dep from discord.js — not listed in our package.json.
-// Types are declared in src/undici.d.ts.
+// regular HTTP requests (question.reply, session.prompt) get blocked — deadlock.
+// undici is a direct dependency (see src/opencode.ts for its SDK fetch usage).
 
 
 const discordLogger = createLogger(LogPrefix.DISCORD)

@@ -1021,20 +1021,67 @@ function getOrCreateClient({
     return cached
   }
 
-  const fetchWithTimeout = (request: Request) =>
-    fetch(request, {
-      // @ts-ignore
-      timeout: false,
-    })
-
   const client = createOpencodeClient({
     baseUrl,
     directory,
-    fetch: fetchWithTimeout as typeof fetch,
+    fetch: createSdkFetch() as typeof fetch,
     headers: getOpencodeServerAuthHeaders(),
   })
   clientCache.set(directory, client)
   return client
+}
+
+// ── SDK fetch timeouts ────────────────────────────────────────────
+//
+// `timeout: false` only disables Bun's 300s fetch timeout; Node's fetch ignores
+// the option, so SDK dispatches ran on undici's default 300s headersTimeout.
+// Agent turns that take longer than that aborted with "TypeError: fetch failed"
+// while the opencode server kept processing the prompt (spurious
+// "OpenCode API error" footers). On Node we therefore fetch through an undici
+// Agent with raised timeouts — using undici's own fetch+Agent from the same
+// package copy so dispatcher and fetch stay compatible. The healthcheck path
+// above keeps its fast-fail 2s policy on purpose.
+
+export const SDK_FETCH_TIMEOUT_MS = resolveSdkFetchTimeoutMs()
+
+export function resolveSdkFetchTimeoutMs(): number {
+  const parsed = Number(process.env.KIMAKI_SDK_FETCH_TIMEOUT_MS)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 900_000
+}
+
+type UndiciFetchRuntime = {
+  fetch: typeof fetch
+  dispatcher: unknown
+}
+
+let undiciRuntime: Promise<UndiciFetchRuntime> | undefined
+
+export function getNodeFetchRuntime(): Promise<UndiciFetchRuntime> | undefined {
+  if (typeof Bun !== 'undefined') return undefined
+  undiciRuntime ??= import('undici').then((undici) => ({
+    fetch: undici.fetch as unknown as typeof fetch,
+    // bodyTimeout is per-chunk idle, not total response time.
+    dispatcher: new undici.Agent({
+      headersTimeout: SDK_FETCH_TIMEOUT_MS,
+      bodyTimeout: SDK_FETCH_TIMEOUT_MS,
+    }),
+  }))
+  return undiciRuntime
+}
+
+export function createSdkFetch() {
+  const runtime = getNodeFetchRuntime()
+  return (request: Request): Promise<Response> => {
+    if (!runtime) {
+      // Bun: timeout:false disables Bun's 300s default fetch timeout.
+      return fetch(request, { timeout: false } as RequestInit)
+    }
+    return runtime.then(({ fetch: undiciFetch, dispatcher }) =>
+      undiciFetch(request, {
+        dispatcher,
+      } as unknown as Parameters<typeof undiciFetch>[1]),
+    )
+  }
 }
 
 // ── Public API ───────────────────────────────────────────────────
