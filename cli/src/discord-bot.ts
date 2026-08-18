@@ -51,6 +51,7 @@ import {
   type ThreadStartMarker,
 } from './system-message.js'
 import YAML from 'yaml'
+import * as errore from 'errore'
 import {
   getFileAttachments,
   getTextAttachments,
@@ -144,6 +145,10 @@ import path from 'node:path'
 import dedent from 'string-dedent'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
+import {
+  RESTART_REQUEST_MESSAGE_TYPE,
+  type RestartRequestMessage,
+} from './restart-supervisor.js'
 import { startTaskRunner } from './task-runner.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
@@ -1635,6 +1640,22 @@ export async function startDiscordBot({
     }
     selfRestarting = true
     discordLogger.log(`Self-restarting (reason: ${reason})...`)
+    const sendToParent = process.send?.bind(process)
+    if (sendToParent && process.connected) {
+      const message: RestartRequestMessage = {
+        type: RESTART_REQUEST_MESSAGE_TYPE,
+        reason,
+      }
+      const sendResult = errore.try(() =>
+        sendToParent(message, (error) => {
+          if (!error) return
+          discordLogger.warn('Failed to notify restart wrapper:', error.message)
+        }),
+      )
+      if (sendResult instanceof Error) {
+        discordLogger.warn('Failed to notify restart wrapper:', sendResult.message)
+      }
+    }
     try {
       await handleShutdown(reason, { skipExit: true })
     } catch (error) {
