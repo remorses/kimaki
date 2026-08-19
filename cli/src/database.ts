@@ -42,6 +42,7 @@ export type ScheduledTaskScheduleKind = typeof schema.scheduled_tasks.$inferSele
 export type ScheduledTask = typeof schema.scheduled_tasks.$inferSelect
 export type ScheduledTaskRun = typeof schema.scheduled_task_runs.$inferSelect
 export type SessionStartSource = typeof schema.session_start_sources.$inferSelect
+export type SessionSleep = typeof schema.session_sleeps.$inferSelect
 export type ModelPreference = { modelId: string; variant: string | null }
 export type { BotMode }
 
@@ -365,6 +366,244 @@ export async function setSessionStartSource({ sessionId, scheduleKind, scheduled
       target: schema.session_start_sources.session_id,
       set: { schedule_kind: scheduleKind, scheduled_task_id: scheduledTaskId ?? null, updated_at: new Date() },
     })
+}
+
+export async function upsertSessionSleep({
+  sessionId,
+  threadId,
+  wakeAt,
+  reason,
+}: {
+  sessionId: string
+  threadId: string
+  wakeAt: Date
+  reason?: string | null
+}) {
+  const db = await getDb()
+  // A new occurrence gets a fresh delivery_id, which invalidates any in-flight
+  // wake for the previous occurrence: every delivery write is guarded on it.
+  const deliveryId = crypto.randomUUID()
+  await db.insert(schema.session_sleeps)
+    .values({
+      session_id: sessionId,
+      thread_id: threadId,
+      wake_at: wakeAt,
+      reason: reason ?? null,
+      status: 'planned',
+      delivery_id: deliveryId,
+    })
+    .onConflictDoUpdate({
+      target: schema.session_sleeps.session_id,
+      set: {
+        thread_id: threadId,
+        wake_at: wakeAt,
+        reason: reason ?? null,
+        status: 'planned',
+        delivery_id: deliveryId,
+        attempts: 0,
+        last_attempt_at: null,
+        posted_at: null,
+        created_at: new Date(),
+      },
+    })
+  return deliveryId
+}
+
+export async function getSessionSleep({ sessionId }: { sessionId: string }) {
+  const db = await getDb()
+  return await db.query.session_sleeps.findFirst({
+    where: { session_id: sessionId },
+  }) ?? null
+}
+
+/** Rows that are due and not attempted too recently. Status stays `planned`. */
+export async function getDueSessionSleeps({
+  now,
+  retryAfterMs,
+  limit,
+}: {
+  now: Date
+  retryAfterMs: number
+  limit: number
+}) {
+  const db = await getDb()
+  const retryBefore = new Date(now.getTime() - retryAfterMs)
+  return db.select()
+    .from(schema.session_sleeps)
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.status, 'planned'),
+      orm.lte(schema.session_sleeps.wake_at, now),
+      orm.or(
+        orm.isNull(schema.session_sleeps.last_attempt_at),
+        orm.lte(schema.session_sleeps.last_attempt_at, retryBefore),
+      ),
+    ))
+    .orderBy(orm.asc(schema.session_sleeps.wake_at))
+    .limit(limit)
+}
+
+/**
+ * Reserve one delivery attempt without leaving `planned`.
+ *
+ * Deliberately NOT a transition to a terminal state: if the process dies between
+ * this call and the Discord post, the row is still `planned` and the next tick
+ * retries it. Only `last_attempt_at` moves, which keeps concurrent ticks off the
+ * same row for retryAfterMs.
+ */
+export async function claimSessionSleepAttempt({
+  sessionId,
+  deliveryId,
+  now,
+  retryAfterMs,
+}: {
+  sessionId: string
+  deliveryId: string
+  now: Date
+  retryAfterMs: number
+}) {
+  const db = await getDb()
+  const retryBefore = new Date(now.getTime() - retryAfterMs)
+  const rows = await db.update(schema.session_sleeps)
+    .set({ last_attempt_at: now, attempts: orm.sql`${schema.session_sleeps.attempts} + 1` })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.session_id, sessionId),
+      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
+      orm.eq(schema.session_sleeps.status, 'planned'),
+      orm.lte(schema.session_sleeps.wake_at, now),
+      orm.or(
+        orm.isNull(schema.session_sleeps.last_attempt_at),
+        orm.lte(schema.session_sleeps.last_attempt_at, retryBefore),
+      ),
+    ))
+    .returning()
+  return rows[0] ?? null
+}
+
+/** `planned` -> `posted` once Discord accepted the wake message. */
+export async function markSessionSleepPosted({
+  sessionId,
+  deliveryId,
+  now,
+}: {
+  sessionId: string
+  deliveryId: string
+  now: Date
+}) {
+  const db = await getDb()
+  const rows = await db.update(schema.session_sleeps)
+    .set({ status: 'posted', posted_at: now })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.session_id, sessionId),
+      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
+      orm.eq(schema.session_sleeps.status, 'planned'),
+    ))
+    .returning({ session_id: schema.session_sleeps.session_id })
+  return countRows(rows) > 0
+}
+
+export async function markSessionSleepFailed({
+  sessionId,
+  deliveryId,
+}: {
+  sessionId: string
+  deliveryId: string
+}) {
+  const db = await getDb()
+  const rows = await db.update(schema.session_sleeps)
+    .set({ status: 'failed' })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.session_id, sessionId),
+      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
+      orm.inArray(schema.session_sleeps.status, ['planned', 'posted']),
+    ))
+    .returning({ session_id: schema.session_sleeps.session_id })
+  return countRows(rows) > 0
+}
+
+/**
+ * Ingress commit point. Marks the wake as delivered to the session.
+ *
+ * Returns false when the row is missing or already cancelled/consumed, which is
+ * how a wake that raced a user cancellation gets dropped instead of starting a
+ * turn the user already superseded.
+ */
+export async function consumeSessionSleepWake({ deliveryId }: { deliveryId: string }) {
+  const db = await getDb()
+  const rows = await db.update(schema.session_sleeps)
+    .set({ status: 'consumed' })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
+      orm.inArray(schema.session_sleeps.status, ['planned', 'posted']),
+    ))
+    .returning({ session_id: schema.session_sleeps.session_id })
+  return countRows(rows) > 0
+}
+
+/**
+ * A `posted` wake that ingress never consumed (event missed, crash between the
+ * post and MessageCreate) goes back to `planned` so it is retried. The Discord
+ * nonce makes the retry idempotent. Bounded by maxAttempts so a permanently
+ * unconsumable row ends as `failed` instead of looping forever.
+ */
+export async function requeueStalePostedSessionSleeps({
+  now,
+  staleAfterMs,
+  maxAttempts,
+}: {
+  now: Date
+  staleAfterMs: number
+  maxAttempts: number
+}) {
+  const db = await getDb()
+  const staleBefore = new Date(now.getTime() - staleAfterMs)
+  const stale = await db.select()
+    .from(schema.session_sleeps)
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.status, 'posted'),
+      orm.lte(schema.session_sleeps.posted_at, staleBefore),
+    ))
+  for (const row of stale) {
+    const exhausted = row.attempts >= maxAttempts
+    await db.update(schema.session_sleeps)
+      .set(exhausted ? { status: 'failed' } : { status: 'planned' })
+      .where(orm.and(
+        orm.eq(schema.session_sleeps.session_id, row.session_id),
+        orm.eq(schema.session_sleeps.delivery_id, row.delivery_id),
+        orm.eq(schema.session_sleeps.status, 'posted'),
+      ))
+  }
+  return countRows(stale)
+}
+
+/**
+ * Cancel any pending sleep owned by a thread.
+ *
+ * Matches on thread_id OR the session currently bound to the thread, because a
+ * row can hold a stale thread binding after /resume. thread_id -> session_id is
+ * unambiguous (thread_id is the primary key), unlike the reverse direction.
+ * `posted` rows are cancelled too so an already-posted wake cannot be requeued
+ * after the user took over the conversation.
+ */
+export async function cancelSessionSleepForThread({ threadId }: { threadId: string }) {
+  const db = await getDb()
+  // Single statement on purpose: this runs on every ingress, so the session
+  // binding is resolved with a correlated subquery instead of a second round
+  // trip. thread_id is the primary key of thread_sessions, so the subquery
+  // yields at most one row.
+  const rows = await db.update(schema.session_sleeps)
+    .set({ status: 'cancelled' })
+    .where(orm.and(
+      orm.inArray(schema.session_sleeps.status, ['planned', 'posted']),
+      orm.or(
+        orm.eq(schema.session_sleeps.thread_id, threadId),
+        orm.eq(
+          schema.session_sleeps.session_id,
+          orm.sql`(SELECT ${schema.thread_sessions.session_id} FROM ${schema.thread_sessions} WHERE ${schema.thread_sessions.thread_id} = ${threadId})`,
+        ),
+      ),
+    ))
+    .returning({ session_id: schema.session_sleeps.session_id })
+  return countRows(rows) > 0
 }
 
 export async function getSessionStartSourcesBySessionIds(sessionIds: string[]) {

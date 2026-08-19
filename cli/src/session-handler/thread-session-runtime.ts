@@ -62,6 +62,7 @@ import {
   startScheduledTaskRunSession,
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
+  cancelSessionSleepForThread,
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
@@ -588,6 +589,12 @@ export type IngressInput = {
    * (e.g. user-to-user replies in a thread).
    */
   noReply?: boolean
+  /**
+   * True only for the wake prompt posted by the kimaki_sleep task runner.
+   * Every other ingress cancels a pending sleep; this one must not, because it
+   * is delivering that sleep rather than superseding it.
+   */
+  isSleepWake?: boolean
   /**
    * Product-analytics turn source. Defaults to discord. Set retry/cli/scheduled
    * at the ingress site so DAU queries can exclude non-user activity.
@@ -3326,6 +3333,18 @@ export class ThreadSessionRuntime {
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     threadState.setSessionUsername(this.threadId, input.username)
     threadState.setSessionUserId(this.threadId, input.userId)
+    // Any new turn supersedes a pending sleep. This lives in the shared ingress
+    // (not in the Discord message handler) so /queue, /abort-then-send, user
+    // commands, and CLI-injected prompts all cancel it too. Awaited on purpose:
+    // fire-and-forget would race the task runner and let a stale wake land
+    // after the user already took the conversation back.
+    if (!input.isSleepWake) {
+      await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
+        (error) => {
+          logger.error('[SLEEP] failed to cancel pending sleep:', error)
+        },
+      )
+    }
     await this.ensureParentSessionId({
       parentSessionId: input.parentSessionId,
     })

@@ -1,0 +1,99 @@
+---
+title: Sleeping Sessions
+description: Let an agent pause itself for hours or days with the kimaki_sleep tool, then wake up in the same thread and keep working.
+icon: lucide:moon
+---
+
+An agent can **put itself to sleep** and wake up later in the same thread. Use it to wait for a deploy, a nightly build, a support reply, or a specific date, without burning tokens and without you remembering to poke it.
+
+The agent calls the **`kimaki_sleep`** tool, the session goes idle, and Kimaki wakes it when the time arrives.
+
+```diagram
+  agent calls kimaki_sleep        Kimaki checks every 5s         same session resumes
+            │                               │                               │
+            ▼                               ▼                               ▼
+  ┌────────────────────┐  writes  ┌────────────────────┐   due    ┌────────────────────┐
+  │ session goes idle  │ ───────► │ wake row in SQLite │ ───────► │ wake message in    │
+  │ no tokens burned   │          │ survives restarts  │          │ the same thread    │
+  └────────────────────┘          └────────────────────┘          └────────────────────┘
+```
+
+## Asking for a sleep
+
+Just say it in the thread. The agent picks the tool itself:
+
+> deploy is running, check back in 2 hours and confirm it went green
+
+> wait until tomorrow 9am UTC, then summarize what changed overnight
+
+The tool takes either **`duration`** or **`until`**, never both:
+
+| Argument | Meaning | Examples |
+|---|---|---|
+| `duration` | Relative wait | `30s`, `10m`, `2h`, `1d` |
+| `until` | Absolute UTC instant | `2030-01-01T09:00:00Z` |
+| `reason` | Why it is waiting, shown on wake | `waiting for the deploy` |
+
+In Discord the sleep appears as a normal tool line:
+
+```
+┣ kimaki_sleep for 2h _waiting for the deploy_
+```
+
+<Aside>
+<Warning>
+`until` must be **UTC** and end with `Z`. Convert from your local time before asking for a specific instant.
+</Warning>
+</Aside>
+
+## Waking up
+
+When the time arrives, Kimaki posts a wake message into the same thread and the session continues with its full history:
+
+```
+⬦ Woke after sleeping until 2030-01-01 09:00 UTC
+Reason: waiting for the deploy
+Continue the work you were waiting for.
+```
+
+The wake is a **new turn** on the **same session**, so the agent still remembers everything from before the sleep.
+
+## It survives restarts
+
+The wake time is stored in SQLite, not in memory. Restarting Kimaki, upgrading it, or rebooting the machine does not lose a pending sleep. The next time the bot runs, the due sleep fires.
+
+Delivery is **retried until it lands**. A sleep is only marked delivered once the wake has actually started a turn, so a crash midway through waking just retries on the next check. Each wake carries an idempotency key, so a retry can never wake the same session twice.
+
+## Cancelling a sleep
+
+Send **any message** in the thread and the pending sleep is cancelled. The agent picks up your new message instead, and no wake arrives later.
+
+This is not limited to chat messages. **`/queue`**, **`/abort`**, slash commands, and prompts sent with `kimaki send` all supersede a pending sleep, because cancelling happens wherever a new turn enters the session.
+
+<Aside>
+<Tip>
+**`/btw` is the exception.** It forks your question into a side thread on purpose, so the sleeping thread keeps waiting. Use it to ask something without ending the wait.
+</Tip>
+</Aside>
+
+Asking for another sleep simply replaces the pending one. Each session has at most **one** pending sleep.
+
+## Sleep vs scheduled tasks
+
+Both wait for the future, but they are not the same thing:
+
+| | `kimaki_sleep` | [`--send-at`](./scheduled-tasks) |
+|---|---|---|
+| Who starts it | The agent, mid-conversation | You, from the CLI |
+| What resumes | **This** session, with full context | A **new** prompt |
+| Repeats | No, one-shot | Cron supported |
+| Best for | "check back after the deploy" | digests, reminders, recurring jobs |
+
+Use **sleep** when the current conversation must continue later. Use **scheduled tasks** when you want fresh work to start on a timer.
+
+## Limits
+
+- Only the **main thread session** can sleep. Subagents cannot.
+- Wake granularity is about **5 seconds**, so very short sleeps can overshoot slightly.
+- The agent should call `kimaki_sleep` **last**, after its text, and stop there.
+- If the thread is **deleted** before the wake, the sleep is dropped instead of retried.

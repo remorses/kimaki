@@ -101,6 +101,101 @@ function parseUtcSendAtDate({
   return runAt
 }
 
+const SLEEP_DURATION_REGEX = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i
+
+const SLEEP_DURATION_MS = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+} as const
+
+function parseUtcFutureDate({
+  value,
+  now,
+  field,
+}: {
+  value: string
+  now: Date
+  field: string
+}): Date | Error {
+  if (!UTC_SEND_AT_DATE_REGEX.test(value)) {
+    return new Error(
+      `${field} must be UTC ISO format ending with Z (example: 2026-08-20T09:00:00Z). Received: ${value}`,
+    )
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return new Error(`Invalid UTC date for ${field}: ${value}`)
+  }
+
+  if (parsed.getTime() <= now.getTime()) {
+    return new Error(`${field} must be in the future (UTC): ${value}`)
+  }
+
+  return parsed
+}
+
+export function parseSleepWakeAt({
+  duration,
+  until,
+  now,
+}: {
+  duration?: string
+  until?: string
+  now: Date
+}): Date | Error {
+  const trimmedDuration = duration?.trim() || ''
+  const trimmedUntil = until?.trim() || ''
+  if (trimmedDuration && trimmedUntil) {
+    return new Error('Pass either duration or until, not both')
+  }
+  if (!trimmedDuration && !trimmedUntil) {
+    return new Error('Pass duration or until')
+  }
+
+  if (trimmedUntil) {
+    return parseUtcFutureDate({
+      value: trimmedUntil,
+      now,
+      field: 'until',
+    })
+  }
+
+  const match = SLEEP_DURATION_REGEX.exec(trimmedDuration)
+  if (!match) {
+    return new Error(
+      `Invalid duration: "${trimmedDuration}". Use a number plus ms, s, m, h, or d (example: 2h).`,
+    )
+  }
+
+  const amount = Number(match[1])
+  const unit = match[2]!.toLowerCase() as keyof typeof SLEEP_DURATION_MS
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return new Error('duration must be greater than 0')
+  }
+
+  return new Date(now.getTime() + amount * SLEEP_DURATION_MS[unit])
+}
+
+export function formatSessionSleepWakeAt(wakeAt: Date): string {
+  return `${wakeAt.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+}
+
+export function formatSessionSleepWakePrompt({
+  wakeAt,
+  reason,
+}: {
+  wakeAt: Date
+  reason: string | null
+}): string {
+  const until = formatSessionSleepWakeAt(wakeAt)
+  const reasonLine = reason?.trim() ? `\nReason: ${reason.trim()}` : ''
+  return `⬦ Woke after sleeping until ${until}${reasonLine}\nContinue the work you were waiting for.`
+}
+
 export function parseSendAtValue({
   value,
   now,

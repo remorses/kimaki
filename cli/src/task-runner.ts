@@ -1,6 +1,6 @@
-// Scheduled task runner for executing due `send --send-at` jobs in the bot process.
+// Scheduled task runner for due `send --send-at` jobs and session sleep wakes.
 
-import { type REST, Routes } from 'discord.js'
+import { DiscordAPIError, type REST, Routes } from 'discord.js'
 import { createDiscordRest } from './discord-urls.js'
 import { ensureThreadMember } from './discord-utils.js'
 import YAML from 'yaml'
@@ -20,6 +20,14 @@ import {
   releaseScheduledTaskClaim,
   setScheduledTaskRunThread,
   type ScheduledTask,
+  type SessionSleep,
+  claimSessionSleepAttempt,
+  getDueSessionSleeps,
+  getThreadIdBySessionId,
+  getThreadSession,
+  markSessionSleepFailed,
+  markSessionSleepPosted,
+  requeueStalePostedSessionSleeps,
 } from './database.js'
 import { execAsync } from './exec-async.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
@@ -29,6 +37,7 @@ import type { ThreadStartMarker } from './system-message.js'
 import {
   type ScheduledTaskPayload,
   appendTaskCommandOutput,
+  formatSessionSleepWakePrompt,
   getNextCronRun,
   getPromptPreview,
   parseScheduledTaskPayload,
@@ -127,6 +136,148 @@ async function executeThreadScheduledTask({
 
   if (postResult instanceof Error) return postResult
   return payload.threadId
+}
+
+/** Wait before retrying a sleep wake whose attempt did not reach `posted`. */
+const SLEEP_WAKE_RETRY_AFTER_MS = 30_000
+/** How long a `posted` wake may stay unconsumed by ingress before requeueing. */
+const SLEEP_WAKE_CONSUME_TIMEOUT_MS = 60_000
+const SLEEP_WAKE_MAX_ATTEMPTS = 5
+
+type SleepWakeFailure = { error: Error; permanent: boolean }
+
+/**
+ * Resolve the thread that should receive the wake.
+ *
+ * The row stores the thread that was current when the tool ran, but /resume can
+ * rebind the session to another thread afterwards. thread_id -> session_id is a
+ * primary-key lookup, so verifying that direction is exact; only if the binding
+ * no longer holds do we fall back to the (ordered) reverse lookup.
+ */
+async function resolveSessionSleepThreadId(sleep: SessionSleep): Promise<string | null> {
+  const boundSession = await getThreadSession(sleep.thread_id)
+  if (boundSession === sleep.session_id) {
+    return sleep.thread_id
+  }
+  const activeThreadId = await getThreadIdBySessionId(sleep.session_id)
+  return activeThreadId ?? null
+}
+
+async function postSessionSleepWake({
+  rest,
+  sleep,
+  threadId,
+}: {
+  rest: REST
+  sleep: SessionSleep
+  threadId: string
+}): Promise<SleepWakeFailure | null> {
+  const marker: ThreadStartMarker = {
+    start: true,
+    sleepWake: true,
+    sleepId: sleep.delivery_id,
+  }
+  const prompt = formatSessionSleepWakePrompt({
+    wakeAt: sleep.wake_at,
+    reason: sleep.reason,
+  })
+  // `.then(() => null)` keeps the success type concrete. Returning the raw post
+  // value would widen the union to `unknown` and erase the failure shape.
+  return await rest
+    .post(Routes.channelMessages(threadId), {
+      body: {
+        content: prompt,
+        embeds: [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }],
+        // A lost response does not mean Discord rejected the post. Retrying with
+        // the same nonce returns the existing message instead of creating a
+        // second one, so a retry can never produce two wake turns.
+        nonce: sleep.delivery_id,
+        enforce_nonce: true,
+      },
+    })
+    .then((): SleepWakeFailure | null => {
+      return null
+    })
+    .catch((error): SleepWakeFailure => {
+      // Only an unknown channel/message is genuinely unrecoverable. A 403 is
+      // often temporary (permissions revoked, thread locked) so it keeps
+      // retrying until the attempt budget runs out.
+      const permanent =
+        error instanceof DiscordAPIError &&
+        error.status === 404
+      return {
+        error: new Error(
+          `Failed to post sleep wake for session ${sleep.session_id}`,
+          { cause: error },
+        ),
+        permanent,
+      }
+    })
+}
+
+export async function wakeDueSessionSleeps({
+  rest,
+  now = new Date(),
+  limit = 20,
+}: {
+  rest: REST
+  now?: Date
+  limit?: number
+}): Promise<void> {
+  await requeueStalePostedSessionSleeps({
+    now,
+    staleAfterMs: SLEEP_WAKE_CONSUME_TIMEOUT_MS,
+    maxAttempts: SLEEP_WAKE_MAX_ATTEMPTS,
+  })
+
+  const dueSleeps = await getDueSessionSleeps({
+    now,
+    retryAfterMs: SLEEP_WAKE_RETRY_AFTER_MS,
+    limit,
+  })
+  for (const sleep of dueSleeps) {
+    // Reserves an attempt but stays `planned`, so dying before the post below
+    // costs one retry delay instead of losing the wake.
+    const claimed = await claimSessionSleepAttempt({
+      sessionId: sleep.session_id,
+      deliveryId: sleep.delivery_id,
+      now,
+      retryAfterMs: SLEEP_WAKE_RETRY_AFTER_MS,
+    })
+    if (!claimed) continue
+
+    const threadId = await resolveSessionSleepThreadId(claimed)
+    if (!threadId) {
+      await markSessionSleepFailed({
+        sessionId: claimed.session_id,
+        deliveryId: claimed.delivery_id,
+      })
+      taskLogger.warn(
+        `[task-runner] no thread owns session ${claimed.session_id}, dropping sleep wake`,
+      )
+      continue
+    }
+
+    const postResult = await postSessionSleepWake({ rest, sleep: claimed, threadId })
+    if (!postResult) {
+      await markSessionSleepPosted({
+        sessionId: claimed.session_id,
+        deliveryId: claimed.delivery_id,
+        now,
+      })
+      continue
+    }
+
+    const exhausted = claimed.attempts >= SLEEP_WAKE_MAX_ATTEMPTS
+    if (postResult.permanent || exhausted) {
+      await markSessionSleepFailed({
+        sessionId: claimed.session_id,
+        deliveryId: claimed.delivery_id,
+      })
+    }
+    taskLogger.error(`[task-runner] ${formatErrorWithStack(postResult.error)}`)
+    void notifyError(postResult.error, 'Session sleep wake failed')
+  }
 }
 
 async function executeChannelScheduledTask({
@@ -564,6 +715,8 @@ async function runTaskRunnerTick({
     await previous
     await processDueTask({ rest, task })
   }, Promise.resolve())
+
+  await wakeDueSessionSleeps({ rest })
 }
 
 export function startTaskRunner({

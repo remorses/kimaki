@@ -7,7 +7,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import type { CommandContext } from './types.js'
-import { getThreadSession } from '../database.js'
+import { cancelSessionSleepForThread, getThreadSession } from '../database.js'
 import { getOpencodeClient, initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
@@ -65,6 +65,11 @@ export async function handleAbortCommand({
     await command.editReply('No active session in this thread')
     return
   }
+
+  // Aborting is an explicit "stop waiting" from the user, and it never goes
+  // through enqueueIncoming, so cancel any pending sleep here too. Otherwise the
+  // wake would still fire later and restart a session the user just stopped.
+  await cancelSessionSleepForThread({ threadId: channel.id })
 
   // abortActiveRun delegates to session.abort(), run settlement stays event-driven.
   const runtime = getRuntime(channel.id)

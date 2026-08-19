@@ -23,6 +23,7 @@ import {
   getChannelMentionMode,
   getChannelDirectory,
   cancelAllPendingIpcRequests,
+  consumeSessionSleepWake,
   deleteChannelDirectoryById,
   createPendingWorkspace,
   setWorkspaceReady,
@@ -840,6 +841,24 @@ export async function startDiscordBot({
           void cancelPendingFileUpload(thread.id)
         }
 
+        // A sleep wake only becomes a turn if it can still claim its own row.
+        // The claim fails when the user cancelled the sleep while the wake was
+        // being posted, so the superseded wake is dropped instead of starting a
+        // turn the user already replaced. Cancellation for every other kind of
+        // message happens inside runtime.enqueueIncoming().
+        const isSleepWake = Boolean(promptMarker?.sleepWake)
+        if (isSleepWake) {
+          const claimedWake = promptMarker?.sleepId
+            ? await consumeSessionSleepWake({ deliveryId: promptMarker.sleepId })
+            : false
+          if (!claimedWake) {
+            discordLogger.log(
+              `[SLEEP] ignoring superseded wake in thread ${thread.id}`,
+            )
+            return
+          }
+        }
+
         // Expensive pre-processing (voice transcription, context fetch,
         // attachment download) runs inside the runtime's serialized
         // preprocess chain, preserving Discord arrival order without
@@ -859,6 +878,7 @@ export async function startDiscordBot({
           permissions: cliInjectedPermissions,
           injectionGuardPatterns: cliInjectedInjectionGuardPatterns,
           parentSessionId: cliInjectedParentSessionId,
+          isSleepWake: isSleepWake || undefined,
           noReply: isLeadingMentionToOtherUser || undefined,
           sessionStartSource: sessionStartSource
             ? {

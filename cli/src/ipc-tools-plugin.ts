@@ -1,15 +1,16 @@
-// OpenCode plugin that provides IPC-based tools for Discord interaction:
+// OpenCode plugin that provides Discord and session tools:
 // - kimaki_file_upload: prompts the Discord user to upload files via native picker
 // - kimaki_action_buttons: shows clickable action buttons in the Discord thread
+// - kimaki_sleep: persist a wake time so the session can sleep hours or days
 //
-// Tools communicate with the bot process via IPC rows in SQLite (the plugin
-// runs inside the OpenCode server process, not the bot process).
+// IPC tools talk to the bot process via SQLite rows. Sleep writes session_sleeps
+// directly. The plugin runs inside the OpenCode server process, not the bot.
 //
 // Exported from kimaki-opencode-plugin.ts — each export is treated as a separate
 // plugin by OpenCode's plugin loader.
 
 import type { Plugin } from '@opencode-ai/plugin'
-import type { ToolContext } from '@opencode-ai/plugin/tool'
+import type { ToolContext, ToolResult } from '@opencode-ai/plugin/tool'
 import dedent from 'string-dedent'
 import { z } from 'zod'
 import { setDataDir } from './config.js'
@@ -33,7 +34,7 @@ function tool<Args extends z.ZodRawShape>(input: {
   execute(
     args: z.infer<z.ZodObject<Args>>,
     context: ToolContext,
-  ): Promise<string>
+  ): Promise<ToolResult>
 }) {
   return input
 }
@@ -220,6 +221,73 @@ const ipcToolsPlugin: any = async () => {
           }
 
           return 'Action button request timed out'
+        },
+      }),
+      kimaki_sleep: tool({
+        description: dedent`
+          Sleep this session until a future time, then wake with a new message.
+          Use this to wait hours or days for CI, a deploy, a date, or any later event.
+          The sleep is stored in SQLite and survives bot restarts.
+
+          Pass either duration (2h, 30m, 1d) or until (UTC ISO ending with Z).
+          Do not pass both. You MUST call kimaki_sleep LAST, after ALL text.
+          Do not call more tools after it. A new user message cancels the sleep.
+        `,
+        args: {
+          duration: z
+            .string()
+            .optional()
+            .describe(
+              'Relative wait. Examples: 30s, 2h, 1d. Do not pass with until.',
+            ),
+          until: z
+            .string()
+            .optional()
+            .describe(
+              'UTC ISO date ending with Z. Example: 2026-08-20T09:00:00Z.',
+            ),
+          reason: z
+            .string()
+            .optional()
+            .describe('Why the session is sleeping. Shown when it wakes.'),
+        },
+        async execute({ duration, until, reason }, context) {
+          const { parseSleepWakeAt, formatSessionSleepWakeAt } = await import(
+            './task-schedule.js'
+          )
+          const wakeAt = parseSleepWakeAt({
+            duration,
+            until,
+            now: new Date(),
+          })
+          if (wakeAt instanceof Error) {
+            return wakeAt.message
+          }
+
+          const { getThreadIdBySessionId, upsertSessionSleep } =
+            await loadDatabaseModule()
+          const threadId = await getThreadIdBySessionId(context.sessionID)
+          if (!threadId) {
+            return 'sleep is only available in the main session'
+          }
+
+          await upsertSessionSleep({
+            sessionId: context.sessionID,
+            threadId,
+            wakeAt,
+            reason,
+          })
+
+          // The title carries the resolved absolute time so Discord shows the
+          // real wake instant instead of a relative input like "2h".
+          const untilLabel = formatSessionSleepWakeAt(wakeAt)
+          const reasonText = reason?.trim()
+            ? ` Reason: ${reason.trim()}.`
+            : ''
+          return {
+            title: `until ${untilLabel}`,
+            output: `Sleeping until ${untilLabel}.${reasonText} Stop now. You will be woken with a new message.`,
+          }
         },
       }),
     },

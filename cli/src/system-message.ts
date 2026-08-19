@@ -316,9 +316,13 @@ export type ThreadStartMarker = {
   /**
    * OpenCode session ID of the parent session that spawned this thread via
    * `kimaki send --parent-session`. Exposed in the child system message so the
-   * child can message the parent only when the user explicitly asks.
-   */
+    * child can message the parent only when the user explicitly asks.
+    */
   parentSessionId?: string
+  /** Wake prompt posted after kimaki_sleep. Ingress must not cancel this sleep. */
+  sleepWake?: boolean
+  /** delivery_id of the session_sleeps row this wake delivers. */
+  sleepId?: string
 }
 
 export function isInjectedPromptMarker({
@@ -537,6 +541,13 @@ see --help for options like voice, speed, etc.
 
 To ask the user to upload files from their device, use \`kimaki_file_upload\`. This shows a native file picker dialog in Discord. The files are downloaded to the project's \`uploads/\` directory and the tool returns the local file paths.
 You MUST call \`kimaki_file_upload\` LAST, after ALL text.
+
+## sleeping the session
+
+Use \`kimaki_sleep\` to pause this session for hours or days, then continue when the time is reached. The sleep is stored in SQLite and survives bot restarts.
+Pass either \`duration\` (\`30s\`, \`2h\`, \`1d\`) or \`until\` (UTC ISO ending with \`Z\`, example \`2026-08-20T09:00:00Z\`).
+You MUST call \`kimaki_sleep\` LAST, after ALL text. Do not call more tools after it.
+A new user message cancels the sleep. After wake, continue the wait reason.
 
 ## archiving the current thread
 
@@ -1001,7 +1012,7 @@ You MUST write ALL user-visible text FIRST.
 You MUST call \`question\` LAST, after ALL text parts.
 NEVER call \`question\` before your text. Discord will hide the message.
 
-The same rule applies to \`kimaki_action_buttons\` and \`kimaki_file_upload\`.
+The same rule applies to \`kimaki_action_buttons\`, \`kimaki_file_upload\`, and \`kimaki_sleep\`.
 You MUST call them LAST, after ALL text.
 
 ALWAYS use \`question\` when you ask the user a question. Do not write a numbered list in plain text.

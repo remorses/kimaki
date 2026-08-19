@@ -857,11 +857,15 @@ export function setupQueueAdvancedSuite({
   username,
   restrictExternalDirectories = false,
   projectPermission,
+  extraMatchers = [],
 }: {
   channelId: string
   channelName: string
   dirName: string
   username: string
+  // Matchers only this suite needs. Keeps narrow markers out of the shared list
+  // so they cannot cascade into unrelated e2e files.
+  extraMatchers?: DeterministicMatcher[]
   // Opt into the --restrict-directories behaviour so reads outside the project
   // still raise an external_directory permission prompt. Off by default, which
   // matches the shipped default of allowing every directory.
@@ -924,7 +928,10 @@ export function setupQueueAdvancedSuite({
       providerNpm,
       model: 'deterministic-v2',
       smallModel: 'deterministic-v3',
-      settings: { strict: false, matchers: createDeterministicMatchers() },
+      settings: {
+        strict: false,
+        matchers: [...createDeterministicMatchers(), ...extraMatchers],
+      },
     })
     fs.writeFileSync(
       path.join(ctx.directories.projectDirectory, 'opencode.json'),

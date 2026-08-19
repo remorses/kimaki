@@ -566,6 +566,22 @@ export function getToolSummaryText(part: Part): string {
     return prompt ? `*${escapeInlineMarkdown(prompt.slice(0, 60))}*` : ''
   }
 
+  // LESSON: tool parts are sent to Discord at `running` status (see
+  // shouldSendPart in thread-session-runtime), so `state.title` from the tool
+  // result is never rendered here. Everything shown must come from state.input.
+  // `until` is already absolute; `duration` is relative, so say "for 2h" —
+  // never "until 2h".
+  if (part.tool.endsWith('kimaki_sleep')) {
+    const until = (part.state.input?.until as string) || ''
+    const duration = (part.state.input?.duration as string) || ''
+    const reason = (part.state.input?.reason as string) || ''
+    const when = until ? `until ${until}` : duration ? `for ${duration}` : ''
+    const reasonText = reason ? `_${escapeInlineMarkdown(reason)}_` : ''
+    return [when && escapeInlineMarkdown(when), reasonText]
+      .filter(Boolean)
+      .join(' ')
+  }
+
   if (!part.state.input) return ''
 
   const inputFields = Object.entries(part.state.input)

@@ -4,7 +4,7 @@
 // initializer functions. OpenCode calls every export as a plugin.
 //
 // Plugins are split into focused modules:
-// - ipc-tools-plugin: file upload + action buttons (IPC-based Discord tools)
+// - ipc-tools-plugin: file upload, action buttons, and session sleep
 // - context-awareness-plugin: branch, pwd, memory reminder, onboarding tutorial
 // - memory-overview-plugin: frozen MEMORY.md heading overview per session
 // - opencode-interrupt-plugin: interrupt queued messages at step boundaries
