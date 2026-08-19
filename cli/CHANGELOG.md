@@ -1,5 +1,100 @@
 # Changelog
 
+## 0.26.0
+
+1. **xAI (Grok) multi-account OAuth rotation** — kimaki now rotates xAI accounts the same way it already rotates Anthropic and OpenAI accounts.
+
+   When an xAI account hits its usage limit (402 "balance exhausted" or 403 "spending-limit"), kimaki switches to the next account in the rotation pool and resumes the session.
+
+   ```bash
+   # List all xAI accounts in the rotation pool
+   kimaki multioauth xai list
+
+   # Show the current active account
+   kimaki multioauth xai current
+
+   # Remove an account by index or email
+   kimaki multioauth xai remove 2
+
+   # Test all accounts for usage limits
+   kimaki multioauth xai check
+   ```
+
+   New accounts are detected automatically when you log in via `/login` in Discord. The rotation pool is stored at `~/.local/share/opencode/xai-oauth-accounts.json`.
+
+   This release also enables the OpenAI rotation plugin, which existed but was never wired into the plugin loader.
+
+2. **Conditional and non-overlapping scheduled tasks** — use `--pre-run` to run a shell command in the project directory before each scheduled occurrence. Exit code 0 starts the session and adds stdout to its prompt. Any other exit code skips the occurrence. Stdout and stderr stay in the Kimaki log.
+
+   ```bash
+   kimaki send --channel <channel-id> \
+     --send-at '*/5 * * * *' \
+     --pre-run 'tsx scripts/should-run.ts' \
+     --prompt 'Handle the support request from the pre-run output.'
+   ```
+
+   Recurring tasks now avoid overlapping sessions by default. If one occurrence still has an active session, Kimaki skips the next tick. Add `--allow-concurrency` to opt into parallel runs from the same task.
+
+   ```bash
+   kimaki task edit <id> --pre-run 'tsx scripts/should-run.ts'
+   kimaki task edit <id> --allow-concurrency true
+   ```
+
+3. **`kimaki tunnel` now prints both the localhost URL and the public tunnel URL** after it connects.
+
+   Never use the tunnel URL for local testing. Use localhost instead; it is much faster. The CLI still prints the tunnel URL so people who are not on the same machine can open the app.
+
+   ```
+   Connected with Traforo!
+
+   Local:  http://localhost:5173
+   Tunnel: https://abc123-tunnel.kimaki.dev
+
+   NEVER use the tunnel URL for local testing. Use the local URL instead; it is much faster.
+   Always show both URLs to the user. The local URL works when they are on the same machine.
+   ```
+
+4. **Refresh the agent model when you run `/agent` or `/xxx-agent`**, even if that agent is already selected.
+
+   This matters when the agent file changed, or when a leftover thread `/model` override is still pinned. The command now clears the session model copy and shows which model will be used next, plus **why**:
+
+   ```
+   Using **plan** agent for this session
+   Model: *anthropic/claude-sonnet-4* (agent "plan")
+   The agent will change on the next message.
+   ```
+
+   If a **session** or **channel** `/model` override is the reason that model is selected, the reply tells you to run `/model` and press **Clear override** so the agent's own model can apply.
+
+   `/model` on this thread still beats the agent model. The agent's model still beats a channel or global `/model`.
+
+5. **Stop inlining large Discord text attachments into the model prompt.**
+
+   Every text attachment is saved under `~/.kimaki/attachments/`. The prompt always includes the local path and Discord URL. Files over 64 KB omit the file contents and tell the agent to read the local path. Small text files and `prompt.md` from `kimaki send` still inline as before.
+
+6. **`question`, `kimaki_action_buttons`, and `kimaki_file_upload` now run last**, after all text.
+
+   Calling these tools first hid the assistant message behind Discord dropdowns and buttons.
+
+7. **Show delegated task parts in Discord** when OpenAI provides the task description only as the completed tool title.
+
+   Task calls now appear as `┣ general **Classify pending changes**` instead of being omitted from the thread.
+
+8. **Keep raw Discord user IDs separate from usernames** when `kimaki send --user` and `kimaki task edit --user` create session metadata. Kimaki now includes `userId` without inventing a numeric `username` when only an ID or mention is available.
+
+9. **Fix parallel `kimaki send` failures** when multiple long prompts are dispatched at once.
+
+   Long prompts used to be written to a shared temp path and unlinked after upload. Concurrent sends from the same working directory could race on create/cleanup and fail with `ENOENT` before the Discord thread was created.
+
+   Long prompt attachments now build `prompt.md` in memory and upload it directly. No temp file is created, so parallel sends cannot delete each other's attachments.
+
+   ```bash
+   # safe to run many long prompts at once
+   kimaki send --channel <id> --prompt "$(cat long-task-1.md)" &
+   kimaki send --channel <id> --prompt "$(cat long-task-2.md)" &
+   wait
+   ```
+
 ## 0.25.0
 
 1. **Allow every directory by default, remove `/add-dir`** — OpenCode's `external_directory` permission defaulted to `ask`, so reading anything outside the project put an approval prompt in the thread. That prompt fired constantly for ordinary work (reading a sibling repo, a config file, a cached dependency), and if nobody clicked it within the permission timeout the tool call was rejected. Kimaki worked around it with a growing allow-list, an `/add-dir` command, and auto-granting directories from `#channel` mentions.
