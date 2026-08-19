@@ -2963,6 +2963,7 @@ export class ThreadSessionRuntime {
    * fields that the local-queue path provides.
    */
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
+    await this.supersedePendingSleep(input)
     let skippedBySessionGuard = false
 
     await this.dispatchAction(async () => {
@@ -3267,7 +3268,28 @@ export class ThreadSessionRuntime {
    * Enqueue in kimaki's local per-thread queue.
    * Used for explicit queue workflows (/queue, queueMessage=true).
    */
+  /**
+   * A new turn supersedes a pending sleep.
+   *
+   * Called from the two terminal routers rather than from the top of
+   * enqueueIncoming: arrival order is only fixed once a message reaches the
+   * preprocessChain link, so awaiting anything before that lets two rapid
+   * messages swap places. By here the order is already committed.
+   *
+   * Awaited rather than fire-and-forget so it cannot race the task runner and
+   * let a stale wake land after the user took the conversation back.
+   */
+  private async supersedePendingSleep(input: IngressInput): Promise<void> {
+    if (input.isSleepWake) return
+    await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
+      (error) => {
+        logger.error('[SLEEP] failed to cancel pending sleep:', error)
+      },
+    )
+  }
+
   private async enqueueViaLocalQueue(input: IngressInput): Promise<EnqueueResult> {
+    await this.supersedePendingSleep(input)
     const queueId = crypto.randomBytes(8).toString('hex')
     const queuedMessage: QueuedMessage = {
       queueId,
@@ -3333,18 +3355,6 @@ export class ThreadSessionRuntime {
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     threadState.setSessionUsername(this.threadId, input.username)
     threadState.setSessionUserId(this.threadId, input.userId)
-    // Any new turn supersedes a pending sleep. This lives in the shared ingress
-    // (not in the Discord message handler) so /queue, /abort-then-send, user
-    // commands, and CLI-injected prompts all cancel it too. Awaited on purpose:
-    // fire-and-forget would race the task runner and let a stale wake land
-    // after the user already took the conversation back.
-    if (!input.isSleepWake) {
-      await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
-        (error) => {
-          logger.error('[SLEEP] failed to cancel pending sleep:', error)
-        },
-      )
-    }
     await this.ensureParentSessionId({
       parentSessionId: input.parentSessionId,
     })

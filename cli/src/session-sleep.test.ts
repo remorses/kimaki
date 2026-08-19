@@ -1,9 +1,9 @@
 // Tests for the durable session-sleep delivery protocol.
 //
 // The invariant under test: a wake is delivered at least once and turned into a
-// session turn at most once. A row therefore stays `planned` until Discord has
-// accepted the post, and every delivery write is guarded on delivery_id so a
-// stale in-flight wake can never touch a newer sleep occurrence.
+// session turn at most once. A row therefore stays `planned` until ingress
+// consumes it, and every delivery write is guarded on delivery_id so a stale
+// in-flight wake can never touch a newer sleep occurrence.
 
 import { afterAll, describe, expect, test } from 'vitest'
 import {
@@ -14,8 +14,6 @@ import {
   getSessionSleep,
   getThreadIdBySessionId,
   markSessionSleepFailed,
-  markSessionSleepPosted,
-  requeueStalePostedSessionSleeps,
   setThreadSession,
   upsertSessionSleep,
 } from './database.js'
@@ -37,7 +35,7 @@ async function createSleep({
   reason?: string | null
 }) {
   await setThreadSession(threadId, sessionId)
-  return upsertSessionSleep({ sessionId, threadId, wakeAt, reason })
+  return upsertSessionSleep({ sessionId, wakeAt, reason })
 }
 
 describe('session sleep delivery', () => {
@@ -108,14 +106,14 @@ describe('session sleep delivery', () => {
       now: NOW,
       retryAfterMs: RETRY_AFTER_MS,
     })
-    const stalePost = await markSessionSleepPosted({
-      sessionId: 'ses-generation',
+    // The wake message already in flight for the old occurrence must not be
+    // able to deliver against the new one.
+    const staleConsume = await consumeSessionSleepWake({
       deliveryId: staleDeliveryId,
-      now: NOW,
     })
 
     expect(staleClaim).toBe(null)
-    expect(stalePost).toBe(false)
+    expect(staleConsume).toBe(false)
     expect((await getSessionSleep({ sessionId: 'ses-generation' }))?.status).toBe(
       'planned',
     )
@@ -126,12 +124,8 @@ describe('session sleep delivery', () => {
       sessionId: 'ses-once',
       threadId: 'thr-once',
     })
-    await markSessionSleepPosted({
-      sessionId: 'ses-once',
-      deliveryId,
-      now: NOW,
-    })
 
+    // A retry can post the same wake twice; only the first delivery may win.
     const first = await consumeSessionSleepWake({ deliveryId })
     const second = await consumeSessionSleepWake({ deliveryId })
 
@@ -163,12 +157,13 @@ describe('session sleep delivery', () => {
     )
   })
 
-  test('cancel finds the sleep through the session when thread_id is stale', async () => {
+  test('cancel reaches the sleep from any thread bound to the session', async () => {
     const deliveryId = await createSleep({
       sessionId: 'ses-rebound',
       threadId: 'thr-rebound-old',
     })
-    // /resume binds the same session to a second thread.
+    // /resume binds the same session to a second thread. A sleep belongs to the
+    // session, not to the thread it was created in, so either thread cancels it.
     await setThreadSession('thr-rebound-new', 'ses-rebound')
 
     const cancelled = await cancelSessionSleepForThread({
@@ -179,39 +174,31 @@ describe('session sleep delivery', () => {
     expect(await consumeSessionSleepWake({ deliveryId })).toBe(false)
   })
 
-  test('a posted wake nobody consumed is retried, then gives up', async () => {
+  test('a wake nobody consumed stays due and is retried', async () => {
     const deliveryId = await createSleep({
       sessionId: 'ses-stale',
       threadId: 'thr-stale',
     })
-    await markSessionSleepPosted({
+
+    // Posting does not change the status, so a wake that was delivered to
+    // Discord but never reached ingress is simply due again after the retry
+    // window. This is the same path that covers a crash before posting.
+    await claimSessionSleepAttempt({
       sessionId: 'ses-stale',
       deliveryId,
       now: NOW,
-    })
-
-    await requeueStalePostedSessionSleeps({
-      now: new Date(NOW.getTime() + 120_000),
-      staleAfterMs: 60_000,
-      maxAttempts: 5,
+      retryAfterMs: RETRY_AFTER_MS,
     })
     expect((await getSessionSleep({ sessionId: 'ses-stale' }))?.status).toBe(
       'planned',
     )
 
-    await markSessionSleepPosted({
-      sessionId: 'ses-stale',
-      deliveryId,
-      now: NOW,
+    const retryDue = await getDueSessionSleeps({
+      now: new Date(NOW.getTime() + RETRY_AFTER_MS + 1),
+      retryAfterMs: RETRY_AFTER_MS,
+      limit: 50,
     })
-    await requeueStalePostedSessionSleeps({
-      now: new Date(NOW.getTime() + 120_000),
-      staleAfterMs: 60_000,
-      maxAttempts: 0,
-    })
-    expect((await getSessionSleep({ sessionId: 'ses-stale' }))?.status).toBe(
-      'failed',
-    )
+    expect(retryDue.map((row) => row.session_id)).toContain('ses-stale')
   })
 
   test('failing a delivery is also guarded by delivery_id', async () => {

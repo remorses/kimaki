@@ -230,27 +230,29 @@ export const forum_sync_configs = sqliteCore.sqliteTable('forum_sync_configs', {
 
 // Durable "wake this session later" rows for the kimaki_sleep tool.
 //
-// Delivery is at-least-once with an idempotency key, never at-most-once:
-//   planned ──post──► posted ──ingress──► consumed
-//      ▲                 │
-//      └── retry ────────┘        cancelled / failed are terminal
+// Delivery is at-least-once, and ingress makes it at-most-once-per-turn:
 //
-// A row only leaves `planned` AFTER Discord accepts the post, so a crash between
-// claiming and posting simply retries. `delivery_id` is sent as the Discord
-// message nonce with enforce_nonce, so a retry after a lost response returns the
-// existing message instead of waking the session twice.
+//   planned ──► consumed          cancelled / failed are terminal
+//      ▲   │
+//      └───┘ retried until ingress consumes it
+//
+// A row stays `planned` until ingress turns the wake into a turn, so ANY loss
+// (crash before posting, crash after posting, missed gateway event) is covered
+// by the same retry. `delivery_id` is the Discord message nonce, so a retry
+// returns the existing message instead of waking the session twice.
+//
+// There is no thread_id: the owning thread is resolved from session_id at wake
+// time, so a session rebound by /resume wakes in its current thread.
 export const session_sleeps = sqliteCore.sqliteTable('session_sleeps', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
-  thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onUpdate: 'cascade' }),
   wake_at: datetime('wake_at').notNull(),
   reason: sqliteCore.text('reason'),
-  status: sqliteCore.text('status', { enum: ['planned', 'posted', 'consumed', 'cancelled', 'failed'] }).notNull().default('planned'),
+  status: sqliteCore.text('status', { enum: ['planned', 'consumed', 'cancelled', 'failed'] }).notNull().default('planned'),
   // Regenerated per sleep occurrence. Doubles as the Discord nonce and as a
   // generation guard so a stale in-flight wake cannot mutate a newer sleep.
   delivery_id: sqliteCore.text('delivery_id').notNull().$defaultFn(() => crypto.randomUUID()),
   attempts: sqliteCore.integer('attempts', { mode: 'number' }).notNull().default(0),
   last_attempt_at: datetime('last_attempt_at'),
-  posted_at: datetime('posted_at'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   sqliteCore.index('session_sleeps_status_wake_at_idx').on(table.status, table.wake_at),
@@ -300,7 +302,6 @@ export const relations = defineRelations({
     scheduled_tasks: r.many.scheduled_tasks(),
     thread_worktree: r.one.thread_worktrees({ from: r.thread_sessions.thread_id, to: r.thread_worktrees.thread_id }),
     thread_workspace: r.one.thread_workspaces({ from: r.thread_sessions.thread_id, to: r.thread_workspaces.thread_id }),
-    session_sleep: r.one.session_sleeps({ from: r.thread_sessions.thread_id, to: r.session_sleeps.thread_id }),
     ipc_requests: r.many.ipc_requests(),
   },
   session_events: {
@@ -365,9 +366,6 @@ export const relations = defineRelations({
   },
   forum_sync_configs: {
     bot: r.one.bot_tokens({ from: r.forum_sync_configs.app_id, to: r.bot_tokens.app_id }),
-  },
-  session_sleeps: {
-    thread: r.one.thread_sessions({ from: r.session_sleeps.thread_id, to: r.thread_sessions.thread_id }),
   },
   ipc_requests: {
     thread: r.one.thread_sessions({ from: r.ipc_requests.thread_id, to: r.thread_sessions.thread_id }),

@@ -266,6 +266,9 @@ const ipcToolsPlugin: any = async () => {
 
           const { getThreadIdBySessionId, upsertSessionSleep } =
             await loadDatabaseModule()
+          // Only a check that a thread owns this session: subagents have none.
+          // The wake resolves the thread again at delivery time, so nothing
+          // here can go stale if /resume rebinds the session later.
           const threadId = await getThreadIdBySessionId(context.sessionID)
           if (!threadId) {
             return 'sleep is only available in the main session'
@@ -273,7 +276,6 @@ const ipcToolsPlugin: any = async () => {
 
           await upsertSessionSleep({
             sessionId: context.sessionID,
-            threadId,
             wakeAt,
             reason,
           })

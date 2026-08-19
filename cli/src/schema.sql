@@ -170,16 +170,13 @@ CREATE TABLE IF NOT EXISTS `session_models` (
 
 CREATE TABLE IF NOT EXISTS `session_sleeps` (
 	`session_id` text PRIMARY KEY,
-	`thread_id` text NOT NULL,
 	`wake_at` datetime NOT NULL,
 	`reason` text,
 	`status` text DEFAULT 'planned' NOT NULL,
 	`delivery_id` text NOT NULL,
 	`attempts` integer DEFAULT 0 NOT NULL,
 	`last_attempt_at` datetime,
-	`posted_at` datetime,
-	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	CONSTRAINT `fk_session_sleeps_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS `session_start_sources` (

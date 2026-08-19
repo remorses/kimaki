@@ -24,10 +24,7 @@ import {
   claimSessionSleepAttempt,
   getDueSessionSleeps,
   getThreadIdBySessionId,
-  getThreadSession,
   markSessionSleepFailed,
-  markSessionSleepPosted,
-  requeueStalePostedSessionSleeps,
 } from './database.js'
 import { execAsync } from './exec-async.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
@@ -138,30 +135,11 @@ async function executeThreadScheduledTask({
   return payload.threadId
 }
 
-/** Wait before retrying a sleep wake whose attempt did not reach `posted`. */
+/** Wait before retrying a wake that ingress has not consumed yet. */
 const SLEEP_WAKE_RETRY_AFTER_MS = 30_000
-/** How long a `posted` wake may stay unconsumed by ingress before requeueing. */
-const SLEEP_WAKE_CONSUME_TIMEOUT_MS = 60_000
 const SLEEP_WAKE_MAX_ATTEMPTS = 5
 
 type SleepWakeFailure = { error: Error; permanent: boolean }
-
-/**
- * Resolve the thread that should receive the wake.
- *
- * The row stores the thread that was current when the tool ran, but /resume can
- * rebind the session to another thread afterwards. thread_id -> session_id is a
- * primary-key lookup, so verifying that direction is exact; only if the binding
- * no longer holds do we fall back to the (ordered) reverse lookup.
- */
-async function resolveSessionSleepThreadId(sleep: SessionSleep): Promise<string | null> {
-  const boundSession = await getThreadSession(sleep.thread_id)
-  if (boundSession === sleep.session_id) {
-    return sleep.thread_id
-  }
-  const activeThreadId = await getThreadIdBySessionId(sleep.session_id)
-  return activeThreadId ?? null
-}
 
 async function postSessionSleepWake({
   rest,
@@ -224,20 +202,15 @@ export async function wakeDueSessionSleeps({
   now?: Date
   limit?: number
 }): Promise<void> {
-  await requeueStalePostedSessionSleeps({
-    now,
-    staleAfterMs: SLEEP_WAKE_CONSUME_TIMEOUT_MS,
-    maxAttempts: SLEEP_WAKE_MAX_ATTEMPTS,
-  })
-
   const dueSleeps = await getDueSessionSleeps({
     now,
     retryAfterMs: SLEEP_WAKE_RETRY_AFTER_MS,
     limit,
   })
   for (const sleep of dueSleeps) {
-    // Reserves an attempt but stays `planned`, so dying before the post below
-    // costs one retry delay instead of losing the wake.
+    // Reserves an attempt but stays `planned`. The row only leaves `planned`
+    // when ingress consumes the wake, so dying anywhere below costs one retry
+    // delay instead of losing the wake.
     const claimed = await claimSessionSleepAttempt({
       sessionId: sleep.session_id,
       deliveryId: sleep.delivery_id,
@@ -246,7 +219,9 @@ export async function wakeDueSessionSleeps({
     })
     if (!claimed) continue
 
-    const threadId = await resolveSessionSleepThreadId(claimed)
+    // Resolved now, not when the tool ran, so a session rebound by /resume
+    // wakes in the thread that currently owns it.
+    const threadId = await getThreadIdBySessionId(claimed.session_id)
     if (!threadId) {
       await markSessionSleepFailed({
         sessionId: claimed.session_id,
@@ -258,15 +233,10 @@ export async function wakeDueSessionSleeps({
       continue
     }
 
+    // A successful post changes nothing here on purpose: ingress owns the
+    // transition out of `planned` when the wake actually becomes a turn.
     const postResult = await postSessionSleepWake({ rest, sleep: claimed, threadId })
-    if (!postResult) {
-      await markSessionSleepPosted({
-        sessionId: claimed.session_id,
-        deliveryId: claimed.delivery_id,
-        now,
-      })
-      continue
-    }
+    if (!postResult) continue
 
     const exhausted = claimed.attempts >= SLEEP_WAKE_MAX_ATTEMPTS
     if (postResult.permanent || exhausted) {

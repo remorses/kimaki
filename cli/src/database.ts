@@ -370,12 +370,10 @@ export async function setSessionStartSource({ sessionId, scheduleKind, scheduled
 
 export async function upsertSessionSleep({
   sessionId,
-  threadId,
   wakeAt,
   reason,
 }: {
   sessionId: string
-  threadId: string
   wakeAt: Date
   reason?: string | null
 }) {
@@ -386,7 +384,6 @@ export async function upsertSessionSleep({
   await db.insert(schema.session_sleeps)
     .values({
       session_id: sessionId,
-      thread_id: threadId,
       wake_at: wakeAt,
       reason: reason ?? null,
       status: 'planned',
@@ -395,14 +392,12 @@ export async function upsertSessionSleep({
     .onConflictDoUpdate({
       target: schema.session_sleeps.session_id,
       set: {
-        thread_id: threadId,
         wake_at: wakeAt,
         reason: reason ?? null,
         status: 'planned',
         delivery_id: deliveryId,
         attempts: 0,
         last_attempt_at: null,
-        posted_at: null,
         created_at: new Date(),
       },
     })
@@ -443,12 +438,12 @@ export async function getDueSessionSleeps({
 }
 
 /**
- * Reserve one delivery attempt without leaving `planned`.
+ * Reserve one delivery attempt. The row never leaves `planned` here.
  *
- * Deliberately NOT a transition to a terminal state: if the process dies between
- * this call and the Discord post, the row is still `planned` and the next tick
- * retries it. Only `last_attempt_at` moves, which keeps concurrent ticks off the
- * same row for retryAfterMs.
+ * Only `last_attempt_at` moves, which keeps concurrent ticks off the same row
+ * for retryAfterMs. Because posting does not change the status either, one
+ * retry path covers every loss: dying before the post, dying after it, or
+ * never receiving the gateway event for the message we posted.
  */
 export async function claimSessionSleepAttempt({
   sessionId,
@@ -479,28 +474,6 @@ export async function claimSessionSleepAttempt({
   return rows[0] ?? null
 }
 
-/** `planned` -> `posted` once Discord accepted the wake message. */
-export async function markSessionSleepPosted({
-  sessionId,
-  deliveryId,
-  now,
-}: {
-  sessionId: string
-  deliveryId: string
-  now: Date
-}) {
-  const db = await getDb()
-  const rows = await db.update(schema.session_sleeps)
-    .set({ status: 'posted', posted_at: now })
-    .where(orm.and(
-      orm.eq(schema.session_sleeps.session_id, sessionId),
-      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
-      orm.eq(schema.session_sleeps.status, 'planned'),
-    ))
-    .returning({ session_id: schema.session_sleeps.session_id })
-  return countRows(rows) > 0
-}
-
 export async function markSessionSleepFailed({
   sessionId,
   deliveryId,
@@ -514,7 +487,7 @@ export async function markSessionSleepFailed({
     .where(orm.and(
       orm.eq(schema.session_sleeps.session_id, sessionId),
       orm.eq(schema.session_sleeps.delivery_id, deliveryId),
-      orm.inArray(schema.session_sleeps.status, ['planned', 'posted']),
+      orm.eq(schema.session_sleeps.status, 'planned'),
     ))
     .returning({ session_id: schema.session_sleeps.session_id })
   return countRows(rows) > 0
@@ -523,9 +496,9 @@ export async function markSessionSleepFailed({
 /**
  * Ingress commit point. Marks the wake as delivered to the session.
  *
- * Returns false when the row is missing or already cancelled/consumed, which is
- * how a wake that raced a user cancellation gets dropped instead of starting a
- * turn the user already superseded.
+ * Returns false when the row is missing or no longer `planned`, which is how a
+ * wake that raced a user cancellation, or a duplicate of one already delivered,
+ * gets dropped instead of starting a turn.
  */
 export async function consumeSessionSleepWake({ deliveryId }: { deliveryId: string }) {
   const db = await getDb()
@@ -533,73 +506,28 @@ export async function consumeSessionSleepWake({ deliveryId }: { deliveryId: stri
     .set({ status: 'consumed' })
     .where(orm.and(
       orm.eq(schema.session_sleeps.delivery_id, deliveryId),
-      orm.inArray(schema.session_sleeps.status, ['planned', 'posted']),
+      orm.eq(schema.session_sleeps.status, 'planned'),
     ))
     .returning({ session_id: schema.session_sleeps.session_id })
   return countRows(rows) > 0
 }
 
 /**
- * A `posted` wake that ingress never consumed (event missed, crash between the
- * post and MessageCreate) goes back to `planned` so it is retried. The Discord
- * nonce makes the retry idempotent. Bounded by maxAttempts so a permanently
- * unconsumable row ends as `failed` instead of looping forever.
- */
-export async function requeueStalePostedSessionSleeps({
-  now,
-  staleAfterMs,
-  maxAttempts,
-}: {
-  now: Date
-  staleAfterMs: number
-  maxAttempts: number
-}) {
-  const db = await getDb()
-  const staleBefore = new Date(now.getTime() - staleAfterMs)
-  const stale = await db.select()
-    .from(schema.session_sleeps)
-    .where(orm.and(
-      orm.eq(schema.session_sleeps.status, 'posted'),
-      orm.lte(schema.session_sleeps.posted_at, staleBefore),
-    ))
-  for (const row of stale) {
-    const exhausted = row.attempts >= maxAttempts
-    await db.update(schema.session_sleeps)
-      .set(exhausted ? { status: 'failed' } : { status: 'planned' })
-      .where(orm.and(
-        orm.eq(schema.session_sleeps.session_id, row.session_id),
-        orm.eq(schema.session_sleeps.delivery_id, row.delivery_id),
-        orm.eq(schema.session_sleeps.status, 'posted'),
-      ))
-  }
-  return countRows(stale)
-}
-
-/**
- * Cancel any pending sleep owned by a thread.
+ * Cancel the pending sleep of the session currently bound to a thread.
  *
- * Matches on thread_id OR the session currently bound to the thread, because a
- * row can hold a stale thread binding after /resume. thread_id -> session_id is
- * unambiguous (thread_id is the primary key), unlike the reverse direction.
- * `posted` rows are cancelled too so an already-posted wake cannot be requeued
- * after the user took over the conversation.
+ * Runs on every ingress, so the binding is resolved with a correlated subquery
+ * rather than a second round trip. thread_id is the primary key of
+ * thread_sessions, so it yields at most one session.
  */
 export async function cancelSessionSleepForThread({ threadId }: { threadId: string }) {
   const db = await getDb()
-  // Single statement on purpose: this runs on every ingress, so the session
-  // binding is resolved with a correlated subquery instead of a second round
-  // trip. thread_id is the primary key of thread_sessions, so the subquery
-  // yields at most one row.
   const rows = await db.update(schema.session_sleeps)
     .set({ status: 'cancelled' })
     .where(orm.and(
-      orm.inArray(schema.session_sleeps.status, ['planned', 'posted']),
-      orm.or(
-        orm.eq(schema.session_sleeps.thread_id, threadId),
-        orm.eq(
-          schema.session_sleeps.session_id,
-          orm.sql`(SELECT ${schema.thread_sessions.session_id} FROM ${schema.thread_sessions} WHERE ${schema.thread_sessions.thread_id} = ${threadId})`,
-        ),
+      orm.eq(schema.session_sleeps.status, 'planned'),
+      orm.eq(
+        schema.session_sleeps.session_id,
+        orm.sql`(SELECT ${schema.thread_sessions.session_id} FROM ${schema.thread_sessions} WHERE ${schema.thread_sessions.thread_id} = ${threadId})`,
       ),
     ))
     .returning({ session_id: schema.session_sleeps.session_id })
