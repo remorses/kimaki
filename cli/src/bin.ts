@@ -20,6 +20,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createRestartSupervisor } from './restart-supervisor.js'
 
 const HEAP_SNAPSHOT_DIR = path.join(os.homedir(), '.kimaki', 'heap-snapshots')
 
@@ -34,84 +35,37 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
 } else {
   console.error('no subcommand detected. kimaki will automatically restart on crash')
   console.error()
-  const EXIT_NO_RESTART = 64
-  const MAX_RAPID_RESTARTS = 5
-  const RAPID_RESTART_WINDOW_MS = 60_000
-  const RESTART_DELAY_MS = 2_000
-
-  const restartTimestamps: number[] = []
-  let child: ReturnType<typeof spawn> | null = null
-  // Track when we forwarded a termination signal so we don't restart after graceful shutdown
-  let shutdownRequested = false
-
-  function start() {
-    if (!fs.existsSync(HEAP_SNAPSHOT_DIR)) {
-      fs.mkdirSync(HEAP_SNAPSHOT_DIR, { recursive: true })
-    }
-    const heapArgs = [
-      `--heapsnapshot-near-heap-limit=3`,
-      `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
-    ]
-    const args = [...heapArgs, ...process.execArgv, ...process.argv.slice(1)]
-    child = spawn(
-      process.argv[0]!,
-      args,
-      {
-        stdio: 'inherit',
+  const supervisor = createRestartSupervisor({
+    spawnChild: () => {
+      if (!fs.existsSync(HEAP_SNAPSHOT_DIR)) {
+        fs.mkdirSync(HEAP_SNAPSHOT_DIR, { recursive: true })
+      }
+      const heapArgs = [
+        `--heapsnapshot-near-heap-limit=3`,
+        `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
+      ]
+      const args = [...heapArgs, ...process.execArgv, ...process.argv.slice(1)]
+      return spawn(process.argv[0]!, args, {
+        stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
         env: { ...process.env, __KIMAKI_CHILD: '1' },
-      },
-    )
-
-    child.on('exit', (code, signal) => {
-      if (code === 0 || code === EXIT_NO_RESTART || shutdownRequested) {
-        process.exit(code ?? 0)
-        return
-      }
-
-      const now = Date.now()
-      restartTimestamps.push(now)
-      while (
-        restartTimestamps.length > 0 &&
-        restartTimestamps[0]! < now - RAPID_RESTART_WINDOW_MS
-      ) {
-        restartTimestamps.shift()
-      }
-
-      if (restartTimestamps.length > MAX_RAPID_RESTARTS) {
-        console.error(
-          `[kimaki] Crash loop detected (${MAX_RAPID_RESTARTS} crashes in ${RAPID_RESTART_WINDOW_MS / 1000}s), exiting`,
-        )
-        process.exit(1)
-        return
-      }
-
-      const reason = signal ? `signal ${signal}` : `code ${code}`
-      // Progressive backoff: 2s, 4s, 8s, 16s, capped at 30s.
-      // Prevents hammering DNS/gateway during sustained network outages.
-      const delay = Math.min(
-        RESTART_DELAY_MS * 2 ** (restartTimestamps.length - 1),
-        30_000,
-      )
-      console.error(
-        `[kimaki] Process exited with ${reason}, restarting in ${(delay / 1000).toFixed(0)}s...`,
-      )
-      setTimeout(start, delay)
-    })
-  }
+      })
+    },
+    exitProcess: (code) => process.exit(code),
+    logError: (message) => console.error(message),
+  })
 
   // Forward signals to child so graceful shutdown and heap snapshots work.
   // SIGTERM/SIGINT mark shutdownRequested so we don't restart after graceful exit.
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.on(sig, () => {
-      shutdownRequested = true
-      child?.kill(sig)
+      supervisor.requestShutdown(sig)
     })
   }
   for (const sig of ['SIGUSR1', 'SIGUSR2'] as const) {
     process.on(sig, () => {
-      child?.kill(sig)
+      supervisor.forwardSignal(sig)
     })
   }
 
-  start()
+  supervisor.start()
 }
