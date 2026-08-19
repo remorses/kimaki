@@ -146,4 +146,5 @@ See the full [Troubleshooting guide](https://kimaki.dev/docs/guides/troubleshoot
 - [**CI & Automation**](https://kimaki.dev/docs/guides/ci-automation): programmatic sessions, GitHub Actions, per-session permissions
 - [**Scheduled Tasks**](https://kimaki.dev/docs/features/scheduled-tasks): cron and one-time tasks, email digests
 - [**Advanced Setup**](https://kimaki.dev/docs/guides/advanced-setup): multiple instances, multiple Discord servers
+- [**Docker**](https://kimaki.dev/docs/guides/docker): run Kimaki on a VPS
 - [**Internals**](https://kimaki.dev/docs/reference/internals): how Kimaki works under the hood
