@@ -39,10 +39,31 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
   const RAPID_RESTART_WINDOW_MS = 60_000
   const RESTART_DELAY_MS = 2_000
 
+  const CHILD_EXIT_DEADLINE_MS = 15_000
   const restartTimestamps: number[] = []
   let child: ReturnType<typeof spawn> | null = null
   // Track when we forwarded a termination signal so we don't restart after graceful shutdown
   let shutdownRequested = false
+  let forceKillTimer: ReturnType<typeof setTimeout> | null = null
+
+  function clearForceKillTimer() {
+    if (!forceKillTimer) return
+    clearTimeout(forceKillTimer)
+    forceKillTimer = null
+  }
+
+  function killChild(signal: NodeJS.Signals) {
+    child?.kill(signal)
+    if (forceKillTimer || !child) return
+    forceKillTimer = setTimeout(() => {
+      forceKillTimer = null
+      console.error(
+        `[kimaki] Child did not exit within ${CHILD_EXIT_DEADLINE_MS / 1000}s, force-killing it`,
+      )
+      child?.kill('SIGKILL')
+    }, CHILD_EXIT_DEADLINE_MS)
+    forceKillTimer.unref()
+  }
 
   function start() {
     if (!fs.existsSync(HEAP_SNAPSHOT_DIR)) {
@@ -63,6 +84,7 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
     )
 
     child.on('exit', (code, signal) => {
+      clearForceKillTimer()
       if (code === 0 || code === EXIT_NO_RESTART || shutdownRequested) {
         process.exit(code ?? 0)
         return
@@ -104,14 +126,15 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.on(sig, () => {
       shutdownRequested = true
-      child?.kill(sig)
+      killChild(sig)
     })
   }
-  for (const sig of ['SIGUSR1', 'SIGUSR2'] as const) {
-    process.on(sig, () => {
-      child?.kill(sig)
-    })
-  }
+  process.on('SIGUSR1', () => {
+    child?.kill('SIGUSR1')
+  })
+  process.on('SIGUSR2', () => {
+    killChild('SIGUSR2')
+  })
 
   start()
 }

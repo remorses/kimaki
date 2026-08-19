@@ -435,8 +435,8 @@ export async function startDiscordBot({
       discordLogger.error(
         `[GATEWAY] Shard ${shardId} exceeded ${MAX_RECONNECT_ATTEMPTS} reconnect attempts, self-restarting`,
       )
-      // Self-restart: cleanup, then exit non-zero so the bin.ts wrapper
-      // restarts us. Without the wrapper this exits after logging a warning.
+      // Self-restart: cleanup, then SIGKILL so the bin.ts wrapper
+      // restarts us. Without the wrapper this dies after logging a warning.
       void selfRestart('gateway-reconnect-limit')
     }
   })
@@ -1626,13 +1626,11 @@ export async function startDiscordBot({
     })
   })
 
-  // Self-restart: exit with code 1 so the bin.ts wrapper restarts us with
-  // exponential backoff and crash-loop detection. When running without the
-  // wrapper (e.g. `tsx src/cli.ts`), the process just exits and the user
-  // sees the non-zero exit code — they should use `tsx src/bin.ts` instead
-  // for auto-restart support. The previous detached-spawn fallback was
-  // unreliable: process.exit(0) could kill the child before it started,
-  // there was no backoff between restarts, and spawn failures were silent.
+  // Self-restart: die so the bin.ts wrapper restarts us with exponential
+  // backoff and crash-loop detection. process.exit() can hang joining native
+  // worker threads after Discord gateway failures, so SIGKILL instead.
+  // When running without the wrapper (e.g. `tsx src/cli.ts`), the process
+  // just dies — use `tsx src/bin.ts` for auto-restart support.
   let selfRestarting = false
   async function selfRestart(reason: string) {
     if (selfRestarting) {
@@ -1641,6 +1639,7 @@ export async function startDiscordBot({
     }
     selfRestarting = true
     discordLogger.log(`Self-restarting (reason: ${reason})...`)
+    setTimeout(() => process.kill(process.pid, 'SIGKILL'), 15_000).unref()
     try {
       await handleShutdown(reason, { skipExit: true })
     } catch (error) {
@@ -1652,7 +1651,7 @@ export async function startDiscordBot({
         'No restart wrapper detected. Run via `tsx src/bin.ts` (dev) or `kimaki` (npm) for auto-restart on crash.',
       )
     }
-    process.exit(1)
+    process.kill(process.pid, 'SIGKILL')
   }
 
   process.on('SIGUSR2', () => {
