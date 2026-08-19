@@ -33,6 +33,10 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   // Survives bot restarts so child multi-turn system prompts keep the parent ID.
   parent_session_id: sqliteCore.text('parent_session_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+  // Bumped on every (re)binding of a session to this thread. /resume can map one
+  // session to several threads, so session_id -> thread_id needs a tiebreaker.
+  // Without it the reverse lookup is arbitrary and tools can target a dead thread.
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
 export const session_events = sqliteCore.sqliteTable('session_events', {

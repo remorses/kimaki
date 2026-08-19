@@ -183,7 +183,8 @@ CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`source` text DEFAULT 'kimaki' NOT NULL,
 	`last_synced_name` text,
 	`parent_session_id` text,
-	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS `thread_workspaces` (

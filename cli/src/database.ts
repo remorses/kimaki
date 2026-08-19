@@ -652,9 +652,18 @@ export async function setThreadSession(threadId: string, sessionId: string) {
 
 export async function upsertThreadSession({ threadId, sessionId, source }: { threadId: string; sessionId: string; source: ThreadSessionSource }) {
   const db = await getDb()
+  // updated_at is written explicitly on BOTH paths, never left to the column's
+  // CURRENT_TIMESTAMP default. The default stores "YYYY-MM-DD HH:MM:SS" while
+  // Date values store ISO with a "T", and those two text formats do not sort
+  // against each other correctly. Writing ISO everywhere keeps the ordering in
+  // getThreadIdBySessionId honest and gives it millisecond resolution.
+  const boundAt = new Date()
   await db.insert(schema.thread_sessions)
-    .values({ thread_id: threadId, session_id: sessionId, source })
-    .onConflictDoUpdate({ target: schema.thread_sessions.thread_id, set: { session_id: sessionId, source } })
+    .values({ thread_id: threadId, session_id: sessionId, source, updated_at: boundAt })
+    .onConflictDoUpdate({
+      target: schema.thread_sessions.thread_id,
+      set: { session_id: sessionId, source, updated_at: boundAt },
+    })
 }
 
 export async function getThreadParentSessionId(threadId: string) {
@@ -686,9 +695,25 @@ export async function getThreadSessionSource(threadId: string) {
   return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId }, columns: { source: true } }))?.source
 }
 
+/**
+ * Reverse lookup of the Discord thread that currently owns an OpenCode session.
+ *
+ * `thread_sessions.session_id` is NOT unique: /resume binds an existing session
+ * to a brand new thread without clearing the old row. An unordered findFirst
+ * therefore returns an arbitrary (often dead) thread, which made plugin tools
+ * post into the wrong conversation. Order by the most recent binding instead,
+ * falling back to created_at for rows written before updated_at existed.
+ */
 export async function getThreadIdBySessionId(sessionId: string) {
   const db = await getDb()
-  return (await db.query.thread_sessions.findFirst({ where: { session_id: sessionId } }))?.thread_id
+  const rows = await db.select({ thread_id: schema.thread_sessions.thread_id })
+    .from(schema.thread_sessions)
+    .where(orm.eq(schema.thread_sessions.session_id, sessionId))
+    .orderBy(
+      orm.desc(orm.sql`COALESCE(${schema.thread_sessions.updated_at}, ${schema.thread_sessions.created_at})`),
+    )
+    .limit(1)
+  return rows[0]?.thread_id
 }
 
 export async function getAllThreadSessionIds() {
