@@ -49,8 +49,7 @@
     "lintcn": "^0.7.1",
     "opencode-cached-provider": "workspace:^",
     "opencode-deterministic-provider": "workspace:^",
-    "tsx": "^4.20.5",
-    "undici": "^8.0.2"
+    "tsx": "^4.20.5"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.53",
@@ -78,6 +77,7 @@
     "libsqlproxy": "workspace:^",
     "marked": "^17.0.5",
     "mime": "^4.1.0",
+    "undici": "^8.0.2",
     "opencode-injection-guard": "workspace:^",
     "opusscript": "^0.0.8",
     "picocolors": "^1.1.1",
