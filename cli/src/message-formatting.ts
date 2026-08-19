@@ -608,15 +608,14 @@ export function formatTodoList(part: Part): string {
 }
 
 export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
-  if (part.tool !== 'task' || part.state.status === 'pending') return ''
+  // Running only. Completed titles arrive after the child ends.
+  if (part.tool !== 'task' || part.state.status !== 'running') return ''
 
   const childSessionId = part.state.metadata?.sessionId
   if (typeof childSessionId !== 'string' || !childSessionId) return ''
 
   const description = part.state.input?.description
-  const stateTitle = part.state.status === 'running' || part.state.status === 'completed'
-    ? part.state.title
-    : undefined
+  const stateTitle = part.state.title
   const title = typeof description === 'string' && description
     ? description
     : typeof stateTitle === 'string'

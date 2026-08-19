@@ -2066,41 +2066,6 @@ export class ThreadSessionRuntime {
       return
     }
 
-    if (
-      part.type === 'tool' &&
-      part.tool === 'task' &&
-      !this.state?.sentPartIds.has(part.id)
-    ) {
-      const taskDisplay = formatTaskToolTitle(part)
-      if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
-        await this.flushBufferedParts({
-          messageID: part.messageID,
-          force: true,
-          skipPartId: part.id,
-        })
-        threadState.updateThread(this.threadId, (t) => {
-          const newIds = new Set(t.sentPartIds)
-          newIds.add(part.id)
-          return { ...t, sentPartIds: newIds }
-        })
-        const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
-          .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-        if (sendResult instanceof Error) {
-          threadState.updateThread(this.threadId, (t) => {
-            const newIds = new Set(t.sentPartIds)
-            newIds.delete(part.id)
-            return { ...t, sentPartIds: newIds }
-          })
-          discordLogger.error(
-            `ERROR: Failed to send task part ${part.id}:`,
-            sendResult,
-          )
-          return
-        }
-        await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
-      }
-    }
-
     if (part.type === 'tool' && part.state.status === 'running') {
       await this.flushBufferedParts({
         messageID: part.messageID,
@@ -2108,6 +2073,32 @@ export class ThreadSessionRuntime {
         skipPartId: part.id,
       })
       await this.sendPartMessage({ part })
+
+      if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
+        const taskDisplay = formatTaskToolTitle(part)
+        if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
+          threadState.updateThread(this.threadId, (t) => {
+            const newIds = new Set(t.sentPartIds)
+            newIds.add(part.id)
+            return { ...t, sentPartIds: newIds }
+          })
+          const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+            .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+          if (sendResult instanceof Error) {
+            threadState.updateThread(this.threadId, (t) => {
+              const newIds = new Set(t.sentPartIds)
+              newIds.delete(part.id)
+              return { ...t, sentPartIds: newIds }
+            })
+            discordLogger.error(
+              `ERROR: Failed to send task part ${part.id}:`,
+              sendResult,
+            )
+            return
+          }
+          await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
+        }
+      }
       return
     }
 
