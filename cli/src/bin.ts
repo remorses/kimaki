@@ -45,6 +45,7 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
   // Track when we forwarded a termination signal so we don't restart after graceful shutdown
   let shutdownRequested = false
   let forceKillTimer: ReturnType<typeof setTimeout> | null = null
+  let scheduledRestart: ReturnType<typeof setTimeout> | null = null
 
   function clearForceKillTimer() {
     if (!forceKillTimer) return
@@ -52,20 +53,39 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
     forceKillTimer = null
   }
 
+  function clearScheduledRestart() {
+    if (!scheduledRestart) return
+    clearTimeout(scheduledRestart)
+    scheduledRestart = null
+  }
+
   function killChild(signal: NodeJS.Signals) {
-    child?.kill(signal)
-    if (forceKillTimer || !child) return
+    const target = child
+    if (!target) {
+      if (shutdownRequested) {
+        clearScheduledRestart()
+        process.exit(0)
+      }
+      return
+    }
+
+    const sent = target.kill(signal)
+    if (!sent || forceKillTimer) return
+
     forceKillTimer = setTimeout(() => {
       forceKillTimer = null
+      if (child !== target) return
       console.error(
         `[kimaki] Child did not exit within ${CHILD_EXIT_DEADLINE_MS / 1000}s, force-killing it`,
       )
-      child?.kill('SIGKILL')
+      target.kill('SIGKILL')
     }, CHILD_EXIT_DEADLINE_MS)
     forceKillTimer.unref()
   }
 
   function start() {
+    if (shutdownRequested) return
+    scheduledRestart = null
     if (!fs.existsSync(HEAP_SNAPSHOT_DIR)) {
       fs.mkdirSync(HEAP_SNAPSHOT_DIR, { recursive: true })
     }
@@ -74,7 +94,7 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
     ]
     const args = [...heapArgs, ...process.execArgv, ...process.argv.slice(1)]
-    child = spawn(
+    const currentChild = spawn(
       process.argv[0]!,
       args,
       {
@@ -82,8 +102,10 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
         env: { ...process.env, __KIMAKI_CHILD: '1' },
       },
     )
+    child = currentChild
 
-    child.on('exit', (code, signal) => {
+    currentChild.on('exit', (code, signal) => {
+      if (child === currentChild) child = null
       clearForceKillTimer()
       if (code === 0 || code === EXIT_NO_RESTART || shutdownRequested) {
         process.exit(code ?? 0)
@@ -117,7 +139,7 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       console.error(
         `[kimaki] Process exited with ${reason}, restarting in ${(delay / 1000).toFixed(0)}s...`,
       )
-      setTimeout(start, delay)
+      scheduledRestart = setTimeout(start, delay)
     })
   }
 

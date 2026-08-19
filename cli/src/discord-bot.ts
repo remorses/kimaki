@@ -1639,7 +1639,7 @@ export async function startDiscordBot({
     }
     selfRestarting = true
     discordLogger.log(`Self-restarting (reason: ${reason})...`)
-    setTimeout(() => process.kill(process.pid, 'SIGKILL'), 15_000).unref()
+    setTimeout(() => process.kill(process.pid, 'SIGKILL'), 15_000)
     try {
       await handleShutdown(reason, { skipExit: true })
     } catch (error) {
