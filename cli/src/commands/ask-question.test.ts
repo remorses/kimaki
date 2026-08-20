@@ -2,6 +2,8 @@
 
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ThreadChannel } from 'discord.js'
+import { getQuestionTimeoutMs } from '../config.js'
+import { store } from '../store.js'
 import {
   areAllQuestionsAnswered,
   deletePendingQuestionContextsForRequest,
@@ -22,6 +24,7 @@ function createFakeThread(): ThreadChannel {
 
 afterEach(() => {
   pendingQuestionContexts.clear()
+  store.setState({ questionTimeoutMs: 10 * 60 * 1000 })
   vi.restoreAllMocks()
 })
 
@@ -107,6 +110,34 @@ describe('ask-question', () => {
 
     expect(removed).toBe(2)
     expect([...pendingQuestionContexts.keys()]).toEqual(['ctx-3'])
+  })
+
+  test('defaults question timeout to 10 minutes', () => {
+    expect(getQuestionTimeoutMs()).toBe(10 * 60 * 1000)
+  })
+
+  test('schedules dropdown expiry with the configured question timeout', async () => {
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    store.setState({ questionTimeoutMs: 45 * 60 * 1000 })
+
+    await showAskUserQuestionDropdowns({
+      thread: createFakeThread(),
+      sessionId: 'ses-1',
+      directory: '/project',
+      requestId: 'req-timeout',
+      input: {
+        questions: [{
+          question: 'Choose one',
+          header: 'Pick',
+          options: [
+            { label: 'Alpha', description: 'A' },
+            { label: 'Beta', description: 'B' },
+          ],
+        }],
+      },
+    })
+
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 45 * 60 * 1000)
   })
 
   test('requires every question to have an answer', () => {

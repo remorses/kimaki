@@ -12,6 +12,7 @@ import {
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
+import { getQuestionTimeoutMs } from '../config.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
@@ -45,7 +46,7 @@ type PendingQuestionContext = {
 
 // Store pending question contexts by hash.
 // TTL prevents unbounded growth if user never answers a question.
-const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
+// Configurable via --question-timeout-minutes CLI flag (default: 10 minutes).
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
 export function areAllQuestionsAnswered({
@@ -160,6 +161,7 @@ export async function showAskUserQuestionDropdowns({
   // On TTL expiry: hide the dropdown UI and abort the session so OpenCode
   // unblocks. We intentionally do NOT call question.reply() — sending 'Other'
   // made the model think the user chose an option when they didn't.
+  const ttlMs = getQuestionTimeoutMs()
   setTimeout(async () => {
     const ctx = pendingQuestionContexts.get(contextHash)
     if (!ctx) {
@@ -182,7 +184,7 @@ export async function showAskUserQuestionDropdowns({
         logger.error('Failed to abort session after question expiry:', error)
       })
     }
-  }, QUESTION_CONTEXT_TTL_MS).unref()
+  }, ttlMs).unref()
 
   // Send one message per question with its dropdown directly underneath
   for (let i = 0; i < input.questions.length; i++) {

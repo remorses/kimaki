@@ -83,6 +83,15 @@ export function getPermissionTimeoutMs(): number {
 }
 
 /**
+ * Get the AskUserQuestion dropdown timeout in milliseconds.
+ * How long question dropdowns remain active before expiry aborts the session.
+ * Defaults to 10 minutes (600000ms).
+ */
+export function getQuestionTimeoutMs(): number {
+  return store.getState().questionTimeoutMs
+}
+
+/**
  * Whether external directory access is restricted to the session working
  * directory plus a few known-safe paths.
  * Defaults to false: every directory is allowed and users protect specific

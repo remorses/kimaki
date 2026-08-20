@@ -114,6 +114,14 @@ export type KimakiState = {
   // Read by: commands/permissions.ts showPermissionButtons().
   permissionTimeoutMs: number
 
+  // AskUserQuestion dropdown TTL in milliseconds. When a question prompt is
+  // shown in Discord, dropdowns remain active for this duration before the
+  // pending context is dropped and the OpenCode session is aborted.
+  // Defaults to 10 minutes.
+  // Changes: set once at startup from --question-timeout-minutes CLI flag.
+  // Read by: commands/ask-question.ts showAskUserQuestionDropdowns().
+  questionTimeoutMs: number
+
   // Whether background auto-upgrade of kimaki is enabled on startup.
   // When true (default), kimaki checks npm for a newer version and installs
   // it in the background. Set to false via --no-auto-upgrade CLI flag.
@@ -191,6 +199,7 @@ export const store = createStore<KimakiState>(() => ({
   allowAllUsers: false,
   restrictExternalDirectories: false,
   permissionTimeoutMs: 10 * 60 * 1000,
+  questionTimeoutMs: 10 * 60 * 1000,
   useWorktrees: false,
   autoUpgradeEnabled: true,
   syncEnabled: true,
