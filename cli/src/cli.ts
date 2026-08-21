@@ -90,10 +90,6 @@ cli
     'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
   )
   .option(
-    '--question-timeout-minutes <minutes>',
-    'AskUserQuestion dropdown timeout in minutes before aborting the session (default: 10)',
-  )
-  .option(
     '--disable-sync',
     'Disable background sync of external OpenCode sessions into Discord',
   )
@@ -152,7 +148,6 @@ cli
       allowAllUsers?: boolean
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
-      questionTimeoutMinutes?: string
       disableSync?: boolean
       autoRestart?: boolean
       noAnalytics?: boolean
@@ -259,33 +254,20 @@ cli
           }
         }
 
+        // --permission-timeout-minutes validation
         // Node setTimeout max is 2_147_483_647ms; larger values fire immediately.
         const MAX_TIMEOUT_MINUTES = Math.floor(2_147_483_647 / 60_000)
-        const parseTimeoutMinutes = ({
-          value,
-          label,
-        }: {
-          value: string | undefined
-          label: string
-        }) => {
-          if (!value) return undefined
-          const parsed = Number(value)
+        const permissionTimeoutMs = (() => {
+          if (!options.permissionTimeoutMinutes) return undefined
+          const parsed = Number(options.permissionTimeoutMinutes)
           if (!Number.isInteger(parsed) || parsed <= 0 || parsed > MAX_TIMEOUT_MINUTES) {
             cliLogger.error(
-              `Invalid ${label} timeout: ${value}. Must be a positive whole number of minutes (max ${MAX_TIMEOUT_MINUTES}).`,
+              `Invalid permission timeout: ${options.permissionTimeoutMinutes}. Must be a positive whole number of minutes (max ${MAX_TIMEOUT_MINUTES}).`,
             )
             process.exit(EXIT_NO_RESTART)
           }
           return parsed * 60_000
-        }
-        const permissionTimeoutMs = parseTimeoutMinutes({
-          value: options.permissionTimeoutMinutes,
-          label: 'permission',
-        })
-        const questionTimeoutMs = parseTimeoutMinutes({
-          value: options.questionTimeoutMinutes,
-          label: 'question',
-        })
+        })()
 
         store.setState({
           ...(defaultVerbosity && {
@@ -296,7 +278,6 @@ cli
           ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
-          ...(questionTimeoutMs !== undefined && { questionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
@@ -327,9 +308,6 @@ cli
         }
         if (permissionTimeoutMs !== undefined) {
           cliLogger.log(`Permission timeout set to ${options.permissionTimeoutMinutes} minutes`)
-        }
-        if (questionTimeoutMs !== undefined) {
-          cliLogger.log(`Question timeout set to ${options.questionTimeoutMinutes} minutes`)
         }
 
         if (options.verbosity) {

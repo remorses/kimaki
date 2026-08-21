@@ -3561,6 +3561,10 @@ export class ThreadSessionRuntime {
 
     this.stopTyping()
 
+    // The aborted run owns the question request, so the dropdown dies with it.
+    // Questions have no TTL, so this is the only thing that clears them here.
+    void cancelPendingQuestion(this.threadId)
+
     const apiAbortPromise = sessionId
       ? this.abortSessionViaApi({ abortId, reason, sessionId })
       : undefined
