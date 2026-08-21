@@ -189,7 +189,8 @@ cli
   )
   .option('--project <path>', 'Project directory (defaults to cwd)')
   .option('--verbose', 'Show full tool inputs and outputs instead of compact summaries')
-  .action(async (sessionId: string, options: { project?: string; verbose?: boolean }) => {
+  .option('--last-assistant-only', 'Show only the latest assistant message')
+  .action(async (sessionId: string, options: { project?: string; verbose?: boolean; lastAssistantOnly?: boolean }) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
@@ -205,7 +206,11 @@ cli
       // Try current project first (fast path)
       const compactTools = !options.verbose
       const markdown = new ShareMarkdown(getClient())
-      const result = await markdown.generate({ sessionID: sessionId, compactTools })
+      const result = await markdown.generate({
+        sessionID: sessionId,
+        compactTools,
+        lastAssistantOnly: options.lastAssistantOnly,
+      })
       if (!(result instanceof Error)) {
         process.stdout.write(result)
         process.exit(0)
@@ -239,6 +244,7 @@ cli
         const otherResult = await otherMarkdown.generate({
           sessionID: sessionId,
           compactTools,
+          lastAssistantOnly: options.lastAssistantOnly,
         })
         if (!(otherResult instanceof Error)) {
           process.stdout.write(otherResult)
@@ -262,7 +268,8 @@ cli
     'session wait <sessionId>',
     'Wait for a session to finish, then print its conversation as markdown',
   )
-  .action(async (sessionId) => {
+  .option('--last-assistant-only', 'Show only the latest assistant message')
+  .action(async (sessionId, options) => {
     try {
       await initDatabase()
 
@@ -278,6 +285,7 @@ cli
       await waitAndOutputExistingSession({
         sessionId,
         projectDirectory,
+        lastAssistantOnly: options.lastAssistantOnly,
       })
 
       process.exit(0)

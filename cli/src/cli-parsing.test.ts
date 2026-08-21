@@ -1,6 +1,7 @@
 // Regression tests for CLI argument parsing around Discord ID string preservation.
 import { describe, expect, test } from 'vitest'
 import { execAsync } from './exec-async.js'
+import sessionCommands from './cli-commands/session.js'
 
 async function parseWithGoke(argv: string[]) {
   const script = [
@@ -71,6 +72,20 @@ async function parseRootBotOptions(argv: string[]) {
 }
 
 describe('goke CLI ID parsing', () => {
+  test('parses latest assistant output flags for session read and wait', async () => {
+    const readResult = await sessionCommands.parse(
+      ['node', 'kimaki', 'session', 'read', 'ses_read', '--last-assistant-only'],
+      { run: false },
+    )
+    const waitResult = await sessionCommands.parse(
+      ['node', 'kimaki', 'session', 'wait', 'ses_wait', '--last-assistant-only'],
+      { run: false },
+    )
+
+    expect(readResult.options.lastAssistantOnly).toBe(true)
+    expect(waitResult.options.lastAssistantOnly).toBe(true)
+  })
+
   test('keeps large Discord IDs as strings', async () => {
     const channelId = '1234567890123456789'
     const threadId = '9876543210987654321'

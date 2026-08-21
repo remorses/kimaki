@@ -45,6 +45,21 @@ function createMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const followUpMatcher: DeterministicMatcher = {
+    id: 'follow-up-reply',
+    priority: 100,
+    when: { latestUserTextIncludes: 'follow-up markdown test' },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'follow-up-text' },
+        { type: 'text-delta', id: 'follow-up-text', delta: 'This is the latest assistant response.' },
+        { type: 'text-end', id: 'follow-up-text' },
+        { type: 'finish', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 8, totalTokens: 18 } },
+      ],
+    },
+  }
+
   const toolCallMatcher: DeterministicMatcher = {
     id: 'tool-call-reply',
     priority: 90,
@@ -72,7 +87,7 @@ function createMatchers(): DeterministicMatcher[] {
     },
   }
 
-  return [helloMatcher, toolCallMatcher, defaultMatcher]
+  return [helloMatcher, followUpMatcher, toolCallMatcher, defaultMatcher]
 }
 
 let client: OpencodeClient
@@ -80,6 +95,7 @@ let directories: ReturnType<typeof createRunDirectories>
 let testStartTime: number
 let sessionID: string
 let toolSessionID: string
+let multipleMessageSessionID: string
 
 beforeAll(async () => {
   testStartTime = Date.now()
@@ -193,6 +209,35 @@ beforeAll(async () => {
       break
     }
     await new Promise((resolve) => { setTimeout(resolve, 200) })
+  }
+
+  const multipleMessageCreateResult = await client.session.create({
+    directory: directories.projectDirectory,
+    title: 'Multiple Message Session',
+  })
+  multipleMessageSessionID = multipleMessageCreateResult.data!.id
+
+  for (const text of ['hello markdown test', 'follow-up markdown test']) {
+    await client.session.promptAsync({
+      sessionID: multipleMessageSessionID,
+      directory: directories.projectDirectory,
+      parts: [{ type: 'text', text }],
+    })
+    const responsePollStart = Date.now()
+    while (Date.now() - responsePollStart < maxWait) {
+      const msgs = await client.session.messages({
+        sessionID: multipleMessageSessionID,
+        directory: directories.projectDirectory,
+      })
+      const assistantMessages = (msgs.data || []).filter(
+        (message) => message.info.role === 'assistant',
+      )
+      const hasTextParts = assistantMessages.at(-1)?.parts.some((part) => {
+        return part.type === 'text' && part.text && !part.synthetic
+      })
+      if (hasTextParts) break
+      await new Promise((resolve) => { setTimeout(resolve, 200) })
+    }
   }
 }, 30_000)
 
@@ -346,7 +391,7 @@ test('generate markdown with lastAssistantOnly', async () => {
   const exporter = new ShareMarkdown(client)
 
   const markdownResult = await exporter.generate({
-    sessionID,
+    sessionID: multipleMessageSessionID,
     lastAssistantOnly: true,
   })
 
@@ -354,10 +399,28 @@ test('generate markdown with lastAssistantOnly', async () => {
   const markdown = errore.unwrap(markdownResult)
 
   // lastAssistantOnly should NOT include title header or conversation section header
-  expect(markdown).not.toContain('# Markdown Test Session')
+  expect(markdown).not.toContain('# Multiple Message Session')
   expect(markdown).not.toContain('## Conversation')
-  // Should contain the assistant response
+  expect(markdown).not.toContain('hello markdown test')
+  expect(markdown).not.toContain('Hello! This is a deterministic markdown test response.')
+  expect(markdown).toContain('This is the latest assistant response.')
+})
+
+test('generate markdown keeps the full multiple-message session by default', async () => {
+  const exporter = new ShareMarkdown(client)
+
+  const markdownResult = await exporter.generate({
+    sessionID: multipleMessageSessionID,
+  })
+
+  expect(errore.isOk(markdownResult)).toBe(true)
+  const markdown = errore.unwrap(markdownResult)
+
+  expect(markdown).toContain('# Multiple Message Session')
+  expect(markdown).toContain('hello markdown test')
   expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
+  expect(markdown).toContain('follow-up markdown test')
+  expect(markdown).toContain('This is the latest assistant response.')
 })
 
 test('compact tools: tool calls show one-liner with line count', async () => {

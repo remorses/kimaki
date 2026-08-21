@@ -129,11 +129,13 @@ export async function waitAndOutputExistingSession({
   projectDirectory,
   completionTimeoutMs,
   waitStartedAtMs,
+  lastAssistantOnly,
 }: {
   sessionId: string
   projectDirectory: string
   completionTimeoutMs?: number
   waitStartedAtMs?: number
+  lastAssistantOnly?: boolean
 }): Promise<void> {
   waitLogger.log(`Waiting for session ${sessionId} to complete...`)
   await waitForSessionComplete({
@@ -143,15 +145,17 @@ export async function waitAndOutputExistingSession({
     waitStartedAtMs,
   })
 
-  await outputSessionMarkdown({ sessionId, projectDirectory })
+  await outputSessionMarkdown({ sessionId, projectDirectory, lastAssistantOnly })
 }
 
 async function outputSessionMarkdown({
   sessionId,
   projectDirectory,
+  lastAssistantOnly,
 }: {
   sessionId: string
   projectDirectory: string
+  lastAssistantOnly?: boolean
 }): Promise<void> {
   waitLogger.log('Generating session output...')
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
@@ -165,7 +169,10 @@ async function outputSessionMarkdown({
   }
 
   const markdown = new ShareMarkdown(getClient())
-  const result = await markdown.generate({ sessionID: sessionId })
+  const result = await markdown.generate({
+    sessionID: sessionId,
+    ...(lastAssistantOnly ? { lastAssistantOnly: true } : {}),
+  })
   if (result instanceof Error) {
     throw new Error(`Failed to generate session markdown: ${result.message}`, {
       cause: result,
