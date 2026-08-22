@@ -69,6 +69,30 @@ describe('threads: Discord → Slack', () => {
     expect(texts).toContain('Reply B')
   })
 
+  test('fetches a newly created thread starter message', async () => {
+    const thread = await channel.threads.create({
+      name: 'Starter message',
+    })
+
+    const starter = await (thread as ThreadChannel).fetchStarterMessage()
+    expect(starter.content).toBe('Starter message')
+  })
+
+  test('renames a virtual thread without renaming its Slack conversation', async () => {
+    const thread = await channel.threads.create({
+      name: 'Slack starter',
+    })
+
+    const renamed = await (thread as ThreadChannel).setName('OpenCode title')
+    expect(renamed.name).toBe('OpenCode title')
+
+    const channelId = ctx.twin.resolveChannelId('threads-test')
+    const messages = await ctx.twin.channel(channelId).getMessages()
+    expect(messages.find((message) => message.ts === decodeThreadId(thread.id).threadTs)?.text).toBe(
+      'Slack starter',
+    )
+  })
+
   test('startThread from message uses message threads endpoint', async () => {
     const parent = await channel.send('Parent message for thread')
 

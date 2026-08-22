@@ -926,14 +926,6 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
         message: `Unknown Channel: ${channelId}`,
       })
     }
-    if (userId !== botUserId) {
-      return errorJsonResponse({
-        status: 403,
-        error: 'missing_permissions',
-        code: 50013,
-        message: 'Missing Permissions',
-      })
-    }
     await rest.joinThreadMember({
       slack,
       threadChannelId: channelId,
@@ -3531,7 +3523,8 @@ function normalizeCreateGuildChannelBody(value: unknown): {
   const channelType = readNumber(value, 'type')
   const normalizedType =
     channelType === ChannelType.GuildText ||
-    channelType === ChannelType.GuildAnnouncement
+    channelType === ChannelType.GuildAnnouncement ||
+    channelType === ChannelType.GuildCategory
       ? channelType
       : undefined
 

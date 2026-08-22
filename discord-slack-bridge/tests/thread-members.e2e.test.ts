@@ -70,6 +70,13 @@ describe('thread member routes', () => {
     `)
   })
 
+  test('adding a Slack user to a thread is a successful no-op', async () => {
+    const thread = await channel.threads.create({ name: 'thread-member-add' })
+    const aliceId = ctx.twin.resolveUserId('alice')
+
+    await expect(thread.members.add(aliceId)).resolves.toBe(aliceId)
+  })
+
   test('unknown thread returns Discord unknown channel error payload', async () => {
     const unknownThreadId = 'C_UNKNOWN_THREAD'
     const response = await fetch(

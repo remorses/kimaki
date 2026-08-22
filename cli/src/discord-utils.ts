@@ -53,10 +53,7 @@ export function hasKimakiBotPermission(
   if (store.getState().allowAllUsers) {
     return true
   }
-  const memberPermissions =
-    member instanceof GuildMember
-      ? member.permissions
-      : new PermissionsBitField(BigInt(member.permissions))
+  const memberPermissions = resolveMemberPermissions(member)
   const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
   const memberId = member instanceof GuildMember ? member.id : member.user.id
   const isOwner = ownerId ? memberId === ownerId : false
@@ -83,10 +80,7 @@ export function hasKimakiAdminPermission(
   if (hasNoKimaki) {
     return false
   }
-  const memberPermissions =
-    member instanceof GuildMember
-      ? member.permissions
-      : new PermissionsBitField(BigInt(member.permissions))
+  const memberPermissions = resolveMemberPermissions(member)
   const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
   const memberId = member instanceof GuildMember ? member.id : member.user.id
   const isOwner = ownerId ? memberId === ownerId : false
@@ -123,7 +117,9 @@ function hasRoleByName(
   const target = roleName.toLowerCase()
 
   if (member instanceof GuildMember) {
-    return member.roles.cache.some((role) => role.name.toLowerCase() === target)
+    return member.roles.cache.some(
+      (role) => role?.name.toLowerCase() === target,
+    )
   }
 
   if (!guild) {
@@ -140,6 +136,20 @@ function hasRoleByName(
   return false
 }
 
+function resolveMemberPermissions(
+  member: GuildMemberType | APIInteractionGuildMember,
+): PermissionsBitField {
+  if (!(member instanceof GuildMember)) {
+    return new PermissionsBitField(BigInt(member.permissions))
+  }
+
+  return member.roles.cache.reduce(
+    (permissions, role) =>
+      role ? permissions.add(role.permissions) : permissions,
+    new PermissionsBitField(),
+  )
+}
+
 /**
  * Check if the member has the "no-kimaki" role that blocks bot access.
  * Separate from hasKimakiBotPermission so callers can show a specific error message.
@@ -149,7 +159,7 @@ export function hasNoKimakiRole(member: GuildMemberType | null): boolean {
     return false
   }
   return member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
+    (role) => role?.name.toLowerCase() === 'no-kimaki',
   )
 }
 
