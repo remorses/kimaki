@@ -147,7 +147,15 @@ describe('hasKimakiBotPermission', () => {
         value: {
           cache: new Collection([
             ['unresolved', undefined],
-            ['allowed', { name: 'Member' }],
+            [
+              'allowed',
+              {
+                name: 'Member',
+                permissions: new PermissionsBitField(
+                  PermissionsBitField.Flags.Administrator,
+                ),
+              },
+            ],
           ]),
         },
       },

@@ -53,10 +53,7 @@ export function hasKimakiBotPermission(
   if (store.getState().allowAllUsers) {
     return true
   }
-  const memberPermissions =
-    member instanceof GuildMember
-      ? member.permissions
-      : new PermissionsBitField(BigInt(member.permissions))
+  const memberPermissions = resolveMemberPermissions(member)
   const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
   const memberId = member instanceof GuildMember ? member.id : member.user.id
   const isOwner = ownerId ? memberId === ownerId : false
@@ -83,10 +80,7 @@ export function hasKimakiAdminPermission(
   if (hasNoKimaki) {
     return false
   }
-  const memberPermissions =
-    member instanceof GuildMember
-      ? member.permissions
-      : new PermissionsBitField(BigInt(member.permissions))
+  const memberPermissions = resolveMemberPermissions(member)
   const ownerId = member instanceof GuildMember ? member.guild.ownerId : guild?.ownerId
   const memberId = member instanceof GuildMember ? member.id : member.user.id
   const isOwner = ownerId ? memberId === ownerId : false
@@ -140,6 +134,20 @@ function hasRoleByName(
     }
   }
   return false
+}
+
+function resolveMemberPermissions(
+  member: GuildMemberType | APIInteractionGuildMember,
+): PermissionsBitField {
+  if (!(member instanceof GuildMember)) {
+    return new PermissionsBitField(BigInt(member.permissions))
+  }
+
+  return member.roles.cache.reduce(
+    (permissions, role) =>
+      role ? permissions.add(role.permissions) : permissions,
+    new PermissionsBitField(),
+  )
 }
 
 /**
