@@ -1,8 +1,9 @@
-import { PermissionsBitField, type Message } from 'discord.js'
+import { Collection, PermissionsBitField, type Message } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   hasKimakiAdminPermission,
   hasKimakiBotPermission,
+  hasNoKimakiRole,
   resolveGuildMessageMember,
   splitMarkdownForDiscord,
 } from './discord-utils.js'
@@ -234,6 +235,34 @@ describe('hasKimakiAdminPermission', () => {
     } as any
 
     expect(hasKimakiAdminPermission(member, guild)).toBe(true)
+  })
+})
+
+describe('hasNoKimakiRole', () => {
+  test('ignores unresolved role cache entries', () => {
+    const member = {
+      roles: {
+        cache: new Collection([
+          ['unresolved', undefined],
+          ['allowed', { name: 'Member' }],
+        ]),
+      },
+    } as any
+
+    expect(hasNoKimakiRole(member)).toBe(false)
+  })
+
+  test('detects a resolved no-kimaki role', () => {
+    const member = {
+      roles: {
+        cache: new Collection([
+          ['unresolved', undefined],
+          ['blocked', { name: 'no-kimaki' }],
+        ]),
+      },
+    } as any
+
+    expect(hasNoKimakiRole(member)).toBe(true)
   })
 })
 

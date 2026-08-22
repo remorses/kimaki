@@ -149,7 +149,7 @@ export function hasNoKimakiRole(member: GuildMemberType | null): boolean {
     return false
   }
   return member.roles.cache.some(
-    (role) => role.name.toLowerCase() === 'no-kimaki',
+    (role) => role?.name.toLowerCase() === 'no-kimaki',
   )
 }
 
