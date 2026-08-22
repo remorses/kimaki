@@ -3523,7 +3523,8 @@ function normalizeCreateGuildChannelBody(value: unknown): {
   const channelType = readNumber(value, 'type')
   const normalizedType =
     channelType === ChannelType.GuildText ||
-    channelType === ChannelType.GuildAnnouncement
+    channelType === ChannelType.GuildAnnouncement ||
+    channelType === ChannelType.GuildCategory
       ? channelType
       : undefined
 
