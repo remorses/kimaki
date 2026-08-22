@@ -456,6 +456,10 @@ export function formatTaskScheduleLine(schedule: ParsedSendAt): string {
 }
 
 export const EXIT_NO_RESTART = 64
+// Temporary failure (sysexits EX_TEMPFAIL). Wrapper retries forever with
+// backoff and does not count this toward the crash-loop detector. Used when
+// Discord login fails because the network is down.
+export const EXIT_TEMPFAIL = 75
 
 export type GuildMemberSearchResult = {
   user: { id: string; username: string; global_name?: string }
@@ -542,6 +546,20 @@ const TRANSIENT_ERROR_CODES = new Set([
   'DEPTH_ZERO_SELF_SIGNED_CERT',
   'SELF_SIGNED_CERT_IN_CHAIN',
   'ERR_TLS_CERT_ALTNAME_INVALID',
+  // undici fetch/WebSocket connect failures when the network is down.
+  // Without these, Discord login exits EXIT_NO_RESTART and the wrapper never
+  // comes back after a connect timeout to discord-gateway.kimaki.dev.
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+])
+
+const TRANSIENT_ERROR_NAMES = new Set([
+  'ConnectTimeoutError',
+  'HeadersTimeoutError',
+  'BodyTimeoutError',
+  'SocketError',
 ])
 
 const TRANSIENT_ERROR_MESSAGE_PATTERNS = [
@@ -549,12 +567,16 @@ const TRANSIENT_ERROR_MESSAGE_PATTERNS = [
   /certificate has expired/i,
   /self[- ]signed certificate/i,
   /unable to get local issuer certificate/i,
+  /connect timeout error/i,
+  /headers timeout error/i,
+  /body timeout error/i,
 ]
 
 export function isTransientNetworkError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
   const code = (error as NodeJS.ErrnoException).code
   if (code && TRANSIENT_ERROR_CODES.has(code)) return true
+  if (TRANSIENT_ERROR_NAMES.has(error.name)) return true
   // Fallback when code is stripped by wrappers (discord.js sometimes rethrows by message only).
   if (
     TRANSIENT_ERROR_MESSAGE_PATTERNS.some((pattern) =>
@@ -1757,12 +1779,14 @@ export async function run({
     cliLogger.error(
       'Error: ' + (error instanceof Error ? error.stack : String(error)),
     )
-    // Transient network errors (DNS down, gateway unreachable) should allow
-    // the bin.ts wrapper to restart us after a delay. Only truly fatal errors
-    // (bad token, invalid intent, etc.) should use EXIT_NO_RESTART.
+    // Transient network errors (DNS down, gateway unreachable, connect
+    // timeout) should allow the bin.ts wrapper to restart us after a delay.
+    // EXIT_TEMPFAIL skips the crash-loop detector so a long outage cannot
+    // permanently stop the bot. Only truly fatal errors (bad token, invalid
+    // intent, etc.) should use EXIT_NO_RESTART.
     if (isTransientNetworkError(error)) {
       cliLogger.error('Transient network error, exiting for wrapper restart...')
-      process.exit(1)
+      process.exit(EXIT_TEMPFAIL)
     }
     process.exit(EXIT_NO_RESTART)
   }

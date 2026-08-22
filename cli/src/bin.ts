@@ -35,12 +35,16 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
   console.error('no subcommand detected. kimaki will automatically restart on crash')
   console.error()
   const EXIT_NO_RESTART = 64
+  // Keep in sync with EXIT_TEMPFAIL in cli-runner.ts. Network-down login
+  // failures use this so a long outage cannot trip the crash-loop detector.
+  const EXIT_TEMPFAIL = 75
   const MAX_RAPID_RESTARTS = 5
   const RAPID_RESTART_WINDOW_MS = 60_000
   const RESTART_DELAY_MS = 2_000
 
   const CHILD_EXIT_DEADLINE_MS = 15_000
   const restartTimestamps: number[] = []
+  let tempFailAttempts = 0
   let child: ReturnType<typeof spawn> | null = null
   // Track when we forwarded a termination signal so we don't restart after graceful shutdown
   let shutdownRequested = false
@@ -113,29 +117,32 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       }
 
       const now = Date.now()
-      restartTimestamps.push(now)
-      while (
-        restartTimestamps.length > 0 &&
-        restartTimestamps[0]! < now - RAPID_RESTART_WINDOW_MS
-      ) {
-        restartTimestamps.shift()
-      }
+      const isTempFail = code === EXIT_TEMPFAIL
+      if (!isTempFail) {
+        restartTimestamps.push(now)
+        while (
+          restartTimestamps.length > 0 &&
+          restartTimestamps[0]! < now - RAPID_RESTART_WINDOW_MS
+        ) {
+          restartTimestamps.shift()
+        }
 
-      if (restartTimestamps.length > MAX_RAPID_RESTARTS) {
-        console.error(
-          `[kimaki] Crash loop detected (${MAX_RAPID_RESTARTS} crashes in ${RAPID_RESTART_WINDOW_MS / 1000}s), exiting`,
-        )
-        process.exit(1)
-        return
+        if (restartTimestamps.length > MAX_RAPID_RESTARTS) {
+          console.error(
+            `[kimaki] Crash loop detected (${MAX_RAPID_RESTARTS} crashes in ${RAPID_RESTART_WINDOW_MS / 1000}s), exiting`,
+          )
+          process.exit(1)
+          return
+        }
       }
 
       const reason = signal ? `signal ${signal}` : `code ${code}`
       // Progressive backoff: 2s, 4s, 8s, 16s, capped at 30s.
       // Prevents hammering DNS/gateway during sustained network outages.
-      const delay = Math.min(
-        RESTART_DELAY_MS * 2 ** (restartTimestamps.length - 1),
-        30_000,
-      )
+      const backoffStep = isTempFail
+        ? Math.min(tempFailAttempts++, 4)
+        : restartTimestamps.length - 1
+      const delay = Math.min(RESTART_DELAY_MS * 2 ** backoffStep, 30_000)
       console.error(
         `[kimaki] Process exited with ${reason}, restarting in ${(delay / 1000).toFixed(0)}s...`,
       )
