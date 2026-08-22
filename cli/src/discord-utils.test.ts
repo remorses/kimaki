@@ -1,4 +1,9 @@
-import { Collection, PermissionsBitField, type Message } from 'discord.js'
+import {
+  Collection,
+  GuildMember,
+  PermissionsBitField,
+  type Message,
+} from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   hasKimakiAdminPermission,
@@ -126,6 +131,29 @@ describe('hasKimakiBotPermission', () => {
     } as any
 
     expect(hasKimakiBotPermission(member, guild)).toBe(true)
+  })
+
+  test('ignores unresolved roles for a hydrated guild member', () => {
+    const member = Object.create(GuildMember.prototype)
+    Object.defineProperties(member, {
+      guild: { value: { ownerId: 'owner-id' } },
+      id: { value: 'member-id' },
+      permissions: {
+        value: new PermissionsBitField(
+          PermissionsBitField.Flags.Administrator,
+        ),
+      },
+      roles: {
+        value: {
+          cache: new Collection([
+            ['unresolved', undefined],
+            ['allowed', { name: 'Member' }],
+          ]),
+        },
+      },
+    })
+
+    expect(hasKimakiBotPermission(member)).toBe(true)
   })
 
   test('still blocks no-kimaki role even when allowAllUsers is enabled', () => {

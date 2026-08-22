@@ -123,7 +123,9 @@ function hasRoleByName(
   const target = roleName.toLowerCase()
 
   if (member instanceof GuildMember) {
-    return member.roles.cache.some((role) => role.name.toLowerCase() === target)
+    return member.roles.cache.some(
+      (role) => role?.name.toLowerCase() === target,
+    )
   }
 
   if (!guild) {
