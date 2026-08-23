@@ -138,7 +138,7 @@ function hasRoleByName(
 
 function resolveMemberPermissions(
   member: GuildMemberType | APIInteractionGuildMember,
-): PermissionsBitField {
+): discord.PermissionsBitField {
   if (!(member instanceof GuildMember)) {
     return new PermissionsBitField(BigInt(member.permissions))
   }
