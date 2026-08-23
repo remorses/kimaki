@@ -146,6 +146,17 @@ const DISCORD_DEFAULT_DISCRIMINATOR = '0'
 const DISCORD_ZERO_PERMISSIONS = '0'
 const THREAD_TYPING_STATUS_TEXT = 'Typing...'
 
+function extractSlackMentionIds(text: string | undefined): string[] {
+  return [
+    ...new Set(
+      Array.from(
+        text?.matchAll(/<@([A-Z0-9]+)(?:\|[^>]+)?>/g) ?? [],
+        (match) => match[1]!,
+      ),
+    ),
+  ]
+}
+
 /**
  * Look up a Slack user with caching.
  * Falls back to the user ID as username if lookup fails.
@@ -1292,10 +1303,16 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
           slack,
           event.message?.user ?? botUserId,
         )
+        const mentionedUsers = await Promise.all(
+          extractSlackMentionIds(event.message?.text).map((id) =>
+            lookupUser(slack, id),
+          ),
+        )
         const translated = events.translateMessageUpdate({
           event,
           guildId: workspaceId,
           author,
+          mentionedUsers,
         })
         if (translated) {
           gateway.broadcast(translated.eventName, translated.data)
@@ -1334,6 +1351,9 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
       // New message
       const userId = event.user ?? event.botId ?? botUserId
       const author = await lookupUser(slack, userId)
+      const mentionedUsers = await Promise.all(
+        extractSlackMentionIds(event.text).map((id) => lookupUser(slack, id)),
+      )
 
       // If this message is a thread reply and we haven't seen this thread,
       // emit THREAD_CREATE first
@@ -1364,6 +1384,7 @@ export function createBridgeApp(config: ServerConfig): BridgeAppComponents {
         event,
         guildId: workspaceId,
         author,
+        mentionedUsers,
       })
       if (translated) {
         gateway.broadcast(translated.eventName, translated.data)
