@@ -66,3 +66,5 @@ You can link the same project to channels in multiple servers — both will poin
 ## Docker on a VPS
 
 To run Kimaki on a remote machine instead of your laptop, put it in a container with a persistent volume. The first boot prints an install URL in the logs. See [Deploy Kimaki on a VPS with Docker](./docker.mdx).
+
+To reach the OpenCode server from your laptop (`opencode attach`, `opencode web`), start Kimaki with `--opencode-hostname 0.0.0.0`, a fixed `--opencode-port`, and `OPENCODE_SERVER_PASSWORD`. See [Expose the OpenCode server](../remote-access/opencode-server.mdx).

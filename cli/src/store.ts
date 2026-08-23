@@ -96,6 +96,19 @@ export type KimakiState = {
   // Read by: discord-utils.ts hasKimakiBotPermission().
   allowAllUsers: boolean
 
+  // Hostname passed to `opencode serve --hostname`. Null means OpenCode's
+  // default (127.0.0.1). Set from --opencode-hostname. Kimaki still talks
+  // to 127.0.0.1 even when the server binds 0.0.0.0. Does not bind the
+  // Kimaki hrana/lock server.
+  // Changes: set once at startup from --opencode-hostname CLI flag.
+  // Read by: opencode.ts startSingleServer().
+  opencodeHostname: string | null
+
+  // Port passed to `opencode serve --port`. Null means pick a free port.
+  // Changes: set once at startup from --opencode-port CLI flag.
+  // Read by: opencode.ts startSingleServer().
+  opencodePort: number | null
+
   // When true, the agent may only touch the session working directory and a
   // small set of known-safe paths; anything else triggers an external_directory
   // permission prompt. When false (default), every directory is allowed and the
@@ -189,6 +202,8 @@ export const store = createStore<KimakiState>(() => ({
   disabledSkills: [],
   allowedMentions: ['users'],
   allowAllUsers: false,
+  opencodeHostname: null,
+  opencodePort: null,
   restrictExternalDirectories: false,
   permissionTimeoutMs: 10 * 60 * 1000,
   useWorktrees: false,

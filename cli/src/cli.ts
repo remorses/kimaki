@@ -16,6 +16,7 @@ import {
 } from './config.js'
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
+import { publicOpencodeBindRequiresPassword } from './opencode.js'
 import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
@@ -99,6 +100,14 @@ cli
   )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
   .option(
+    '--opencode-hostname <host>',
+    'Hostname the OpenCode server listens on (default: 127.0.0.1). Use 0.0.0.0 to expose it on a VPS',
+  )
+  .option(
+    '--opencode-port <port>',
+    'Port the OpenCode server listens on (default: a random free port)',
+  )
+  .option(
     '--gateway',
     'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
   )
@@ -157,6 +166,8 @@ cli
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
       disableSkill?: string[]
+      opencodeHostname?: string
+      opencodePort?: string
     }) => {
       // Guard: only one kimaki bot process can run per lock port. Agents may run
       // a second dev bot only when they explicitly choose a different lock port.
@@ -269,6 +280,29 @@ cli
           return parsed * 60_000
         })()
 
+        const opencodeHostname = options.opencodeHostname?.trim() || undefined
+        const opencodePort = (() => {
+          if (!options.opencodePort) return undefined
+          const parsed = Number(options.opencodePort)
+          if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+            cliLogger.error(
+              `Invalid --opencode-port: ${options.opencodePort}. Must be an integer between 1 and 65535.`,
+            )
+            process.exit(EXIT_NO_RESTART)
+          }
+          return parsed
+        })()
+
+        if (
+          publicOpencodeBindRequiresPassword({ hostname: opencodeHostname }) &&
+          !process.env.OPENCODE_SERVER_PASSWORD
+        ) {
+          cliLogger.error(
+            `OPENCODE_SERVER_PASSWORD is required when --opencode-hostname is ${opencodeHostname}. Binding the OpenCode server on a public address without a password lets anyone control the agent.`,
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
         store.setState({
           ...(defaultVerbosity && {
             defaultVerbosity,
@@ -283,6 +317,8 @@ cli
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
+          ...(opencodeHostname && { opencodeHostname }),
+          ...(opencodePort !== undefined && { opencodePort }),
         })
 
         if (enabledSkills.length > 0) {
@@ -338,6 +374,12 @@ cli
           cliLogger.log(
             'Anonymous product analytics disabled (--no-analytics)',
           )
+        }
+        if (opencodeHostname) {
+          cliLogger.log(`OpenCode server hostname: ${opencodeHostname}`)
+        }
+        if (opencodePort !== undefined) {
+          cliLogger.log(`OpenCode server port: ${opencodePort}`)
         }
 
         if (options.installUrl) {

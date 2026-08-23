@@ -92,6 +92,14 @@ export function getRestrictExternalDirectories(): boolean {
   return store.getState().restrictExternalDirectories
 }
 
+export function getOpencodeHostname(): string | null {
+  return store.getState().opencodeHostname
+}
+
+export function getOpencodePort(): number | null {
+  return store.getState().opencodePort
+}
+
 export type { RegisteredUserCommand } from './store.js'
 
 const DEFAULT_LOCK_PORT = 29988

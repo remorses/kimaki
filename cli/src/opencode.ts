@@ -59,6 +59,8 @@ import {
   getDataDir,
   getLockPort,
   getRestrictExternalDirectories,
+  getOpencodeHostname,
+  getOpencodePort,
 } from './config.js'
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
@@ -108,6 +110,32 @@ export function getOpencodeServerAuthHeaders(): Record<string, string> {
   return { Authorization: `Basic ${encoded}` }
 }
 
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1'])
+
+export function publicOpencodeBindRequiresPassword({
+  hostname,
+}: {
+  hostname: string | null | undefined
+}): boolean {
+  if (!hostname) return false
+  return !LOOPBACK_HOSTNAMES.has(hostname)
+}
+
+export function buildOpencodeServeArgs({
+  port,
+  hostname,
+}: {
+  port: number
+  hostname?: string | null
+}): string[] {
+  const args = ['serve', '--port', port.toString()]
+  if (hostname) {
+    args.push('--hostname', hostname)
+  }
+  args.push('--print-logs', '--log-level', 'WARN')
+  return args
+}
+
 // Tracks directories that have been initialized, to avoid repeated log spam
 // from the external sync polling loop.
 const initializedDirectories = new Set<string>()
@@ -143,6 +171,7 @@ export async function requestHealthcheck({
         method: 'GET',
         headers: {
           connection: 'close',
+          ...getOpencodeServerAuthHeaders(),
         },
       },
       (res) => {
@@ -682,16 +711,21 @@ async function startSingleServer({
 } = {}): Promise<ServerStartError | SingleServer> {
   ensureProcessCleanupHandlersRegistered()
 
-  const port = await getOpenPort()
+  const configuredPort = getOpencodePort()
+  const port = configuredPort ?? (await getOpenPort())
+  const hostname = getOpencodeHostname()
 
-  const serveArgs = [
-    'serve',
-    '--port',
-    port.toString(),
-    '--print-logs',
-    '--log-level',
-    'WARN',
-  ]
+  if (
+    publicOpencodeBindRequiresPassword({ hostname }) &&
+    !process.env.OPENCODE_SERVER_PASSWORD
+  ) {
+    return new ServerStartError({
+      port,
+      reason: `OPENCODE_SERVER_PASSWORD is required when --opencode-hostname is ${hostname}`,
+    })
+  }
+
+  const serveArgs = buildOpencodeServeArgs({ port, hostname })
 
   const {
     command: spawnCommand,
@@ -889,7 +923,7 @@ async function startSingleServer({
   let serverReady = false
 
   logBuffer.push(
-    `Spawned opencode serve --port ${port} (pid: ${serverProcess.pid})`,
+    `Spawned opencode ${serveArgs.join(' ')} (pid: ${serverProcess.pid})`,
   )
 
   const stdoutReader = subscribeToProcessLogStream({

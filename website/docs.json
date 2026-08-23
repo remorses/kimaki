@@ -67,7 +67,8 @@
         "pages": [
           "docs/remote-access/vscode",
           "docs/remote-access/tunnels",
-          "docs/remote-access/screen-sharing"
+          "docs/remote-access/screen-sharing",
+          "docs/remote-access/opencode-server"
         ]
       },
       {

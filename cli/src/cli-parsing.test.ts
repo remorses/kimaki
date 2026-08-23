@@ -55,7 +55,7 @@ async function parseRootBotOptions(argv: string[]) {
   const script = [
     "import { goke } from 'goke'",
     'const cli = goke(\'kimaki\')',
-    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics')",
+    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--opencode-hostname <host>', 'OpenCode listen hostname').option('--opencode-port <port>', 'OpenCode listen port')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
@@ -202,5 +202,19 @@ describe('goke CLI ID parsing', () => {
     ])
 
     expect(result.options.noAnalytics).toBe(true)
+  })
+
+  test('parses --opencode-hostname and --opencode-port on the root bot command', async () => {
+    const result = await parseRootBotOptions([
+      'node',
+      'kimaki',
+      '--opencode-hostname',
+      '0.0.0.0',
+      '--opencode-port',
+      '4096',
+    ])
+
+    expect(result.options.opencodeHostname).toBe('0.0.0.0')
+    expect(result.options.opencodePort).toBe('4096')
   })
 })

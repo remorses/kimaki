@@ -45,6 +45,56 @@ describe('selectResolvedCommand', () => {
   })
 })
 
+describe('buildOpencodeServeArgs', () => {
+  test('omits hostname when unset so opencode stays on 127.0.0.1', async () => {
+    const { buildOpencodeServeArgs } = await import('./opencode.js')
+    expect(buildOpencodeServeArgs({ port: 4096 })).toEqual([
+      'serve',
+      '--port',
+      '4096',
+      '--print-logs',
+      '--log-level',
+      'WARN',
+    ])
+  })
+
+  test('passes --hostname when set', async () => {
+    const { buildOpencodeServeArgs } = await import('./opencode.js')
+    expect(
+      buildOpencodeServeArgs({ port: 4096, hostname: '0.0.0.0' }),
+    ).toEqual([
+      'serve',
+      '--port',
+      '4096',
+      '--hostname',
+      '0.0.0.0',
+      '--print-logs',
+      '--log-level',
+      'WARN',
+    ])
+  })
+})
+
+describe('publicOpencodeBindRequiresPassword', () => {
+  test('allows loopback without a password', async () => {
+    const { publicOpencodeBindRequiresPassword } = await import('./opencode.js')
+    expect(publicOpencodeBindRequiresPassword({ hostname: null })).toBe(false)
+    expect(publicOpencodeBindRequiresPassword({ hostname: '127.0.0.1' })).toBe(
+      false,
+    )
+    expect(publicOpencodeBindRequiresPassword({ hostname: 'localhost' })).toBe(
+      false,
+    )
+  })
+
+  test('requires a password for 0.0.0.0', async () => {
+    const { publicOpencodeBindRequiresPassword } = await import('./opencode.js')
+    expect(publicOpencodeBindRequiresPassword({ hostname: '0.0.0.0' })).toBe(
+      true,
+    )
+  })
+})
+
 describe('getSpawnCommandAndArgs', () => {
   test('wraps windows cmd shims through cmd.exe without double-quoting by node', () => {
     expect(

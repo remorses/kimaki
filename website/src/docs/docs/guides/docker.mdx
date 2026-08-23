@@ -158,12 +158,14 @@ Credentials, channel mappings, and project files stay on the volume. Rebuilding 
 
 Add these to `CMD` when they match how you want the VPS to behave.
 
-| Flag                     | When to use it                                                                                                                                           |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--allow-all-users`      | Anyone in the Discord server can start sessions. The `no-kimaki` role still blocks. Default access is [role-based](../configuration/access-control.mdx). |
-| `--restrict-directories` | The agent must ask before leaving the project folder.                                                                                                    |
-| `--no-auto-upgrade`      | Stop Kimaki from upgrading itself on boot. You control versions by rebuilding the image.                                                                 |
-| `--verbosity <level>`    | Default thread verbosity. See [Verbosity](../configuration/verbosity.mdx).                                                                               |
+| Flag                          | When to use it                                                                                                                                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--allow-all-users`           | Anyone in the Discord server can start sessions. The `no-kimaki` role still blocks. Default access is [role-based](../configuration/access-control.mdx).                                         |
+| `--restrict-directories`      | The agent must ask before leaving the project folder.                                                                                                                                            |
+| `--no-auto-upgrade`           | Stop Kimaki from upgrading itself on boot. You control versions by rebuilding the image.                                                                                                         |
+| `--verbosity <level>`         | Default thread verbosity. See [Verbosity](../configuration/verbosity.mdx).                                                                                                                       |
+| `--opencode-hostname 0.0.0.0` | Bind the OpenCode server on every interface so you can `opencode attach` from another machine. Requires `OPENCODE_SERVER_PASSWORD`. See [OpenCode server](../remote-access/opencode-server.mdx). |
+| `--opencode-port <port>`      | Stable OpenCode listen port. Default is a random free port. Use this with `--opencode-hostname` on a VPS.                                                                                        |
 
 A public demo or shared box usually wants `--allow-all-users` and an OpenCode config that auto-allows tools, because nobody is sitting on permission buttons. A personal VPS can keep the defaults and approve tools from Discord.
 
