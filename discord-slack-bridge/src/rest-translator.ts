@@ -43,6 +43,7 @@ type SlackCreateChannel = NonNullable<ConversationsCreateResponse['channel']>
 type SlackUser = NonNullable<UsersInfoResponse['user']>
 type SlackMember = NonNullable<UsersListResponse['members']>[number]
 type SlackUsergroup = NonNullable<UsergroupsListResponse['usergroups']>[number]
+let nextVirtualCategoryId = 0
 import {
   ChannelType,
   ComponentType,
@@ -69,6 +70,7 @@ import {
   encodeMessageId,
   encodeThreadId,
   decodeMessageId,
+  decodeThreadId,
   resolveSlackTarget,
   slackTsToIso,
   isThreadChannelId,
@@ -347,9 +349,15 @@ export async function getMessage({
 }): Promise<APIMessage> {
   const { channel, threadTs } = resolveSlackTarget(channelId)
 
-  const targetTs = isEncodedMessageId(messageId)
-    ? decodeMessageId(messageId).ts
-    : messageId
+  // Discord addresses a thread's starter message through its parent channel
+  // using the synthetic thread ID. Slack addresses it with the thread
+  // timestamp embedded in that ID.
+  const targetTs =
+    isThreadChannelId(messageId)
+      ? decodeThreadId(messageId).threadTs
+      : isEncodedMessageId(messageId)
+        ? decodeMessageId(messageId).ts
+        : messageId
 
   if (threadTs) {
     // Thread message: use conversations.replies with inclusive range
@@ -496,6 +504,14 @@ export async function updateChannel({
   body: { name?: string; topic?: string; archived?: boolean }
   guildId: string
 }): Promise<APIChannel> {
+  if (isThreadChannelId(channelId)) {
+    // Slack threads have no independently mutable channel metadata. Preserve
+    // the virtual Discord operation without attempting to rename the parent
+    // Slack conversation with a synthetic thread ID.
+    const thread = await getChannel({ slack, channelId, guildId })
+    return body.name ? ({ ...thread, name: body.name } as APIChannel) : thread
+  }
+
   if (body.name) {
     const renameArgs = {
       channel: channelId,
@@ -589,8 +605,21 @@ export async function createChannel({
   guildId: string
   body: { name: string; type?: ChannelType }
 }): Promise<APIChannel> {
+  if (body.type === ChannelType.GuildCategory) {
+    // Slack has a flat conversation model. Keep Discord categories virtual so
+    // creating one neither requires an invalid Slack channel name nor occupies
+    // the name of its child conversation.
+    return {
+      id: `CAT_${++nextVirtualCategoryId}`,
+      type: ChannelType.GuildCategory,
+      name: body.name,
+      guild_id: guildId,
+      position: 0,
+    }
+  }
+
   const createArgs = {
-    name: body.name,
+    name: normalizeSlackChannelName(body.name),
     is_private: false,
   } satisfies ConversationsCreateArguments
   const result = await slack.conversations.create(createArgs)
@@ -604,6 +633,17 @@ export async function createChannel({
     topic: channel.topic?.value ?? null,
     position: 0,
   }
+}
+
+function normalizeSlackChannelName(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^[-_]+|[-_]+$/g, '')
+      .slice(0, 80) || 'channel'
+  )
 }
 
 /**

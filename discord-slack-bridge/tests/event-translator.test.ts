@@ -4,6 +4,8 @@ import { describe, expect, test } from 'vitest'
 import {
   translateChannelDelete,
   translateChannelRename,
+  translateMessageCreate,
+  translateMessageUpdate,
   translateMemberJoinedChannel,
   translateReaction,
 } from '../src/event-translator.js'
@@ -48,6 +50,62 @@ describe('translateReaction', () => {
 
     // Thread channel IDs encode both channel and thread_ts (20+ digits)
     expect(translated.data.channel_id).toBe(encodeThreadId('C123', '1700000000.123456'))
+  })
+})
+
+describe('message mentions', () => {
+  const author = {
+    id: 'U_AUTHOR',
+    name: 'alice',
+    realName: 'Alice',
+    isBot: false,
+  }
+  const bot = {
+    id: 'U_BOT',
+    name: 'north',
+    realName: 'North',
+    isBot: true,
+  }
+
+  test('includes Slack mentions in message create payloads', () => {
+    const translated = translateMessageCreate({
+      event: {
+        type: 'app_mention',
+        channel: 'C123',
+        user: author.id,
+        text: '<@U_BOT> start a session',
+        ts: '1700000001.123456',
+      },
+      guildId: 'T123',
+      author,
+      mentionedUsers: [bot],
+    })
+
+    expect(translated?.data.mentions).toEqual([
+      expect.objectContaining({ id: 'U_BOT', username: 'north', bot: true }),
+    ])
+  })
+
+  test('includes Slack mentions in message update payloads', () => {
+    const translated = translateMessageUpdate({
+      event: {
+        type: 'message',
+        subtype: 'message_changed',
+        channel: 'C123',
+        message: {
+          user: author.id,
+          text: '<@U_BOT> edited prompt',
+          ts: '1700000001.123456',
+        },
+      },
+      guildId: 'T123',
+      author,
+      mentionedUsers: [bot],
+    })
+
+    expect(translated?.data.mentions).toEqual([
+      expect.objectContaining({ id: 'U_BOT', username: 'north', bot: true }),
+    ])
   })
 })
 

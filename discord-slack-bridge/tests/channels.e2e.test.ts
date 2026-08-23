@@ -1,6 +1,7 @@
 // E2E: Channel operations through the bridge.
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
+import { ChannelType } from 'discord-api-types/v10'
 import { setupE2E, teardownE2E, type E2EContext } from './e2e-setup.js'
 
 describe('channels', () => {
@@ -33,5 +34,22 @@ describe('channels', () => {
     const ch = await ctx.client.channels.fetch(channelId)
     expect(ch).toBeDefined()
     expect(ch!.id).toBe(channelId)
+  })
+
+  test('creates the default channel hierarchy with Slack-compatible names', async () => {
+    const guild = ctx.client.guilds.cache.first()!
+    const category = await guild.channels.create({
+      name: 'Kimaki',
+      type: ChannelType.GuildCategory,
+    })
+    const channel = await guild.channels.create({
+      name: 'Kimaki General',
+      type: ChannelType.GuildText,
+      parent: category,
+    })
+
+    expect(category.name).toBe('Kimaki')
+    expect(channel.name).toBe('kimaki-general')
+    expect(await ctx.twin.channel(channel.id).getMessages()).toEqual([])
   })
 })

@@ -39,10 +39,12 @@ export function translateMessageCreate({
   event,
   guildId,
   author,
+  mentionedUsers = [],
 }: {
   event: NormalizedSlackMessageEvent
   guildId: string
   author: CachedSlackUser
+  mentionedUsers?: CachedSlackUser[]
 }): { eventName: string; data: APIMessage & { guild_id: string } } | null {
   if (!(event.channel && event.ts)) {
     return null
@@ -74,7 +76,7 @@ export function translateMessageCreate({
     edited_timestamp: null,
     tts: false,
     mention_everyone: false,
-    mentions: [],
+    mentions: mentionedUsers.map(toApiUser),
     mention_roles: [],
     attachments: mapSlackFilesToDiscordAttachments(event.files),
     embeds: [],
@@ -96,10 +98,12 @@ export function translateMessageUpdate({
   event,
   guildId,
   author,
+  mentionedUsers = [],
 }: {
   event: NormalizedSlackMessageEvent
   guildId: string
   author: CachedSlackUser
+  mentionedUsers?: CachedSlackUser[]
 }): { eventName: string; data: APIMessage & { guild_id: string } } | null {
   // message_changed has the updated message in event.message
   const inner = event.message
@@ -133,7 +137,7 @@ export function translateMessageUpdate({
     edited_timestamp: inner.editedTs ? slackTsToIso(inner.editedTs) : null,
     tts: false,
     mention_everyone: false,
-    mentions: [],
+    mentions: mentionedUsers.map(toApiUser),
     mention_roles: [],
     attachments: mapSlackFilesToDiscordAttachments(inner.files),
     embeds: [],
@@ -145,6 +149,17 @@ export function translateMessageUpdate({
   return {
     eventName: GatewayDispatchEvents.MessageUpdate,
     data: apiMessage,
+  }
+}
+
+function toApiUser(user: CachedSlackUser): APIUser {
+  return {
+    id: user.id,
+    username: user.name,
+    discriminator: DISCORD_DEFAULT_DISCRIMINATOR,
+    avatar: user.avatar ?? null,
+    bot: user.isBot,
+    global_name: user.realName,
   }
 }
 
