@@ -9,8 +9,11 @@ import {
   showAskUserQuestionDropdowns,
 } from './ask-question.js'
 
-function createFakeThread(): ThreadChannel {
+function createFakeThread({ failSend }: { failSend?: boolean } = {}): ThreadChannel {
   const send = vi.fn(async () => {
+    if (failSend) {
+      throw new Error('Missing Permissions')
+    }
     return { id: 'msg-1' }
   })
 
@@ -107,6 +110,50 @@ describe('ask-question', () => {
 
     expect(removed).toBe(2)
     expect([...pendingQuestionContexts.keys()]).toEqual(['ctx-3'])
+  })
+
+  test('does not schedule a question expiry timer', async () => {
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+
+    await showAskUserQuestionDropdowns({
+      thread: createFakeThread(),
+      sessionId: 'ses-1',
+      directory: '/project',
+      requestId: 'req-no-ttl',
+      input: {
+        questions: [{
+          question: 'Choose one',
+          header: 'Pick',
+          options: [
+            { label: 'Alpha', description: 'A' },
+            { label: 'Beta', description: 'B' },
+          ],
+        }],
+      },
+    })
+
+    expect(timeoutSpy).not.toHaveBeenCalled()
+  })
+
+  test('drops the context when the dropdown message fails to send', async () => {
+    await showAskUserQuestionDropdowns({
+      thread: createFakeThread({ failSend: true }),
+      sessionId: 'ses-1',
+      directory: '/project',
+      requestId: 'req-send-fails',
+      input: {
+        questions: [{
+          question: 'Choose one',
+          header: 'Pick',
+          options: [
+            { label: 'Alpha', description: 'A' },
+            { label: 'Beta', description: 'B' },
+          ],
+        }],
+      },
+    })
+
+    expect(pendingQuestionContexts.size).toBe(0)
   })
 
   test('requires every question to have an answer', () => {

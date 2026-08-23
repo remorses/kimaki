@@ -62,6 +62,7 @@ import {
   startScheduledTaskRunSession,
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
+  cancelSessionSleepForThread,
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
@@ -588,6 +589,12 @@ export type IngressInput = {
    * (e.g. user-to-user replies in a thread).
    */
   noReply?: boolean
+  /**
+   * True only for the wake prompt posted by the kimaki_sleep task runner.
+   * Every other ingress cancels a pending sleep; this one must not, because it
+   * is delivering that sleep rather than superseding it.
+   */
+  isSleepWake?: boolean
   /**
    * Product-analytics turn source. Defaults to discord. Set retry/cli/scheduled
    * at the ingress site so DAU queries can exclude non-user activity.
@@ -2066,41 +2073,6 @@ export class ThreadSessionRuntime {
       return
     }
 
-    if (
-      part.type === 'tool' &&
-      part.tool === 'task' &&
-      !this.state?.sentPartIds.has(part.id)
-    ) {
-      const taskDisplay = formatTaskToolTitle(part)
-      if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
-        await this.flushBufferedParts({
-          messageID: part.messageID,
-          force: true,
-          skipPartId: part.id,
-        })
-        threadState.updateThread(this.threadId, (t) => {
-          const newIds = new Set(t.sentPartIds)
-          newIds.add(part.id)
-          return { ...t, sentPartIds: newIds }
-        })
-        const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
-          .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-        if (sendResult instanceof Error) {
-          threadState.updateThread(this.threadId, (t) => {
-            const newIds = new Set(t.sentPartIds)
-            newIds.delete(part.id)
-            return { ...t, sentPartIds: newIds }
-          })
-          discordLogger.error(
-            `ERROR: Failed to send task part ${part.id}:`,
-            sendResult,
-          )
-          return
-        }
-        await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
-      }
-    }
-
     if (part.type === 'tool' && part.state.status === 'running') {
       await this.flushBufferedParts({
         messageID: part.messageID,
@@ -2108,6 +2080,32 @@ export class ThreadSessionRuntime {
         skipPartId: part.id,
       })
       await this.sendPartMessage({ part })
+
+      if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
+        const taskDisplay = formatTaskToolTitle(part)
+        if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
+          threadState.updateThread(this.threadId, (t) => {
+            const newIds = new Set(t.sentPartIds)
+            newIds.add(part.id)
+            return { ...t, sentPartIds: newIds }
+          })
+          const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+            .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+          if (sendResult instanceof Error) {
+            threadState.updateThread(this.threadId, (t) => {
+              const newIds = new Set(t.sentPartIds)
+              newIds.delete(part.id)
+              return { ...t, sentPartIds: newIds }
+            })
+            discordLogger.error(
+              `ERROR: Failed to send task part ${part.id}:`,
+              sendResult,
+            )
+            return
+          }
+          await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
+        }
+      }
       return
     }
 
@@ -2965,6 +2963,7 @@ export class ThreadSessionRuntime {
    * fields that the local-queue path provides.
    */
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
+    await this.supersedePendingSleep(input)
     let skippedBySessionGuard = false
 
     await this.dispatchAction(async () => {
@@ -3269,7 +3268,28 @@ export class ThreadSessionRuntime {
    * Enqueue in kimaki's local per-thread queue.
    * Used for explicit queue workflows (/queue, queueMessage=true).
    */
+  /**
+   * A new turn supersedes a pending sleep.
+   *
+   * Called from the two terminal routers rather than from the top of
+   * enqueueIncoming: arrival order is only fixed once a message reaches the
+   * preprocessChain link, so awaiting anything before that lets two rapid
+   * messages swap places. By here the order is already committed.
+   *
+   * Awaited rather than fire-and-forget so it cannot race the task runner and
+   * let a stale wake land after the user took the conversation back.
+   */
+  private async supersedePendingSleep(input: IngressInput): Promise<void> {
+    if (input.isSleepWake) return
+    await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
+      (error) => {
+        logger.error('[SLEEP] failed to cancel pending sleep:', error)
+      },
+    )
+  }
+
   private async enqueueViaLocalQueue(input: IngressInput): Promise<EnqueueResult> {
+    await this.supersedePendingSleep(input)
     const queueId = crypto.randomBytes(8).toString('hex')
     const queuedMessage: QueuedMessage = {
       queueId,
@@ -3540,6 +3560,10 @@ export class ThreadSessionRuntime {
     )
 
     this.stopTyping()
+
+    // The aborted run owns the question request, so the dropdown dies with it.
+    // Questions have no TTL, so this is the only thing that clears them here.
+    void cancelPendingQuestion(this.threadId)
 
     const apiAbortPromise = sessionId
       ? this.abortSessionViaApi({ abortId, reason, sessionId })

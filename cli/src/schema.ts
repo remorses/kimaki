@@ -33,6 +33,10 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   // Survives bot restarts so child multi-turn system prompts keep the parent ID.
   parent_session_id: sqliteCore.text('parent_session_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+  // Bumped on every (re)binding of a session to this thread. /resume can map one
+  // session to several threads, so session_id -> thread_id needs a tiebreaker.
+  // Without it the reverse lookup is arbitrary and tools can target a dead thread.
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
 export const session_events = sqliteCore.sqliteTable('session_events', {
@@ -224,6 +228,36 @@ export const forum_sync_configs = sqliteCore.sqliteTable('forum_sync_configs', {
   sqliteCore.uniqueIndex('forum_sync_configs_app_id_forum_channel_id_key').on(table.app_id, table.forum_channel_id),
 ])
 
+// Durable "wake this session later" rows for the kimaki_sleep tool.
+//
+// Delivery is at-least-once, and ingress makes it at-most-once-per-turn:
+//
+//   planned ──► consumed          cancelled / failed are terminal
+//      ▲   │
+//      └───┘ retried until ingress consumes it
+//
+// A row stays `planned` until ingress turns the wake into a turn, so ANY loss
+// (crash before posting, crash after posting, missed gateway event) is covered
+// by the same retry. `delivery_id` is the Discord message nonce, so a retry
+// returns the existing message instead of waking the session twice.
+//
+// There is no thread_id: the owning thread is resolved from session_id at wake
+// time, so a session rebound by /resume wakes in its current thread.
+export const session_sleeps = sqliteCore.sqliteTable('session_sleeps', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  wake_at: datetime('wake_at').notNull(),
+  reason: sqliteCore.text('reason'),
+  status: sqliteCore.text('status', { enum: ['planned', 'consumed', 'cancelled', 'failed'] }).notNull().default('planned'),
+  // Regenerated per sleep occurrence. Doubles as the Discord nonce and as a
+  // generation guard so a stale in-flight wake cannot mutate a newer sleep.
+  delivery_id: sqliteCore.text('delivery_id').notNull().$defaultFn(() => crypto.randomUUID()),
+  attempts: sqliteCore.integer('attempts', { mode: 'number' }).notNull().default(0),
+  last_attempt_at: datetime('last_attempt_at'),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  sqliteCore.index('session_sleeps_status_wake_at_idx').on(table.status, table.wake_at),
+])
+
 export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
   id: sqliteCore.text('id').primaryKey().notNull().$defaultFn(() => crypto.randomUUID()),
   type: sqliteCore.text('type', { enum: ['file_upload', 'action_buttons'] }).notNull(),
@@ -259,6 +293,7 @@ export const relations = defineRelations({
   scheduled_task_runs,
   session_start_sources,
   forum_sync_configs,
+  session_sleeps,
   ipc_requests,
 }, (r) => ({
   thread_sessions: {
@@ -340,6 +375,7 @@ export const relations = defineRelations({
 export type BotMode = typeof bot_tokens.$inferSelect.bot_mode
 export type ChannelType = typeof channel_directories.$inferSelect.channel_type
 export type IpcRequestType = typeof ipc_requests.$inferSelect.type
+export type SessionSleepStatus = typeof session_sleeps.$inferSelect.status
 export type SessionEvent = typeof session_events.$inferSelect
 export type ThreadSessionSource = typeof thread_sessions.$inferSelect.source
 export type VerbosityLevel = typeof channel_verbosity.$inferSelect.verbosity

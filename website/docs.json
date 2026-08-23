@@ -54,6 +54,7 @@
           "docs/features/worktrees",
           "docs/features/diff-viewer",
           "docs/features/scheduled-tasks",
+          "docs/features/sleep",
           "docs/features/voice",
           "docs/features/images",
           "docs/features/opencode-commands",

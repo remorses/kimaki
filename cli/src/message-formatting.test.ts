@@ -52,27 +52,98 @@ describe('formatPart', () => {
 })
 
 describe('formatTaskToolTitle', () => {
-  test('uses the completed task title when OpenAI omits the description', () => {
-    const part: Extract<Part, { type: 'tool' }> = {
+  function taskPart({
+    status,
+    input = {},
+    title = '',
+    sessionId,
+  }: {
+    status: 'running' | 'completed'
+    input?: { description?: string; subagent_type?: string }
+    title?: string
+    sessionId?: string
+  }): Extract<Part, { type: 'tool' }> {
+    const base = {
       id: 'prt_task',
-      type: 'tool',
+      type: 'tool' as const,
       tool: 'task',
       callID: 'call_task',
       sessionID: 'ses_parent',
       messageID: 'msg_assistant',
+    }
+    if (status === 'completed') {
+      return {
+        ...base,
+        state: {
+          status,
+          input,
+          output: '',
+          title,
+          metadata: sessionId ? { sessionId } : {},
+          time: { start: 1, end: 2 },
+        },
+      }
+    }
+    return {
+      ...base,
       state: {
-        status: 'completed',
-        input: { subagent_type: 'general' },
-        output: '',
-        title: 'Classify pending changes',
-        metadata: { sessionId: 'ses_child' },
-        time: { start: 1, end: 2 },
+        status,
+        input,
+        title,
+        metadata: sessionId ? { sessionId } : {},
+        time: { start: 1 },
       },
     }
+  }
 
-    expect(formatTaskToolTitle(part)).toMatchInlineSnapshot(
-      `"┣ general **Classify pending changes**"`,
-    )
+  test('uses the running task title when OpenAI omits the description', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'running',
+          input: { subagent_type: 'general' },
+          title: 'Classify pending changes',
+          sessionId: 'ses_child',
+        }),
+      ),
+    ).toMatchInlineSnapshot(`"┣ general **Classify pending changes**"`)
+  })
+
+  test('prefers input description on running parts', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'running',
+          input: { description: 'inspect repo', subagent_type: 'explore' },
+          title: 'ignored title',
+          sessionId: 'ses_child',
+        }),
+      ),
+    ).toMatchInlineSnapshot(`"┣ explore **inspect repo**"`)
+  })
+
+  test('does not format completed parts so Discord does not post the line at the end', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'completed',
+          input: { subagent_type: 'general' },
+          title: 'Classify pending changes',
+          sessionId: 'ses_child',
+        }),
+      ),
+    ).toBe('')
+  })
+
+  test('skips running parts until the child session and title exist', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'running',
+          input: {},
+        }),
+      ),
+    ).toBe('')
   })
 })
 

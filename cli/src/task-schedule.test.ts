@@ -18,6 +18,7 @@ import {
   appendTaskCommandOutput,
   parseScheduledTaskPayload,
   parseSendAtValue,
+  parseSleepWakeAt,
 } from './task-schedule.js'
 
 describe('parseSendAtValue', () => {
@@ -97,6 +98,81 @@ describe('parseSendAtValue', () => {
     expect(result.scheduleKind).toBe('cron')
     expect(result.cronExpr).toBe('0 9 * * 1')
     expect(result.nextRunAt.toISOString()).toBe('2026-02-23T09:00:00.000Z')
+  })
+})
+
+describe('parseSleepWakeAt', () => {
+  const now = new Date('2026-08-19T12:00:00Z')
+
+  test('adds 2h to now', () => {
+    const result = parseSleepWakeAt({ duration: '2h', now })
+    expect(result).not.toBeInstanceOf(Error)
+    if (result instanceof Error) throw result
+    expect(result.toISOString()).toBe('2026-08-19T14:00:00.000Z')
+  })
+
+  test('adds 30s and 1d', () => {
+    const thirtySeconds = parseSleepWakeAt({ duration: '30s', now })
+    expect(thirtySeconds).not.toBeInstanceOf(Error)
+    if (thirtySeconds instanceof Error) throw thirtySeconds
+    expect(thirtySeconds.toISOString()).toBe('2026-08-19T12:00:30.000Z')
+
+    const oneDay = parseSleepWakeAt({ duration: '1d', now })
+    expect(oneDay).not.toBeInstanceOf(Error)
+    if (oneDay instanceof Error) throw oneDay
+    expect(oneDay.toISOString()).toBe('2026-08-20T12:00:00.000Z')
+  })
+
+  test('accepts until UTC ISO date ending with Z', () => {
+    const result = parseSleepWakeAt({
+      until: '2026-08-20T09:00:00Z',
+      now,
+    })
+    expect(result).not.toBeInstanceOf(Error)
+    if (result instanceof Error) throw result
+    expect(result.toISOString()).toBe('2026-08-20T09:00:00.000Z')
+  })
+
+  test('rejects past until', () => {
+    const result = parseSleepWakeAt({
+      until: '2026-08-19T11:59:59Z',
+      now,
+    })
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toContain('until must be in the future (UTC)')
+    }
+  })
+
+  test('rejects both duration and until', () => {
+    const result = parseSleepWakeAt({
+      duration: '1h',
+      until: '2026-08-20T09:00:00Z',
+      now,
+    })
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toContain('either duration or until')
+    }
+  })
+
+  test('rejects neither duration nor until', () => {
+    const result = parseSleepWakeAt({ now })
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toContain('duration or until')
+    }
+  })
+
+  test('rejects until with a non-UTC offset', () => {
+    const result = parseSleepWakeAt({
+      until: '2026-08-20T09:00:00+01:00',
+      now,
+    })
+    expect(result).toBeInstanceOf(Error)
+    if (result instanceof Error) {
+      expect(result.message).toContain('UTC ISO format ending with Z')
+    }
   })
 })
 

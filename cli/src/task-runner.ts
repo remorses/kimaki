@@ -1,6 +1,6 @@
-// Scheduled task runner for executing due `send --send-at` jobs in the bot process.
+// Scheduled task runner for due `send --send-at` jobs and session sleep wakes.
 
-import { type REST, Routes } from 'discord.js'
+import { DiscordAPIError, type REST, Routes } from 'discord.js'
 import { createDiscordRest } from './discord-urls.js'
 import { ensureThreadMember } from './discord-utils.js'
 import YAML from 'yaml'
@@ -20,6 +20,11 @@ import {
   releaseScheduledTaskClaim,
   setScheduledTaskRunThread,
   type ScheduledTask,
+  type SessionSleep,
+  claimSessionSleepAttempt,
+  getDueSessionSleeps,
+  getThreadIdBySessionId,
+  markSessionSleepFailed,
 } from './database.js'
 import { execAsync } from './exec-async.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
@@ -29,6 +34,7 @@ import type { ThreadStartMarker } from './system-message.js'
 import {
   type ScheduledTaskPayload,
   appendTaskCommandOutput,
+  formatSessionSleepWakePrompt,
   getNextCronRun,
   getPromptPreview,
   parseScheduledTaskPayload,
@@ -127,6 +133,121 @@ async function executeThreadScheduledTask({
 
   if (postResult instanceof Error) return postResult
   return payload.threadId
+}
+
+/** Wait before retrying a wake that ingress has not consumed yet. */
+const SLEEP_WAKE_RETRY_AFTER_MS = 30_000
+const SLEEP_WAKE_MAX_ATTEMPTS = 5
+
+type SleepWakeFailure = { error: Error; permanent: boolean }
+
+async function postSessionSleepWake({
+  rest,
+  sleep,
+  threadId,
+}: {
+  rest: REST
+  sleep: SessionSleep
+  threadId: string
+}): Promise<SleepWakeFailure | null> {
+  const marker: ThreadStartMarker = {
+    start: true,
+    sleepWake: true,
+    sleepId: sleep.delivery_id,
+  }
+  const prompt = formatSessionSleepWakePrompt({
+    wakeAt: sleep.wake_at,
+    reason: sleep.reason,
+  })
+  // `.then(() => null)` keeps the success type concrete. Returning the raw post
+  // value would widen the union to `unknown` and erase the failure shape.
+  return await rest
+    .post(Routes.channelMessages(threadId), {
+      body: {
+        content: prompt,
+        embeds: [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }],
+        // A lost response does not mean Discord rejected the post. Retrying with
+        // the same nonce returns the existing message instead of creating a
+        // second one, so a retry can never produce two wake turns.
+        nonce: sleep.delivery_id,
+        enforce_nonce: true,
+      },
+    })
+    .then((): SleepWakeFailure | null => {
+      return null
+    })
+    .catch((error): SleepWakeFailure => {
+      // Only an unknown channel/message is genuinely unrecoverable. A 403 is
+      // often temporary (permissions revoked, thread locked) so it keeps
+      // retrying until the attempt budget runs out.
+      const permanent =
+        error instanceof DiscordAPIError &&
+        error.status === 404
+      return {
+        error: new Error(
+          `Failed to post sleep wake for session ${sleep.session_id}`,
+          { cause: error },
+        ),
+        permanent,
+      }
+    })
+}
+
+export async function wakeDueSessionSleeps({
+  rest,
+  now = new Date(),
+  limit = 20,
+}: {
+  rest: REST
+  now?: Date
+  limit?: number
+}): Promise<void> {
+  const dueSleeps = await getDueSessionSleeps({
+    now,
+    retryAfterMs: SLEEP_WAKE_RETRY_AFTER_MS,
+    limit,
+  })
+  for (const sleep of dueSleeps) {
+    // Reserves an attempt but stays `planned`. The row only leaves `planned`
+    // when ingress consumes the wake, so dying anywhere below costs one retry
+    // delay instead of losing the wake.
+    const claimed = await claimSessionSleepAttempt({
+      sessionId: sleep.session_id,
+      deliveryId: sleep.delivery_id,
+      now,
+      retryAfterMs: SLEEP_WAKE_RETRY_AFTER_MS,
+    })
+    if (!claimed) continue
+
+    // Resolved now, not when the tool ran, so a session rebound by /resume
+    // wakes in the thread that currently owns it.
+    const threadId = await getThreadIdBySessionId(claimed.session_id)
+    if (!threadId) {
+      await markSessionSleepFailed({
+        sessionId: claimed.session_id,
+        deliveryId: claimed.delivery_id,
+      })
+      taskLogger.warn(
+        `[task-runner] no thread owns session ${claimed.session_id}, dropping sleep wake`,
+      )
+      continue
+    }
+
+    // A successful post changes nothing here on purpose: ingress owns the
+    // transition out of `planned` when the wake actually becomes a turn.
+    const postResult = await postSessionSleepWake({ rest, sleep: claimed, threadId })
+    if (!postResult) continue
+
+    const exhausted = claimed.attempts >= SLEEP_WAKE_MAX_ATTEMPTS
+    if (postResult.permanent || exhausted) {
+      await markSessionSleepFailed({
+        sessionId: claimed.session_id,
+        deliveryId: claimed.delivery_id,
+      })
+    }
+    taskLogger.error(`[task-runner] ${formatErrorWithStack(postResult.error)}`)
+    void notifyError(postResult.error, 'Session sleep wake failed')
+  }
 }
 
 async function executeChannelScheduledTask({
@@ -564,6 +685,8 @@ async function runTaskRunnerTick({
     await previous
     await processDueTask({ rest, task })
   }, Promise.resolve())
+
+  await wakeDueSessionSleeps({ rest })
 }
 
 export function startTaskRunner({

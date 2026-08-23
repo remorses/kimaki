@@ -168,6 +168,17 @@ CREATE TABLE IF NOT EXISTS `session_models` (
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS `session_sleeps` (
+	`session_id` text PRIMARY KEY,
+	`wake_at` datetime NOT NULL,
+	`reason` text,
+	`status` text DEFAULT 'planned' NOT NULL,
+	`delivery_id` text NOT NULL,
+	`attempts` integer DEFAULT 0 NOT NULL,
+	`last_attempt_at` datetime,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `session_start_sources` (
 	`session_id` text PRIMARY KEY,
 	`schedule_kind` text NOT NULL,
@@ -183,7 +194,8 @@ CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`source` text DEFAULT 'kimaki' NOT NULL,
 	`last_synced_name` text,
 	`parent_session_id` text,
-	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS `thread_workspaces` (
@@ -219,4 +231,5 @@ CREATE INDEX IF NOT EXISTS `scheduled_tasks_channel_id_status_idx` ON `scheduled
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_thread_id_status_idx` ON `scheduled_tasks` (`thread_id`,`status`);
 CREATE INDEX IF NOT EXISTS `session_events_session_id_timestamp_event_index_id_idx` ON `session_events` (`session_id`,`timestamp`,`event_index`,`id`);
 CREATE INDEX IF NOT EXISTS `session_events_thread_id_timestamp_event_index_id_idx` ON `session_events` (`thread_id`,`timestamp`,`event_index`,`id`);
+CREATE INDEX IF NOT EXISTS `session_sleeps_status_wake_at_idx` ON `session_sleeps` (`status`,`wake_at`);
 CREATE INDEX IF NOT EXISTS `session_start_sources_scheduled_task_id_idx` ON `session_start_sources` (`scheduled_task_id`);
