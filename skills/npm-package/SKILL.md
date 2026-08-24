@@ -3,8 +3,9 @@ name: npm-package
 description: >
   Opinionated TypeScript npm package template for ESM packages. Enforces
   src→dist builds with tsc, strict TypeScript defaults, explicit exports, and
-  publish-safe package metadata. Use this when creating or updating any npm
-  package in this repo.
+  publish-safe package metadata. Relative source imports must use .ts or .tsx
+  (never .js); tsc rewrites them via rewriteRelativeImportExtensions. Use this
+  when creating or updating any npm package in this repo.
 version: 0.0.1
 ---
 
@@ -175,32 +176,32 @@ Use Node ESM-compatible compiler settings:
 
 - Always use "rootDir": "src"
 - Add `"DOM"` to `lib` only when browser globals are needed.
-- Use `.ts` and `.tsx` extensions in source imports. `tsc` rewrites them to
-  `.js` in the emitted `dist/` output automatically via
-  `rewriteRelativeImportExtensions`. This means source code works directly in
-  runtimes like `tsx`, `bun`, and frameworks like Next.js that expect `.ts`
-  extensions, while the published `dist/` has correct `.js` imports that Node.js
-  and other consumers resolve without issues.
-
-  ```ts
-  // source (src/index.ts) — use .ts/.tsx extensions
-  import { helper } from "./utils.ts";
-  import { Button } from "./button.tsx";
-
-  // emitted output (dist/index.js) — tsc rewrites to .js
-  // import { helper } from './utils.js'
-  // import { Button } from './button.js'
-  ```
-
-- Only relative imports are rewritten. Path aliases (`paths` in tsconfig) are
-  not supported by `rewriteRelativeImportExtensions` — this is fine since npm
-  packages should use relative imports anyway.
-- Requires TypeScript 5.7+.
+- Requires TypeScript 5.7+ (`rewriteRelativeImportExtensions`).
 - Install `@types/node` as a dev dependency whenever Node APIs are used.
 - If generation is required, keep generators in `scripts/*.ts` and invoke them
   from package scripts before build/publish.
 
 > IMPORTANT! always use rootDir src. if there are other root level folders that should be type checked you should create other tsconfig.json files inside those folder. DO NOT add other folders inside src or the dist/ will contain dist/src, dist/other-folder. which breaks imports. the tsconfig.json inside these other folders can be minimal, using noEmit true, declaration false. Because usually these folders do not need to be emitted or compiled. just type checked. tests should still be put inside src. other folders can be things like `scripts` or `fixtures`.
+
+## Relative imports
+
+Always write `.ts` or `.tsx` in relative source imports. Never write `.js`.
+
+TypeScript 5.7+ rewrites those extensions to `.js` in `dist/` when
+`rewriteRelativeImportExtensions` is on. Source then runs as-is in `tsx`,
+`bun`, Next.js, and Node type-stripping. Published JS still resolves.
+
+```ts
+import { helper } from "./utils.ts";
+import { Button } from "./button.tsx";
+```
+
+`tsc` emits `./utils.js` and `./button.js`. Only relative paths (`./`, `../`)
+are rewritten. Path aliases, `#` imports, and bare specifiers are not. npm
+packages should use relative imports anyway.
+
+Docs: [rewriteRelativeImportExtensions](https://www.typescriptlang.org/tsconfig/#rewriteRelativeImportExtensions),
+[TypeScript 5.7 path rewriting](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-7.html#path-rewriting-for-relative-paths).
 
 ## Preferred exports template
 
@@ -355,7 +356,7 @@ Source of truth: [TypeScript Modules Reference — package.json "imports" and se
 
 ## tests location
 
-test files should be close with the associated source files. for example if you have an utils.ts file you will create utils.test.ts file next to it. with tests, importing from utils. preferred testing framework is vitest (or bun if project already using `bun test` or depends on bun APIs, rare)
+test files should be close with the associated source files. for example if you have an utils.ts file you will create utils.test.ts file next to it. with tests, importing from `./utils.ts`. preferred testing framework is vitest (or bun if project already using `bun test` or depends on bun APIs, rare)
 
 ## Agent skill
 
@@ -665,6 +666,7 @@ To make peer dependencies optional, add `peerDependenciesMeta`:
 
 ## common mistakes
 
+- never write `.js` in relative source imports. use `.ts` or `.tsx`. tsc rewrites them in `dist/`
 - if you need to use zod always use latest version
 - always install packages as dev dependencies if used only for scripts, testing or types only
 - if the package uses `rimraf` in scripts, install it as a dev dependency instead of relying on platform-specific shell behavior
