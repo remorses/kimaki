@@ -90,8 +90,10 @@ cli
     '--project <path>',
     'Project directory to list sessions for (defaults to cwd)',
   )
+  .option('--active', 'Only list active sessions; exits 1 when none remain')
+  .option('--exclude <sessionId>', 'Exclude one session ID from the results')
   .option('--json', 'Output as JSON')
-  .action(async (options: { project?: string; json?: boolean }) => {
+  .action(async (options) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
@@ -106,10 +108,28 @@ cli
 
       const sessionsResponse = await getClient().session.list()
       const sessions = sessionsResponse.data || []
+      const statuses = await (async () => {
+        if (!options.active) return null
+        const response = await getClient().session.status({
+          directory: projectDirectory,
+        })
+        if (response.error) {
+          cliLogger.error('Failed to list active sessions')
+          process.exit(EXIT_NO_RESTART)
+        }
+        return response.data || {}
+      })()
+      const selectedSessions = sessions.filter((session) => {
+        if (session.id === options.exclude) return false
+        if (!options.active) return true
+        const status = statuses?.[session.id]
+        return Boolean(status && status.type !== 'idle')
+      })
 
-      if (sessions.length === 0) {
-        cliLogger.log('No sessions found')
-        process.exit(0)
+      if (selectedSessions.length === 0) {
+        if (options.json) console.log('[]')
+        else cliLogger.log(options.active ? 'No active sessions found' : 'No sessions found')
+        process.exit(options.active ? 1 : 0)
       }
 
       // Look up which sessions were started via kimaki (have a thread mapping)
@@ -123,7 +143,7 @@ cli
           .map((row) => [row.session_id, row.thread_id]),
       )
       const sessionStartSources = await getSessionStartSourcesBySessionIds(
-        sessions.map((session) => session.id),
+        selectedSessions.map((session) => session.id),
       )
 
       const scheduleModeLabel = ({
@@ -138,7 +158,7 @@ cli
       }
 
       if (options.json) {
-        const output = sessions.map((session) => {
+        const output = selectedSessions.map((session) => {
           const startSource = sessionStartSources.get(session.id)
           const startedBy = startSource
             ? `scheduled-${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}`
@@ -152,13 +172,14 @@ cli
             threadId: sessionToThread.get(session.id) || null,
             startedBy,
             scheduledTaskId: startSource?.scheduled_task_id || null,
+            status: options.active ? statuses?.[session.id]?.type || 'busy' : undefined,
           }
         })
         console.log(JSON.stringify(output, null, 2))
         process.exit(0)
       }
 
-      for (const session of sessions) {
+      for (const session of selectedSessions) {
         const threadId = sessionToThread.get(session.id)
         const startSource = sessionStartSources.get(session.id)
         const source = threadId ? '(kimaki)' : '(opencode)'
@@ -167,8 +188,11 @@ cli
           : ''
         const updatedAt = new Date(session.time.updated).toISOString()
         const threadInfo = threadId ? ` | thread: ${threadId}` : ''
+        const statusInfo = options.active
+          ? ` | status: ${statuses?.[session.id]?.type || 'busy'}`
+          : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}${statusInfo}`,
         )
       }
 

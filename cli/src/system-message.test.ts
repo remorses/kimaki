@@ -152,6 +152,9 @@ describe('system-message', () => {
     expect(message).toContain(
       'When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work.',
     )
+    expect(message).toContain(
+      'while kimaki session list --active --exclude ses_123; do sleep 5; done',
+    )
 
     expect(message).toMatchInlineSnapshot(`
       "
@@ -488,6 +491,9 @@ describe('system-message', () => {
       kimaki session list
       kimaki session list --json  # machine-readable output
       kimaki session list --project /path/to/project  # specific project
+
+      # List only in-progress sessions. Exit status is 1 when none remain.
+      kimaki session list --active
       \`\`\`
 
       To search past sessions for this project (supports plain text or /regex/flags):
@@ -574,7 +580,7 @@ describe('system-message', () => {
 
       When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself via Bash, then continue from the printed session markdown. Do not tell the user to run the command.
 
-      IMPORTANT: if you run \`kimaki send --wait\` or \`kimaki session wait <session_id>\` via the Bash tool, you must set the Bash tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). Otherwise the tool will terminate early (default is 2 minutes) and you won't see long sessions.
+      IMPORTANT: if you run \`kimaki send --wait\`, \`kimaki session wait <session_id>\`, or the active-session wait loop via the Bash tool, you must set the Bash tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). Otherwise the tool will terminate early (default is 2 minutes) and you won't see long sessions.
 
       If your Bash tool timeout triggers anyway, fall back to reading the session output from disk:
 
@@ -589,9 +595,14 @@ describe('system-message', () => {
 
       # Wait for a session that was already started elsewhere
       kimaki session wait <session_id>
+
+      # Wait until every other in-progress session in this project finishes
+      while kimaki session list --active --exclude ses_123; do sleep 5; done
       \`\`\`
 
-      The command exits with the session markdown on stdout once the model finishes responding.
+      \`session list --active\` exits with status 0 while it finds active sessions and status 1 when none remain. Exclude the current session in a wait loop so the loop does not wait for itself.
+
+      \`session wait\` exits with the session markdown on stdout once the model finishes responding.
 
       Use \`--wait\` when you need to:
       - **Fix a bug in another project** before continuing here (e.g. fix a dependency, then resume)
