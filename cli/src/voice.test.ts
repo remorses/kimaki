@@ -65,6 +65,48 @@ describe('voice attachment detection', () => {
       ]
     `)
   })
+
+  test('does not treat iOS and Discord videos as voice', () => {
+    expect(
+      [
+        getVoiceAttachmentMatchReason({
+          name: 'ScreenRecording_08-26-2026_11-10-29_1.mov',
+          contentType: 'video/quicktime',
+          duration: 12.4,
+          width: 1170,
+          height: 2532,
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'IMG_1234.MOV',
+          contentType: null,
+          duration: 8,
+          width: 1920,
+          height: 1080,
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'clip.mp4',
+          contentType: 'video/mp4',
+          duration: 4,
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'clip.mp4',
+          contentType: null,
+        }),
+        isVoiceAttachment({
+          name: 'memo.m4a',
+          contentType: null,
+          duration: 3.2,
+        }),
+      ]).toMatchInlineSnapshot(`
+        [
+          null,
+          null,
+          null,
+          null,
+          true,
+        ]
+      `)
+  })
 })
 
 describe('extractTranscription', () => {
