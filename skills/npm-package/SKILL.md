@@ -46,19 +46,36 @@ Use this skill when scaffolding or fixing npm packages.
      README at the repository root. Package READMEs don't get read by anyone.
      The root README is the single source of truth for the whole project.
 10. `scripts.build` should be `tsc && chmod +x dist/cli.js` (skip the chmod if
-    the package has no bin). No bundling. Do not delete `dist/` in `build` by
-    default because forcing a clean build on every local build can cause
-    issues. Optionally include running scripts with `tsx` if needed to
-    generate build artifacts.
-11. `prepublishOnly` must always do the cleanup before `build` (optionally run
-    generation before build when required). Always add this script:
+    the package has no bin). No bundling. Optionally include running scripts
+    with `tsx` if needed to generate build artifacts.
+
+    **Never put `rm -rf`, `rimraf`, or any delete in `build`.** `build` runs on
+    every edit, watch loop, and CI test job. Deleting `dist/` there breaks live
+    dev servers that hold it in their module graph (Bun fails with `Failed to
+    load bundled module '<pkg>/dist/index.js'` until restarted) and throws away
+    incremental compilation. A stale file only matters in a published tarball,
+    which `prepublishOnly` already handles.
+
+11. `prepublishOnly` is the **only** place a delete belongs. It keeps a file
+    deleted from `src/` out of the published package:
     ```json
     { "prepublishOnly": "rimraf dist \"*.tsbuildinfo\" && pnpm build" }
     ```
-    This ensures `dist/` is fresh before every `npm publish`, so deleted files
-    do not accidentally stay in the published package. Use `rimraf` here
-    instead of bare shell globs so the script behaves the same in zsh, bash,
-    and Windows shells even when no `.tsbuildinfo` file exists.
+    **Always use `rimraf`, never `rm -rf`.** This holds for every package.json
+    script, not just this one. `rm -rf` is not portable to Windows, and with no
+    `.tsbuildinfo` present zsh aborts `rm -rf dist *.tsbuildinfo` with `no
+    matches found`, so the build after `&&` never runs and you publish a stale
+    `dist/`. `sh` and `bash` only survive because `rm -f` ignores the literal
+    unmatched name. Install `rimraf` as a devDependency; never rely on
+    `npx`/`bunx` at publish time.
+
+    When the package also has a publish guard, chain it first so the guard
+    still runs before anything is deleted:
+    ```json
+    {
+      "prepublishOnly": "node -e \"if (!process.env.CI) process.exit(1)\" && rimraf dist \"*.tsbuildinfo\" && pnpm build"
+    }
+    ```
 
 ## bin field
 
@@ -669,6 +686,7 @@ To make peer dependencies optional, add `peerDependenciesMeta`:
 - never write `.js` in relative source imports. use `.ts` or `.tsx`. tsc rewrites them in `dist/`
 - if you need to use zod always use latest version
 - always install packages as dev dependencies if used only for scripts, testing or types only
-- if the package uses `rimraf` in scripts, install it as a dev dependency instead of relying on platform-specific shell behavior
+- never use `rm -rf` in a package.json script. always use `rimraf`, installed as a dev dependency. `rm -rf` is not portable to Windows and zsh aborts the whole `&&` chain when a glob matches nothing
+- never delete anything in `build`. deletes belong in `prepublishOnly` only
 - never use em-dashes (—) or dashes as inline separators (like `word - word`) in README or documentation. instead restructure the sentence: use periods to split into two sentences, colons, commas, or parentheses
 - never add badge images (shields.io, etc.) or any images you don't have locally in the repo. don't invent image URLs
