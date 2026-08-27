@@ -9,7 +9,14 @@
 import type { Plugin, WorkspaceAdapter, WorkspaceInfo } from '@opencode-ai/plugin'
 import crypto from 'node:crypto'
 import path from 'node:path'
-import { createWorktreeCore, removeWorktreeCore } from './git-worktree-core.js'
+import {
+  createWorktreeCore,
+  KIMAKI_WORKTREE_ADAPTER_TYPE,
+  parseKimakiWorktreeIdentity,
+  removeWorktreeCore,
+  removeWorktreeFromOwnRepository,
+  type KimakiWorktreeIdentity,
+} from './git-worktree-core.js'
 
 /**
  * Compute the on-disk directory for a managed worktree.
@@ -39,15 +46,26 @@ function computeWorktreeDirectory({
   return path.join(dataDir, 'worktrees', projectHash, withoutPrefix)
 }
 
-function createKimakiWorktreeAdaptor(projectDirectory: string): WorkspaceAdapter {
+function getWorktreeIdentity(info: WorkspaceInfo) {
+  if (!info.extra || typeof info.extra !== 'object') {
+    return new Error('Kimaki worktree identity is missing')
+  }
+  const identity: Partial<KimakiWorktreeIdentity> = {}
+  Object.assign(identity, info.extra)
+  return parseKimakiWorktreeIdentity(identity)
+}
+
+function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
   return {
     name: 'Kimaki Worktree',
     description: 'Create a git worktree managed by Kimaki',
 
     configure(info: WorkspaceInfo): WorkspaceInfo {
+      const identity = getWorktreeIdentity(info)
+      if (identity instanceof Error) throw identity
       const branchName = info.branch || info.name
       const directory = computeWorktreeDirectory({
-        projectDirectory,
+        projectDirectory: identity.projectDirectory,
         branchName,
       })
       if (directory instanceof Error) {
@@ -65,12 +83,14 @@ function createKimakiWorktreeAdaptor(projectDirectory: string): WorkspaceAdapter
       if (!info.directory) {
         throw new Error('Workspace directory not set — configure() likely failed')
       }
-      const baseBranch = (info.extra as { baseBranch?: string })?.baseBranch || undefined
+      const identity = getWorktreeIdentity(info)
+      if (identity instanceof Error) throw identity
       const result = await createWorktreeCore({
-        projectDirectory,
+        projectDirectory: identity.projectDirectory,
         targetDirectory: info.directory,
         branchName: info.branch || info.name,
-        baseBranch,
+        baseCommit: identity.baseCommit,
+        expectedCommonGitDirectory: identity.expectedCommonGitDirectory,
         // Silent log — plugin must not write to stdout/stderr
       })
       if (result instanceof Error) {
@@ -80,11 +100,17 @@ function createKimakiWorktreeAdaptor(projectDirectory: string): WorkspaceAdapter
 
     async remove(info: WorkspaceInfo): Promise<void> {
       if (!info.directory) return
-      const result = await removeWorktreeCore({
-        projectDirectory,
-        worktreeDirectory: info.directory,
-        branchName: info.branch || '',
-      })
+      const identity = getWorktreeIdentity(info)
+      const result = identity instanceof Error
+        ? await removeWorktreeFromOwnRepository({
+            worktreeDirectory: info.directory,
+            branchName: info.branch || '',
+          })
+        : await removeWorktreeCore({
+            projectDirectory: identity.projectDirectory,
+            worktreeDirectory: info.directory,
+            branchName: info.branch || '',
+          })
       if (result instanceof Error) {
         throw result
       }
@@ -104,12 +130,11 @@ function createKimakiWorktreeAdaptor(projectDirectory: string): WorkspaceAdapter
  * Called by OpenCode's plugin loader.
  */
 export const kimakiWorkspaceAdaptorPlugin: Plugin = async ({
-  directory,
   experimental_workspace,
 }) => {
   experimental_workspace.register(
-    'kimaki-worktree',
-    createKimakiWorktreeAdaptor(directory),
+    KIMAKI_WORKTREE_ADAPTER_TYPE,
+    createKimakiWorktreeAdaptor(),
   )
   return {}
 }

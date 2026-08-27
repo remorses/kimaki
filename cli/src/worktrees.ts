@@ -7,7 +7,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getDataDir } from './config.js'
 import { execAsync } from './exec-async.js'
-import { createWorktreeCore, type WorktreeResult } from './git-worktree-core.js'
+import {
+  createWorktreeCore,
+  resolveGitCommit,
+  resolveGitCommonDirectory,
+  type WorktreeResult,
+} from './git-worktree-core.js'
 import { createLogger, LogPrefix } from './logger.js'
 
 export { execAsync } from './exec-async.js'
@@ -561,13 +566,22 @@ export async function createWorktreeWithSubmodules({
   onProgress?: (phase: string) => void
 }): Promise<WorktreeResult | Error> {
   const worktreeDir = getManagedWorktreeDirectory({ directory, name })
+  const [baseCommit, expectedCommonGitDirectory] = await Promise.all([
+    resolveGitCommit({ directory, ref: baseBranch || 'HEAD' }),
+    resolveGitCommonDirectory({ directory }),
+  ])
+  if (baseCommit instanceof Error) return baseCommit
+  if (expectedCommonGitDirectory instanceof Error) {
+    return expectedCommonGitDirectory
+  }
 
   // Delegate to the plugin-safe core module, passing our logger as callbacks.
   return createWorktreeCore({
     projectDirectory: directory,
     targetDirectory: worktreeDir,
     branchName: name,
-    baseBranch,
+    baseCommit,
+    expectedCommonGitDirectory,
     onProgress,
     log: {
       info: (msg) => logger.log(msg),

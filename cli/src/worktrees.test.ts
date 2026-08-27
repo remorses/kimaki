@@ -14,7 +14,12 @@ import {
   parseGitWorktreeListPorcelain,
   resolveSessionWorkingDirectory,
 } from './worktrees.js'
-import { parseGitmodulesFileContent as parseCoreGitmodulesFileContent } from './git-worktree-core.js'
+import {
+  parseGitmodulesFileContent as parseCoreGitmodulesFileContent,
+  removeWorktreeFromOwnRepository,
+  resolveGitCommonDirectory,
+  validateWorktreeIdentity,
+} from './git-worktree-core.js'
 import { TargetDirtyWorktreeError } from './errors.js'
 import {
   formatAutoWorktreeName,
@@ -224,14 +229,38 @@ describe('worktrees', () => {
         cwd: path.join(worktreeResult.directory, 'errore'),
         args: ['rev-parse', 'HEAD'],
       })
+      const parentCommonDirectory = await resolveGitCommonDirectory({
+        directory: parentRepo,
+      })
+      if (parentCommonDirectory instanceof Error) {
+        throw parentCommonDirectory
+      }
+      const submoduleCommonDirectory = await resolveGitCommonDirectory({
+        directory: path.join(worktreeResult.directory, 'errore'),
+      })
+      if (submoduleCommonDirectory instanceof Error) {
+        throw submoduleCommonDirectory
+      }
+      const gitlinkSha = (
+        await git({
+          cwd: worktreeResult.directory,
+          args: ['ls-tree', 'HEAD', '--', 'errore'],
+        })
+      ).split(/\s+/)[2]
 
       expect({
         localOnlyShaLength: localOnlySha.length,
         worktreeSubmoduleShaLength: worktreeSubmoduleSha.length,
         sameCommit: localOnlySha === worktreeSubmoduleSha,
+        matchesGitlink: worktreeSubmoduleSha === gitlinkSha,
+        belongsToParentClone: !path
+          .relative(parentCommonDirectory, submoduleCommonDirectory)
+          .startsWith(`..${path.sep}`),
       }).toMatchInlineSnapshot(`
         {
+          "belongsToParentClone": true,
           "localOnlyShaLength": 40,
+          "matchesGitlink": true,
           "sameCommit": true,
           "worktreeSubmoduleShaLength": 40,
         }
@@ -326,6 +355,87 @@ describe('worktrees', () => {
           return ''
         })
       }
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('worktree identity mismatch is detected and cleaned from its actual clone', async () => {
+    const sandbox = createTestRoot()
+    const remote = path.join(sandbox, 'remote.git')
+    const requestedClone = path.join(sandbox, 'requested')
+    const otherClone = path.join(sandbox, 'other')
+    const worktreeDirectory = path.join(sandbox, 'wrong-worktree')
+    const branchName = 'opencode/kimaki-wrong-clone'
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', remote] })
+      await git({ cwd: sandbox, args: ['clone', remote, otherClone] })
+      await git({ cwd: otherClone, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: otherClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(otherClone, 'README.md'), 'old\n')
+      await git({ cwd: otherClone, args: ['add', 'README.md'] })
+      await git({ cwd: otherClone, args: ['commit', '-m', 'old'] })
+      await git({ cwd: otherClone, args: ['push', 'origin', 'HEAD:main'] })
+
+      await git({ cwd: sandbox, args: ['clone', remote, requestedClone] })
+      await git({ cwd: requestedClone, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: requestedClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(requestedClone, 'requested.txt'), 'new\n')
+      await git({ cwd: requestedClone, args: ['add', 'requested.txt'] })
+      await git({ cwd: requestedClone, args: ['commit', '-m', 'requested'] })
+
+      const baseCommit = await git({
+        cwd: requestedClone,
+        args: ['rev-parse', 'HEAD'],
+      })
+      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
+        directory: requestedClone,
+      })
+      if (expectedCommonGitDirectory instanceof Error) {
+        throw expectedCommonGitDirectory
+      }
+
+      await git({
+        cwd: otherClone,
+        args: ['worktree', 'add', '-b', branchName, worktreeDirectory, 'HEAD'],
+      })
+
+      const validation = await validateWorktreeIdentity({
+        projectDirectory: requestedClone,
+        worktreeDirectory,
+        baseCommit,
+        expectedCommonGitDirectory,
+      })
+      expect(validation).toBeInstanceOf(Error)
+
+      const cleanup = await removeWorktreeFromOwnRepository({
+        worktreeDirectory,
+        branchName,
+      })
+      if (cleanup instanceof Error) throw cleanup
+      const otherWorktrees = await git({
+        cwd: otherClone,
+        args: ['worktree', 'list', '--porcelain'],
+      })
+      const branchExists = await execAsync(
+        `git show-ref --verify --quiet ${JSON.stringify(`refs/heads/${branchName}`)}`,
+        { cwd: otherClone },
+      )
+        .then(() => true)
+        .catch(() => false)
+
+      expect({
+        directoryRemoved: !fs.existsSync(worktreeDirectory),
+        registrationRemoved: !otherWorktrees.includes(worktreeDirectory),
+        branchRemoved: !branchExists,
+      }).toMatchInlineSnapshot(`
+        {
+          "branchRemoved": true,
+          "directoryRemoved": true,
+          "registrationRemoved": true,
+        }
+      `)
+    } finally {
       fs.rmSync(sandbox, { recursive: true, force: true })
     }
   })

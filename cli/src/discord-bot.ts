@@ -1058,14 +1058,9 @@ export async function startDiscordBot({
           })
         }
 
-        const sessionDirectory = await (async () => {
-          if (!worktreePromise) {
-            return projectDirectory
-          }
-          const result = await worktreePromise
-          if (result instanceof Error) return projectDirectory
-          return result
-        })()
+        const worktreeResult = worktreePromise ? await worktreePromise : projectDirectory
+        if (worktreeResult instanceof Error) return
+        const sessionDirectory = worktreeResult
 
         const channelRuntime = getOrCreateRuntime({
           threadId: thread.id,
@@ -1412,17 +1407,9 @@ export async function startDiscordBot({
 
       const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
 
-      const sessionDirectory = await (async () => {
-        if (cwdDirectory) {
-          return cwdDirectory
-        }
-        if (!worktreePromise) {
-          return projectDirectory
-        }
-        const result = await worktreePromise
-        if (result instanceof Error) return projectDirectory
-        return result
-      })()
+      const worktreeResult = worktreePromise ? await worktreePromise : undefined
+      if (worktreeResult instanceof Error) return
+      const sessionDirectory = cwdDirectory ?? worktreeResult ?? projectDirectory
 
       const runtime = getOrCreateRuntime({
         threadId: thread.id,

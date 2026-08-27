@@ -213,12 +213,12 @@ export const handleUserCommand: CommandHandler = async ({
         })
       }
 
-      const sessionDirectory = await (async () => {
-        if (!worktreePromise) return projectDirectory
-        const result = await worktreePromise
-        if (result instanceof Error) return projectDirectory
-        return result
-      })()
+      const worktreeResult = worktreePromise ? await worktreePromise : projectDirectory
+      if (worktreeResult instanceof Error) {
+        await command.editReply(`Worktree creation failed: ${worktreeResult.message}`)
+        return
+      }
+      const sessionDirectory = worktreeResult
 
       await command.editReply(
         `Started /${commandName} in ${newThread.toString()}`,
