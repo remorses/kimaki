@@ -592,13 +592,14 @@ export async function createWorktreeWithSubmodules({
 }
 
 // ─── Worktree merge ──────────────────────────────────────────────────────────
-// Merge pipeline (preserves all worktree commits, no squash):
+// Merge pipeline:
 //   1. Reject if uncommitted changes exist
 //   2. Rebase worktree commits onto target (default branch)
-//   3. Fast-forward push to target via local git push
-//   4. Switch to detached HEAD, delete branch
+//   3. Optionally collapse the rebased tree into one commit
+//   4. Fast-forward push to target via local git push
+//   5. Switch to detached HEAD, delete branch
 //
-// Uses `git push <git-common-dir> HEAD:<target>` with
+// Uses `git push <git-common-dir> <merge-ref>:<target>` with
 // `receive.denyCurrentBranch=updateInstead` to fast-forward the target
 // WITHOUT checking it out in the main repo.
 //
@@ -631,15 +632,21 @@ export type MergeSuccess = {
   shortSha: string
 }
 
+export type MergeStrategy = 'rebase' | 'squash'
+
 export async function git(
   dir: string,
-  args: string,
+  args: string | string[],
   opts?: { timeout?: number },
 ): Promise<GitCommandError | string> {
+  const command = Array.isArray(args)
+    ? { command: 'git', args: ['-C', dir, ...args] }
+    : `git -C "${dir}" ${args}`
+  const commandLabel = Array.isArray(args) ? args.join(' ') : args
   const result = await execAsync(
-    `git -C "${dir}" ${args}`,
+    command,
     opts ? { timeout: opts.timeout } : undefined,
-  ).catch((e) => new GitCommandError({ command: args, cause: e }))
+  ).catch((e) => new GitCommandError({ command: commandLabel, cause: e }))
   if (result instanceof Error) return result
   return result.stdout.trim()
 }
@@ -648,7 +655,7 @@ export async function getDefaultBranch(
   repoDir: string,
   opts?: { timeout?: number },
 ): Promise<string> {
-  const ref = await git(repoDir, 'symbolic-ref refs/remotes/origin/HEAD', opts)
+  const ref = await git(repoDir, ['symbolic-ref', 'refs/remotes/origin/HEAD'], opts)
   if (ref instanceof Error) return 'main'
   return ref.replace(/^refs\/remotes\/origin\//, '') || 'main'
 }
@@ -715,7 +722,7 @@ export async function isDirty(
   dir: string,
   opts?: { timeout?: number },
 ): Promise<boolean> {
-  const status = await git(dir, 'status --porcelain', opts)
+  const status = await git(dir, ['status', '--porcelain'], opts)
   if (status instanceof Error) return false
   return status.length > 0
 }
@@ -727,7 +734,7 @@ export async function isGitRepositoryRoot(directory: string): Promise<boolean> {
 }
 
 async function getGitCommonDir(dir: string): Promise<GitCommandError | string> {
-  const commonDir = await git(dir, 'rev-parse --git-common-dir')
+  const commonDir = await git(dir, ['rev-parse', '--git-common-dir'])
   if (commonDir instanceof Error) return commonDir
   if (path.isAbsolute(commonDir)) {
     return commonDir
@@ -746,14 +753,14 @@ async function isAncestor(
     ref2: string
   },
 ): Promise<boolean> {
-  const result = await git(dir, `merge-base --is-ancestor "${ref1}" "${ref2}"`)
+  const result = await git(dir, ['merge-base', '--is-ancestor', ref1, ref2])
   return !(result instanceof Error)
 }
 
 async function isRebasedOnto(dir: string, target: string): Promise<boolean> {
-  const mergeBase = await git(dir, `merge-base HEAD "${target}"`)
+  const mergeBase = await git(dir, ['merge-base', 'HEAD', target])
   if (mergeBase instanceof Error) return false
-  const targetSha = await git(dir, `rev-parse "${target}"`)
+  const targetSha = await git(dir, ['rev-parse', target])
   if (targetSha instanceof Error) return false
   return mergeBase === targetSha
 }
@@ -770,7 +777,7 @@ async function isCheckedOutTargetDirty({
   targetDir: string
   targetBranch: string
 }): Promise<boolean> {
-  const currentBranch = await git(targetDir, 'symbolic-ref --short HEAD')
+  const currentBranch = await git(targetDir, ['symbolic-ref', '--short', 'HEAD'])
   if (currentBranch instanceof Error || currentBranch !== targetBranch) {
     return false
   }
@@ -782,7 +789,7 @@ async function isCheckedOutTargetDirty({
  */
 async function isRebaseInProgress(dir: string): Promise<boolean> {
   for (const rebaseDir of ['rebase-merge', 'rebase-apply']) {
-    const gitPath = await git(dir, `rev-parse --git-path ${rebaseDir}`)
+    const gitPath = await git(dir, ['rev-parse', '--git-path', rebaseDir])
     if (gitPath instanceof Error) continue
     const resolvedPath = path.isAbsolute(gitPath)
       ? gitPath
@@ -802,9 +809,32 @@ async function isRebaseInProgress(dir: string): Promise<boolean> {
   return false
 }
 
+async function createSquashCommit({
+  worktreeDir,
+  target,
+  branchName,
+}: {
+  worktreeDir: string
+  target: string
+  branchName: string
+}) {
+  const tree = await git(worktreeDir, ['rev-parse', 'HEAD^{tree}'])
+  if (tree instanceof Error) return tree
+  const parent = await git(worktreeDir, ['rev-parse', `${target}^{commit}`])
+  if (parent instanceof Error) return parent
+  return git(worktreeDir, [
+    'commit-tree',
+    tree,
+    '-p',
+    parent,
+    '-m',
+    `Merge worktree ${branchName}`,
+  ])
+}
+
 /**
- * Merge a worktree branch into the default branch by rebasing all commits
- * onto target, then fast-forward pushing. Preserves every worktree commit.
+ * Merge a worktree branch into the default branch by rebasing all commits,
+ * optionally squashing them, then fast-forward pushing.
  * Returns MergeWorktreeErrors | MergeSuccess.
  */
 export async function mergeWorktree({
@@ -812,6 +842,7 @@ export async function mergeWorktree({
   mainRepoDir,
   worktreeName,
   targetBranch,
+  strategy = 'rebase',
   onProgress,
 }: {
   worktreeDir: string
@@ -819,6 +850,7 @@ export async function mergeWorktree({
   worktreeName: string
   /** Override the branch to merge into. Defaults to origin/HEAD (or main). */
   targetBranch?: string
+  strategy?: MergeStrategy
   onProgress?: (message: string) => void
 }): Promise<MergeWorktreeErrors | MergeSuccess> {
   const log = (msg: string) => {
@@ -826,20 +858,37 @@ export async function mergeWorktree({
     onProgress?.(msg)
   }
 
+  const requestedTarget = targetBranch || (await getDefaultBranch(mainRepoDir))
+  const validatedTarget = await validateBranchRef({
+    directory: mainRepoDir,
+    ref: requestedTarget,
+  })
+  if (validatedTarget instanceof Error) {
+    return new GitCommandError({
+      command: `validate merge target ${requestedTarget}`,
+      cause: validatedTarget,
+    })
+  }
+  const defaultBranch = validatedTarget
+
+  // A paused rebase has a detached HEAD, so detect it before creating a temp branch.
+  if (await isRebaseInProgress(worktreeDir)) {
+    return new RebaseConflictError({ target: defaultBranch })
+  }
+
   // Resolve current branch. If detached, create a temp branch.
   let branchName: string
   let tempBranch: string | null = null
-  const branchResult = await git(worktreeDir, 'symbolic-ref --short HEAD')
+  const branchResult = await git(worktreeDir, ['symbolic-ref', '--short', 'HEAD'])
   if (branchResult instanceof Error) {
     tempBranch = `kimaki-merge-${Date.now()}`
-    const createResult = await git(worktreeDir, `checkout -b "${tempBranch}"`)
+    const createResult = await git(worktreeDir, ['checkout', '-b', tempBranch])
     if (createResult instanceof Error) return createResult
     branchName = tempBranch
   } else {
     branchName = branchResult || worktreeName
   }
 
-  const defaultBranch = targetBranch || (await getDefaultBranch(mainRepoDir))
   log(`Merging ${branchName} into ${defaultBranch}`)
 
   // Best-effort cleanup of temp branch on error paths
@@ -848,17 +897,18 @@ export async function mergeWorktree({
       return
     }
 
-    const detachResult = await git(worktreeDir, 'checkout --detach')
+    const detachResult = await git(worktreeDir, ['checkout', '--detach'])
     if (detachResult instanceof Error) {
       logger.warn(
         `[MERGE CLEANUP] Failed to detach HEAD before deleting temp branch: ${detachResult.message}`,
       )
     }
 
-    const deleteTempBranchResult = await git(
-      worktreeDir,
-      `branch -D "${tempBranch}"`,
-    )
+    const deleteTempBranchResult = await git(worktreeDir, [
+      'branch',
+      '-D',
+      tempBranch,
+    ])
     if (deleteTempBranchResult instanceof Error) {
       logger.warn(
         `[MERGE CLEANUP] Failed to delete temp branch ${tempBranch}: ${deleteTempBranchResult.message}`,
@@ -866,40 +916,31 @@ export async function mergeWorktree({
     }
   }
 
-  // ── Step 1: If a rebase is already paused mid-flight, surface it ──
-  // This happens when the user reruns /merge-worktree while the model is
-  // still resolving conflicts. With multi-commit rebases, each conflict
-  // leaves staged conflict markers (isDirty would say yes) AND merge-base
-  // may already equal target (isRebasedOnto would say yes), so neither
-  // of those checks is safe to run first. We must detect the in-progress
-  // rebase explicitly and route back to the AI-resolve flow.
-  if (await isRebaseInProgress(worktreeDir)) {
-    return new RebaseConflictError({ target: defaultBranch })
-  }
-
-  // ── Step 2: Reject uncommitted changes ──
+  // ── Step 1: Reject uncommitted changes ──
   if (await isDirty(worktreeDir)) {
     await cleanupTempBranch()
     return new DirtyWorktreeError()
   }
 
-  // ── Step 3: Rebase worktree commits onto target ──
+  // ── Step 2: Rebase worktree commits onto target ──
   // If already rebased onto target AND no rebase is in progress, skip
   // rebase entirely. The in-progress check above guarantees the second
   // half; we keep it implicit here.
   const alreadyRebased = await isRebasedOnto(worktreeDir, defaultBranch)
 
-  const mergeBaseResult = await git(
-    worktreeDir,
-    `merge-base HEAD "${defaultBranch}"`,
-  )
+  const mergeBaseResult = await git(worktreeDir, [
+    'merge-base',
+    'HEAD',
+    defaultBranch,
+  ])
   const mergeBase =
     mergeBaseResult instanceof Error ? defaultBranch : mergeBaseResult
 
-  const commitCountResult = await git(
-    worktreeDir,
-    `rev-list --count "${mergeBase}..HEAD"`,
-  )
+  const commitCountResult = await git(worktreeDir, [
+    'rev-list',
+    '--count',
+    `${mergeBase}..HEAD`,
+  ])
   if (commitCountResult instanceof Error) {
     await cleanupTempBranch()
     return commitCountResult
@@ -918,7 +959,7 @@ export async function mergeWorktree({
         ? `Rebasing ${commitCount} commits onto ${defaultBranch}...`
         : `Rebasing onto ${defaultBranch}...`,
     )
-    const rebaseResult = await git(worktreeDir, `rebase "${defaultBranch}"`, {
+    const rebaseResult = await git(worktreeDir, ['rebase', defaultBranch], {
       timeout: 60_000,
     })
     if (rebaseResult instanceof Error) {
@@ -935,8 +976,24 @@ export async function mergeWorktree({
     log('Already rebased onto target')
   }
 
+  // ── Step 3: Optionally create one commit for the complete rebased tree ──
+  const mergeRef = strategy === 'squash'
+    ? await createSquashCommit({
+        worktreeDir,
+        target: defaultBranch,
+        branchName,
+      })
+    : 'HEAD'
+  if (mergeRef instanceof Error) {
+    await cleanupTempBranch()
+    return mergeRef
+  }
+  if (strategy === 'squash') {
+    log(`Squashing ${commitCount} commit${commitCount === 1 ? '' : 's'}...`)
+  }
+
   // ── Step 4: Fast-forward push via local git push ──
-  if (!(await isAncestor({ dir: worktreeDir, ref1: defaultBranch, ref2: 'HEAD' }))) {
+  if (!(await isAncestor({ dir: worktreeDir, ref1: defaultBranch, ref2: mergeRef }))) {
     await cleanupTempBranch()
     return new NotFastForwardError({ target: defaultBranch })
   }
@@ -957,18 +1014,19 @@ export async function mergeWorktree({
   }
 
   log(`Pushing to ${defaultBranch}...`)
-  const pushResult = await git(
-    worktreeDir,
-    `push --receive-pack="git -c receive.denyCurrentBranch=updateInstead receive-pack" "${gitCommonDir}" "HEAD:${defaultBranch}"`,
-    { timeout: 30_000 },
-  )
+  const pushResult = await git(worktreeDir, [
+    'push',
+    '--receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack',
+    gitCommonDir,
+    `${mergeRef}:${defaultBranch}`,
+  ], { timeout: 30_000 })
   if (pushResult instanceof Error) {
     await cleanupTempBranch()
     return new PushError({ target: defaultBranch, cause: pushResult })
   }
 
   // Get short SHA for display
-  const shortSha = await git(worktreeDir, 'rev-parse --short HEAD')
+  const shortSha = await git(worktreeDir, ['rev-parse', '--short', mergeRef])
   if (shortSha instanceof Error) {
     // Push succeeded but can't get SHA -- non-fatal, use placeholder
     logger.warn('Failed to get short SHA after push')
@@ -976,30 +1034,22 @@ export async function mergeWorktree({
 
   // ── Step 5: Clean up -- detach HEAD and delete branch ──
   log('Cleaning up worktree...')
-  const detachResult = await git(worktreeDir, `checkout --detach "${defaultBranch}"`)
+  const detachResult = await git(worktreeDir, [
+    'checkout',
+    '--detach',
+    defaultBranch,
+  ])
   if (detachResult instanceof Error) {
     logger.warn(
       `[MERGE CLEANUP] Failed to detach worktree HEAD after push: ${detachResult.message}`,
     )
   }
 
-  const deleteBranchResult = await git(worktreeDir, `branch -D "${branchName}"`)
+  const deleteBranchResult = await git(worktreeDir, ['branch', '-D', branchName])
   if (deleteBranchResult instanceof Error) {
     logger.warn(
       `[MERGE CLEANUP] Failed to delete branch ${branchName}: ${deleteBranchResult.message}`,
     )
-  }
-
-  if (branchName !== worktreeName && worktreeName) {
-    const deleteWorktreeBranchResult = await git(
-      worktreeDir,
-      `branch -D "${worktreeName}"`,
-    )
-    if (deleteWorktreeBranchResult instanceof Error) {
-      logger.warn(
-        `[MERGE CLEANUP] Failed to delete worktree branch ${worktreeName}: ${deleteWorktreeBranchResult.message}`,
-      )
-    }
   }
 
   return {
@@ -1143,7 +1193,7 @@ export async function validateBranchRef({
   directory: string
   ref: string
 }): Promise<string | Error> {
-  const result = await git(directory, `check-ref-format --branch ${JSON.stringify(ref)}`)
+  const result = await git(directory, ['check-ref-format', '--branch', ref])
   if (result instanceof Error) return new Error(`Invalid branch name: ${ref}`)
   return result
 }

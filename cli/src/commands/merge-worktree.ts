@@ -1,7 +1,5 @@
-// /merge-worktree command - Merge worktree commits into default branch.
-// Pipeline: rebase worktree commits onto target -> local fast-forward push.
-// Preserves all commits (no squash). On rebase conflicts, asks the AI model
-// in the thread to resolve them.
+// /merge-worktree command - Rebase or squash worktree commits into a target branch.
+// On rebase conflicts, asks the AI model in the thread to resolve them.
 
 import { type TextChannel, type ThreadChannel } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
@@ -122,6 +120,15 @@ export async function handleMergeWorktreeCommand({
     return
   }
 
+  const strategyOption = command.options.getString('strategy') || 'rebase'
+  if (strategyOption !== 'rebase' && strategyOption !== 'squash') {
+    await command.editReply(`Invalid merge strategy: \`${strategyOption}\``)
+    return
+  }
+  const strategyName = strategyOption === 'squash'
+    ? 'Squash into one commit'
+    : 'Keep commits (rebase)'
+
   const rawTargetBranch = command.options.getString('target-branch') || undefined
   let targetBranch = rawTargetBranch
   if (targetBranch) {
@@ -141,6 +148,7 @@ export async function handleMergeWorktreeCommand({
     mainRepoDir: info.project_directory,
     worktreeName: info.workspace_name,
     targetBranch,
+    strategy: strategyOption,
     onProgress: (msg) => {
       logger.log(`[merge] ${msg}`)
     },
@@ -169,7 +177,7 @@ export async function handleMergeWorktreeCommand({
 
     if (result instanceof RebaseConflictError) {
       await command.editReply(
-        'Rebase conflict detected. Asking the model to resolve...',
+        `Rebase conflict detected. Asking the model to resolve it. Rerun \`/merge-worktree\` with **${strategyName}** and target branch \`${result.target}\` after it finishes.`,
       )
       await sendPromptToModel({
         prompt: [
@@ -184,7 +192,7 @@ export async function handleMergeWorktreeCommand({
           '6. Stage resolved files with `git add`',
           '7. Continue the rebase with `git rebase --continue`',
           '8. If git reports more conflicts, repeat steps 1-7 until the rebase finishes (no more rebase in progress, `git status` is clean)',
-          '9. Once the rebase is fully complete, tell me so I can run `/merge-worktree` again',
+          `9. Once the rebase is fully complete, tell me to run \`/merge-worktree\` again with **${strategyName}** and target branch \`${result.target}\``,
         ].join('\n'),
         thread,
         projectDirectory: info.project_directory,
@@ -199,9 +207,10 @@ export async function handleMergeWorktreeCommand({
   }
 
   void removeWorktreePrefixFromTitle(thread)
-  await command.editReply(
-    `Merged \`${result.branchName}\` into \`${result.defaultBranch}\` @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})\nWorktree now at detached HEAD.`,
-  )
+  const mergeSummary = strategyOption === 'squash'
+    ? `Squashed \`${result.branchName}\` into \`${result.defaultBranch}\` @ ${result.shortSha} (${result.commitCount} source commit${result.commitCount === 1 ? '' : 's'} → 1)`
+    : `Merged \`${result.branchName}\` into \`${result.defaultBranch}\` @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`
+  await command.editReply(`${mergeSummary}\nWorktree now at detached HEAD.`)
 }
 
 /**

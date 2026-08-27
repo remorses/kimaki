@@ -156,8 +156,22 @@ export async function registerCommands({
     new SlashCommandBuilder()
       .setName('merge-worktree')
       .setDescription(
-        truncateCommandDescription('Squash-merge worktree into default branch. Aborts if main has uncommitted changes.'),
+        truncateCommandDescription('Merge worktree commits into the default branch'),
       )
+      .addStringOption((option) => {
+        option
+          .setName('strategy')
+          .setDescription(
+            truncateCommandDescription('How to merge commits (default: keep commits)'),
+          )
+          .setRequired(false)
+          .addChoices(
+            { name: 'Keep commits (rebase)', value: 'rebase' },
+            { name: 'Squash into one commit', value: 'squash' },
+          )
+
+        return option
+      })
       .addStringOption((option) => {
         option
           .setName('target-branch')
