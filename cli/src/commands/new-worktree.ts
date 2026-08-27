@@ -9,6 +9,7 @@ import {
   type ThreadChannel,
   type Message,
 } from 'discord.js'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { OpenCodeSdkError } from '../errors.js'
 import type { CommandContext } from './types.js'
@@ -218,7 +219,7 @@ async function getProjectDirectoryFromChannel(
  * Returns the workspace directory on success, or an Error if the workspace
  * feature is not available or the creation fails.
  */
-async function tryWorkspaceCreate({
+export async function tryWorkspaceCreate({
   worktreeName,
   projectDirectory,
   baseCommit,
@@ -233,38 +234,14 @@ async function tryWorkspaceCreate({
   if (getClient instanceof Error) return getClient
 
   const client = getClient()
-  const response = await client.experimental.workspace.create({
+  const workspaceId = `wrk_${crypto.randomUUID()}`
+  const expectedWorktreeDirectory = getManagedWorktreeDirectory({
     directory: projectDirectory,
-    type: KIMAKI_WORKTREE_ADAPTER_TYPE,
-    branch: worktreeName,
-    extra: {
-      projectDirectory,
-      baseCommit,
-      expectedCommonGitDirectory,
-    },
-  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
-  if (response instanceof Error) return response
-  if (response.error) {
-    return new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
-  }
-  const workspace = response.data
-  if (!workspace?.directory || !workspace.id) {
-    return new Error('Workspace SDK returned no directory or ID')
-  }
-
-  const identityResult = await validateWorktreeIdentity({
-    projectDirectory,
-    worktreeDirectory: workspace.directory,
-    expectedWorktreeDirectory: getManagedWorktreeDirectory({
-      directory: projectDirectory,
-      name: worktreeName,
-    }),
-    baseCommit,
-    expectedCommonGitDirectory,
+    name: worktreeName,
   })
-  if (identityResult instanceof Error) {
+  const cleanupFailedWorkspace = async (worktreeDirectory: string) => {
     const removeResponse = await client.experimental.workspace.remove({
-      id: workspace.id,
+      id: workspaceId,
       directory: projectDirectory,
     }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.remove', cause: e }))
     const sdkCleanupError = (() => {
@@ -274,15 +251,62 @@ async function tryWorkspaceCreate({
       }
       return undefined
     })()
-    const gitCleanupError = fs.existsSync(workspace.directory)
+    const gitCleanupError = fs.existsSync(worktreeDirectory)
       ? await removeWorktreeFromOwnRepository({
-          worktreeDirectory: workspace.directory,
+          worktreeDirectory,
           branchName: worktreeName,
         })
       : undefined
-    if (sdkCleanupError || gitCleanupError instanceof Error) {
+    return sdkCleanupError ?? gitCleanupError
+  }
+
+  const response = await client.experimental.workspace.create({
+    id: workspaceId,
+    directory: projectDirectory,
+    type: KIMAKI_WORKTREE_ADAPTER_TYPE,
+    branch: worktreeName,
+    extra: {
+      projectDirectory,
+      baseCommit,
+      expectedCommonGitDirectory,
+    },
+  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
+  if (response instanceof Error || response.error) {
+    const creationError = response instanceof Error
+      ? response
+      : new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
+    const cleanupError = await cleanupFailedWorkspace(expectedWorktreeDirectory)
+    if (cleanupError instanceof Error) {
+      return new Error(`${creationError.message}; cleanup failed: ${cleanupError.message}`, {
+        cause: creationError,
+      })
+    }
+    return creationError
+  }
+  const workspace = response.data
+  if (!workspace?.directory || !workspace.id) {
+    const creationError = new Error('Workspace SDK returned no directory or ID')
+    const cleanupError = await cleanupFailedWorkspace(expectedWorktreeDirectory)
+    if (cleanupError instanceof Error) {
+      return new Error(`${creationError.message}; cleanup failed: ${cleanupError.message}`, {
+        cause: creationError,
+      })
+    }
+    return creationError
+  }
+
+  const identityResult = await validateWorktreeIdentity({
+    projectDirectory,
+    worktreeDirectory: workspace.directory,
+    expectedWorktreeDirectory,
+    baseCommit,
+    expectedCommonGitDirectory,
+  })
+  if (identityResult instanceof Error) {
+    const cleanupError = await cleanupFailedWorkspace(workspace.directory)
+    if (cleanupError instanceof Error) {
       return new Error(
-        `${identityResult.message}; cleanup failed: ${sdkCleanupError?.message ?? gitCleanupError?.message}`,
+        `${identityResult.message}; cleanup failed: ${cleanupError.message}`,
         { cause: identityResult },
       )
     }

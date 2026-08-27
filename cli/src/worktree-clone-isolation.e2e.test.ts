@@ -4,12 +4,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { setDataDir } from './config.js'
+import { tryWorkspaceCreate } from './commands/new-worktree.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import { chooseLockPort } from './test-utils.js'
-import { execAsync } from './worktrees.js'
-import { KIMAKI_WORKTREE_ADAPTER_TYPE } from './git-worktree-core.js'
+import { execAsync, getManagedWorktreeDirectory } from './worktrees.js'
+import {
+  KIMAKI_WORKTREE_ADAPTER_TYPE,
+  resolveGitCommonDirectory,
+} from './git-worktree-core.js'
 
 const WORKTREE_BRANCH = 'opencode/kimaki-clone-isolation'
+const REJECTED_WORKTREE_BRANCH = 'opencode/kimaki-rejected-clone-isolation'
 
 async function git({ cwd, args }: { cwd: string; args: string[] }) {
   const result = await execAsync(`git ${args.map((arg) => JSON.stringify(arg)).join(' ')}`, {
@@ -141,5 +146,77 @@ test('creates a workspace from the exact requested clone and commit', async () =
       id: workspace.id,
       directory: requestedClone,
     })
+  }
+}, 30_000)
+
+test('removes workspace state when identity validation rejects creation', async () => {
+  const requestedCommit = await git({
+    cwd: requestedClone,
+    args: ['rev-parse', 'HEAD^{commit}'],
+  })
+  const wrongCommonDirectory = await resolveGitCommonDirectory({
+    directory: otherClone,
+  })
+  if (wrongCommonDirectory instanceof Error) throw wrongCommonDirectory
+
+  const result = await tryWorkspaceCreate({
+    worktreeName: REJECTED_WORKTREE_BRANCH,
+    projectDirectory: requestedClone,
+    baseCommit: requestedCommit,
+    expectedCommonGitDirectory: wrongCommonDirectory,
+  })
+  expect(result).toBeInstanceOf(Error)
+
+  const clientResult = await initializeOpencodeForDirectory(requestedClone)
+  if (clientResult instanceof Error) throw clientResult
+  const client = clientResult()
+  const listResponse = await client.experimental.workspace.list({
+    directory: requestedClone,
+  })
+  if (listResponse.error) throw new Error(JSON.stringify(listResponse.error))
+  const rejectedWorkspaces = (listResponse.data ?? []).filter((workspace) => {
+    return workspace.branch === REJECTED_WORKTREE_BRANCH
+  })
+
+  try {
+    const managedDirectory = getManagedWorktreeDirectory({
+      directory: requestedClone,
+      name: REJECTED_WORKTREE_BRANCH,
+    })
+    const [requestedWorktrees, otherWorktrees] = await Promise.all([
+      git({ cwd: requestedClone, args: ['worktree', 'list', '--porcelain'] }),
+      git({ cwd: otherClone, args: ['worktree', 'list', '--porcelain'] }),
+    ])
+    const branchExists = await execAsync(
+      `git show-ref --verify --quiet ${JSON.stringify(`refs/heads/${REJECTED_WORKTREE_BRANCH}`)}`,
+      { cwd: requestedClone },
+    )
+      .then(() => true)
+      .catch(() => false)
+
+    expect({
+      workspaceRows: rejectedWorkspaces.length,
+      directoryExists: fs.existsSync(managedDirectory),
+      requestedCloneRegistration: requestedWorktrees.includes(managedDirectory),
+      otherCloneRegistration: otherWorktrees.includes(managedDirectory),
+      branchExists,
+    }).toMatchInlineSnapshot(`
+      {
+        "branchExists": false,
+        "directoryExists": false,
+        "otherCloneRegistration": false,
+        "requestedCloneRegistration": false,
+        "workspaceRows": 0,
+      }
+    `)
+  } finally {
+    await Promise.all(
+      rejectedWorkspaces.map((workspace) => {
+        return client.experimental.workspace.remove({
+          id: workspace.id,
+          directory: requestedClone,
+        })
+      }),
+    )
   }
 }, 30_000)
