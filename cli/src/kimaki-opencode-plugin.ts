@@ -15,6 +15,10 @@ export { ipcToolsPlugin } from './ipc-tools-plugin.js'
 export { contextAwarenessPlugin } from './context-awareness-plugin.js'
 export { memoryOverviewPlugin } from './memory-overview-plugin.js'
 export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
+// LEGACY per-provider account rotation. Superseded by @subrouter/opencode
+// (registered separately in opencode.ts), which also fails over across
+// providers. These stay because they own `anthropic/*` auth, which opencode
+// itself does not provide. See anthropic-auth-plugin.ts for the full note.
 export { anthropicAuthPlugin } from './anthropic-auth-plugin.js'
 export { openaiRotationPlugin } from './openai-auth-plugin.js'
 export { xaiRotationPlugin } from './xai-auth-plugin.js'

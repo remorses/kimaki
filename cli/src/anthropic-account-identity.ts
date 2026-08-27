@@ -1,3 +1,4 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 // Helpers for extracting and normalizing Anthropic OAuth account identity.
 
 export type AnthropicAccountIdentity = {

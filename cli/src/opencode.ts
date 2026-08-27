@@ -41,7 +41,8 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
-import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import {
@@ -64,6 +65,19 @@ import {
 } from './config.js'
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
+
+export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
+  const require = createRequire(import.meta.url)
+  const entry = require.resolve('@subrouter/opencode')
+  if (isDev) return pathToFileURL(entry).href
+
+  const packageJsonPath = require.resolve('@subrouter/opencode/package.json')
+  const version = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version
+  if (typeof version !== 'string' || !version) {
+    throw new Error(`Missing @subrouter/opencode version in ${packageJsonPath}`)
+  }
+  return `@subrouter/opencode@${version}`
+}
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
@@ -806,6 +820,9 @@ async function startSingleServer({
         isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
         import.meta.url,
       ).href,
+      // npm identity lets opencode dedupe a user-installed copy by package
+      // name. Development still loads this workspace's built package directly.
+      resolveSubrouterPluginSpec({ isDev }),
     ],
     permission: {
       edit: 'allow',
@@ -896,6 +913,8 @@ async function startSingleServer({
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
+        // The browser is not on this machine, so no localhost callback fires.
+        SUBROUTER_MANUAL_OAUTH: '1',
         OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
         OPENCODE_ENABLE_EXA: '1',
         KIMAKI_DATA_DIR: getDataDir(),

@@ -38,11 +38,64 @@ If you already authenticated OpenCode on this machine (for example with the Open
 </Tip>
 </Aside>
 
-## Multiple accounts and rotation
+## Pooling every subscription with Subrouter
 
-You can store **more than one OAuth account** per provider. When a run hits a rate limit or auth failure, Kimaki automatically **rotates to the next account** so your work keeps going.
+**Subrouter** is the first entry in the `/login` provider list. Pick it and Kimaki asks *which* subscription to add, then adds it to a shared pool. Log in as many times as you like, to as many providers as you like.
 
-Manage the account pool from the CLI:
+When a run hits a rate limit, Subrouter tries the **next account**. When every account of that provider is exhausted, it tries the **next provider**. Quota and authentication failures rotate through the pool; normal request errors return immediately so a bad prompt is not repeated across subscriptions.
+
+```diagram
+  model: subrouter/default
+       │
+       ▼
+  anthropic/claude-opus-4-6 ──429──▶ second Claude account ──429──▶ openai/gpt-5.5
+                                                                        │
+                                                        exhausted ──────┴──▶ xai/grok-4.6
+```
+
+Rate-limited accounts go into a **cooldown** shared by every session on the machine, so nothing retries a subscription that is known to be out. A `429` honors `retry-after` with a five minute floor; a `402` (balance exhausted) waits six hours.
+
+After logging in, pick the model with `/model` and choose **`subrouter/default`**.
+
+### Managing the pool
+
+Everything except login is the [`subrouter` CLI](https://github.com/remorses/subrouter). Kimaki does not wrap it; run it directly.
+
+```bash
+# everything at a glance: accounts, presets, cooldowns
+npx -y @subrouter/cli status
+
+# accounts and their cooldown state
+npx -y @subrouter/cli account list
+npx -y @subrouter/cli account remove anthropic <n|email>
+
+# stop waiting on cooldowns and retry everything now
+npx -y @subrouter/cli cooldown clear
+```
+
+Install it globally with `npm i -g @subrouter/cli` if you use it often.
+
+### Presets
+
+A **preset** is an ordered list of `provider/model` entries, and every preset shows up as a model named `subrouter/<preset>`.
+
+```bash
+# try Opus first, fall back to Grok
+npx -y @subrouter/cli preset create fast --models 'anthropic/claude-opus-4-6,xai/grok-4.6'
+npx -y @subrouter/cli preset list
+npx -y @subrouter/cli preset remove fast
+```
+
+The builtin `default` preset ranks the newest model of every provider you are logged in to. Create a preset named `default` to override it. New presets appear in `/model` after the OpenCode server restarts.
+
+## Legacy per-provider rotation
+
+Before Subrouter, Kimaki rotated accounts **within** a single provider: pick `anthropic/claude-opus-4-6`, hit a limit, swap to your second Claude account, keep the same model. That still works and is still the path used by plain `anthropic/*`, `openai/*`, and `xai/*` model ids.
+
+It cannot fall back to a different provider, so prefer Subrouter. To move an existing account across, run `/login`, pick **Subrouter**, and authorize it again.
+
+<details>
+<summary>Legacy <code>kimaki multioauth</code> commands</summary>
 
 ```bash
 # List all stored Anthropic + OpenAI accounts (active one marked)
@@ -56,6 +109,8 @@ kimaki multioauth openai list
 kimaki multioauth openai check     # test all accounts for usage limits
 kimaki multioauth openai remove <index-or-email>
 ```
+
+</details>
 
 ## Choosing the model after login
 

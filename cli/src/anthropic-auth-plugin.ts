@@ -1,3 +1,4 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 /**
  * Anthropic OAuth authentication plugin for OpenCode.
  *

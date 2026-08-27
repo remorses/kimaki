@@ -1,4 +1,14 @@
 /**
+ * LEGACY. Superseded by @subrouter/opencode, registered alongside the kimaki
+ * plugin in opencode.ts. This whole rotation path only cycles accounts inside
+ * one provider; subrouter also fails over to a different provider when every
+ * account of one is exhausted.
+ *
+ * Kept because opencode ships no Claude Pro/Max auth of its own, so deleting
+ * it would strand anyone still picking `anthropic/*` directly. To move to
+ * subrouter, log in again through /login and pick Subrouter.
+ */
+/**
  * Shared utilities for multi-provider OAuth account rotation.
  * Used by both anthropic-auth-state.ts and openai-auth-state.ts to avoid
  * duplicating file locking, store I/O, account labeling, and rotation logic.

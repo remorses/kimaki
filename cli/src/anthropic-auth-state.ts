@@ -1,3 +1,4 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 /**
  * Anthropic OAuth account store and rotation.
  * Uses shared utilities from oauth-rotation-shared.ts for file locking,

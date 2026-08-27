@@ -1,3 +1,4 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 /**
  * OpenAI OAuth account store and rotation.
  * Mirrors anthropic-auth-state.ts but for OpenAI/Codex OAuth accounts.

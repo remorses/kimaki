@@ -122,7 +122,9 @@ function createContextHash(context: LoginContext): string {
 // ── Provider popularity order ───────────────────────────────────
 // Discord select menus cap at 25 options, so we show popular ones first.
 // IDs sourced from opencode's provider.list() API (scripts/list-providers.ts).
+// `subrouter` leads: it pools every subscription and cycles across them.
 const PROVIDER_POPULARITY_ORDER: string[] = [
+  'subrouter',
   'anthropic',
   'openai',
   'google',

@@ -1,6 +1,7 @@
 // Regression tests for Windows OpenCode command resolution and spawn args.
 
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -72,6 +73,25 @@ describe('buildOpencodeServeArgs', () => {
       '--log-level',
       'WARN',
     ])
+  })
+})
+
+describe('resolveSubrouterPluginSpec', () => {
+  test('uses npm package identity in production for OpenCode deduplication', async () => {
+    const { resolveSubrouterPluginSpec } = await import('./opencode.js')
+    const require = createRequire(import.meta.url)
+    const packageJsonPath = require.resolve('@subrouter/opencode/package.json')
+    const version = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version
+    expect(resolveSubrouterPluginSpec({ isDev: false })).toBe(
+      `@subrouter/opencode@${version}`,
+    )
+  })
+
+  test('loads workspace source directly in development', async () => {
+    const { resolveSubrouterPluginSpec } = await import('./opencode.js')
+    expect(resolveSubrouterPluginSpec({ isDev: true })).toMatch(
+      /^file:.*\/subrouter\/opencode\/dist\/index\.js$/,
+    )
   })
 })
 

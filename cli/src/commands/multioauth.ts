@@ -1,3 +1,4 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 /**
  * CLI commands for multi-provider OAuth account management.
  * Mounted via goke .use() in cli.ts under the `multioauth` namespace.
