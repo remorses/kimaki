@@ -18,6 +18,7 @@ import {
   upsertSessionSleep,
 } from './database.js'
 import { closeDb } from './db.js'
+import { buildSessionSleepWakeBody } from './task-runner.js'
 
 const RETRY_AFTER_MS = 30_000
 const NOW = new Date('2026-08-19T12:00:00Z')
@@ -39,6 +40,28 @@ async function createSleep({
 }
 
 describe('session sleep delivery', () => {
+  test('uses a Discord-compatible nonce without changing the delivery marker', () => {
+    const deliveryId = 'f0e3a009-dd6b-4c6a-a244-646693d9ae8d'
+    const body = buildSessionSleepWakeBody({
+      deliveryId,
+      wakeAt: DUE,
+      reason: 'Continue after deployment',
+    })
+
+    expect({
+      nonce: body.nonce,
+      nonceLength: body.nonce.length,
+      markerIncludesDeliveryId: body.embeds[0]?.footer.text.includes(deliveryId),
+    }).toMatchInlineSnapshot(`
+      {
+        "markerIncludesDeliveryId": true,
+        "nonce": "f0e3a009dd6b4c6aa24464669",
+        "nonceLength": 25,
+      }
+    `)
+    expect(body.nonce.length).toBeLessThanOrEqual(25)
+  })
+
   test('claim reserves an attempt but stays planned so a crash retries', async () => {
     const deliveryId = await createSleep({
       sessionId: 'ses-crash',

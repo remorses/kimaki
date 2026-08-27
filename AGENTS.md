@@ -346,6 +346,12 @@ instead:
 - resolve anything else at interaction time (eg call `resolveWorkingDirectory({ channel })` from the thread)
 - if you need extra context, store it server-side keyed by the short hash/id rather than encoding it into `custom_id`
 
+## discord message nonces
+
+Discord message `nonce` values have a strict maximum length of **25 characters**. never send a UUID directly as a nonce; Discord rejects it with `nonce[NONCE_TYPE_TOO_LONG]`.
+
+for durable delivery, keep the full delivery id in storage or message metadata and derive a stable nonce of at most 25 characters for Discord. add a regression test that asserts the nonce length before changing any message retry or deduplication flow.
+
 ## discord components v2 limits
 
 when editing Discord Components V2 (`IS_COMPONENTS_V2`) messages, always check the official docs first:

@@ -141,6 +141,30 @@ const SLEEP_WAKE_MAX_ATTEMPTS = 5
 
 type SleepWakeFailure = { error: Error; permanent: boolean }
 
+export function buildSessionSleepWakeBody({
+  deliveryId,
+  wakeAt,
+  reason,
+}: {
+  deliveryId: string
+  wakeAt: Date
+  reason: string | null
+}) {
+  const marker: ThreadStartMarker = {
+    start: true,
+    sleepWake: true,
+    sleepId: deliveryId,
+  }
+  return {
+    content: formatSessionSleepWakePrompt({ wakeAt, reason }),
+    embeds: [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }],
+    // Discord limits nonces to 25 characters. The full ID stays in the marker.
+    // A stable nonce deduplicates retries when a successful response is lost.
+    nonce: deliveryId.replaceAll('-', '').slice(0, 25),
+    enforce_nonce: true,
+  }
+}
+
 async function postSessionSleepWake({
   rest,
   sleep,
@@ -150,28 +174,15 @@ async function postSessionSleepWake({
   sleep: SessionSleep
   threadId: string
 }): Promise<SleepWakeFailure | null> {
-  const marker: ThreadStartMarker = {
-    start: true,
-    sleepWake: true,
-    sleepId: sleep.delivery_id,
-  }
-  const prompt = formatSessionSleepWakePrompt({
-    wakeAt: sleep.wake_at,
-    reason: sleep.reason,
-  })
   // `.then(() => null)` keeps the success type concrete. Returning the raw post
   // value would widen the union to `unknown` and erase the failure shape.
   return await rest
     .post(Routes.channelMessages(threadId), {
-      body: {
-        content: prompt,
-        embeds: [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }],
-        // A lost response does not mean Discord rejected the post. Retrying with
-        // the same nonce returns the existing message instead of creating a
-        // second one, so a retry can never produce two wake turns.
-        nonce: sleep.delivery_id,
-        enforce_nonce: true,
-      },
+      body: buildSessionSleepWakeBody({
+        deliveryId: sleep.delivery_id,
+        wakeAt: sleep.wake_at,
+        reason: sleep.reason,
+      }),
     })
     .then((): SleepWakeFailure | null => {
       return null
