@@ -28,6 +28,10 @@ import {
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
+function quoteShellArg(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
 /** Worktree thread title prefix - indicates unmerged worktree */
 export const WORKTREE_PREFIX = '⬦ '
 
@@ -176,8 +180,18 @@ export async function handleMergeWorktreeCommand({
     }
 
     if (result instanceof RebaseConflictError) {
+      const mergedThreadName = thread.name.startsWith(WORKTREE_PREFIX)
+        ? thread.name.slice(WORKTREE_PREFIX.length)
+        : thread.name
+      const mergeCommand = [
+        'kimaki merge-worktree',
+        `--strategy ${strategyOption}`,
+        `--target-branch ${quoteShellArg(String(result.target))}`,
+        `--thread ${quoteShellArg(thread.id)}`,
+        `--thread-name ${quoteShellArg(mergedThreadName)}`,
+      ].join(' ')
       await command.editReply(
-        `Rebase conflict detected. Asking the model to resolve it. Rerun \`/merge-worktree\` with **${strategyName}** and target branch \`${result.target}\` after it finishes.`,
+        `Rebase conflict detected. Asking the model to resolve it and retry the merge with **${strategyName}**.`,
       )
       await sendPromptToModel({
         prompt: [
@@ -192,7 +206,8 @@ export async function handleMergeWorktreeCommand({
           '6. Stage resolved files with `git add`',
           '7. Continue the rebase with `git rebase --continue`',
           '8. If git reports more conflicts, repeat steps 1-7 until the rebase finishes (no more rebase in progress, `git status` is clean)',
-          `9. Once the rebase is fully complete, tell me to run \`/merge-worktree\` again with **${strategyName}** and target branch \`${result.target}\``,
+          `9. Once the rebase is fully complete, run \`${mergeCommand}\` yourself`,
+          '10. If that command fails because the target changed or is not ready, stop and report the failure. The user can run it again later.',
         ].join('\n'),
         thread,
         projectDirectory: info.project_directory,

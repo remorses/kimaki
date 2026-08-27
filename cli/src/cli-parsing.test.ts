@@ -1,6 +1,7 @@
 // Regression tests for CLI argument parsing around Discord ID string preservation.
 import { describe, expect, test } from 'vitest'
 import { execAsync } from './exec-async.js'
+import maintenanceCommands from './cli-commands/maintenance.js'
 
 async function parseWithGoke(argv: string[]) {
   const script = [
@@ -192,6 +193,41 @@ describe('goke CLI ID parsing', () => {
 
     expect(stdout).toContain('send')
     expect(stdout).toContain('multioauth')
+  })
+
+  test('merge-worktree parses strategy and target branch', async () => {
+    const result = await maintenanceCommands.parse(
+      [
+        'node',
+        'kimaki',
+        'merge-worktree',
+        '--strategy',
+        'squash',
+        '--target-branch',
+        'release',
+        '--thread',
+        '123456789012345678',
+        '--thread-name',
+        'feature work',
+      ],
+      { run: false },
+    )
+
+    expect({
+      command: maintenanceCommands.matchedCommandName,
+      strategy: result.options.strategy,
+      targetBranch: result.options.targetBranch,
+      thread: result.options.thread,
+      threadName: result.options.threadName,
+    }).toMatchInlineSnapshot(`
+      {
+        "command": "merge-worktree",
+        "strategy": "squash",
+        "targetBranch": "release",
+        "thread": "123456789012345678",
+        "threadName": "feature work",
+      }
+    `)
   })
 
   test('parses --no-analytics as a boolean flag on the root bot command', async () => {

@@ -54,13 +54,14 @@ When the worktree work is ready, run **`/merge-worktree`**. The `strategy` selec
 
 ## Conflict resolution by the agent
 
-If the rebase hits **conflicts**, Kimaki does not give up. It asks the AI model **in the thread** to resolve them: understand both sides, edit the conflicted files, `git add`, and `git rebase --continue`, repeating until the rebase finishes. Once the agent is done, run `/merge-worktree` again with the same strategy to complete the merge.
+If the rebase hits **conflicts**, Kimaki does not give up. It asks the AI model **in the thread** to resolve them: understand both sides, edit the conflicted files, `git add`, and `git rebase --continue`, repeating until the rebase finishes. The agent then runs `kimaki merge-worktree` itself with the same strategy and target branch. If the target changed and the automatic retry fails, run `/merge-worktree` again later.
 
 ```diagram
   /merge-worktree ──▶ rebase ──▶ conflict?
                                  │ yes
                                  ▼
-                      agent resolves ──▶ run /merge-worktree again
+                      agent resolves ──▶ CLI retries merge ──▶ done
+                                              └──▶ failure ──▶ retry later
 ```
 
 ## Listing worktrees and auto-worktrees
