@@ -8,10 +8,7 @@ import { tryWorkspaceCreate } from './commands/new-worktree.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import { chooseLockPort } from './test-utils.js'
 import { execAsync, getManagedWorktreeDirectory } from './worktrees.js'
-import {
-  KIMAKI_WORKTREE_ADAPTER_TYPE,
-  resolveGitCommonDirectory,
-} from './git-worktree-core.js'
+import { KIMAKI_WORKTREE_ADAPTER_TYPE } from './git-worktree-core.js'
 
 const WORKTREE_BRANCH = 'opencode/kimaki-clone-isolation'
 const REJECTED_WORKTREE_BRANCH = 'opencode/kimaki-rejected-clone-isolation'
@@ -102,7 +99,6 @@ test('creates a workspace from the exact requested clone and commit', async () =
     extra: {
       projectDirectory: requestedClone,
       baseCommit: requestedCommit,
-      expectedCommonGitDirectory: requestedCommonDirectory,
     },
   })
   if (response.error) throw new Error(JSON.stringify(response.error))
@@ -154,16 +150,11 @@ test('removes workspace state when identity validation rejects creation', async 
     cwd: requestedClone,
     args: ['rev-parse', 'HEAD^{commit}'],
   })
-  const wrongCommonDirectory = await resolveGitCommonDirectory({
-    directory: otherClone,
-  })
-  if (wrongCommonDirectory instanceof Error) throw wrongCommonDirectory
 
   const result = await tryWorkspaceCreate({
     worktreeName: REJECTED_WORKTREE_BRANCH,
     projectDirectory: requestedClone,
-    baseCommit: requestedCommit,
-    expectedCommonGitDirectory: wrongCommonDirectory,
+    baseCommit: requestedCommit.toUpperCase(),
   })
   expect(result).toBeInstanceOf(Error)
 

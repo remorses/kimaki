@@ -41,7 +41,6 @@ import {
   KIMAKI_WORKTREE_ADAPTER_TYPE,
   removeWorktreeFromOwnRepository,
   resolveGitCommit,
-  resolveGitCommonDirectory,
   validateWorktreeIdentity,
 } from '../git-worktree-core.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
@@ -223,19 +222,17 @@ export async function tryWorkspaceCreate({
   worktreeName,
   projectDirectory,
   baseCommit,
-  expectedCommonGitDirectory,
 }: {
   worktreeName: string
   projectDirectory: string
   baseCommit: string
-  expectedCommonGitDirectory: string
 }): Promise<{ directory: string; workspaceId: string } | Error> {
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
   const client = getClient()
   const workspaceId = `wrk_${crypto.randomUUID()}`
-  const expectedWorktreeDirectory = getManagedWorktreeDirectory({
+  const managedDirectory = getManagedWorktreeDirectory({
     directory: projectDirectory,
     name: worktreeName,
   })
@@ -268,14 +265,13 @@ export async function tryWorkspaceCreate({
     extra: {
       projectDirectory,
       baseCommit,
-      expectedCommonGitDirectory,
     },
   }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
   if (response instanceof Error || response.error) {
     const creationError = response instanceof Error
       ? response
       : new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
-    const cleanupError = await cleanupFailedWorkspace(expectedWorktreeDirectory)
+    const cleanupError = await cleanupFailedWorkspace(managedDirectory)
     if (cleanupError instanceof Error) {
       return new Error(`${creationError.message}; cleanup failed: ${cleanupError.message}`, {
         cause: creationError,
@@ -286,7 +282,7 @@ export async function tryWorkspaceCreate({
   const workspace = response.data
   if (!workspace?.directory || !workspace.id) {
     const creationError = new Error('Workspace SDK returned no directory or ID')
-    const cleanupError = await cleanupFailedWorkspace(expectedWorktreeDirectory)
+    const cleanupError = await cleanupFailedWorkspace(managedDirectory)
     if (cleanupError instanceof Error) {
       return new Error(`${creationError.message}; cleanup failed: ${cleanupError.message}`, {
         cause: creationError,
@@ -298,9 +294,7 @@ export async function tryWorkspaceCreate({
   const identityResult = await validateWorktreeIdentity({
     projectDirectory,
     worktreeDirectory: workspace.directory,
-    expectedWorktreeDirectory,
     baseCommit,
-    expectedCommonGitDirectory,
   })
   if (identityResult instanceof Error) {
     const cleanupError = await cleanupFailedWorkspace(workspace.directory)
@@ -371,12 +365,9 @@ export async function createWorktreeInBackground({
         projectDirectory,
       })
 
-      const [resolvedBaseCommit, expectedCommonGitDirectory] = await Promise.all([
-        baseCommit
-          ? Promise.resolve(baseCommit)
-          : resolveGitCommit({ directory: projectDirectory, ref: 'HEAD' }),
-        resolveGitCommonDirectory({ directory: projectDirectory }),
-      ])
+      const resolvedBaseCommit = baseCommit
+        ? baseCommit
+        : await resolveGitCommit({ directory: projectDirectory, ref: 'HEAD' })
       if (resolvedBaseCommit instanceof Error) {
         await setWorkspaceError({
           threadId: thread.id,
@@ -386,16 +377,6 @@ export async function createWorktreeInBackground({
         await editChain
         return resolvedBaseCommit
       }
-      if (expectedCommonGitDirectory instanceof Error) {
-        await setWorkspaceError({
-          threadId: thread.id,
-          errorMessage: expectedCommonGitDirectory.message,
-        })
-        editStatus(`🌳 **Worktree: ${worktreeName}**\n❌ ${expectedCommonGitDirectory.message}`)
-        await editChain
-        return expectedCommonGitDirectory
-      }
-
       logger.log(
         `Creating worktree "${worktreeName}" for project ${projectDirectory} from ${resolvedBaseCommit}`,
       )
@@ -404,7 +385,6 @@ export async function createWorktreeInBackground({
         worktreeName,
         projectDirectory,
         baseCommit: resolvedBaseCommit,
-        expectedCommonGitDirectory,
       })
 
       if (workspaceResult instanceof Error) {

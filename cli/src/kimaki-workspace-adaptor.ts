@@ -12,10 +12,7 @@ import path from 'node:path'
 import {
   createWorktreeCore,
   KIMAKI_WORKTREE_ADAPTER_TYPE,
-  parseKimakiWorktreeIdentity,
-  removeWorktreeCore,
   removeWorktreeFromOwnRepository,
-  type KimakiWorktreeIdentity,
 } from './git-worktree-core.js'
 
 /**
@@ -50,9 +47,24 @@ function getWorktreeIdentity(info: WorkspaceInfo) {
   if (!info.extra || typeof info.extra !== 'object') {
     return new Error('Kimaki worktree identity is missing')
   }
-  const identity: Partial<KimakiWorktreeIdentity> = {}
+  const identity: { projectDirectory?: string; baseCommit?: string } = {}
   Object.assign(identity, info.extra)
-  return parseKimakiWorktreeIdentity(identity)
+  if (
+    typeof identity.projectDirectory !== 'string' ||
+    !path.isAbsolute(identity.projectDirectory)
+  ) {
+    return new Error('Kimaki worktree project directory must be absolute')
+  }
+  if (
+    typeof identity.baseCommit !== 'string' ||
+    !/^[0-9a-f]{40}$/i.test(identity.baseCommit)
+  ) {
+    return new Error('Kimaki worktree base commit must be a full commit SHA')
+  }
+  return {
+    projectDirectory: identity.projectDirectory,
+    baseCommit: identity.baseCommit,
+  }
 }
 
 function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
@@ -90,7 +102,6 @@ function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
         targetDirectory: info.directory,
         branchName: info.branch || info.name,
         baseCommit: identity.baseCommit,
-        expectedCommonGitDirectory: identity.expectedCommonGitDirectory,
         // Silent log — plugin must not write to stdout/stderr
       })
       if (result instanceof Error) {
@@ -100,17 +111,10 @@ function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
 
     async remove(info: WorkspaceInfo): Promise<void> {
       if (!info.directory) return
-      const identity = getWorktreeIdentity(info)
-      const result = identity instanceof Error
-        ? await removeWorktreeFromOwnRepository({
-            worktreeDirectory: info.directory,
-            branchName: info.branch || '',
-          })
-        : await removeWorktreeCore({
-            projectDirectory: identity.projectDirectory,
-            worktreeDirectory: info.directory,
-            branchName: info.branch || '',
-          })
+      const result = await removeWorktreeFromOwnRepository({
+        worktreeDirectory: info.directory,
+        branchName: info.branch || '',
+      })
       if (result instanceof Error) {
         throw result
       }

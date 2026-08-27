@@ -35,34 +35,6 @@ export class WorktreeIdentityError extends errore.createTaggedError({
   message: 'Created worktree does not match the requested checkout: $reason',
 }) {}
 
-export type KimakiWorktreeIdentity = {
-  projectDirectory: string
-  baseCommit: string
-  expectedCommonGitDirectory: string
-}
-
-export function parseKimakiWorktreeIdentity(
-  extra: Partial<KimakiWorktreeIdentity> | null,
-): KimakiWorktreeIdentity | Error {
-  if (!extra) {
-    return new Error('Kimaki worktree identity is missing')
-  }
-  const { projectDirectory, baseCommit, expectedCommonGitDirectory } = extra
-  if (typeof projectDirectory !== 'string' || !path.isAbsolute(projectDirectory)) {
-    return new Error('Kimaki worktree project directory must be absolute')
-  }
-  if (typeof baseCommit !== 'string' || !/^[0-9a-f]{40}$/i.test(baseCommit)) {
-    return new Error('Kimaki worktree base commit must be a full commit SHA')
-  }
-  if (
-    typeof expectedCommonGitDirectory !== 'string' ||
-    !path.isAbsolute(expectedCommonGitDirectory)
-  ) {
-    return new Error('Kimaki worktree common Git directory must be absolute')
-  }
-  return { projectDirectory, baseCommit, expectedCommonGitDirectory }
-}
-
 const silentLog: WorktreeLog = {
   info() {},
   warn() {},
@@ -292,13 +264,17 @@ async function validateSubmodulePointers({
   log: WorktreeLog
 }): Promise<void | Error> {
   const submoduleConfigs = await readSubmoduleConfigs(directory)
-  if (submoduleConfigs instanceof Error) return submoduleConfigs
+  if (submoduleConfigs instanceof Error) {
+    log.warn(submoduleConfigs.message)
+    return
+  }
   const submodulePaths = submoduleConfigs.map(({ path: submodulePath }) => {
     return submodulePath
   })
   if (submodulePaths.length === 0) return
 
   const issues: string[] = []
+  const foreignGitdirs: string[] = []
   await Promise.all(
     submodulePaths.map(async (subPath) => {
       const gitFile = path.join(directory, subPath, '.git')
@@ -318,34 +294,13 @@ async function validateSubmodulePointers({
         const resolvedGitdir = path.resolve(path.join(directory, subPath), gitdir)
         const relativeGitdir = path.relative(expectedCommonGitDirectory, resolvedGitdir)
         if (relativeGitdir === '..' || relativeGitdir.startsWith(`..${path.sep}`)) {
-          issues.push(`${subPath}: gitdir belongs to another repository (${resolvedGitdir})`)
+          foreignGitdirs.push(`${subPath}: ${resolvedGitdir}`)
           return
         }
         const headExists = await fs.promises.access(path.join(resolvedGitdir, 'HEAD')).then(() => true).catch(() => false)
         if (!headExists) {
           issues.push(`${subPath}: gitdir missing HEAD (${resolvedGitdir})`)
           return
-        }
-        const [gitlinkResult, submoduleCommit] = await Promise.all([
-          execAsync(`git ls-tree HEAD -- ${JSON.stringify(subPath)}`, {
-            cwd: directory,
-            timeout: 10_000,
-          }).catch((e) => new Error(`failed to read gitlink for ${subPath}`, { cause: e })),
-          resolveGitCommit({ directory: path.join(directory, subPath), ref: 'HEAD' }),
-        ])
-        if (gitlinkResult instanceof Error) {
-          issues.push(`${subPath}: ${gitlinkResult.message}`)
-          return
-        }
-        if (submoduleCommit instanceof Error) {
-          issues.push(`${subPath}: ${submoduleCommit.message}`)
-          return
-        }
-        const gitlinkCommit = gitlinkResult.stdout.trim().split(/\s+/)[2]
-        if (gitlinkCommit !== submoduleCommit) {
-          issues.push(
-            `${subPath}: expected gitlink ${gitlinkCommit || 'missing'}, received ${submoduleCommit}`,
-          )
         }
       } catch (e) {
         issues.push(
@@ -355,9 +310,12 @@ async function validateSubmodulePointers({
     }),
   )
 
-  if (issues.length > 0) {
-    return new Error(`Submodule validation failed: ${issues.join('; ')}`)
+  if (foreignGitdirs.length > 0) {
+    return new Error(
+      `Submodule gitdir belongs to another repository: ${foreignGitdirs.join('; ')}`,
+    )
   }
+  if (issues.length > 0) log.warn(`Submodule validation issues: ${issues.join('; ')}`)
 }
 
 function detectInstallCommand(directory: string): string | null {
@@ -429,44 +387,43 @@ export async function resolveGitCommonDirectory({
   return canonicalizePath(commonDirectory)
 }
 
+async function resolveGitDirectory({
+  directory,
+}: {
+  directory: string
+}): Promise<string | Error> {
+  const result = await execAsync('git rev-parse --absolute-git-dir', {
+    cwd: directory,
+    timeout: 10_000,
+  }).catch(
+    (e) => new Error(`Failed to resolve Git directory for ${directory}`, { cause: e }),
+  )
+  if (result instanceof Error) return result
+  return canonicalizePath(result.stdout.trim())
+}
+
 export async function validateWorktreeIdentity({
   projectDirectory,
   worktreeDirectory,
-  expectedWorktreeDirectory,
   baseCommit,
-  expectedCommonGitDirectory,
-}: KimakiWorktreeIdentity & {
+}: {
+  projectDirectory: string
+  baseCommit: string
   worktreeDirectory: string
-  expectedWorktreeDirectory?: string
 }): Promise<{ commonGitDirectory: string; headCommit: string } | WorktreeIdentityError> {
-  const sourceCommonGitDirectory = await resolveGitCommonDirectory({
-    directory: projectDirectory,
-  })
+  const [sourceCommonGitDirectory, commonGitDirectory, gitDirectory, headCommit] =
+    await Promise.all([
+      resolveGitCommonDirectory({ directory: projectDirectory }),
+      resolveGitCommonDirectory({ directory: worktreeDirectory }),
+      resolveGitDirectory({ directory: worktreeDirectory }),
+      resolveGitCommit({ directory: worktreeDirectory, ref: 'HEAD' }),
+    ])
   if (sourceCommonGitDirectory instanceof Error) {
     return new WorktreeIdentityError({
       reason: sourceCommonGitDirectory.message,
       cause: sourceCommonGitDirectory,
     })
   }
-  const expectedCommonDirectory = await canonicalizePath(expectedCommonGitDirectory)
-  if (sourceCommonGitDirectory !== expectedCommonDirectory) {
-    return new WorktreeIdentityError({
-      reason: `registered checkout common directory changed from ${expectedCommonDirectory} to ${sourceCommonGitDirectory}`,
-    })
-  }
-  if (
-    expectedWorktreeDirectory &&
-    path.resolve(worktreeDirectory) !== path.resolve(expectedWorktreeDirectory)
-  ) {
-    return new WorktreeIdentityError({
-      reason: `expected directory ${expectedWorktreeDirectory}, received ${worktreeDirectory}`,
-    })
-  }
-
-  const [commonGitDirectory, headCommit] = await Promise.all([
-    resolveGitCommonDirectory({ directory: worktreeDirectory }),
-    resolveGitCommit({ directory: worktreeDirectory, ref: 'HEAD' }),
-  ])
   if (commonGitDirectory instanceof Error) {
     return new WorktreeIdentityError({
       reason: commonGitDirectory.message,
@@ -479,9 +436,20 @@ export async function validateWorktreeIdentity({
       cause: headCommit,
     })
   }
-  if (commonGitDirectory !== expectedCommonDirectory) {
+  if (gitDirectory instanceof Error) {
     return new WorktreeIdentityError({
-      reason: `expected common directory ${expectedCommonDirectory}, received ${commonGitDirectory}`,
+      reason: gitDirectory.message,
+      cause: gitDirectory,
+    })
+  }
+  if (commonGitDirectory !== sourceCommonGitDirectory) {
+    return new WorktreeIdentityError({
+      reason: `expected common directory ${sourceCommonGitDirectory}, received ${commonGitDirectory}`,
+    })
+  }
+  if (gitDirectory === commonGitDirectory) {
+    return new WorktreeIdentityError({
+      reason: `${worktreeDirectory} is not a linked worktree`,
     })
   }
   if (headCommit !== baseCommit) {
@@ -502,7 +470,6 @@ export async function createWorktreeCore({
   targetDirectory,
   branchName,
   baseCommit,
-  expectedCommonGitDirectory,
   onProgress,
   log = silentLog,
 }: {
@@ -510,13 +477,16 @@ export async function createWorktreeCore({
   targetDirectory: string
   branchName: string
   baseCommit: string
-  expectedCommonGitDirectory: string
   onProgress?: (phase: string) => void
   log?: WorktreeLog
 }): Promise<WorktreeResult | Error> {
   if (fs.existsSync(targetDirectory)) {
     return new Error(`Worktree directory already exists: ${targetDirectory}`)
   }
+  const commonGitDirectory = await resolveGitCommonDirectory({
+    directory: projectDirectory,
+  })
+  if (commonGitDirectory instanceof Error) return commonGitDirectory
   await fs.promises.mkdir(path.dirname(targetDirectory), { recursive: true })
 
   const createCmd = `git worktree add ${JSON.stringify(targetDirectory)} -B ${JSON.stringify(branchName)} ${JSON.stringify(baseCommit)}`
@@ -528,31 +498,10 @@ export async function createWorktreeCore({
   )
   if (createResult instanceof Error) return createResult
 
-  const identityResult = await validateWorktreeIdentity({
-    projectDirectory,
-    worktreeDirectory: targetDirectory,
-    expectedWorktreeDirectory: targetDirectory,
-    baseCommit,
-    expectedCommonGitDirectory,
-  })
-  if (identityResult instanceof Error) {
-    const cleanupResult = await removeWorktreeFromOwnRepository({
-      worktreeDirectory: targetDirectory,
-      branchName,
-    })
-    if (cleanupResult instanceof Error) {
-      return new WorktreeIdentityError({
-        reason: `${identityResult.message}; cleanup failed: ${cleanupResult.message}`,
-        cause: identityResult,
-      })
-    }
-    return identityResult
-  }
-
   // Remove broken submodule stubs before init
   await removeBrokenSubmoduleStubs({
     directory: targetDirectory,
-    expectedCommonGitDirectory: identityResult.commonGitDirectory,
+    expectedCommonGitDirectory: commonGitDirectory,
     log,
   })
 
@@ -572,7 +521,7 @@ export async function createWorktreeCore({
   // Invalid submodule pointers can route later Git commands into another clone.
   const submoduleValidation = await validateSubmodulePointers({
     directory: targetDirectory,
-    expectedCommonGitDirectory: identityResult.commonGitDirectory,
+    expectedCommonGitDirectory: commonGitDirectory,
     log,
   })
   if (submoduleValidation instanceof Error) {
@@ -619,13 +568,22 @@ export async function removeWorktreeCore({
   if (removeResult instanceof Error) return removeResult
 
   if (branchName) {
-    const deleteResult = await execAsync(
-      `git branch -D ${JSON.stringify(branchName)}`,
+    const listResult = await execAsync(
+      `git branch --list --format=${JSON.stringify('%(refname:short)')} ${JSON.stringify(branchName)}`,
       { cwd: projectDirectory, timeout: 10_000 },
     ).catch((e) =>
-      new Error(`git branch delete failed: ${formatCommandError(e)}`, { cause: e }),
+      new Error(`git branch list failed: ${formatCommandError(e)}`, { cause: e }),
     )
-    if (deleteResult instanceof Error) return deleteResult
+    if (listResult instanceof Error) return listResult
+    if (listResult.stdout.trim() === branchName) {
+      const deleteResult = await execAsync(
+        `git branch -D ${JSON.stringify(branchName)}`,
+        { cwd: projectDirectory, timeout: 10_000 },
+      ).catch((e) =>
+        new Error(`git branch delete failed: ${formatCommandError(e)}`, { cause: e }),
+      )
+      if (deleteResult instanceof Error) return deleteResult
+    }
   }
 }
 

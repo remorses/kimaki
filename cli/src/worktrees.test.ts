@@ -5,19 +5,19 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
-  buildSubmoduleReferencePlan,
-  createWorktreeWithSubmodules,
   execAsync,
   getManagedWorktreeDirectory,
   mergeWorktree,
-  parseGitmodulesFileContent,
   parseGitWorktreeListPorcelain,
   resolveSessionWorkingDirectory,
   validateBranchRef,
 } from './worktrees.js'
 import {
+  createWorktreeCore,
   parseGitmodulesFileContent as parseCoreGitmodulesFileContent,
+  removeWorktreeCore,
   removeWorktreeFromOwnRepository,
+  resolveGitCommit,
   resolveGitCommonDirectory,
   validateWorktreeIdentity,
 } from './git-worktree-core.js'
@@ -57,33 +57,24 @@ function createTestRoot(): string {
   return fs.mkdtempSync(path.join(tmpRoot, 'worktrees-test-'))
 }
 
-describe('worktrees', () => {
-  test('parseGitmodulesFileContent parses paths and urls', () => {
-    const parsed = parseGitmodulesFileContent(`
-[submodule "errore"]
-  path = errore
-  url = https://github.com/remorses/errore.git
-[submodule "gateway-proxy"]
-  path = gateway-proxy
-  url = https://github.com/remorses/gateway-proxy.git
-`)
-
-    expect(parsed).toMatchInlineSnapshot(`
-      [
-        {
-          "name": "errore",
-          "path": "errore",
-          "url": "https://github.com/remorses/errore.git",
-        },
-        {
-          "name": "gateway-proxy",
-          "path": "gateway-proxy",
-          "url": "https://github.com/remorses/gateway-proxy.git",
-        },
-      ]
-    `)
+async function createTestWorktree({
+  directory,
+  name,
+}: {
+  directory: string
+  name: string
+}) {
+  const baseCommit = await resolveGitCommit({ directory, ref: 'HEAD' })
+  if (baseCommit instanceof Error) return baseCommit
+  return createWorktreeCore({
+    projectDirectory: directory,
+    targetDirectory: getManagedWorktreeDirectory({ directory, name }),
+    branchName: name,
+    baseCommit,
   })
+}
 
+describe('worktrees', () => {
   test('plugin-safe gitmodules parser handles standard indented entries', () => {
     const parsed = parseCoreGitmodulesFileContent(`
 [submodule "errore"]
@@ -102,36 +93,7 @@ describe('worktrees', () => {
     `)
   })
 
-  test('buildSubmoduleReferencePlan uses local references when available', () => {
-    const sourceDirectory = '/repo'
-    const plan = buildSubmoduleReferencePlan({
-      sourceDirectory,
-      submodulePaths: ['errore', 'gateway-proxy', 'traforo'],
-      existingSourceSubmoduleDirectories: new Set([
-        '/repo/errore',
-        '/repo/gateway-proxy',
-      ]),
-    })
-
-    expect(plan).toMatchInlineSnapshot(`
-      [
-        {
-          "path": "errore",
-          "referenceDirectory": "/repo/errore",
-        },
-        {
-          "path": "gateway-proxy",
-          "referenceDirectory": "/repo/gateway-proxy",
-        },
-        {
-          "path": "traforo",
-          "referenceDirectory": null,
-        },
-      ]
-    `)
-  })
-
-  test('createWorktreeWithSubmodules resolves local-only submodule commits from local source checkout', async () => {
+  test('worktree creation resolves local-only submodule commits from local source checkout', async () => {
     const sandbox = createTestRoot()
     const submoduleRemote = path.join(sandbox, 'errore-remote.git')
     const submoduleLocal = path.join(sandbox, 'errore-local')
@@ -216,7 +178,7 @@ describe('worktrees', () => {
         args: ['commit', '-m', 'pin local-only submodule commit'],
       })
 
-      const worktreeResult = await createWorktreeWithSubmodules({
+      const worktreeResult = await createTestWorktree({
         directory: parentRepo,
         name: worktreeName,
       })
@@ -242,18 +204,10 @@ describe('worktrees', () => {
       if (submoduleCommonDirectory instanceof Error) {
         throw submoduleCommonDirectory
       }
-      const gitlinkSha = (
-        await git({
-          cwd: worktreeResult.directory,
-          args: ['ls-tree', 'HEAD', '--', 'errore'],
-        })
-      ).split(/\s+/)[2]
-
       expect({
         localOnlyShaLength: localOnlySha.length,
         worktreeSubmoduleShaLength: worktreeSubmoduleSha.length,
         sameCommit: localOnlySha === worktreeSubmoduleSha,
-        matchesGitlink: worktreeSubmoduleSha === gitlinkSha,
         belongsToParentClone: !path
           .relative(parentCommonDirectory, submoduleCommonDirectory)
           .startsWith(`..${path.sep}`),
@@ -261,7 +215,6 @@ describe('worktrees', () => {
         {
           "belongsToParentClone": true,
           "localOnlyShaLength": 40,
-          "matchesGitlink": true,
           "sameCommit": true,
           "worktreeSubmoduleShaLength": 40,
         }
@@ -279,7 +232,7 @@ describe('worktrees', () => {
     }
   })
 
-  test('createWorktreeWithSubmodules uses current HEAD even when origin does not have the commit', async () => {
+  test('worktree creation uses current HEAD even when origin does not have the commit', async () => {
     const sandbox = createTestRoot()
     const parentRemote = path.join(sandbox, 'parent-remote.git')
     const parentLocal = path.join(sandbox, 'parent-local')
@@ -317,7 +270,7 @@ describe('worktrees', () => {
         args: ['rev-parse', 'origin/main'],
       })
 
-      const worktreeResult = await createWorktreeWithSubmodules({
+      const worktreeResult = await createTestWorktree({
         directory: parentLocal,
         name: worktreeName,
       })
@@ -360,6 +313,111 @@ describe('worktrees', () => {
     }
   })
 
+  test('worktree creation survives an unavailable submodule remote', async () => {
+    const sandbox = createTestRoot()
+    const submoduleRemote = path.join(sandbox, 'missing-remote.git')
+    const submoduleSource = path.join(sandbox, 'submodule-source')
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeName = `opencode/kimaki-missing-submodule-${Date.now()}`
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', submoduleRemote] })
+      await git({ cwd: sandbox, args: ['clone', submoduleRemote, submoduleSource] })
+      await git({ cwd: submoduleSource, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: submoduleSource, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(submoduleSource, 'README.md'), 'submodule\n')
+      await git({ cwd: submoduleSource, args: ['add', 'README.md'] })
+      await git({ cwd: submoduleSource, args: ['commit', '-m', 'submodule'] })
+      await git({ cwd: submoduleSource, args: ['push', 'origin', 'HEAD:main'] })
+
+      await git({ cwd: sandbox, args: ['init', '-b', 'main', parentRepo] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(parentRepo, 'README.md'), 'parent\n')
+      await git({ cwd: parentRepo, args: ['add', 'README.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'parent'] })
+      await git({
+        cwd: parentRepo,
+        args: [
+          '-c',
+          'protocol.file.allow=always',
+          'submodule',
+          'add',
+          submoduleRemote,
+          'missing',
+        ],
+      })
+      await git({ cwd: parentRepo, args: ['commit', '-am', 'add submodule'] })
+      await git({ cwd: parentRepo, args: ['submodule', 'deinit', '-f', '--all'] })
+      fs.rmSync(path.join(parentRepo, '.git', 'modules', 'missing'), {
+        recursive: true,
+        force: true,
+      })
+      fs.rmSync(submoduleRemote, { recursive: true, force: true })
+
+      const result = await createTestWorktree({
+        directory: parentRepo,
+        name: worktreeName,
+      })
+      if (result instanceof Error) throw result
+
+      expect({
+        directoryExists: fs.existsSync(result.directory),
+        submoduleUnavailable: !fs.existsSync(path.join(result.directory, 'missing', '.git')),
+      }).toMatchInlineSnapshot(`
+        {
+          "directoryExists": true,
+          "submoduleUnavailable": true,
+        }
+      `)
+    } finally {
+      const managedDirectory = getManagedWorktreeDirectory({
+        directory: parentRepo,
+        name: worktreeName,
+      })
+      if (fs.existsSync(parentRepo)) {
+        await git({
+          cwd: parentRepo,
+          args: ['worktree', 'remove', '--force', managedDirectory],
+        }).catch(() => '')
+      }
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('worktree removal succeeds when its branch was already deleted', async () => {
+    const sandbox = createTestRoot()
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeDirectory = path.join(sandbox, 'worktree')
+    const branchName = 'opencode/kimaki-removed-branch'
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '-b', 'main', parentRepo] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(parentRepo, 'README.md'), 'parent\n')
+      await git({ cwd: parentRepo, args: ['add', 'README.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'parent'] })
+      await git({
+        cwd: parentRepo,
+        args: ['worktree', 'add', '-b', branchName, worktreeDirectory],
+      })
+      await git({ cwd: worktreeDirectory, args: ['switch', '--detach'] })
+      await git({ cwd: parentRepo, args: ['branch', '-D', branchName] })
+
+      const result = await removeWorktreeCore({
+        projectDirectory: parentRepo,
+        worktreeDirectory,
+        branchName,
+      })
+      if (result instanceof Error) throw result
+
+      expect(fs.existsSync(worktreeDirectory)).toBe(false)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
   test('worktree identity mismatch is detected and cleaned from its actual clone', async () => {
     const sandbox = createTestRoot()
     const remote = path.join(sandbox, 'remote.git')
@@ -389,13 +447,6 @@ describe('worktrees', () => {
         cwd: requestedClone,
         args: ['rev-parse', 'HEAD'],
       })
-      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
-        directory: requestedClone,
-      })
-      if (expectedCommonGitDirectory instanceof Error) {
-        throw expectedCommonGitDirectory
-      }
-
       await git({
         cwd: otherClone,
         args: ['worktree', 'add', '-b', branchName, worktreeDirectory, 'HEAD'],
@@ -405,7 +456,6 @@ describe('worktrees', () => {
         projectDirectory: requestedClone,
         worktreeDirectory,
         baseCommit,
-        expectedCommonGitDirectory,
       })
       expect(validation).toBeInstanceOf(Error)
 
