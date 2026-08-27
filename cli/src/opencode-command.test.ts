@@ -6,12 +6,209 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
+  decodeWindowsBunShimTarget,
   ensureKimakiCommandShim,
   getSpawnCommandAndArgs,
+  resolveWindowsBunShimTarget,
   sanitizeShimExecArgv,
   selectResolvedCommand,
   splitCommandLookupOutput,
 } from './opencode-command.js'
+
+const BUN_SHIM_VERSION = 5478
+
+function createBunShimMetadata({
+  relativeTarget,
+  flags = BUN_SHIM_VERSION << 3,
+}: {
+  relativeTarget: string
+  flags?: number
+}): Buffer {
+  const trailer = Buffer.alloc(6)
+  trailer.writeUInt16LE(0x22, 0)
+  trailer.writeUInt16LE(0, 2)
+  trailer.writeUInt16LE(flags, 4)
+  return Buffer.concat([Buffer.from(relativeTarget, 'utf16le'), trailer])
+}
+
+function createPeExecutableFixture(): Buffer {
+  const executable = Buffer.alloc(512)
+  executable.write('MZ', 0, 'ascii')
+  executable.writeUInt32LE(0x80, 0x3c)
+  executable.write('PE\0\0', 0x80, 'ascii')
+  executable.writeUInt16LE(1, 0x80 + 6)
+  executable.writeUInt16LE(0xf0, 0x80 + 20)
+  executable.writeUInt16LE(0x0002, 0x80 + 22)
+  executable.writeUInt16LE(0x20b, 0x80 + 24)
+  return executable
+}
+
+describe('decodeWindowsBunShimTarget', () => {
+  const command = 'C:\\Users\\test\\.bun\\bin\\opencode.exe'
+  const expectedTarget =
+    'C:\\Users\\test\\.bun\\install\\global\\node_modules\\opencode-ai\\bin\\opencode.exe'
+
+  test('decodes a native target from current Bun shim metadata', () => {
+    // Captured from Bun 1.3.14's generated opencode.bunx metadata.
+    const metadata = Buffer.from(
+      '69006e007300740061006c006c005c0067006c006f00620061006c005c006e006f00640065005f006d006f00640075006c00650073005c006f00700065006e0063006f00640065002d00610069005c00620069006e005c006f00700065006e0063006f00640065002e006500780065002200000030ab',
+      'hex',
+    )
+
+    expect(decodeWindowsBunShimTarget({ command, metadata })).toBe(
+      expectedTarget,
+    )
+  })
+
+  test.each([
+    ['unknown metadata version', (BUN_SHIM_VERSION + 1) << 3],
+    ['interpreter-backed target', (BUN_SHIM_VERSION << 3) | 0b100],
+  ])('rejects %s', (_name, flags) => {
+    const metadata = createBunShimMetadata({
+      relativeTarget:
+        'install\\global\\node_modules\\opencode-ai\\bin\\opencode.exe',
+      flags,
+    })
+
+    expect(decodeWindowsBunShimTarget({ command, metadata })).toBeNull()
+  })
+
+  test('rejects malformed metadata', () => {
+    expect(
+      decodeWindowsBunShimTarget({ command, metadata: Buffer.alloc(4) }),
+    ).toBeNull()
+    expect(
+      decodeWindowsBunShimTarget({
+        command,
+        metadata: Buffer.alloc(65_538),
+      }),
+    ).toBeNull()
+  })
+
+  test('rejects targets outside the shim root', () => {
+    const metadata = createBunShimMetadata({
+      relativeTarget: '..\\outside.exe',
+    })
+
+    expect(decodeWindowsBunShimTarget({ command, metadata })).toBeNull()
+  })
+
+  test('rejects metadata beside executables outside Bun bin directories', () => {
+    const metadata = createBunShimMetadata({
+      relativeTarget: 'opencode-ai\\bin\\opencode.exe',
+    })
+
+    expect(
+      decodeWindowsBunShimTarget({
+        command: 'C:\\tools\\opencode.exe',
+        metadata,
+      }),
+    ).toBeNull()
+  })
+})
+
+describe.runIf(process.platform === 'win32')(
+  'resolveWindowsBunShimTarget',
+  () => {
+    let tempDir: string
+    let shimPath: string
+    let metadataPath: string
+    let nativeTarget: string
+    let outsideDir: string | null
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-bun-shim-test-'))
+      const binDir = path.join(tempDir, 'bin')
+      nativeTarget = path.join(
+        tempDir,
+        'install',
+        'global',
+        'node_modules',
+        'opencode-ai',
+        'bin',
+        'opencode.exe',
+      )
+      shimPath = path.join(binDir, 'opencode.exe')
+      metadataPath = path.join(binDir, 'opencode.bunx')
+      fs.mkdirSync(path.dirname(nativeTarget), { recursive: true })
+      fs.mkdirSync(binDir, { recursive: true })
+      fs.writeFileSync(shimPath, createPeExecutableFixture())
+      fs.writeFileSync(nativeTarget, createPeExecutableFixture())
+      outsideDir = null
+    })
+
+    afterEach(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+      if (outsideDir) {
+        fs.rmSync(outsideDir, { recursive: true, force: true })
+      }
+    })
+
+    test('resolves a native target from current Bun shim metadata', () => {
+      fs.writeFileSync(
+        metadataPath,
+        createBunShimMetadata({
+          relativeTarget:
+            'install\\global\\node_modules\\opencode-ai\\bin\\opencode.exe',
+        }),
+      )
+
+      expect(
+        resolveWindowsBunShimTarget({ command: shimPath, platform: 'win32' }),
+      ).toBe(nativeTarget)
+    })
+
+    test('keeps the launcher when the target is missing or not native', () => {
+      fs.writeFileSync(
+        metadataPath,
+        createBunShimMetadata({
+          relativeTarget:
+            'install\\global\\node_modules\\opencode-ai\\bin\\missing.exe',
+        }),
+      )
+      expect(
+        resolveWindowsBunShimTarget({ command: shimPath, platform: 'win32' }),
+      ).toBe(shimPath)
+
+      fs.writeFileSync(nativeTarget, Buffer.from('MZ but not a PE executable'))
+      fs.writeFileSync(
+        metadataPath,
+        createBunShimMetadata({
+          relativeTarget:
+            'install\\global\\node_modules\\opencode-ai\\bin\\opencode.exe',
+        }),
+      )
+      expect(
+        resolveWindowsBunShimTarget({ command: shimPath, platform: 'win32' }),
+      ).toBe(shimPath)
+
+      const truncatedPe = createPeExecutableFixture().subarray(0, 0x9a)
+      fs.writeFileSync(nativeTarget, truncatedPe)
+      expect(
+        resolveWindowsBunShimTarget({ command: shimPath, platform: 'win32' }),
+      ).toBe(shimPath)
+    })
+
+    test('keeps the launcher when a junction redirects outside the shim root', () => {
+      outsideDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'kimaki-bun-shim-outside-'),
+      )
+      fs.writeFileSync(
+        path.join(outsideDir, 'opencode.exe'),
+        createPeExecutableFixture(),
+      )
+      fs.symlinkSync(outsideDir, path.join(tempDir, 'linked'), 'junction')
+      fs.writeFileSync(
+        metadataPath,
+        createBunShimMetadata({ relativeTarget: 'linked\\opencode.exe' }),
+      )
+
+      expect(
+        resolveWindowsBunShimTarget({ command: shimPath, platform: 'win32' }),
+      ).toBe(shimPath)
+    })
+  },
+)
 
 describe('splitCommandLookupOutput', () => {
   test('splits windows command lookup output into trimmed lines', () => {

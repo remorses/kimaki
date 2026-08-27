@@ -106,6 +106,7 @@ import {
   getPathEnvKey,
   getSpawnCommandAndArgs,
   prependPathEntry,
+  resolveWindowsBunShimTarget,
   selectResolvedCommand,
 } from './opencode-command.js'
 import { computeSkillPermission } from './skill-filter.js'
@@ -518,8 +519,10 @@ export function resolveOpencodeCommand(): string {
       isWindows: process.platform === 'win32',
     })
     if (resolvedFromEnv) {
-      resolvedOpencodeCommand = resolvedFromEnv
-      return resolvedFromEnv
+      resolvedOpencodeCommand = resolveWindowsBunShimTarget({
+        command: resolvedFromEnv,
+      })
+      return resolvedOpencodeCommand
     }
   }
 
@@ -550,9 +553,9 @@ export function resolveOpencodeCommand(): string {
     return 'opencode'
   }
 
-  resolvedOpencodeCommand = result
-  opencodeLogger.log(`Resolved opencode binary: ${result}`)
-  return result
+  resolvedOpencodeCommand = resolveWindowsBunShimTarget({ command: result })
+  opencodeLogger.log(`Resolved opencode binary: ${resolvedOpencodeCommand}`)
+  return resolvedOpencodeCommand
 }
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
