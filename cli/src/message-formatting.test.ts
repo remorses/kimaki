@@ -135,15 +135,18 @@ describe('formatTaskToolTitle', () => {
     ).toBe('')
   })
 
-  test('skips running parts until the child session and title exist', () => {
+  test('shows queued task calls before the child session exists', () => {
     expect(
       formatTaskToolTitle(
         taskPart({
           status: 'running',
-          input: {},
+          input: {
+            description: 'audit customer pages',
+            subagent_type: 'general',
+          },
         }),
       ),
-    ).toBe('')
+    ).toMatchInlineSnapshot(`"┣ general **audit customer pages**"`)
   })
 })
 

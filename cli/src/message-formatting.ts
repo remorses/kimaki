@@ -624,11 +624,8 @@ export function formatTodoList(part: Part): string {
 }
 
 export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
-  // Running only. Completed titles arrive after the child ends.
+  // Running only. The child session can be created later when many tasks queue.
   if (part.tool !== 'task' || part.state.status !== 'running') return ''
-
-  const childSessionId = part.state.metadata?.sessionId
-  if (typeof childSessionId !== 'string' || !childSessionId) return ''
 
   const description = part.state.input?.description
   const stateTitle = part.state.title
