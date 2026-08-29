@@ -23,7 +23,11 @@ import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
-import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
+import { archiveThread, uploadFilesToDiscord, stripMentions, raceDiscordRename, DISCORD_THREAD_RENAME_TIMEOUT_MS } from '../discord-utils.js'
+import { DiscordOperationError, OpenCodeSdkError } from '../errors.js'
+import { deriveThreadNameFromSessionTitle } from '../session-handler/thread-session-runtime.js'
+import * as orm from 'drizzle-orm'
+import * as schema from '../schema.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -852,6 +856,161 @@ cli
       note(
         `Aborted session: ${sessionId}${threadId ? `\nThread ID: ${threadId}` : ''}`,
         '✅ Aborted',
+      )
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.stack : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
+    'session title <title>',
+    'Update the OpenCode session title and Discord thread name',
+  )
+  .option('--session <sessionId>', 'OpenCode session ID')
+  .option('--thread <threadId>', 'Discord thread ID')
+  .example("kimaki session title 'Fix queue draining' --session ses_xxx")
+  .action(async (title, options) => {
+    try {
+      await initDatabase()
+
+      const trimmedTitle = title.trim()
+      if (!trimmedTitle) {
+        cliLogger.error('Title must not be empty')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (options.session && options.thread) {
+        cliLogger.error('Use either --session or --thread, not both')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (!options.session && !options.thread) {
+        cliLogger.error('Provide --session <sessionId> or --thread <threadId>')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const resolved = await (async () => {
+        if (options.session) {
+          const threadId = await getThreadIdBySessionId(options.session)
+          if (!threadId) {
+            return new Error(
+              `No Discord thread found for session: ${options.session}`,
+            )
+          }
+          return { sessionId: options.session, threadId }
+        }
+        const threadId = options.thread
+        if (!threadId) {
+          return new Error('Provide --session <sessionId> or --thread <threadId>')
+        }
+        const sessionId = await getThreadSession(threadId)
+        if (!sessionId) {
+          return new Error(`No OpenCode session found for thread: ${threadId}`)
+        }
+        return { sessionId, threadId }
+      })()
+      if (resolved instanceof Error) {
+        cliLogger.error(resolved.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const { token: botToken } = await resolveBotCredentials()
+      const rest = createDiscordRest(botToken)
+      const threadResult = await rest
+        .get(Routes.channel(resolved.threadId))
+        .catch((e) =>
+          new DiscordOperationError({ operation: 'fetchChannel', cause: e }),
+        )
+      if (threadResult instanceof Error) {
+        cliLogger.error(threadResult.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+      const threadData = threadResult as {
+        id: string
+        type: number
+        name?: string
+      }
+      if (!isThreadChannelType(threadData.type)) {
+        cliLogger.error(`Channel is not a thread: ${resolved.threadId}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const desiredName = deriveThreadNameFromSessionTitle({
+        sessionTitle: trimmedTitle,
+        currentName: threadData.name || '',
+      })
+      if (desiredName) {
+        const renameResult = await raceDiscordRename({
+          rename: rest
+            .patch(Routes.channel(resolved.threadId), {
+              body: { name: desiredName },
+            })
+            .catch((e) =>
+              new DiscordOperationError({
+                operation: 'renameChannel',
+                cause: e,
+              }),
+            ),
+        })
+        if (renameResult === 'timeout') {
+          cliLogger.warn(
+            `Discord thread rename timed out after ${DISCORD_THREAD_RENAME_TIMEOUT_MS}ms (likely rate-limited)`,
+          )
+        } else if (renameResult instanceof Error) {
+          cliLogger.warn(`Could not rename Discord thread: ${renameResult.message}`)
+        } else {
+          const db = await getDb()
+          const persistResult = await db
+            .update(schema.thread_sessions)
+            .set({ last_synced_name: desiredName })
+            .where(orm.eq(schema.thread_sessions.thread_id, resolved.threadId))
+            .catch((e) =>
+              new Error('Failed to persist thread rename state', { cause: e }),
+            )
+          if (persistResult instanceof Error) {
+            cliLogger.warn(persistResult.message)
+          }
+        }
+      }
+
+      const directory = await resolveSessionDirectoryFromDatabase({
+        sessionId: resolved.sessionId,
+      })
+      if (directory instanceof Error) {
+        cliLogger.error(directory.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const serverResult = await initializeOpencodeForDirectory(directory)
+      if (serverResult instanceof Error) {
+        cliLogger.error(`Failed to initialize OpenCode: ${serverResult.message}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const updateResult = await serverResult()
+        .session.update({
+          sessionID: resolved.sessionId,
+          title: trimmedTitle,
+        })
+        .catch((e) =>
+          new OpenCodeSdkError({ operation: 'session.update', cause: e }),
+        )
+      if (updateResult instanceof Error) {
+        cliLogger.error(updateResult.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (updateResult.error) {
+        cliLogger.error('OpenCode rejected the session title update')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      note(
+        `Updated title: ${trimmedTitle}${desiredName ? `\nDiscord thread: ${desiredName}` : ''}`,
+        'Title updated',
       )
       process.exit(0)
     } catch (error) {

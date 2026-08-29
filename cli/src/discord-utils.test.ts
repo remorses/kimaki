@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import {
   hasKimakiAdminPermission,
   hasKimakiBotPermission,
+  raceDiscordRename,
   resolveGuildMessageMember,
   splitMarkdownForDiscord,
 } from './discord-utils.js'
@@ -290,5 +291,23 @@ describe('resolveGuildMessageMember', () => {
     } as unknown as Message
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(null)
+  })
+})
+
+describe('raceDiscordRename', () => {
+  test('returns timeout when rename hangs', async () => {
+    const result = await raceDiscordRename({
+      rename: new Promise(() => {}),
+      timeoutMs: 20,
+    })
+    expect(result).toBe('timeout')
+  })
+
+  test('returns rename result when it finishes first', async () => {
+    const result = await raceDiscordRename({
+      rename: Promise.resolve('ok'),
+      timeoutMs: 1000,
+    })
+    expect(result).toBe('ok')
   })
 })

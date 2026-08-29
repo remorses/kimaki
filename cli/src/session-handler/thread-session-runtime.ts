@@ -40,6 +40,8 @@ import {
   sendThreadMessage,
   SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
+  raceDiscordRename,
+  DISCORD_THREAD_RENAME_TIMEOUT_MS,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import { formatPart, formatTaskToolTitle } from '../message-formatting.js'
@@ -2894,25 +2896,18 @@ export class ThreadSessionRuntime {
     // because the failure is almost always a rate limit.
     this.appliedOpencodeTitle = normalizedTitle
 
-    const RENAME_TIMEOUT_MS = 3000
-    const timeoutSignal = AbortSignal.timeout(RENAME_TIMEOUT_MS)
-    const renameResult = await Promise.race([
-      this.thread.setName(desiredName)
+    const renameResult = await raceDiscordRename({
+      rename: this.thread.setName(desiredName)
         .catch((e) =>
           new Error('Failed to rename thread from OpenCode title', {
             cause: e,
           }),
         ),
-      new Promise<'timeout'>((resolve) => {
-        timeoutSignal.addEventListener('abort', () => {
-          resolve('timeout')
-        })
-      }),
-    ])
+    })
 
     if (renameResult === 'timeout') {
       logger.warn(
-        `[TITLE] setName timed out after ${RENAME_TIMEOUT_MS}ms for thread ${this.threadId} (likely rate-limited)`,
+        `[TITLE] setName timed out after ${DISCORD_THREAD_RENAME_TIMEOUT_MS}ms for thread ${this.threadId} (likely rate-limited)`,
       )
       return
     }
@@ -3215,6 +3210,7 @@ export class ThreadSessionRuntime {
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
         sourceThreadId: input.sourceThreadId,
+        threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
         worktree,
         currentAgent: resolvedAgent,
@@ -4029,6 +4025,7 @@ export class ThreadSessionRuntime {
       userId: input.userId,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
+      threadName: this.thread.name || undefined,
       repliedMessage: input.repliedMessage,
       worktree,
       currentAgent: earlyAgentPreference,
@@ -4079,6 +4076,7 @@ export class ThreadSessionRuntime {
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
         sourceThreadId: input.sourceThreadId,
+        threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
       })
       // OpenCode's session.command API has no `system` field. Persist the

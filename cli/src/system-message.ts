@@ -361,6 +361,7 @@ export function getOpencodePromptContext({
   userId,
   sourceMessageId,
   sourceThreadId,
+  threadName,
   repliedMessage,
   worktree,
   currentAgent,
@@ -370,6 +371,7 @@ export function getOpencodePromptContext({
   userId?: string
   sourceMessageId?: string
   sourceThreadId?: string
+  threadName?: string
   repliedMessage?: RepliedMessageContext
   worktree?: WorktreeInfo
   currentAgent?: string
@@ -387,6 +389,9 @@ export function getOpencodePromptContext({
       : []),
     ...(sourceThreadId
       ? [` thread-id="${escapePromptAttribute(sourceThreadId)}"`]
+      : []),
+    ...(threadName
+      ? [` thread-name="${escapePromptAttribute(threadName)}"`]
       : []),
   ].join('')
   const repliedMessageXml = repliedMessage
@@ -490,7 +495,7 @@ interface BashToolInput {
 
 Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${parentSessionContext}
 
-Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts.
+Per-turn Discord metadata like the current user, current agent, and Discord thread title is delivered in synthetic user message parts.
 
 ## permissions
 
@@ -565,6 +570,16 @@ kimaki session abort <session_id>
 
 This stops the AI from processing but keeps the thread visible in Discord.
 Different from \`kimaki session archive\` which hides the thread.
+
+## updating the session title
+
+When the session scope or goal changed from the first message, and the Discord thread title no longer makes sense, update it:
+
+kimaki session title 'Short title' --session ${sessionId}
+
+The current Discord thread title is in the per-turn \`<discord-user thread-name="..." />\` metadata.
+Do not retitle every turn. Discord rate-limits thread renames.
+Keep titles short. Do not add emoji. Prefixes like ⬦, btw:, and Fork: are kept automatically.
 
 ## discord user mentions
 

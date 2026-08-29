@@ -9,6 +9,7 @@ async function parseWithGoke(argv: string[]) {
     'const cli = goke(\'kimaki\')',
     "cli.command('send', 'Send a message').option('-c, --channel <channelId>', 'Discord channel ID').option('--thread <threadId>', 'Thread ID').option('--session <sessionId>', 'Session ID').option('--send-at <schedule>', 'Schedule')",
     "cli.command('session archive <threadId>', 'Archive a thread')",
+    "cli.command('session title <title>', 'Update title').option('--session <sessionId>', 'Session ID').option('--thread <threadId>', 'Thread ID')",
     "cli.command('session search <query>', 'Search sessions').option('--channel <channelId>', 'Discord channel ID').option('--project <path>', 'Project path')",
     "cli.command('session export-events-jsonl', 'Export in-memory events to JSONL').option('--session <sessionId>', 'Session ID').option('--out <file>', 'Output path')",
     "cli.command('add-project', 'Add a project').option('-g, --guild <guildId>', 'Discord guild/server ID')",
@@ -105,6 +106,28 @@ describe('goke CLI ID parsing', () => {
 
     expect(result.options.guild).toBe(guildId)
     expect(typeof result.options.guild).toBe('string')
+  })
+
+  test('keeps session title and session ID as strings', async () => {
+    const sessionId = '001111222233334444'
+    const title = 'Fix queue draining'
+
+    const result = await parseWithGoke(
+      [
+        'node',
+        'kimaki',
+        'session',
+        'title',
+        title,
+        '--session',
+        sessionId,
+      ],
+    )
+
+    expect(result.args[0]).toBe(title)
+    expect(typeof result.args[0]).toBe('string')
+    expect(result.options.session).toBe(sessionId)
+    expect(typeof result.options.session).toBe('string')
   })
 
   test('keeps session archive thread ID as string', async () => {

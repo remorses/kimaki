@@ -275,6 +275,27 @@ export async function archiveThread({
   })
 }
 
+export const DISCORD_THREAD_RENAME_TIMEOUT_MS = 3000
+
+// Discord rename can hang on the 3rd call (~2 per 10 min). Race so it never blocks.
+export async function raceDiscordRename<T>({
+  rename,
+  timeoutMs = DISCORD_THREAD_RENAME_TIMEOUT_MS,
+}: {
+  rename: Promise<T>
+  timeoutMs?: number
+}): Promise<T | 'timeout'> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  return Promise.race([
+    rename,
+    new Promise<'timeout'>((resolve) => {
+      timeoutSignal.addEventListener('abort', () => {
+        resolve('timeout')
+      })
+    }),
+  ])
+}
+
 /**
  * Add a user as a thread member so the thread shows up in their Discord left
  * sidebar. Discord only lists threads you are a member of, so a scheduled

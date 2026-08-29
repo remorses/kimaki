@@ -101,6 +101,22 @@ describe('system-message', () => {
     ).rejects.toMatchObject({ code: 'EISDIR' })
   })
 
+  test('includes session title update guidance when scope or goal changed', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+      threadId: 'thread_123',
+    })
+    expect(message).toContain('## updating the session title')
+    expect(message).toContain(
+      "kimaki session title 'Short title' --session ses_123",
+    )
+    expect(message).toContain(
+      'When the session scope or goal changed from the first message',
+    )
+    expect(message).toContain('thread-name="..."')
+    expect(message).toContain('Do not retitle every turn')
+  })
+
   test('includes parent session context when parentSessionId is set', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_child',
@@ -184,7 +200,7 @@ describe('system-message', () => {
       Your current Discord thread ID is: thread_123
       Your current Discord guild ID is: guild_123
 
-      Per-turn Discord metadata like the current user and current agent is delivered in synthetic user message parts.
+      Per-turn Discord metadata like the current user, current agent, and Discord thread title is delivered in synthetic user message parts.
 
       ## permissions
 
@@ -259,6 +275,16 @@ describe('system-message', () => {
 
       This stops the AI from processing but keeps the thread visible in Discord.
       Different from \`kimaki session archive\` which hides the thread.
+
+      ## updating the session title
+
+      When the session scope or goal changed from the first message, and the Discord thread title no longer makes sense, update it:
+
+      kimaki session title 'Short title' --session ses_123
+
+      The current Discord thread title is in the per-turn \`<discord-user thread-name="..." />\` metadata.
+      Do not retitle every turn. Discord rate-limits thread renames.
+      Keep titles short. Do not add emoji. Prefixes like ⬦, btw:, and Fork: are kept automatically.
 
       ## discord user mentions
 
@@ -920,6 +946,7 @@ describe('system-message', () => {
         userId: 'user_123',
         sourceMessageId: 'msg_123',
         sourceThreadId: 'thread_123',
+        threadName: 'Fix auth bug',
         repliedMessage: {
           authorUsername: 'alice',
           text: 'Original replied message',
@@ -933,7 +960,7 @@ describe('system-message', () => {
         },
       }),
     ).toMatchInlineSnapshot(`
-      "<discord-user name="Tommy" user-id="user_123" message-id="msg_123" thread-id="thread_123" />
+      "<discord-user name="Tommy" user-id="user_123" message-id="msg_123" thread-id="thread_123" thread-name="Fix auth bug" />
 
       This message was a reply to message
 
