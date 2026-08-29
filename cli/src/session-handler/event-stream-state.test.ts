@@ -24,6 +24,8 @@ import {
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
   isSessionBusy,
+  isAssistantTextReadyForQuestion,
+  deriveLatestUnansweredQuestion,
   type EventBufferEntry,
 } from './event-stream-state.js'
 
@@ -1557,5 +1559,123 @@ describe('task child session token tracking', () => {
       mainSessionId,
       idleSessionId: childSessionId,
     })).toEqual([childSessionId])
+  })
+})
+
+describe('question waits for preceding text-end', () => {
+  const sessionId = 'ses_question_text'
+  const messageId = 'msg_asst_question'
+  const questionId = 'que_1'
+
+  const textStart = eventEntry({
+    type: 'message.part.updated',
+    properties: {
+      sessionID: sessionId,
+      part: {
+        id: 'prt_text',
+        sessionID: sessionId,
+        messageID: messageId,
+        type: 'text',
+        text: '',
+        time: { start: 1 },
+      },
+    },
+  })
+  const questionAsked = eventEntry({
+    type: 'question.asked',
+    properties: {
+      id: questionId,
+      sessionID: sessionId,
+      questions: [{
+        question: 'What next?',
+        header: 'Next step',
+        options: [
+          { label: 'Commit', description: 'Commit these files' },
+        ],
+      }],
+      tool: {
+        messageID: messageId,
+        callID: 'call_question',
+      },
+    },
+  })
+  const textEnd = eventEntry({
+    type: 'message.part.updated',
+    properties: {
+      sessionID: sessionId,
+      part: {
+        id: 'prt_text',
+        sessionID: sessionId,
+        messageID: messageId,
+        type: 'text',
+        text: 'Done callout',
+        time: { start: 1, end: 2 },
+      },
+    },
+  })
+  const questionError = eventEntry({
+    type: 'message.part.updated',
+    properties: {
+      sessionID: sessionId,
+      part: {
+        id: 'prt_question',
+        sessionID: sessionId,
+        messageID: messageId,
+        type: 'tool',
+        tool: 'question',
+        callID: 'call_question',
+        state: {
+          status: 'error',
+          error: 'Aborted',
+          time: { start: 2, end: 3 },
+        },
+      },
+    },
+  })
+
+  test('text is not ready when question.asked arrives before time.end', () => {
+    const events = [textStart, questionAsked]
+    expect(isAssistantTextReadyForQuestion({
+      events,
+      sessionId,
+      messageId,
+    })).toBe(false)
+    expect(deriveLatestUnansweredQuestion({
+      events,
+      sessionId,
+    })).toMatchObject({
+      id: questionId,
+      tool: { messageID: messageId },
+    })
+  })
+
+  test('text is ready after time.end, and still unanswered', () => {
+    const events = [textStart, questionAsked, textEnd]
+    expect(isAssistantTextReadyForQuestion({
+      events,
+      sessionId,
+      messageId,
+    })).toBe(true)
+    expect(deriveLatestUnansweredQuestion({
+      events,
+      sessionId,
+    })?.id).toBe(questionId)
+  })
+
+  test('no text part means the question is ready immediately', () => {
+    const events = [questionAsked]
+    expect(isAssistantTextReadyForQuestion({
+      events,
+      sessionId,
+      messageId,
+    })).toBe(true)
+  })
+
+  test('aborted question is not unanswered', () => {
+    const events = [textStart, questionAsked, textEnd, questionError]
+    expect(deriveLatestUnansweredQuestion({
+      events,
+      sessionId,
+    })).toBeUndefined()
   })
 })

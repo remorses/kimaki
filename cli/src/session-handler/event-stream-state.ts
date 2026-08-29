@@ -165,6 +165,101 @@ export function didQuestionQueueHandoffSinceLatestQuestionAsked({
   return false
 }
 
+export type DerivedUnansweredQuestion = {
+  id: string
+  questions: Array<{
+    question: string
+    header: string
+    options: Array<{
+      label: string
+      description: string
+    }>
+    multiple?: boolean
+  }>
+  tool?: {
+    messageID: string
+    callID: string
+  }
+}
+
+// OpenCode emits question.asked when the tool starts, often before the
+// preceding text part gets time.end. Discord must wait for that end event
+// or the question UI posts first and the text dumps later.
+export function isAssistantTextReadyForQuestion({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (!event || event.type !== 'message.part.updated') {
+      continue
+    }
+    const part = event.properties.part
+    if (part.sessionID !== sessionId) {
+      continue
+    }
+    if (part.messageID !== messageId) {
+      continue
+    }
+    if (part.type !== 'text') {
+      continue
+    }
+    return Boolean(part.time?.end)
+  }
+  return true
+}
+
+export function deriveLatestUnansweredQuestion({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): DerivedUnansweredQuestion | undefined {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) {
+      continue
+    }
+    const event = entry.event
+    if (getEventBufferSessionId(event) !== sessionId) {
+      continue
+    }
+    if (event.type === 'question.replied' || event.type === 'question.rejected') {
+      return undefined
+    }
+    if (event.type === 'message.part.updated') {
+      const part = event.properties.part
+      if (
+        part.type === 'tool'
+        && part.tool === 'question'
+        && (part.state.status === 'error' || part.state.status === 'completed')
+      ) {
+        return undefined
+      }
+    }
+    if (event.type === 'question.asked') {
+      return {
+        id: event.properties.id,
+        questions: event.properties.questions,
+        tool: event.properties.tool,
+      }
+    }
+  }
+  return undefined
+}
+
 export function derivePendingPermissionRequests({
   events,
   sessionId,

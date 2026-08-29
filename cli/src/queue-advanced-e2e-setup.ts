@@ -487,6 +487,50 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Text then question, with text-end delayed after the tool call.
+  // Reproduces OpenCode emitting question.asked before the text part's time.end.
+  const questionAfterTextMatcher: DeterministicMatcher = {
+    id: 'question-after-text-marker',
+    priority: 108,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'QUESTION_AFTER_TEXT_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'plan-before-question' },
+        {
+          type: 'text-delta',
+          id: 'plan-before-question',
+          delta: 'PLAN_TEXT_BEFORE_QUESTION',
+        },
+        {
+          type: 'tool-call',
+          toolCallId: 'question-after-text-call',
+          toolName: 'question',
+          input: JSON.stringify({
+            questions: [{
+              question: 'What next?',
+              header: 'Next step',
+              options: [
+                { label: 'Commit', description: 'Commit these files' },
+                { label: 'Stop', description: 'Leave uncommitted' },
+              ],
+            }],
+          }),
+        },
+        { type: 'text-end', id: 'plan-before-question' },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [200, 0, 0, 0, 400, 0],
+    },
+  }
+
   // Model responds with text + tool call, then after tool result the
   // follow-up matcher responds with text. This creates two assistant messages:
   // first with finish="tool-calls" + completed, second with finish="stop".
@@ -813,6 +857,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     actionButtonClickFollowupMatcher,
     questionToolMatcher,
     questionSelectQueueMatcher,
+    questionAfterTextMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
     externalDirectoryProbeMatcher,

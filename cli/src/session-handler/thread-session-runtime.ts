@@ -78,6 +78,7 @@ import {
   showAskUserQuestionDropdowns,
   pendingQuestionContexts,
   cancelPendingQuestion,
+  findPendingQuestionContextForRequest,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
@@ -119,6 +120,7 @@ import {
 import {
   doesLatestUserTurnHaveNaturalCompletion,
   didQuestionQueueHandoffSinceLatestQuestionAsked,
+  deriveLatestUnansweredQuestion,
   getAssistantMessageIdsForLatestUserTurn,
   getCurrentTurnStartTime,
   isSessionBusy,
@@ -679,8 +681,10 @@ export class ThreadSessionRuntime {
   // message and showing multiple back-to-back POSTs is wasteful.
   private typingKeepaliveTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly typingRepulseDebounce: ReturnType<typeof createDebouncedTimeout>
+  private readonly deferredQuestionShow: ReturnType<typeof createDebouncedTimeout>
 
   private static TYPING_REPULSE_DEBOUNCE_MS = 500
+  private static DEFERRED_QUESTION_SHOW_MS = 1000
 
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
@@ -692,6 +696,7 @@ export class ThreadSessionRuntime {
 
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, Part>>()
+  private shownQuestionRequestIds = new Set<string>()
 
   // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
@@ -767,6 +772,17 @@ export class ThreadSessionRuntime {
           return
         }
         this.restartTypingKeepalive({ sendNow: true })
+      },
+    })
+    this.deferredQuestionShow = createDebouncedTimeout({
+      delayMs: ThreadSessionRuntime.DEFERRED_QUESTION_SHOW_MS,
+      callback: () => {
+        if (this.disposed) {
+          return
+        }
+        void this.dispatchAction(async () => {
+          await this.tryShowPendingQuestion({ ignoreUnfinishedText: true })
+        })
       },
     })
   }
@@ -1034,6 +1050,7 @@ export class ThreadSessionRuntime {
     this.disposed = true
     unregisterEventListener(this.threadId)
     void this.persistEventBufferDebounced.dispose()
+    this.deferredQuestionShow.clear()
     this.stopTyping()
 
     // Release large internal buffers so GC can reclaim memory immediately
@@ -1041,6 +1058,7 @@ export class ThreadSessionRuntime {
     this.eventBuffer = []
     this.nextEventIndex = 0
     this.partBuffer.clear()
+    this.shownQuestionRequestIds.clear()
     this.preprocessChain = Promise.resolve()
 
     // Don't clear actionQueue here — queued closures own resolve/reject for
@@ -2210,6 +2228,7 @@ export class ThreadSessionRuntime {
 
     if (part.type === 'text' && part.time?.end) {
       await this.sendPartMessage({ part })
+      await this.tryShowPendingQuestion()
       return
     }
 
@@ -2625,6 +2644,70 @@ export class ThreadSessionRuntime {
     this.onInteractiveUiStateChanged()
   }
 
+  private hasUnfinishedTextPart(messageID: string): boolean {
+    return this.getBufferedParts(messageID).some((part) => {
+      return part.type === 'text' && !part.time?.end
+    })
+  }
+
+  // OpenCode emits question.asked when the tool starts, often before the
+  // preceding text part gets time.end. Showing the dropdown on that event
+  // holds the action queue while Discord posts, so the later text-end cannot
+  // send and dumps after the queued » user: indicator. Wait for text-end.
+  private async tryShowPendingQuestion({
+    ignoreUnfinishedText = false,
+  } = {}): Promise<boolean> {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) {
+      return false
+    }
+
+    const request = deriveLatestUnansweredQuestion({
+      events: this.eventBuffer,
+      sessionId,
+    })
+    if (!request) {
+      this.deferredQuestionShow.clear()
+      return false
+    }
+    if (
+      this.shownQuestionRequestIds.has(request.id)
+      || findPendingQuestionContextForRequest({
+        threadId: this.thread.id,
+        requestId: request.id,
+      })
+    ) {
+      this.deferredQuestionShow.clear()
+      return true
+    }
+
+    const messageId = request.tool?.messageID
+    if (!ignoreUnfinishedText && messageId && this.hasUnfinishedTextPart(messageId)) {
+      return false
+    }
+
+    this.shownQuestionRequestIds.add(request.id)
+    await this.showInteractiveUi({
+      flushMessageId: messageId,
+      show: async () => {
+        await showAskUserQuestionDropdowns({
+          thread: this.thread,
+          sessionId,
+          directory: this.sdkDirectory,
+          requestId: request.id,
+          input: { questions: request.questions },
+          silent: this.getQueueLength() > 0,
+        })
+      },
+    })
+    this.deferredQuestionShow.clear()
+    this.maybeHandoffQueuedItemForPendingQuestion({
+      sessionId,
+      reason: 'question-shown',
+    })
+    return true
+  }
+
   private async handleQuestionAsked(
     questionRequest: QuestionRequest,
   ): Promise<void> {
@@ -2640,26 +2723,10 @@ export class ThreadSessionRuntime {
       `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
     )
 
-    await this.showInteractiveUi({
-      show: async () => {
-        if (!sessionId) {
-          return
-        }
-        await showAskUserQuestionDropdowns({
-          thread: this.thread,
-          sessionId,
-          directory: this.sdkDirectory,
-          requestId: questionRequest.id,
-          input: { questions: questionRequest.questions },
-          silent: this.getQueueLength() > 0,
-        })
-      },
-    })
-
-    this.maybeHandoffQueuedItemForPendingQuestion({
-      sessionId,
-      reason: 'question-shown',
-    })
+    const shown = await this.tryShowPendingQuestion()
+    if (!shown) {
+      this.deferredQuestionShow.trigger()
+    }
   }
 
   private handleQuestionReplied(properties: { sessionID: string }): void {
@@ -2667,6 +2734,7 @@ export class ThreadSessionRuntime {
     if (properties.sessionID !== sessionId) {
       return
     }
+    this.deferredQuestionShow.clear()
     this.onInteractiveUiStateChanged()
 
     // When a question is answered and the local queue has items, the model may
@@ -3516,6 +3584,7 @@ export class ThreadSessionRuntime {
     )
 
     this.stopTyping()
+    this.deferredQuestionShow.clear()
 
     // The aborted run owns the question request, so the dropdown dies with it.
     // Questions have no TTL, so this is the only thing that clears them here.
