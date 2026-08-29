@@ -111,7 +111,7 @@ describe('system-message', () => {
       "kimaki session title 'Short title' --session ses_123",
     )
     expect(message).toContain(
-      'When the session scope or goal changed from the first message',
+      'When the session scope or goal changed from the first message, update the title:',
     )
     expect(message).toContain('thread-name="..."')
     expect(message).toContain('Do not retitle every turn')
@@ -278,13 +278,14 @@ describe('system-message', () => {
 
       ## updating the session title
 
-      When the session scope or goal changed from the first message, and the Discord thread title no longer makes sense, update it:
+      When the session scope or goal changed from the first message, update the title:
 
       kimaki session title 'Short title' --session ses_123
 
       The current Discord thread title is in the per-turn \`<discord-user thread-name="..." />\` metadata.
+      This updates the OpenCode title. Discord follows automatically.
       Do not retitle every turn. Discord rate-limits thread renames.
-      Keep titles short. Do not add emoji. Prefixes like ⬦, btw:, and Fork: are kept automatically.
+      Keep titles short. Do not add emoji. Do not copy ⬦, btw:, or Fork: prefixes.
 
       ## discord user mentions
 

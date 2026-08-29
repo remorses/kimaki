@@ -434,6 +434,14 @@ const PRESERVED_THREAD_PREFIXES: string[] = [
   'Fork: ',
 ]
 
+function stripPreservedThreadPrefix(name: string) {
+  const matchedPrefix = PRESERVED_THREAD_PREFIXES.find((prefix) => {
+    return name.startsWith(prefix)
+  })
+  if (!matchedPrefix) return name
+  return name.slice(matchedPrefix.length).trim()
+}
+
 function getThreadNameCandidateFromSessionTitle({
   sessionTitle,
   currentName,
@@ -445,14 +453,18 @@ function getThreadNameCandidateFromSessionTitle({
   if (!trimmed) {
     return null
   }
-  if (/^new session\s*-/i.test(trimmed)) {
+  const withoutCopiedPrefix = stripPreservedThreadPrefix(trimmed)
+  if (!withoutCopiedPrefix) {
+    return null
+  }
+  if (/^new session\s*-/i.test(withoutCopiedPrefix)) {
     return null
   }
   const matchedPrefix =
     PRESERVED_THREAD_PREFIXES.find((p) => {
       return currentName.startsWith(p)
     }) ?? ''
-  return `${matchedPrefix}${trimmed}`.slice(0, DISCORD_THREAD_NAME_MAX)
+  return `${matchedPrefix}${withoutCopiedPrefix}`.slice(0, DISCORD_THREAD_NAME_MAX)
 }
 
 export function deriveThreadNameFromSessionTitle({
@@ -473,45 +485,6 @@ export function deriveThreadNameFromSessionTitle({
     return undefined
   }
   return candidate
-}
-
-export function deriveThreadRenameFromSessionUpdate({
-  sessionTitle,
-  currentName,
-  lastSyncedName,
-}: {
-  sessionTitle: string | undefined | null
-  currentName: string
-  lastSyncedName: string | null
-}) {
-  if (lastSyncedName !== null && currentName !== lastSyncedName) {
-    return {
-      desiredName: null,
-      nextSyncedName: lastSyncedName,
-    }
-  }
-
-  const candidate = getThreadNameCandidateFromSessionTitle({
-    sessionTitle,
-    currentName,
-  })
-  if (candidate === null) {
-    return {
-      desiredName: null,
-      nextSyncedName: lastSyncedName,
-    }
-  }
-  if (candidate === currentName) {
-    return {
-      desiredName: null,
-      nextSyncedName: currentName,
-    }
-  }
-
-  return {
-    desiredName: candidate,
-    nextSyncedName: candidate,
-  }
 }
 
 // ── Ingress input type ───────────────────────────────────────────
@@ -712,17 +685,9 @@ export class ThreadSessionRuntime {
   private lastDisplayedContextPercentage = 0
   private lastRateLimitDisplayTime = 0
 
-  // Last OpenCode-generated session title we successfully applied to the
-  // Discord thread name. Used to dedupe repeated session.updated events so
-  // we only call thread.setName() once per distinct title. Discord rate-limits
-  // channel/thread renames to ~2 per 10 minutes per thread, so we must avoid
-  // retrying. Not persisted — worst case on restart we re-apply the same title
-  // once (which is a no-op via deriveThreadNameFromSessionTitle).
+  // Last OpenCode session title we applied to Discord. Dedupes session.updated
+  // so we only call setName once per distinct title. Not persisted.
   private appliedOpencodeTitle: string | undefined
-
-  // Last Discord thread name known to match the OpenCode title. Persisted so a
-  // user rename is still respected after Kimaki restarts.
-  private lastSyncedThreadName: string | null | undefined
 
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, Part>>()
@@ -2860,41 +2825,20 @@ export class ThreadSessionRuntime {
     if (info.id !== this.state?.sessionId) {
       return
     }
-    if (this.lastSyncedThreadName === undefined) {
-      const persistedName = await this.loadLastSyncedThreadName().catch(
-        (e) =>
-          new Error('Failed to read persisted thread rename state', { cause: e }),
-      )
-      if (persistedName instanceof Error) {
-        logger.warn(`[TITLE] ${persistedName.message} for thread ${this.threadId}`)
-        return
-      }
-      this.lastSyncedThreadName = persistedName
-    }
-
-    const renameDecision = deriveThreadRenameFromSessionUpdate({
-      sessionTitle: info.title,
-      currentName: this.thread.name,
-      lastSyncedName: this.lastSyncedThreadName,
-    })
-    if (renameDecision.desiredName === null) {
-      if (
-        renameDecision.nextSyncedName !== null &&
-        renameDecision.nextSyncedName !== this.lastSyncedThreadName
-      ) {
-        await this.persistLastSyncedThreadName(renameDecision.nextSyncedName)
-      }
-      return
-    }
-    const { desiredName } = renameDecision
     const normalizedTitle = info.title.trim()
     if (this.appliedOpencodeTitle === normalizedTitle) {
       return
     }
-    // Mark before the call so concurrent session.updated events don't stack
-    // rename attempts. On failure we keep the mark — a retry won't help
-    // because the failure is almost always a rate limit.
+    const desiredName = deriveThreadNameFromSessionTitle({
+      sessionTitle: info.title,
+      currentName: this.thread.name,
+    })
+    // Mark before setName so concurrent session.updated events don't stack
+    // renames. Keep the mark on failure — retry is almost always a rate limit.
     this.appliedOpencodeTitle = normalizedTitle
+    if (!desiredName) {
+      return
+    }
 
     const renameResult = await raceDiscordRename({
       rename: this.thread.setName(desiredName)
@@ -2917,36 +2861,9 @@ export class ThreadSessionRuntime {
       )
       return
     }
-    await this.persistLastSyncedThreadName(desiredName)
     logger.log(
       `[TITLE] Renamed thread ${this.threadId} to "${desiredName}" from OpenCode session title`,
     )
-  }
-
-  private async loadLastSyncedThreadName() {
-    const db = await getDb()
-    const row = await db.query.thread_sessions.findFirst({
-      where: { thread_id: this.threadId },
-      columns: { last_synced_name: true },
-    })
-    return row?.last_synced_name ?? null
-  }
-
-  private async persistLastSyncedThreadName(name: string): Promise<void> {
-    this.lastSyncedThreadName = name
-    const db = await getDb()
-    const result = await db.update(schema.thread_sessions)
-      .set({ last_synced_name: name })
-      .where(orm.eq(schema.thread_sessions.thread_id, this.threadId))
-      .catch(
-        (e) =>
-          new Error('Failed to persist thread rename state', {
-            cause: e,
-          }),
-      )
-    if (result instanceof Error) {
-      logger.warn(`[TITLE] ${result.message} for thread ${this.threadId}`)
-    }
   }
 
   private async handleTuiToast(properties: {
