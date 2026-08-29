@@ -412,7 +412,7 @@ describe('kimaki send --channel thread creation', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ caught-by-model
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000830>
         --- from: user (cli-send-tester)
         --- from: assistant (TestBot)
         I can see you sent a message, but Discord did not include its text.

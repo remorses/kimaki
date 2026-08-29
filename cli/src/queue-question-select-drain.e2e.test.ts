@@ -176,7 +176,7 @@ describe('queue drain after question select answer', () => {
         [user selects dropdown: 0]
         » **question-select-tester:** Alpha
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(timeline).toContain('QUESTION_SELECT_QUEUE_MARKER')
       expect(timeline).toContain('How to proceed?')
@@ -319,7 +319,7 @@ describe('queue drain after question select answer', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **question-select-tester:** Reply with exactly: post-question-second
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(timeline).toContain(`» **question-select-tester:** ${firstQueuedPrompt}`)
       expect(timeline).toContain('⬥ slow-response-started')

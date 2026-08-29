@@ -3593,14 +3593,6 @@ export class ThreadSessionRuntime {
     return this.state?.queueItems.length ?? 0
   }
 
-  /** NOTIFY_MESSAGE_FLAGS unless queue has a next item, then SILENT.
-   * Permissions should NOT use this — they always notify. */
-  private getNotifyFlags(): number {
-    return this.getQueueLength() > 0
-      ? SILENT_MESSAGE_FLAGS
-      : NOTIFY_MESSAGE_FLAGS
-  }
-
   /** Clear all queued messages. Returns the removed items. */
   clearQueue(): threadState.QueuedMessage[] {
     return threadState.clearQueueItems(this.threadId)
@@ -4568,13 +4560,15 @@ export class ThreadSessionRuntime {
     const projectInfo = truncatedBranch
       ? `${truncatedFolder} ⋅ ${truncatedBranch} ⋅ `
       : `${truncatedFolder} ⋅ `
-    const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
+    const hasQueuedMessage = this.getQueueLength() > 0
+    const mention = !hasQueuedMessage && this.state?.sessionUserId
+      ? ` <@${this.state.sessionUserId}>`
+      : ''
+    const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`
     this.stopTyping()
 
-    // Skip notification if there's a queued message next — the user only
-    // needs to be notified when the entire queue finishes.
     await sendThreadMessage(this.thread, footerText, {
-      flags: this.getNotifyFlags(),
+      flags: hasQueuedMessage ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     })
     logger.log(
       `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,
