@@ -1,6 +1,7 @@
 // Session inspection and archival terminal commands.
 import { goke } from 'goke'
 import { z } from 'zod'
+import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
@@ -16,6 +17,8 @@ import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessi
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
+import { formatTimeAgo } from '../commands/worktrees.js'
+import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
@@ -202,6 +205,89 @@ cli
         'Error:',
         error instanceof Error ? error.stack : String(error),
       )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
+    'session editors <file>',
+    dedent`
+      List sessions that last edited a file, newest first.
+
+      Use this before a commit in another session so the \`Session:\` line
+      uses the session that actually edited the file.
+    `,
+  )
+  .option('--json', 'Output as JSON')
+  .option(
+    '--limit <n>',
+    z.number().default(20).describe('Max sessions to show'),
+  )
+  .example('kimaki session editors src/cli.ts')
+  .example('kimaki session editors src/cli.ts --json')
+  .action(async (file, options, { console, process }) => {
+    try {
+      const cwd = process.cwd
+      const loaded = loadFileEditEvents({ dataDir: getDataDir() })
+      if (loaded instanceof Error) {
+        console.error(loaded.message)
+        process.exit(EXIT_NO_RESTART)
+        return
+      }
+
+      const editors = editorsForFile({
+        events: loaded,
+        filePath: file,
+        cwd,
+      }).slice(0, options.limit)
+      if (editors.length === 0) {
+        console.error(`No recorded editors for ${path.resolve(cwd, file)}`)
+        process.exit(1)
+        return
+      }
+
+      const titles = new Map<string, string>()
+      try {
+        await initDatabase()
+        const db = await getDb()
+        const sessionRows = await db.query.thread_sessions.findMany({
+          columns: { session_id: true, last_synced_name: true },
+          where: { session_id: { in: editors.map((editor) => editor.sessionId) } },
+          orderBy: { updated_at: 'desc' },
+        })
+        for (const row of sessionRows) {
+          if (!titles.has(row.session_id) && row.last_synced_name) {
+            titles.set(row.session_id, row.last_synced_name)
+          }
+        }
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error))
+      }
+
+      const rows = editors.map((editor) => {
+        const title = titles.get(editor.sessionId) || '-'
+        const editedAt = new Date(editor.at)
+        return {
+          sessionId: editor.sessionId,
+          title,
+          editedAt: editedAt.toISOString(),
+          ago: formatTimeAgo(editedAt),
+        }
+      })
+
+      if (options.json) {
+        console.log(JSON.stringify(rows, null, 2))
+        process.exit(0)
+        return
+      }
+
+      for (const row of rows) {
+        console.log(`${row.sessionId} | ${row.title} | ${row.ago}`)
+      }
+      process.exit(0)
+    } catch (error) {
+      console.error(error instanceof Error ? error.stack : String(error))
       process.exit(EXIT_NO_RESTART)
     }
   })

@@ -818,6 +818,29 @@ kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
 
 Then use grep/read tools on the file to find what you need.
 
+### who edited a file
+
+To find the session that last edited a file, run:
+
+\`\`\`bash
+kimaki session editors src/foo.ts
+kimaki session editors src/foo.ts --json
+\`\`\`
+
+Output is newest first. Each row has:
+
+- **session ID** (\`ses_xxx\`)
+- **title** (Discord thread name, so you can tell what that session was doing)
+- **time ago** (when that session last edited the file)
+
+Use this before a commit when this session did not edit the file. Put the original session ID as the last line of the commit message:
+
+\`\`\`
+Session: ses_xxx
+\`\`\`
+
+If this session edited the file, use this session ID instead. If several files come from different sessions, split the commit by session. Do not attribute another session's edits to this one.
+
 ## cross-project commands
 
 When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a Discord channel for it. Do not add subfolders of an existing project — only add root project directories.
