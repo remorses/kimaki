@@ -135,6 +135,9 @@ export function publicOpencodeBindRequiresPassword({
   return !LOOPBACK_HOSTNAMES.has(hostname)
 }
 
+// Always pass --hostname so opencode.json server.hostname / mdns cannot bind 0.0.0.0.
+const DEFAULT_OPENCODE_HOSTNAME = '127.0.0.1'
+
 export function buildOpencodeServeArgs({
   port,
   hostname,
@@ -142,12 +145,16 @@ export function buildOpencodeServeArgs({
   port: number
   hostname?: string | null
 }): string[] {
-  const args = ['serve', '--port', port.toString()]
-  if (hostname) {
-    args.push('--hostname', hostname)
-  }
-  args.push('--print-logs', '--log-level', 'WARN')
-  return args
+  return [
+    'serve',
+    '--port',
+    port.toString(),
+    '--hostname',
+    hostname || DEFAULT_OPENCODE_HOSTNAME,
+    '--print-logs',
+    '--log-level',
+    'WARN',
+  ]
 }
 
 // Tracks directories that have been initialized, to avoid repeated log spam
@@ -727,7 +734,7 @@ async function startSingleServer({
 
   const configuredPort = getOpencodePort()
   const port = configuredPort ?? (await getOpenPort())
-  const hostname = getOpencodeHostname()
+  const hostname = getOpencodeHostname() ?? DEFAULT_OPENCODE_HOSTNAME
 
   if (
     publicOpencodeBindRequiresPassword({ hostname }) &&

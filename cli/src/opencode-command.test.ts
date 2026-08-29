@@ -47,12 +47,14 @@ describe('selectResolvedCommand', () => {
 })
 
 describe('buildOpencodeServeArgs', () => {
-  test('omits hostname when unset so opencode stays on 127.0.0.1', async () => {
+  test('always passes --hostname so opencode.json cannot bind 0.0.0.0', async () => {
     const { buildOpencodeServeArgs } = await import('./opencode.js')
     expect(buildOpencodeServeArgs({ port: 4096 })).toEqual([
       'serve',
       '--port',
       '4096',
+      '--hostname',
+      '127.0.0.1',
       '--print-logs',
       '--log-level',
       'WARN',
