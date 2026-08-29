@@ -712,3 +712,18 @@ when working on the slack bridge, consult these docs:
 **slack mrkdwn format:**
 - Slack uses `*bold*` (not `**bold**`), `~strike~` (not `~~strike~~`), `<url|text>` (not `[text](url)`)
 - Full reference: https://api.slack.com/reference/surfaces/formatting
+
+# official discord demo
+
+`kimaki-demo/` is the Fly.io app for the public try-Kimaki bot in the official Kimaki Discord. People use it to try Kimaki without a local install.
+
+Always bump `kimaki-demo/Dockerfile` (`kimaki@x.y.z`) to `npm view kimaki version` before deploy.
+
+```bash
+cd kimaki-demo
+pnpm fly logs            # live logs
+pnpm fly ssh console     # inspect /data/kimaki.log
+pnpm fly deploy          # rebuild + deploy
+```
+
+If `fly` says no access token, the local 30-day flyctl session expired. Export `FLY_ACCESS_TOKEN` from `access_token` in `~/.fly/config.yml`, or run `fly auth login`.
