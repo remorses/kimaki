@@ -337,10 +337,119 @@ function emptyTurnTokenUsage(): TurnTokenUsage {
   }
 }
 
+function addAssistantTokens({
+  usage,
+  message,
+}: {
+  usage: TurnTokenUsage
+  message: AssistantMessage
+}): void {
+  if (message.tokens) {
+    usage.input += message.tokens.input
+    usage.output += message.tokens.output
+    usage.reasoning += message.tokens.reasoning
+    usage.cacheRead += message.tokens.cache.read
+    usage.cacheWrite += message.tokens.cache.write
+    usage.total += message.tokens.total ?? getTokenTotal(message.tokens)
+  }
+  usage.cost += message.cost
+  usage.model = message.modelID
+  usage.providerID = message.providerID
+}
+
+function sumAssistantMessages({
+  messages,
+  userMessageId,
+}: {
+  messages: Map<string, AssistantMessage>
+  userMessageId?: string
+}): TurnTokenUsage {
+  if (messages.size === 0) {
+    return {
+      ...emptyTurnTokenUsage(),
+      userMessageId,
+    }
+  }
+  const usage = emptyTurnTokenUsage()
+  usage.userMessageId = userMessageId
+  usage.assistantMessageCount = messages.size
+  for (const message of messages.values()) {
+    addAssistantTokens({ usage, message })
+  }
+  return usage
+}
+
+function collectAssistantMessages({
+  events,
+  sessionId,
+  upToIndex,
+  parentID,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex: number
+  parentID?: string
+}): Map<string, AssistantMessage> {
+  const latestByMessageId = new Map<string, AssistantMessage>()
+  for (let i = 0; i <= upToIndex; i++) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+      continue
+    }
+    if (parentID && info.parentID !== parentID) {
+      continue
+    }
+    latestByMessageId.set(info.id, info)
+  }
+  return latestByMessageId
+}
+
+function getSessionInfoTokenUsage({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex: number
+}): TurnTokenUsage | undefined {
+  for (let i = upToIndex; i >= 0; i--) {
+    const event = events[i]?.event
+    if (event?.type !== 'session.updated' && event?.type !== 'session.created') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.id !== sessionId) {
+      continue
+    }
+    if (!info.tokens) {
+      continue
+    }
+    const usage = emptyTurnTokenUsage()
+    usage.input = info.tokens.input
+    usage.output = info.tokens.output
+    usage.reasoning = info.tokens.reasoning
+    usage.cacheRead = info.tokens.cache.read
+    usage.cacheWrite = info.tokens.cache.write
+    usage.total = getTokenTotal(info.tokens)
+    usage.cost = info.cost ?? 0
+    usage.model = info.model?.id
+    usage.providerID = info.model?.providerID
+    return usage.total > 0 || usage.cost > 0 ? usage : undefined
+  }
+  return undefined
+}
+
 // Latest billed token snapshot for the current user turn.
 // Sums the last message.updated tokens per assistant message id so streaming
 // updates are not double-counted. Scoped to sessionId so subagent idles
-// report their own usage.
+// report their own usage. Child task sessions often have no user message in
+// the buffer; fall back to all assistant messages, then Session.tokens on
+// session.updated (OpenCode projects per-session usage there).
 export function getLatestTurnTokenUsage({
   events,
   sessionId,
@@ -350,60 +459,40 @@ export function getLatestTurnTokenUsage({
   sessionId: string
   upToIndex?: number
 }): TurnTokenUsage {
+  const end = upToIndex ?? events.length - 1
   const latestUserMessage = getLatestUserMessage({
     events,
     sessionId,
     upToIndex,
   })
-  if (!latestUserMessage) {
-    return emptyTurnTokenUsage()
-  }
-  const end = upToIndex ?? events.length - 1
-  const latestByMessageId = new Map<string, AssistantMessage>()
-
-  for (let i = 0; i <= end; i++) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    if (event.type !== 'message.updated') {
-      continue
-    }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
-      continue
-    }
-    if (info.parentID !== latestUserMessage.id) {
-      continue
-    }
-    latestByMessageId.set(info.id, info)
+  if (latestUserMessage) {
+    return sumAssistantMessages({
+      messages: collectAssistantMessages({
+        events,
+        sessionId,
+        upToIndex: end,
+        parentID: latestUserMessage.id,
+      }),
+      userMessageId: latestUserMessage.id,
+    })
   }
 
-  if (latestByMessageId.size === 0) {
-    return {
-      ...emptyTurnTokenUsage(),
-      userMessageId: latestUserMessage?.id,
-    }
+  const sessionAssistants = sumAssistantMessages({
+    messages: collectAssistantMessages({
+      events,
+      sessionId,
+      upToIndex: end,
+    }),
+  })
+  if (sessionAssistants.total > 0 || sessionAssistants.assistantMessageCount > 0) {
+    return sessionAssistants
   }
 
-  const usage = emptyTurnTokenUsage()
-  usage.userMessageId = latestUserMessage.id
-  usage.assistantMessageCount = latestByMessageId.size
-  for (const message of latestByMessageId.values()) {
-    if (message.tokens) {
-      usage.input += message.tokens.input
-      usage.output += message.tokens.output
-      usage.reasoning += message.tokens.reasoning
-      usage.cacheRead += message.tokens.cache.read
-      usage.cacheWrite += message.tokens.cache.write
-      usage.total += message.tokens.total ?? getTokenTotal(message.tokens)
-    }
-    usage.cost += message.cost
-    usage.model = message.modelID
-    usage.providerID = message.providerID
-  }
-  return usage
+  return getSessionInfoTokenUsage({
+    events,
+    sessionId,
+    upToIndex: end,
+  }) ?? emptyTurnTokenUsage()
 }
 
 function findFirstUserMessageIndex({
@@ -469,8 +558,31 @@ function subtractTokenUsage({
   }
 }
 
+function findFirstSessionEventIndex({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex: number
+}): number {
+  for (let i = 0; i <= upToIndex; i++) {
+    const event = events[i]?.event
+    if (!event) {
+      continue
+    }
+    if (getEventBufferSessionId(event) === sessionId) {
+      return i
+    }
+  }
+  return 0
+}
+
 // Tokens billed since the previous session.idle in this user turn.
 // Survives process restart because both idles stay in the event buffer.
+// Child task sessions may have no user message.updated; scope from the first
+// event for that sessionId instead so their tokens still emit.
 export function getIdleTokenUsageDelta({
   events,
   sessionId,
@@ -485,16 +597,22 @@ export function getIdleTokenUsageDelta({
     sessionId,
     upToIndex: idleEventIndex,
   })
-  if (!current.userMessageId) {
+  if (current.total <= 0) {
     return undefined
   }
-  const firstUserMessageIndex = findFirstUserMessageIndex({
-    events,
-    userMessageId: current.userMessageId,
-    upToIndex: idleEventIndex,
-  })
+  const firstUserMessageIndex = current.userMessageId
+    ? findFirstUserMessageIndex({
+      events,
+      userMessageId: current.userMessageId,
+      upToIndex: idleEventIndex,
+    })
+    : findFirstSessionEventIndex({
+      events,
+      sessionId,
+      upToIndex: idleEventIndex,
+    })
   if (firstUserMessageIndex === undefined) {
-    return undefined
+    return current
   }
   const previousIdleIndex = findPreviousIdleIndexInTurn({
     events,
@@ -503,7 +621,7 @@ export function getIdleTokenUsageDelta({
     beforeIndex: idleEventIndex,
   })
   if (previousIdleIndex === undefined) {
-    return current.total > 0 ? current : undefined
+    return current
   }
   const previous = getLatestTurnTokenUsage({
     events,
@@ -944,4 +1062,109 @@ export function getDerivedSubagentSessions({
   }
 
   return sessions
+}
+
+function getParentIdFromSessionEvent(event: EventBufferEvent): {
+  sessionId: string
+  parentID: string
+} | undefined {
+  if (event.type !== 'session.created' && event.type !== 'session.updated') {
+    return undefined
+  }
+  const parentID = event.properties.info.parentID
+  if (typeof parentID !== 'string' || parentID.length === 0) {
+    return undefined
+  }
+  return {
+    sessionId: event.properties.info.id,
+    parentID,
+  }
+}
+
+// Child sessions of the main thread: task tool metadata.sessionId, plus
+// session.created/updated parentID (available before task metadata lands).
+export function getDerivedChildSessionIds({
+  events,
+  mainSessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  upToIndex?: number
+}): Set<string> {
+  const end = upToIndex ?? events.length - 1
+  const ids = new Set<string>()
+  for (const session of getDerivedSubagentSessions({
+    events,
+    mainSessionId,
+    upToIndex,
+  })) {
+    ids.add(session.childSessionId)
+  }
+
+  let grew = true
+  while (grew) {
+    grew = false
+    for (let i = 0; i <= end; i++) {
+      const event = events[i]?.event
+      if (!event) {
+        continue
+      }
+      const parented = getParentIdFromSessionEvent(event)
+      if (!parented || ids.has(parented.sessionId)) {
+        continue
+      }
+      if (parented.parentID !== mainSessionId && !ids.has(parented.parentID)) {
+        continue
+      }
+      ids.add(parented.sessionId)
+      grew = true
+    }
+  }
+  return ids
+}
+
+export function isDerivedChildSession({
+  events,
+  mainSessionId,
+  candidateSessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  candidateSessionId: string
+  upToIndex?: number
+}): boolean {
+  if (candidateSessionId === mainSessionId) {
+    return false
+  }
+  return getDerivedChildSessionIds({
+    events,
+    mainSessionId,
+    upToIndex,
+  }).has(candidateSessionId)
+}
+
+export function getTokenUsageSessionIdsForIdle({
+  events,
+  mainSessionId,
+  idleSessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  idleSessionId: string
+  upToIndex?: number
+}): string[] {
+  if (idleSessionId !== mainSessionId) {
+    return [idleSessionId]
+  }
+  return [
+    mainSessionId,
+    ...getDerivedChildSessionIds({
+      events,
+      mainSessionId,
+      upToIndex,
+    }),
+  ]
 }

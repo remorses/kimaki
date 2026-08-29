@@ -17,6 +17,8 @@ import {
   getLatestRunInfo,
   getLatestTurnTokenUsage,
   getIdleTokenUsageDelta,
+  getTokenUsageSessionIdsForIdle,
+  isDerivedChildSession,
   hasAssistantMessageCompletedBefore,
   doesLatestUserTurnHaveNaturalCompletion,
   isAssistantMessageInLatestUserTurn,
@@ -1124,7 +1126,7 @@ describe('getLatestTurnTokenUsage', () => {
     })
   })
 
-  test('returns empty when the session has no user message', () => {
+  test('sums assistant tokens when the session has no user message', () => {
     const sessionId = 'ses_no_user'
     const events = [
       assistantEvent({
@@ -1142,16 +1144,16 @@ describe('getLatestTurnTokenUsage', () => {
     ]
 
     expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
-      input: 0,
-      output: 0,
+      input: 100,
+      output: 10,
       reasoning: 0,
       cacheRead: 0,
       cacheWrite: 0,
-      total: 0,
+      total: 110,
       cost: 0,
-      model: undefined,
-      providerID: undefined,
-      assistantMessageCount: 0,
+      model: 'gpt-5.3-codex',
+      providerID: 'openai',
+      assistantMessageCount: 1,
       userMessageId: undefined,
     })
   })
@@ -1322,5 +1324,238 @@ describe('getIdleTokenUsageDelta', () => {
       reasoning: 3,
       total: 20,
     })
+  })
+
+  test('counts child session assistant tokens without a user message.updated', () => {
+    const childSessionId = 'ses_task_child'
+    const events = [
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: childSessionId,
+          info: {
+            id: 'msg_child_asst_1',
+            sessionID: childSessionId,
+            role: 'assistant',
+            time: { created: 2, completed: 3 },
+            parentID: 'msg_child_user_missing',
+            modelID: 'gpt-5.3-codex',
+            providerID: 'openai',
+            mode: 'general',
+            agent: 'general',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0.02,
+            tokens: {
+              total: 40,
+              input: 30,
+              output: 10,
+              reasoning: 4,
+              cache: { read: 0, write: 0 },
+            },
+            finish: 'stop',
+          },
+        },
+      }),
+      idleEvent(childSessionId),
+    ]
+
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId: childSessionId,
+      idleEventIndex: events.length - 1,
+    })).toMatchObject({
+      input: 30,
+      output: 10,
+      reasoning: 4,
+      total: 40,
+      cost: 0.02,
+      assistantMessageCount: 1,
+    })
+  })
+
+  test('falls back to session.updated Session.tokens for a child with no message.updated', () => {
+    const childSessionId = 'ses_task_child_session_tokens'
+    const events = [
+      eventEntry({
+        type: 'session.updated',
+        properties: {
+          sessionID: childSessionId,
+          info: {
+            id: childSessionId,
+            slug: 'child',
+            projectID: 'prj_1',
+            directory: '/test',
+            parentID: 'ses_main',
+            title: 'child task',
+            version: '1',
+            cost: 0.05,
+            tokens: {
+              input: 100,
+              output: 20,
+              reasoning: 8,
+              cache: { read: 4, write: 1 },
+            },
+            time: { created: 1, updated: 2 },
+          },
+        },
+      }),
+      idleEvent(childSessionId),
+    ]
+
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId: childSessionId,
+      idleEventIndex: events.length - 1,
+    })).toMatchObject({
+      input: 100,
+      output: 20,
+      reasoning: 8,
+      cacheRead: 4,
+      cacheWrite: 1,
+      total: 133,
+      cost: 0.05,
+    })
+  })
+
+  test('does not re-emit child tokens at parent idle after the child already idled', () => {
+    const childSessionId = 'ses_task_child_dedupe'
+    const events = [
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: childSessionId,
+          info: {
+            id: 'msg_child_asst_1',
+            sessionID: childSessionId,
+            role: 'assistant',
+            time: { created: 2, completed: 3 },
+            parentID: 'msg_child_user_missing',
+            modelID: 'gpt-5.3-codex',
+            providerID: 'openai',
+            mode: 'general',
+            agent: 'general',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0,
+            tokens: {
+              total: 40,
+              input: 30,
+              output: 10,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+            finish: 'stop',
+          },
+        },
+      }),
+      idleEvent(childSessionId),
+      idleEvent('ses_main'),
+    ]
+
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId: childSessionId,
+      idleEventIndex: 1,
+    })).toMatchObject({ total: 40 })
+    expect(getIdleTokenUsageDelta({
+      events,
+      sessionId: childSessionId,
+      idleEventIndex: 2,
+    })).toBeUndefined()
+  })
+})
+
+describe('task child session token tracking', () => {
+  function idleEvent(sessionId: string): EventBufferEntry {
+    return eventEntry({
+      type: 'session.idle',
+      properties: { sessionID: sessionId },
+    })
+  }
+
+  test('isDerivedChildSession is true from session.created parentID before task metadata', () => {
+    const mainSessionId = 'ses_main'
+    const childSessionId = 'ses_child'
+    const events = [
+      eventEntry({
+        type: 'session.created',
+        properties: {
+          sessionID: childSessionId,
+          info: {
+            id: childSessionId,
+            slug: 'child',
+            projectID: 'prj_1',
+            directory: '/test',
+            parentID: mainSessionId,
+            title: 'explore files',
+            version: '1',
+            time: { created: 1, updated: 1 },
+          },
+        },
+      }),
+    ]
+
+    expect(isDerivedChildSession({
+      events,
+      mainSessionId,
+      candidateSessionId: childSessionId,
+    })).toBe(true)
+    expect(isDerivedChildSession({
+      events,
+      mainSessionId,
+      candidateSessionId: 'ses_unrelated',
+    })).toBe(false)
+  })
+
+  test('main idle also returns child session ids so their tokens can be tracked', () => {
+    const mainSessionId = 'ses_main'
+    const childSessionId = 'ses_child'
+    const events = [
+      eventEntry({
+        type: 'session.created',
+        properties: {
+          sessionID: childSessionId,
+          info: {
+            id: childSessionId,
+            slug: 'child',
+            projectID: 'prj_1',
+            directory: '/test',
+            parentID: mainSessionId,
+            title: 'child task',
+            version: '1',
+            time: { created: 1, updated: 1 },
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'prt_task',
+            sessionID: mainSessionId,
+            messageID: 'msg_asst',
+            type: 'tool',
+            callID: 'call_task',
+            tool: 'task',
+            state: {
+              status: 'running',
+              input: { subagent_type: 'general' },
+              metadata: { sessionId: childSessionId },
+            },
+          },
+        },
+      }),
+      idleEvent(mainSessionId),
+    ]
+
+    expect(getTokenUsageSessionIdsForIdle({
+      events,
+      mainSessionId,
+      idleSessionId: mainSessionId,
+    })).toEqual([mainSessionId, childSessionId])
+    expect(getTokenUsageSessionIdsForIdle({
+      events,
+      mainSessionId,
+      idleSessionId: childSessionId,
+    })).toEqual([childSessionId])
   })
 })

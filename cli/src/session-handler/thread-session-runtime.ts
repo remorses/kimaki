@@ -123,6 +123,8 @@ import {
   getIdleTokenUsageDelta,
   getDerivedSubtaskIndex,
   getDerivedSubtaskAgentType,
+  getTokenUsageSessionIdsForIdle,
+  isDerivedChildSession,
   getLatestAssistantMessageIdForLatestUserTurn,
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
@@ -1033,21 +1035,25 @@ export class ThreadSessionRuntime {
     if (!mainSessionId || candidateSessionId === mainSessionId) {
       return undefined
     }
+    if (!isDerivedChildSession({
+      events: this.eventBuffer,
+      mainSessionId,
+      candidateSessionId,
+    })) {
+      return undefined
+    }
+
     const subtaskIndex = getDerivedSubtaskIndex({
       events: this.eventBuffer,
       mainSessionId,
       candidateSessionId,
     })
-    if (!subtaskIndex) {
-      return undefined
-    }
-
     const agentType = getDerivedSubtaskAgentType({
       events: this.eventBuffer,
       mainSessionId,
       candidateSessionId,
     })
-    const label = `${agentType || 'task'}-${subtaskIndex}`
+    const label = `${agentType || 'task'}-${subtaskIndex || 1}`
     const assistantMessageId = this.getLatestAssistantMessageIdForCurrentTurn({
       sessionId: candidateSessionId,
     })
@@ -2299,21 +2305,16 @@ export class ThreadSessionRuntime {
     this.requestTypingRepulse()
   }
 
-  private trackIdleTokenUsage(idleSessionId: string): void {
-    let idleEventIndex: number | undefined
-    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
-      const event = this.eventBuffer[i]?.event
-      if (event?.type === 'session.idle' && event.properties.sessionID === idleSessionId) {
-        idleEventIndex = i
-        break
-      }
-    }
-    if (idleEventIndex === undefined) {
-      return
-    }
+  private trackIdleTokenUsage({
+    sessionId,
+    idleEventIndex,
+  }: {
+    sessionId: string
+    idleEventIndex: number
+  }): void {
     const usage = getIdleTokenUsageDelta({
       events: this.eventBuffer,
-      sessionId: idleSessionId,
+      sessionId,
       idleEventIndex,
     })
     if (!usage) {
@@ -2329,7 +2330,7 @@ export class ThreadSessionRuntime {
       tokens_total: usage.total,
       cost: usage.cost,
       assistant_message_count: usage.assistantMessageCount,
-      is_subagent: Boolean(this.getSubtaskInfoForSession(idleSessionId)),
+      is_subagent: Boolean(this.getSubtaskInfoForSession(sessionId)),
     }
     if (usage.model) {
       properties.model = usage.model
@@ -2340,8 +2341,37 @@ export class ThreadSessionRuntime {
     trackEvent('tokens_used', properties)
   }
 
+  private trackIdleTokenUsageForSessionTree(idleSessionId: string): void {
+    let idleEventIndex: number | undefined
+    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
+      const event = this.eventBuffer[i]?.event
+      if (event?.type === 'session.idle' && event.properties.sessionID === idleSessionId) {
+        idleEventIndex = i
+        break
+      }
+    }
+    if (idleEventIndex === undefined) {
+      return
+    }
+    const mainSessionId = this.state?.sessionId
+    const sessionIds = mainSessionId
+      ? getTokenUsageSessionIdsForIdle({
+        events: this.eventBuffer,
+        mainSessionId,
+        idleSessionId,
+        upToIndex: idleEventIndex,
+      })
+      : [idleSessionId]
+    for (const sessionId of sessionIds) {
+      this.trackIdleTokenUsage({
+        sessionId,
+        idleEventIndex,
+      })
+    }
+  }
+
   private async handleSessionIdle(idleSessionId: string): Promise<void> {
-    this.trackIdleTokenUsage(idleSessionId)
+    this.trackIdleTokenUsageForSessionTree(idleSessionId)
 
     const sessionId = this.state?.sessionId
 
