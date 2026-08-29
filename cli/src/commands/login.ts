@@ -34,6 +34,7 @@ import {
   getOpencodeServerAuthHeaders,
 } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import { clearModelListCache } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
@@ -939,6 +940,7 @@ export async function handleOAuthCodeModalSubmit(
     }
 
     await getClient().instance.dispose({ directory: ctx.dir })
+    clearModelListCache()
     pendingLoginContexts.delete(hash)
 
     await interaction.editReply({
@@ -995,6 +997,7 @@ export async function handleApiKeyModalSubmit(
 
     // Dispose to refresh provider state so new credentials are recognized
     await getClient().instance.dispose({ directory: ctx.dir })
+    clearModelListCache()
 
     await interaction.editReply({
       content: `✅ **Successfully authenticated with ${ctx.providerName}!**\n\nYou can now use models from this provider.`,
@@ -1161,6 +1164,7 @@ async function startOAuthFlow(
     }
 
     await getClient().instance.dispose({ directory: ctx.dir })
+    clearModelListCache()
     pendingLoginContexts.delete(hash)
 
     await interaction.editReply({

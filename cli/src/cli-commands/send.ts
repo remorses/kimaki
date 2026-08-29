@@ -47,6 +47,7 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import { validateCliModelOption } from '../session-handler/model-utils.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -175,6 +176,14 @@ cli
 
         if (!prompt) {
           cliLogger.error('Prompt is required. Use --prompt <prompt>')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        const earlyModelCheck = await validateCliModelOption({
+          model: options.model,
+        })
+        if (earlyModelCheck instanceof Error) {
+          cliLogger.error(earlyModelCheck.message)
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -485,6 +494,14 @@ cli
           // We only require it for features that genuinely need a local directory
           // (scheduled tasks and --wait).
           const channelConfig = await getChannelDirectory(threadData.parent_id)
+          const threadModelCheck = await validateCliModelOption({
+            model: options.model,
+            directory: channelConfig?.directory,
+          })
+          if (threadModelCheck instanceof Error) {
+            cliLogger.error(threadModelCheck.message)
+            process.exit(EXIT_NO_RESTART)
+          }
 
           // Guard early: fail before sending the message if a feature that
           // needs local project directory mapping is requested.
@@ -624,6 +641,14 @@ cli
         // (--send-at, --wait, --cwd).
         const channelConfig = await getChannelDirectory(channelData.id)
         const projectDirectory = channelConfig?.directory
+        const channelModelCheck = await validateCliModelOption({
+          model: options.model,
+          directory: projectDirectory,
+        })
+        if (channelModelCheck instanceof Error) {
+          cliLogger.error(channelModelCheck.message)
+          process.exit(EXIT_NO_RESTART)
+        }
 
         // Features that require a local project directory mapping
         const needsProjectDirectory = Boolean(parsedSchedule || options.wait || options.cwd)

@@ -1,12 +1,17 @@
 // Model resolution utilities.
 // getDefaultModel resolves the default model from OpenCode when no user preference is set.
+// listModels wraps provider.list() with a per-directory memoized cache.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
-import { OpenCodeSdkError } from '../errors.js'
-import { type initializeOpencodeForDirectory } from '../opencode.js'
+import type { OpencodeClient, Provider } from '@opencode-ai/sdk/v2'
+import { InvalidModelError, OpenCodeSdkError } from '../errors.js'
+import {
+  initializeOpencodeForDirectory,
+  subscribeOpencodeServerLifecycle,
+} from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { ScheduledTaskScheduleKind } from '../database.js'
 
@@ -58,7 +63,7 @@ function getRecentModelsFromTuiState(): Array<{
 /**
  * Parse a model string in format "provider/model" into providerID and modelID.
  */
-function parseModelString(
+export function parseModelId(
   model: string,
 ): { providerID: string; modelID: string } | undefined {
   const [providerID, ...modelParts] = model.split('/')
@@ -85,7 +90,7 @@ function getModelFromProjectConfig({
     if (!parsed.model) {
       return undefined
     }
-    return parseModelString(parsed.model)
+    return parseModelId(parsed.model)
   })
   if (result instanceof Error) return undefined
   return result
@@ -105,6 +110,181 @@ function isModelValid(
   })
   const modelExists = provider?.models && model.modelID in provider.models
   return isConnected && !!modelExists
+}
+
+export type ListedModel = {
+  providerID: string
+  modelID: string
+  name: string
+  connected: boolean
+}
+
+type ModelListCacheEntry =
+  | { status: 'pending'; promise: Promise<ListedModel[] | OpenCodeSdkError> }
+  | { status: 'ready'; value: ListedModel[] }
+
+const modelListCache = new Map<string, ModelListCacheEntry>()
+
+export function clearModelListCache() {
+  modelListCache.clear()
+}
+
+subscribeOpencodeServerLifecycle(() => {
+  clearModelListCache()
+})
+
+function flattenProviderModels({
+  providers,
+  connected,
+}: {
+  providers: Provider[]
+  connected: string[]
+}): ListedModel[] {
+  const connectedSet = new Set(connected)
+  const models: ListedModel[] = []
+  for (const provider of providers) {
+    const isConnected = connectedSet.has(provider.id)
+    for (const [modelID, model] of Object.entries(provider.models)) {
+      models.push({
+        providerID: provider.id,
+        modelID,
+        name: model.name || modelID,
+        connected: isConnected,
+      })
+    }
+  }
+  return models
+}
+
+export async function listModels({
+  getClient,
+  directory,
+}: {
+  getClient: () => OpencodeClient
+  directory?: string
+}): Promise<ListedModel[] | OpenCodeSdkError> {
+  const cacheKey = directory ?? ''
+  const cached = modelListCache.get(cacheKey)
+  if (cached?.status === 'ready') return cached.value
+  if (cached?.status === 'pending') return cached.promise
+
+  const promise = (async () => {
+    const providersResponse = await getClient()
+      .provider.list({ directory })
+      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
+    if (providersResponse instanceof Error) return providersResponse
+    if (!providersResponse.data) {
+      return new OpenCodeSdkError({ operation: 'provider.list' })
+    }
+    return flattenProviderModels({
+      providers: providersResponse.data.all,
+      connected: providersResponse.data.connected,
+    })
+  })()
+
+  modelListCache.set(cacheKey, { status: 'pending', promise })
+  const result = await promise
+  const current = modelListCache.get(cacheKey)
+  const ownsCacheEntry = current?.status === 'pending' && current.promise === promise
+  if (result instanceof Error) {
+    if (ownsCacheEntry) modelListCache.delete(cacheKey)
+    return result
+  }
+  if (ownsCacheEntry) modelListCache.set(cacheKey, { status: 'ready', value: result })
+  return result
+}
+
+export function validateModelIdAgainstList({
+  model,
+  models,
+}: {
+  model: string
+  models: ListedModel[]
+}): { providerID: string; modelID: string } | InvalidModelError {
+  const parsed = parseModelId(model)
+  if (!parsed) {
+    return new InvalidModelError({
+      model,
+      reason: 'expected provider/model, for example anthropic/claude-opus-4-6',
+    })
+  }
+
+  const match = models.find((candidate) => {
+    return (
+      candidate.providerID === parsed.providerID &&
+      candidate.modelID === parsed.modelID
+    )
+  })
+  if (!match) {
+    const siblings = models
+      .filter((candidate) => candidate.providerID === parsed.providerID)
+      .map((candidate) => `${candidate.providerID}/${candidate.modelID}`)
+    if (siblings.length > 0) {
+      return new InvalidModelError({
+        model,
+        reason: `unknown model. Similar: ${siblings.slice(0, 8).join(', ')}`,
+      })
+    }
+    const connectedProviders = [
+      ...new Set(
+        models.filter((candidate) => candidate.connected).map((candidate) => {
+          return candidate.providerID
+        }),
+      ),
+    ]
+    const connectedHint = connectedProviders.length
+      ? ` Connected providers: ${connectedProviders.join(', ')}`
+      : ''
+    return new InvalidModelError({
+      model,
+      reason: `unknown provider ${parsed.providerID}.${connectedHint}`,
+    })
+  }
+  if (!match.connected) {
+    return new InvalidModelError({
+      model,
+      reason: `provider ${parsed.providerID} is not connected`,
+    })
+  }
+  return parsed
+}
+
+export async function validateModelId({
+  model,
+  getClient,
+  directory,
+}: {
+  model: string
+  getClient: () => OpencodeClient
+  directory?: string
+}): Promise<
+  { providerID: string; modelID: string } | InvalidModelError | OpenCodeSdkError
+> {
+  const models = await listModels({ getClient, directory })
+  if (models instanceof Error) return models
+  return validateModelIdAgainstList({ model, models })
+}
+
+export async function validateCliModelOption({
+  model,
+  directory,
+}: {
+  model: string | undefined
+  directory?: string
+}) {
+  if (!model) return
+  const parsed = parseModelId(model)
+  if (!parsed) {
+    return new InvalidModelError({
+      model,
+      reason: 'expected provider/model, for example anthropic/claude-opus-4-6',
+    })
+  }
+  if (!directory) return parsed
+
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (getClient instanceof Error) return getClient
+  return validateModelId({ model, getClient, directory })
 }
 
 /**
@@ -163,7 +343,7 @@ export async function getDefaultModel({
   const configResponse = await getClient().config.get({ directory })
     .catch((e) => new OpenCodeSdkError({ operation: 'config.get', cause: e }))
   if (!(configResponse instanceof Error) && configResponse.data?.model) {
-    const configModel = parseModelString(configResponse.data.model)
+    const configModel = parseModelId(configResponse.data.model)
     if (configModel && isModelValid(configModel, connected, providers)) {
       sessionLogger.log(
         `[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`,

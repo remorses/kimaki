@@ -93,6 +93,7 @@ import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
 } from '../commands/model.js'
+import { validateModelId } from './model-utils.js'
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
@@ -2980,6 +2981,18 @@ export class ThreadSessionRuntime {
         await clearSessionModel(session.id)
       }
 
+      if (input.model) {
+        const validatedModel = await validateModelId({
+          model: input.model,
+          getClient,
+          directory: this.sdkDirectory,
+        })
+        if (validatedModel instanceof Error) {
+          await cleanupOnError(`Failed to resolve model: ${validatedModel.message}`)
+          return
+        }
+      }
+
       await ensureSessionPreferencesSnapshot({
         sessionId: session.id,
         channelId,
@@ -3008,11 +3021,11 @@ export class ThreadSessionRuntime {
       const [modelResult, preferredVariant] = await Promise.all([
         (async () => {
           if (input.model) {
-            const [providerID, ...modelParts] = input.model.split('/')
-            const modelID = modelParts.join('/')
-            if (providerID && modelID) {
-              return { providerID, modelID }
-            }
+            return validateModelId({
+              model: input.model,
+              getClient,
+              directory: this.sdkDirectory,
+            })
           }
           const modelInfo = await getCurrentModelInfo({
             sessionId: session.id,
@@ -3776,6 +3789,24 @@ export class ThreadSessionRuntime {
       await clearSessionModel(session.id)
     }
 
+    if (input.model) {
+      const validatedModel = await validateModelId({
+        model: input.model,
+        getClient,
+        directory: this.sdkDirectory,
+      })
+      if (validatedModel instanceof Error) {
+        this.stopTyping()
+        await sendThreadMessage(
+          this.thread,
+          `Failed to resolve model: ${validatedModel.message}`,
+          { flags: NOTIFY_MESSAGE_FLAGS },
+        )
+        await this.tryDrainQueue({ showIndicator: true })
+        return
+      }
+    }
+
     await ensureSessionPreferencesSnapshot({
       sessionId: session.id,
       channelId,
@@ -3811,11 +3842,11 @@ export class ThreadSessionRuntime {
     const [earlyModelResult, preferredVariant] = await Promise.all([
       (async () => {
         if (input.model) {
-          const [providerID, ...modelParts] = input.model.split('/')
-          const modelID = modelParts.join('/')
-          if (providerID && modelID) {
-            return { providerID, modelID }
-          }
+          return validateModelId({
+            model: input.model,
+            getClient,
+            directory: this.sdkDirectory,
+          })
         }
         const modelInfo = await getCurrentModelInfo({
           sessionId: session.id,

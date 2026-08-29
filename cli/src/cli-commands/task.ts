@@ -39,6 +39,7 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import { validateCliModelOption } from '../session-handler/model-utils.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -263,6 +264,17 @@ cli
       }
 
       const newPrompt = trimmedPrompt ?? existingPayload.prompt
+      const nextModel = hasModel ? options.model!.trim() || null : existingPayload.model
+      if (nextModel) {
+        const modelCheck = await validateCliModelOption({
+          model: nextModel,
+          directory: task.project_directory ?? undefined,
+        })
+        if (modelCheck instanceof Error) {
+          cliLogger.error(modelCheck.message)
+          process.exit(EXIT_NO_RESTART)
+        }
+      }
       // Match send --model/--agent: empty string clears the override (null).
       const updatedPayload: ScheduledTaskPayload = {
         ...existingPayload,
@@ -271,7 +283,7 @@ cli
           ? { userId: resolvedUser.id, username: resolvedUser.username || null }
           : {}),
         ...(hasAgent ? { agent: options.agent!.trim() || null } : {}),
-        ...(hasModel ? { model: options.model!.trim() || null } : {}),
+         ...(hasModel ? { model: nextModel } : {}),
         ...(hasPreRun ? { preRunCommand: options.preRun!.trim() || null } : {}),
         ...(hasAllowConcurrency
           ? { allowConcurrency: options.allowConcurrency === 'true' }
