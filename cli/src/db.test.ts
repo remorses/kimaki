@@ -11,10 +11,14 @@ import * as schema from './schema.js'
 import {
   appendSessionEventsSinceLastTimestamp,
   createPendingWorkspace,
+  getDueSessionSleeps,
   getSessionEventSnapshot,
   getSessionModel,
+  getSessionSleep,
   setSessionModel,
+  upsertSessionSleep,
 } from './database.js'
+import { createClient } from '@libsql/client'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { chooseLockPort } from './test-utils.js'
 import { copyCurrentSessionModel } from './commands/model.js'
@@ -25,6 +29,171 @@ afterAll(async () => {
 })
 
 describe('getDb', () => {
+  test('adds session_sleeps delivery columns on databases created before that schema', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-legacy-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE thread_sessions (
+          thread_id text PRIMARY KEY,
+          session_id text NOT NULL
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE session_sleeps (
+          session_id text PRIMARY KEY,
+          thread_id text NOT NULL,
+          wake_at datetime NOT NULL,
+          reason text,
+          status text DEFAULT 'planned' NOT NULL,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id)
+        VALUES ('thr-legacy', 'ses-legacy')
+      `)
+      await client.execute(`
+        INSERT INTO session_sleeps (session_id, thread_id, wake_at, status)
+        VALUES ('ses-legacy', 'thr-legacy', '2020-01-01T00:00:00.000Z', 'planned')
+      `)
+      client.close()
+
+      process.env['KIMAKI_DB_URL'] = `file:${dbPath}`
+      await getDb()
+
+      const due = await getDueSessionSleeps({
+        now: new Date('2026-08-21T00:00:00Z'),
+        retryAfterMs: 30_000,
+        limit: 10,
+      })
+      const legacy = due.find((row) => row.session_id === 'ses-legacy')
+      expect(legacy?.delivery_id).toBeTruthy()
+      expect(legacy?.attempts).toBe(0)
+
+      // The first table required thread_id. After the column was dropped from
+      // the schema, inserts that omit it must still work on existing databases.
+      await upsertSessionSleep({
+        sessionId: 'ses-legacy-new',
+        wakeAt: new Date('2026-08-26T00:00:00Z'),
+        reason: 'check the reply',
+      })
+      const created = await getSessionSleep({ sessionId: 'ses-legacy-new' })
+      expect(created?.status).toBe('planned')
+      expect(created?.reason).toBe('check the reply')
+      expect(created?.delivery_id).toBeTruthy()
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('rebuilds session_sleeps that still have posted_at from the intermediate schema', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-posted-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE thread_sessions (
+          thread_id text PRIMARY KEY,
+          session_id text NOT NULL
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE session_sleeps (
+          session_id text PRIMARY KEY,
+          thread_id text NOT NULL,
+          wake_at datetime NOT NULL,
+          reason text,
+          status text DEFAULT 'planned' NOT NULL,
+          delivery_id text NOT NULL,
+          attempts integer DEFAULT 0 NOT NULL,
+          last_attempt_at datetime,
+          posted_at datetime,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id)
+        VALUES ('thr-posted', 'ses-posted')
+      `)
+      await client.execute(`
+        INSERT INTO session_sleeps (
+          session_id, thread_id, wake_at, status, delivery_id, posted_at
+        )
+        VALUES (
+          'ses-posted',
+          'thr-posted',
+          '2020-01-01T00:00:00.000Z',
+          'posted',
+          'del-posted',
+          '2020-01-01T00:00:01.000Z'
+        )
+      `)
+      client.close()
+
+      process.env['KIMAKI_DB_URL'] = `file:${dbPath}`
+      await getDb()
+
+      const due = await getDueSessionSleeps({
+        now: new Date('2026-08-21T00:00:00Z'),
+        retryAfterMs: 30_000,
+        limit: 10,
+      })
+      const posted = due.find((row) => row.session_id === 'ses-posted')
+      expect(posted?.status).toBe('planned')
+      expect(posted?.delivery_id).toBe('del-posted')
+
+      await upsertSessionSleep({
+        sessionId: 'ses-posted',
+        wakeAt: new Date('2026-08-26T00:00:00Z'),
+        reason: 'retry after schema change',
+      })
+      const updated = await getSessionSleep({ sessionId: 'ses-posted' })
+      expect(updated?.status).toBe('planned')
+      expect(updated?.reason).toBe('retry after schema change')
+      expect(updated?.delivery_id).not.toBe('del-posted')
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
   test('creates sqlite file and migrates schema automatically', async () => {
     const db = await getDb()
 
