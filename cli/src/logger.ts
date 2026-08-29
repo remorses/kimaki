@@ -113,10 +113,19 @@ function formatArg(arg: LogArg): string {
 
 export function formatErrorWithStack<T>(error: T): string {
   if (error instanceof Error) {
-    return sanitizeSensitiveText(
-      error.stack ?? `${error.name}: ${error.message}`,
-      { redactPaths: false },
-    )
+    const seen = new Set<Error>()
+    const parts: string[] = []
+    let current: unknown = error
+    while (current instanceof Error && !seen.has(current)) {
+      seen.add(current)
+      const formatted = sanitizeSensitiveText(
+        current.stack ?? `${current.name}: ${current.message}`,
+        { redactPaths: false },
+      )
+      parts.push(parts.length === 0 ? formatted : `Caused by: ${formatted}`)
+      current = current.cause
+    }
+    return parts.join('\n')
   }
   if (typeof error === 'string') {
     return sanitizeSensitiveText(error, { redactPaths: false })
