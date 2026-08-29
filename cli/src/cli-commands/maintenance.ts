@@ -122,7 +122,7 @@ cli
   .action(
     async (options) => {
       try {
-        const { mergeWorktree } = await import('../worktrees.js')
+        const { formatMergeWorktreeError, mergeWorktree } = await import('../worktrees.js')
         const worktreeDir = path.resolve(options.directory || '.')
 
         // Auto-detect main repo: find the main worktree's toplevel.
@@ -192,7 +192,7 @@ cli
         })
 
         if (result instanceof Error) {
-          cliLogger.error(`Merge failed: ${result.message}`)
+          cliLogger.error(formatMergeWorktreeError(result, { maxLength: 8000 }))
           if (result instanceof RebaseConflictError) {
             cliLogger.log(
               'Resolve the rebase conflicts, then run this command again.',

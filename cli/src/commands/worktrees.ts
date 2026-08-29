@@ -28,13 +28,13 @@ import {
   cancelHtmlActionsForOwner,
   registerHtmlAction,
 } from '../html-actions.js'
-import * as errore from 'errore'
 import crypto from 'node:crypto'
-import { GitCommandError, OpenCodeSdkError } from '../errors.js'
+import { OpenCodeSdkError } from '../errors.js'
 import { resolveTextChannel, resolveWorkingDirectory } from '../discord-utils.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   deleteWorktree,
+  extractGitExecOutput,
   git,
   getDefaultBranch,
   listGitWorktrees,
@@ -42,15 +42,9 @@ import {
 } from '../worktrees.js'
 import path from 'node:path'
 
-// Extracts the git stderr from a deleteWorktree error via errore.findCause.
-// Chain: Error { cause: GitCommandError { cause: CommandError { stderr } } }.
 export function extractGitStderr(error: Error): string | undefined {
-  const gitErr = errore.findCause(error, GitCommandError)
-  const stderr = (gitErr?.cause as { stderr?: string } | undefined)?.stderr?.trim()
-  if (stderr && stderr.length > 0) {
-    return stderr
-  }
-  return undefined
+  const stderr = extractGitExecOutput(error).stderr
+  return stderr.length > 0 ? stderr : undefined
 }
 
 export function formatTimeAgo(date: Date): string {
@@ -152,8 +146,7 @@ async function getWorktreeGitStatus({
   defaultBranch: string
 }): Promise<WorktreeGitStatus | null> {
   try {
-    // Use raw git calls so errors/timeouts are visible — isDirty() swallows
-    // errors and returns false, which would render "merged" instead of "unknown".
+    // Use raw git calls so status and ahead-count share one timeout window.
     const [statusResult, aheadResult] = await Promise.all([
       git(directory, 'status --porcelain', { timeout: GIT_CMD_TIMEOUT }),
       git(directory, `rev-list --count "${defaultBranch}..HEAD"`, {

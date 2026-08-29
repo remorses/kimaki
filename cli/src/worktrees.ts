@@ -98,13 +98,138 @@ export async function git(
   const command = Array.isArray(args)
     ? { command: 'git', args: ['-C', dir, ...args] }
     : `git -C "${dir}" ${args}`
-  const commandLabel = Array.isArray(args) ? args.join(' ') : args
+  const commandLabel = Array.isArray(args)
+    ? ['git', '-C', dir, ...args].join(' ')
+    : `git -C "${dir}" ${args}`
   const result = await execAsync(
     command,
     opts ? { timeout: opts.timeout } : undefined,
   ).catch((e) => new GitCommandError({ command: commandLabel, cause: e }))
   if (result instanceof Error) return result
   return result.stdout.trim()
+}
+
+function walkErrorCauseChain(error: Error): Error[] {
+  const seen = new Set<Error>()
+  const chain: Error[] = []
+  let current: unknown = error
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current)
+    chain.push(current)
+    current = current.cause
+  }
+  return chain
+}
+
+function execTextField(error: Error, field: 'stderr' | 'stdout'): string {
+  const value = Reflect.get(error, field)
+  if (typeof value === 'string') return value.trim()
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value).trim()
+  return ''
+}
+
+function execExitCode(error: Error): string | undefined {
+  const code = Reflect.get(error, 'code')
+  if (typeof code === 'string' || typeof code === 'number') return String(code)
+  return undefined
+}
+
+export type GitExecOutput = {
+  command: string | undefined
+  stderr: string
+  stdout: string
+  code: string | undefined
+}
+
+export function extractGitExecOutput(error: Error): GitExecOutput {
+  const chain = walkErrorCauseChain(error)
+  const gitErr = chain.find((item) => item instanceof GitCommandError)
+  let stderr = ''
+  let stdout = ''
+  let code: string | undefined
+  for (const item of chain) {
+    if (!stderr) stderr = execTextField(item, 'stderr')
+    if (!stdout) stdout = execTextField(item, 'stdout')
+    if (code === undefined) code = execExitCode(item)
+  }
+  const command = gitErr instanceof GitCommandError ? gitErr.command : undefined
+  return {
+    command: typeof command === 'string' ? command : undefined,
+    stderr,
+    stdout,
+    code,
+  }
+}
+
+function isRedundantCauseMessage({
+  message,
+  headline,
+  command,
+  output,
+}: {
+  message: string
+  headline: string
+  command: string | undefined
+  output: string
+}): boolean {
+  if (!message) return true
+  if (message === headline) return true
+  if (command && message === `Git command failed: ${command}`) return true
+  if (message.startsWith('Command failed:')) return true
+  if (output && message.includes(output)) return true
+  return false
+}
+
+function truncateFormattedError(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text
+  const ellipsis = '\n… [truncated]'
+  return text.slice(0, Math.max(0, maxLength - ellipsis.length)) + ellipsis
+}
+
+export function formatMergeWorktreeError(
+  error: Error,
+  opts?: { maxLength?: number },
+): string {
+  const maxLength = opts?.maxLength ?? 1900
+  const output = extractGitExecOutput(error)
+  const lines: string[] = [`Merge failed: ${error.message}`]
+  if (error instanceof PushError) {
+    lines.push(
+      'Worktree rebase succeeded. Local branch was not updated. This is not a push to origin.',
+    )
+  }
+
+  const extraCauses = walkErrorCauseChain(error)
+    .slice(1)
+    .map((item) => item.message)
+    .filter((message) => {
+      return !isRedundantCauseMessage({
+        message,
+        headline: error.message,
+        command: output.command,
+        output: [output.stderr, output.stdout].filter(Boolean).join('\n'),
+      })
+    })
+
+  const blockLines: string[] = []
+  if (output.command) blockLines.push(output.command)
+  if (output.code) blockLines.push(`exit ${output.code}`)
+  if (output.stderr) {
+    if (blockLines.length) blockLines.push('')
+    blockLines.push(output.stderr)
+  }
+  if (output.stdout && output.stdout !== output.stderr) {
+    if (blockLines.length) blockLines.push('')
+    blockLines.push(output.stdout)
+  }
+  for (const message of extraCauses) {
+    if (blockLines.length) blockLines.push('')
+    blockLines.push(message)
+  }
+  if (blockLines.length > 0) {
+    lines.push('', '```', ...blockLines, '```')
+  }
+  return truncateFormattedError(lines.join('\n'), maxLength)
 }
 
 export async function getDefaultBranch(
@@ -177,9 +302,9 @@ export async function deleteWorktree({
 export async function isDirty(
   dir: string,
   opts?: { timeout?: number },
-): Promise<boolean> {
+): Promise<GitCommandError | boolean> {
   const status = await git(dir, ['status', '--porcelain'], opts)
-  if (status instanceof Error) return false
+  if (status instanceof Error) return status
   return status.length > 0
 }
 
@@ -232,7 +357,7 @@ async function isCheckedOutTargetDirty({
 }: {
   targetDir: string
   targetBranch: string
-}): Promise<boolean> {
+}): Promise<GitCommandError | boolean> {
   const currentBranch = await git(targetDir, ['symbolic-ref', '--short', 'HEAD'])
   if (currentBranch instanceof Error || currentBranch !== targetBranch) {
     return false
@@ -373,7 +498,12 @@ export async function mergeWorktree({
   }
 
   // ── Step 1: Reject uncommitted changes ──
-  if (await isDirty(worktreeDir)) {
+  const worktreeDirty = await isDirty(worktreeDir)
+  if (worktreeDirty instanceof Error) {
+    await cleanupTempBranch()
+    return worktreeDirty
+  }
+  if (worktreeDirty) {
     await cleanupTempBranch()
     return new DirtyWorktreeError()
   }
@@ -458,6 +588,10 @@ export async function mergeWorktree({
     targetDir: mainRepoDir,
     targetBranch: defaultBranch,
   })
+  if (targetIsDirty instanceof Error) {
+    await cleanupTempBranch()
+    return targetIsDirty
+  }
   if (targetIsDirty) {
     await cleanupTempBranch()
     return new TargetDirtyWorktreeError({ target: defaultBranch })

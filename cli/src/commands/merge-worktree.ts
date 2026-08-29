@@ -10,7 +10,12 @@ import {
 } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
-import { mergeWorktree, listBranchesByLastCommit, validateBranchRef } from '../worktrees.js'
+import {
+  mergeWorktree,
+  listBranchesByLastCommit,
+  validateBranchRef,
+  formatMergeWorktreeError,
+} from '../worktrees.js'
 import {
   sendThreadMessage,
   resolveWorkingDirectory,
@@ -175,7 +180,7 @@ export async function handleMergeWorktreeCommand({
 
     if (result instanceof NothingToMergeError) {
       void removeWorktreePrefixFromTitle(thread)
-      await command.editReply(`Merge failed: ${result.message}`)
+      await command.editReply(formatMergeWorktreeError(result))
       return
     }
 
@@ -217,7 +222,9 @@ export async function handleMergeWorktreeCommand({
       return
     }
 
-    await command.editReply(`Merge failed: ${result.message}`)
+    const formatted = formatMergeWorktreeError(result)
+    logger.error(formatted)
+    await command.editReply(formatted)
     return
   }
 

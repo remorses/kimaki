@@ -7,6 +7,7 @@ import { describe, expect, test } from 'vitest'
 import {
   execAsync,
   getManagedWorktreeDirectory,
+  formatMergeWorktreeError,
   mergeWorktree,
   parseGitWorktreeListPorcelain,
   resolveSessionWorkingDirectory,
@@ -21,7 +22,12 @@ import {
   resolveGitCommonDirectory,
   validateWorktreeIdentity,
 } from './git-worktree-core.js'
-import { RebaseConflictError, TargetDirtyWorktreeError } from './errors.js'
+import {
+  GitCommandError,
+  PushError,
+  RebaseConflictError,
+  TargetDirtyWorktreeError,
+} from './errors.js'
 import {
   formatAutoWorktreeName,
   formatWorktreeName,
@@ -524,6 +530,122 @@ describe('worktrees', () => {
       expect(await git({ cwd: parentRepo, args: ['rev-parse', 'main'] })).not.toBe(
         await git({ cwd: worktreeDir, args: ['rev-parse', 'HEAD'] }),
       )
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('formatMergeWorktreeError includes git command, exit code, and stderr', () => {
+    const execErr = Object.assign(new Error('Command failed: git push'), {
+      stderr:
+        'fatal: refusing to update checked out branch: refs/heads/main\nhint: set receive.denyCurrentBranch to updateInstead\n',
+      stdout: '',
+      code: 1,
+    })
+    const gitErr = new GitCommandError({
+      command:
+        'git -C /wt push --receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack /repo/.git HEAD:main',
+      cause: execErr,
+    })
+    const err = new PushError({ target: 'main', cause: gitErr })
+    expect(formatMergeWorktreeError(err)).toMatchInlineSnapshot(`
+      "Merge failed: Push to main failed
+      Worktree rebase succeeded. Local branch was not updated. This is not a push to origin.
+
+      \`\`\`
+      git -C /wt push --receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack /repo/.git HEAD:main
+      exit 1
+
+      fatal: refusing to update checked out branch: refs/heads/main
+      hint: set receive.denyCurrentBranch to updateInstead
+      \`\`\`"
+    `)
+  })
+
+  test('formatMergeWorktreeError keeps timeout cause when git has no stderr', () => {
+    const timeoutErr = new Error(
+      'Command timed out after 30000ms: git -C /wt push /repo/.git HEAD:main',
+    )
+    const gitErr = new GitCommandError({
+      command: 'git -C /wt push /repo/.git HEAD:main',
+      cause: timeoutErr,
+    })
+    const err = new PushError({ target: 'main', cause: gitErr })
+    expect(formatMergeWorktreeError(err)).toMatchInlineSnapshot(`
+      "Merge failed: Push to main failed
+      Worktree rebase succeeded. Local branch was not updated. This is not a push to origin.
+
+      \`\`\`
+      git -C /wt push /repo/.git HEAD:main
+
+      Command timed out after 30000ms: git -C /wt push /repo/.git HEAD:main
+      \`\`\`"
+    `)
+  })
+
+  test('formatMergeWorktreeError truncates to maxLength', () => {
+    const execErr = Object.assign(new Error('Command failed: git push'), {
+      stderr: 'fatal: ' + 'x'.repeat(200),
+      code: 1,
+    })
+    const gitErr = new GitCommandError({
+      command: 'git -C /wt push /repo/.git HEAD:main',
+      cause: execErr,
+    })
+    const formatted = formatMergeWorktreeError(
+      new PushError({ target: 'main', cause: gitErr }),
+      { maxLength: 80 },
+    )
+    expect(formatted.length).toBeLessThanOrEqual(80)
+    expect(formatted.endsWith('… [truncated]')).toBe(true)
+  })
+
+  test('mergeWorktree push failure includes git stderr in formatted error', async () => {
+    const sandbox = createTestRoot()
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeDir = path.join(sandbox, 'feature-worktree')
+
+    try {
+      fs.mkdirSync(parentRepo, { recursive: true })
+      await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({
+        cwd: parentRepo,
+        args: ['config', 'core.hooksPath', path.join(parentRepo, '.git', 'hooks')],
+      })
+
+      fs.writeFileSync(path.join(parentRepo, 'README.md'), 'v1\n', 'utf-8')
+      await git({ cwd: parentRepo, args: ['add', 'README.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'init'] })
+
+      await git({ cwd: parentRepo, args: ['worktree', 'add', '-b', 'feature', worktreeDir] })
+      fs.writeFileSync(path.join(worktreeDir, 'feature.md'), 'feature\n', 'utf-8')
+      await git({ cwd: worktreeDir, args: ['add', 'feature.md'] })
+      await git({ cwd: worktreeDir, args: ['commit', '-m', 'feature'] })
+
+      const hookPath = path.join(parentRepo, '.git', 'hooks', 'pre-receive')
+      fs.writeFileSync(
+        hookPath,
+        '#!/bin/sh\ncat >/dev/null\necho "hook rejected the push" >&2\nexit 1\n',
+        'utf-8',
+      )
+      fs.chmodSync(hookPath, 0o755)
+
+      const result = await mergeWorktree({
+        worktreeDir,
+        mainRepoDir: parentRepo,
+        worktreeName: 'feature',
+        targetBranch: 'main',
+      })
+
+      expect(result).toBeInstanceOf(PushError)
+      if (!(result instanceof PushError)) return
+      const formatted = formatMergeWorktreeError(result)
+      expect(formatted.startsWith('Merge failed: Push to main failed')).toBe(true)
+      expect(formatted).toContain('hook rejected the push')
+      expect(formatted).toContain('exit 1')
+      expect(formatted).toContain('git -C ')
     } finally {
       fs.rmSync(sandbox, { recursive: true, force: true })
     }
