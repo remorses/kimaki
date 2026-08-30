@@ -207,6 +207,54 @@ describe.runIf(process.platform === 'win32')(
         resolveWindowsBunShimTarget({ command: shimPath, platform: 'win32' }),
       ).toBe(shimPath)
     })
+
+    test('keeps the launcher when no Bun metadata file exists', () => {
+      expect(
+        resolveWindowsBunShimTarget({ command: shimPath, platform: 'win32' }),
+      ).toBe(shimPath)
+    })
+
+    test('resolved target spawns directly without a cmd.exe wrapper', () => {
+      fs.writeFileSync(
+        metadataPath,
+        createBunShimMetadata({
+          relativeTarget:
+            'install\\global\\node_modules\\opencode-ai\\bin\\opencode.exe',
+        }),
+      )
+      const resolved = resolveWindowsBunShimTarget({
+        command: shimPath,
+        platform: 'win32',
+      })
+      expect(resolved).toBe(nativeTarget)
+
+      // With the native target as the spawn command there is no intermediate
+      // process, so the spawned ChildProcess.pid is the server Kimaki's
+      // SIGTERM cleanup must terminate.
+      expect(
+        getSpawnCommandAndArgs({
+          resolvedCommand: resolved,
+          baseArgs: ['serve', '--port', '4096'],
+          platform: 'win32',
+        }),
+      ).toEqual({
+        command: nativeTarget,
+        args: ['serve', '--port', '4096'],
+      })
+    })
+
+    test('keeps direct executables with spaces unchanged on windows', () => {
+      expect(
+        getSpawnCommandAndArgs({
+          resolvedCommand: 'C:\\Program Files\\opencode\\opencode.exe',
+          baseArgs: ['serve', '--port', '4096'],
+          platform: 'win32',
+        }),
+      ).toEqual({
+        command: 'C:\\Program Files\\opencode\\opencode.exe',
+        args: ['serve', '--port', '4096'],
+      })
+    })
   },
 )
 
