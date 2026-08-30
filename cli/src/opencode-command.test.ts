@@ -78,6 +78,15 @@ describe('buildOpencodeServeArgs', () => {
   })
 })
 
+describe('published runtime artifacts', () => {
+  test('lists @subrouter/opencode as a runtime dependency', () => {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, '../package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> }
+    expect(pkg.dependencies?.['@subrouter/opencode']).toMatch(/^(workspace:\^|\^)/)
+  })
+})
+
 describe('resolveSubrouterPluginSpec', () => {
   test('uses npm package identity in production for OpenCode deduplication', async () => {
     const { resolveSubrouterPluginSpec } = await import('./opencode.js')

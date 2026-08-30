@@ -29,6 +29,25 @@ afterAll(async () => {
 })
 
 describe('getDb', () => {
+  test('schema.sql creates every drizzle table', () => {
+    const schemaTs = fs.readFileSync(
+      path.join(import.meta.dirname, 'schema.ts'),
+      'utf8',
+    )
+    const schemaSql = fs.readFileSync(
+      path.join(import.meta.dirname, 'schema.sql'),
+      'utf8',
+    )
+    const tablesFromTs = [
+      ...schemaTs.matchAll(/sqliteTable\('([^']+)'/g),
+    ].map((match) => match[1])
+    const tablesFromSql = [
+      ...schemaSql.matchAll(/CREATE TABLE IF NOT EXISTS `([^`]+)`/g),
+    ].map((match) => match[1])
+    expect(new Set(tablesFromSql)).toEqual(new Set(tablesFromTs))
+    expect(tablesFromSql).toContain('session_sleeps')
+  })
+
   test('adds session_sleeps delivery columns on databases created before that schema', async () => {
     await closeDb()
 

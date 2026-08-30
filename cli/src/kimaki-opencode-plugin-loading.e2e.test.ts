@@ -169,13 +169,13 @@ test('login offers subrouter and asks which subscription to add first', async ()
   expect(prompt?.options?.map((option) => option.value)).toEqual([...PROVIDER_IDS])
 })
 
-test('authorize and callback add an opencode zen subscription', async () => {
+test('authorize and callback add an opencode-go subscription', async () => {
   const url = new URL('/provider/subrouter/oauth/authorize', `http://127.0.0.1:${port}`)
   url.searchParams.set('directory', projectDir)
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-opencode-directory': projectDir },
-    body: JSON.stringify({ method: 0, inputs: { provider: 'opencode' } }),
+    body: JSON.stringify({ method: 0, inputs: { provider: 'opencode-go' } }),
   })
 
   expect(response.ok).toBe(true)
@@ -202,7 +202,7 @@ test('authorize and callback add an opencode zen subscription', async () => {
   const accounts = JSON.parse(
     fs.readFileSync(path.join(subrouterHome, 'accounts.json'), 'utf8'),
   ) as AccountsFile
-  expect(accounts.providers.opencode?.accounts).toMatchObject([
+  expect(accounts.providers['opencode-go']?.accounts).toMatchObject([
     { type: 'api', key: 'zen-key-1' },
   ])
 })
