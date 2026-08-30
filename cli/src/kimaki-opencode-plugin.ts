@@ -8,7 +8,6 @@
 // - context-awareness-plugin: branch, pwd, memory reminder, onboarding tutorial
 // - memory-overview-plugin: frozen MEMORY.md heading overview per session
 // - opencode-interrupt-plugin: interrupt queued messages at step boundaries
-// - subagent-rate-limit-plugin: aborts only task subagents after rate limits
 // - kitty-graphics-plugin: extract Kitty Graphics Protocol images from bash output
 // - file-edit-log: record edit/write/apply_patch files per session
 
@@ -24,7 +23,6 @@ export { anthropicAuthPlugin } from './anthropic-auth-plugin.js'
 export { openaiRotationPlugin } from './openai-auth-plugin.js'
 export { xaiRotationPlugin } from './xai-auth-plugin.js'
 export { imageOptimizerPlugin } from './image-optimizer-plugin.js'
-export { subagentRateLimitPlugin } from './subagent-rate-limit-plugin.js'
 export { cacheDriftPlugin } from './cache-drift-plugin.js'
 export { kittyGraphicsPlugin } from 'kitty-graphics-agent'
 export { injectionGuardInternal as injectionGuard } from 'opencode-injection-guard'
