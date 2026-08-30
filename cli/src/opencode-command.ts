@@ -5,12 +5,16 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { createLogger, LogPrefix } from './logger.js'
+
+const logger = createLogger(LogPrefix.OPENCODE)
 
 const WINDOWS_CMD_SHIM_REGEX = /\.(cmd|bat)$/i
 const WINDOWS_EXECUTABLE_REGEX = /\.exe$/i
 const BUN_SHIM_METADATA_VERSION = 5478
 const BUN_SHIM_METADATA_MAX_BYTES = 65_536
 const BUN_SHIM_EXECUTABLE_MAX_BYTES = 1_048_576
+const BUN_SHIM_TARGET_TRAILER_MAGIC = 0x22
 const IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002
 const IMAGE_FILE_DLL = 0x2000
 
@@ -80,6 +84,12 @@ export function resolveWindowsBunShimTarget({
       return command
     }
 
+    // No sibling metadata = not Bun-managed (a native binary or another
+    // package manager's launcher). Fall back silently.
+    if (!fs.existsSync(metadataPath)) {
+      return command
+    }
+
     const metadataFd = fs.openSync(metadataPath, 'r')
     let metadata: Buffer
     try {
@@ -107,6 +117,9 @@ export function resolveWindowsBunShimTarget({
       metadata,
     })
     if (!target) {
+      logger.warn(
+        `Bun shim metadata present but could not be decoded for ${command}; falling back to the launcher. SIGTERM cleanup may orphan the server until the metadata format is supported.`,
+      )
       return command
     }
 
@@ -114,15 +127,8 @@ export function resolveWindowsBunShimTarget({
       path.win32.dirname(commandDirectory),
     )
     const canonicalTarget = fs.realpathSync.native(target)
-    const canonicalRelativeTarget = path.win32.relative(
-      canonicalRoot,
-      canonicalTarget,
-    )
     if (
-      !canonicalRelativeTarget ||
-      canonicalRelativeTarget === '..' ||
-      canonicalRelativeTarget.startsWith(`..${path.win32.sep}`) ||
-      path.win32.isAbsolute(canonicalRelativeTarget) ||
+      !isPathWithinRoot(canonicalRoot, canonicalTarget) ||
       !fs.statSync(canonicalTarget).isFile() ||
       !isWindowsPeExecutable(canonicalTarget)
     ) {
@@ -130,9 +136,27 @@ export function resolveWindowsBunShimTarget({
     }
 
     return canonicalTarget
-  } catch {
+  } catch (cause) {
+    logger.warn(
+      `Failed to resolve Bun shim target for ${command}; falling back to the launcher: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
     return command
   }
+}
+
+/**
+ * True when `candidate` resolves to a path strictly inside `root` (never the
+ * root itself, a parent, or a sibling tree). Guard against shim metadata
+ * redirecting the spawn target outside the package it belongs to.
+ */
+function isPathWithinRoot(root: string, candidate: string): boolean {
+  const relative = path.win32.relative(root, candidate)
+  return (
+    relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${path.win32.sep}`) &&
+    !path.win32.isAbsolute(relative)
+  )
 }
 
 export function decodeWindowsBunShimTarget({
@@ -163,7 +187,8 @@ export function decodeWindowsBunShimTarget({
   const targetByteLength = metadata.length - 6
   if (
     targetByteLength < 2 ||
-    metadata.readUInt16LE(targetByteLength) !== 0x22 ||
+    metadata.readUInt16LE(targetByteLength) !==
+      BUN_SHIM_TARGET_TRAILER_MAGIC ||
     metadata.readUInt16LE(targetByteLength + 2) !== 0
   ) {
     return null
@@ -179,12 +204,8 @@ export function decodeWindowsBunShimTarget({
   // Bun resolves metadata from the parent of its bin/.bin directory.
   const targetRoot = path.win32.dirname(path.win32.dirname(command))
   const target = path.win32.resolve(targetRoot, relativeTarget)
-  const relativeResolvedTarget = path.win32.relative(targetRoot, target)
   if (
-    !relativeResolvedTarget ||
-    relativeResolvedTarget === '..' ||
-    relativeResolvedTarget.startsWith(`..${path.win32.sep}`) ||
-    path.win32.isAbsolute(relativeResolvedTarget) ||
+    !isPathWithinRoot(targetRoot, target) ||
     !WINDOWS_EXECUTABLE_REGEX.test(target)
   ) {
     return null
