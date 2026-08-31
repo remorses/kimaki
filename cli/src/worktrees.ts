@@ -11,6 +11,7 @@ import {
   createWorktreeCore,
   resolveGitCommit,
   resolveGitCommonDirectory,
+  validateLegacyWorktreeRemoval,
   type WorktreeResult,
 } from './git-worktree-core.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -671,6 +672,9 @@ export async function deleteWorktree({
   // Pass empty string for detached HEAD worktrees — branch deletion is skipped.
   worktreeName: string
 }): Promise<void | Error> {
+  // ZAI 2026-08-31: Legacy deletion must not bypass SDK workspace ownership.
+  const ownershipResult = await validateLegacyWorktreeRemoval(worktreeDirectory)
+  if (ownershipResult instanceof Error) return ownershipResult
   let removeResult = await git(
     projectDirectory,
     `worktree remove ${JSON.stringify(worktreeDirectory)}`,

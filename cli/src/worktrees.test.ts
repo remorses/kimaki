@@ -3,10 +3,12 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { describe, expect, test } from 'vitest'
+import type { PluginInput, WorkspaceAdapter, WorkspaceInfo } from '@opencode-ai/plugin'
+import { describe, expect, test, vi } from 'vitest'
 import {
   buildSubmoduleReferencePlan,
   createWorktreeWithSubmodules,
+  deleteWorktree,
   execAsync,
   getManagedWorktreeDirectory,
   mergeWorktree,
@@ -16,7 +18,9 @@ import {
   validateBranchRef,
 } from './worktrees.js'
 import {
+  createWorktreeCore,
   parseGitmodulesFileContent as parseCoreGitmodulesFileContent,
+  removeWorktreeCore,
   removeWorktreeFromOwnRepository,
   resolveGitCommonDirectory,
   validateWorktreeIdentity,
@@ -28,7 +32,9 @@ import {
   shortenWorktreeSlug,
 } from './commands/new-worktree.js'
 import { setDataDir } from './config.js'
+import { kimakiWorkspaceAdaptorPlugin } from './kimaki-workspace-adaptor.js'
 
+// ZAI 2026-08-31: Regression coverage for non-destructive creation and owner-gated cleanup.
 const GIT_TIMEOUT_MS = 60_000
 
 async function git({
@@ -57,7 +63,462 @@ function createTestRoot(): string {
   return fs.mkdtempSync(path.join(tmpRoot, 'worktrees-test-'))
 }
 
+async function getKimakiWorkspaceAdapter() {
+  let adapter: WorkspaceAdapter | undefined
+  await kimakiWorkspaceAdaptorPlugin({
+    experimental_workspace: {
+      register(_type: string, registeredAdapter: WorkspaceAdapter) {
+        adapter = registeredAdapter
+      },
+    },
+  } as unknown as PluginInput)
+  if (!adapter) throw new Error('Kimaki workspace adapter was not registered')
+  return adapter
+}
+
 describe('worktrees', () => {
+  test('createWorktreeCore preserves a pre-existing branch', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'project')
+    const worktreeDirectory = path.join(sandbox, 'worktree')
+    const branchName = 'opencode/kimaki-existing-branch'
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({ cwd: projectDirectory, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(projectDirectory, 'README.md'), 'first\n')
+      await git({ cwd: projectDirectory, args: ['add', 'README.md'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'first'] })
+      const existingBranchCommit = await git({ cwd: projectDirectory, args: ['rev-parse', 'HEAD'] })
+      await git({ cwd: projectDirectory, args: ['branch', branchName, existingBranchCommit] })
+      fs.writeFileSync(path.join(projectDirectory, 'README.md'), 'second\n')
+      await git({ cwd: projectDirectory, args: ['commit', '-am', 'second'] })
+      const baseCommit = await git({ cwd: projectDirectory, args: ['rev-parse', 'HEAD'] })
+      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
+        directory: projectDirectory,
+      })
+      if (expectedCommonGitDirectory instanceof Error) throw expectedCommonGitDirectory
+
+      const result = await createWorktreeCore({
+        projectDirectory,
+        targetDirectory: worktreeDirectory,
+        branchName,
+        baseCommit,
+        expectedCommonGitDirectory,
+      })
+
+      expect(result).toBeInstanceOf(Error)
+      await expect(git({ cwd: projectDirectory, args: ['rev-parse', branchName] })).resolves.toBe(
+        existingBranchCommit,
+      )
+      expect(fs.existsSync(worktreeDirectory)).toBe(false)
+    } finally {
+      await git({
+        cwd: projectDirectory,
+        args: ['worktree', 'remove', '--force', worktreeDirectory],
+      }).catch(() => '')
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('createWorktreeCore leaves tracked files unchanged after dependency install', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'Psychology')
+    const worktreeDirectory = path.join(sandbox, 'canary-psychology')
+    const branchName = 'opencode/kimaki-clean-install'
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({ cwd: projectDirectory, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(projectDirectory, '.gitignore'), 'node_modules/\n')
+      fs.writeFileSync(
+        path.join(projectDirectory, 'package.json'),
+        JSON.stringify({ dependencies: {} }, null, 2) + '\n',
+      )
+      fs.writeFileSync(
+        path.join(projectDirectory, 'package-lock.json'),
+        JSON.stringify(
+          {
+            name: 'Psychology',
+            lockfileVersion: 3,
+            requires: true,
+            packages: { '': { dependencies: {} } },
+          },
+          null,
+          2,
+        ) + '\n',
+      )
+      await git({ cwd: projectDirectory, args: ['add', '.'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'initial'] })
+      const baseCommit = await git({ cwd: projectDirectory, args: ['rev-parse', 'HEAD'] })
+      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
+        directory: projectDirectory,
+      })
+      if (expectedCommonGitDirectory instanceof Error) throw expectedCommonGitDirectory
+
+      const result = await createWorktreeCore({
+        projectDirectory,
+        targetDirectory: worktreeDirectory,
+        branchName,
+        baseCommit,
+        expectedCommonGitDirectory,
+      })
+      if (result instanceof Error) throw result
+
+      await expect(git({ cwd: worktreeDirectory, args: ['status', '--porcelain'] })).resolves.toBe(
+        '',
+      )
+    } finally {
+      if (fs.existsSync(worktreeDirectory)) {
+        await removeWorktreeFromOwnRepository({ worktreeDirectory, branchName })
+      }
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('createWorktreeCore rolls back when dependency install deletes a lockfile', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'project')
+    const worktreeDirectory = path.join(sandbox, 'worktree')
+    const branchName = 'opencode/kimaki-deleted-lockfile'
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({ cwd: projectDirectory, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(projectDirectory, '.gitignore'), 'node_modules/\n')
+      fs.writeFileSync(
+        path.join(projectDirectory, 'package.json'),
+        JSON.stringify(
+          {
+            scripts: {
+              postinstall: "node -e \"require('node:fs').unlinkSync('package-lock.json')\"",
+            },
+          },
+          null,
+          2,
+        ) + '\n',
+      )
+      await execAsync('npm install --package-lock-only --ignore-scripts', {
+        cwd: projectDirectory,
+        timeout: GIT_TIMEOUT_MS,
+      })
+      await git({ cwd: projectDirectory, args: ['add', '.'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'initial'] })
+      const baseCommit = await git({ cwd: projectDirectory, args: ['rev-parse', 'HEAD'] })
+      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
+        directory: projectDirectory,
+      })
+      if (expectedCommonGitDirectory instanceof Error) throw expectedCommonGitDirectory
+
+      const result = await createWorktreeCore({
+        projectDirectory,
+        targetDirectory: worktreeDirectory,
+        branchName,
+        baseCommit,
+        expectedCommonGitDirectory,
+      })
+
+      expect(result).toBeInstanceOf(Error)
+      expect(result instanceof Error ? result.message : '').toContain(
+        'Dependency install modified lockfiles',
+      )
+      expect(fs.existsSync(worktreeDirectory)).toBe(false)
+      await expect(git({ cwd: projectDirectory, args: ['rev-parse', branchName] })).rejects.toThrow()
+    } finally {
+      await git({ cwd: projectDirectory, args: ['worktree', 'prune'] }).catch(() => '')
+      await git({ cwd: projectDirectory, args: ['branch', '-D', branchName] }).catch(() => '')
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('createWorktreeCore cleans up when recording workspace ownership fails', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'project')
+    const worktreeDirectory = path.join(sandbox, 'worktree')
+    const branchName = 'opencode/kimaki-owner-write-failure'
+    const workspaceId = 'wrk_11111111-1111-1111-1111-111111111111'
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({ cwd: projectDirectory, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(projectDirectory, 'README.md'), 'owned\n')
+      await git({ cwd: projectDirectory, args: ['add', 'README.md'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'initial'] })
+      const baseCommit = await git({ cwd: projectDirectory, args: ['rev-parse', 'HEAD'] })
+      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
+        directory: projectDirectory,
+      })
+      if (expectedCommonGitDirectory instanceof Error) throw expectedCommonGitDirectory
+      const writeFile = vi
+        .spyOn(fs.promises, 'writeFile')
+        .mockRejectedValueOnce(new Error('owner marker unavailable'))
+
+      const result = await createWorktreeCore({
+        projectDirectory,
+        targetDirectory: worktreeDirectory,
+        branchName,
+        baseCommit,
+        expectedCommonGitDirectory,
+        workspaceId,
+      })
+      writeFile.mockRestore()
+
+      expect(result).toBeInstanceOf(Error)
+      expect(fs.existsSync(worktreeDirectory)).toBe(false)
+      await expect(git({ cwd: projectDirectory, args: ['rev-parse', branchName] })).rejects.toThrow()
+    } finally {
+      vi.restoreAllMocks()
+      await git({ cwd: projectDirectory, args: ['worktree', 'prune'] }).catch(() => '')
+      await git({ cwd: projectDirectory, args: ['branch', '-D', branchName] }).catch(() => '')
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('removeWorktreeCore requires matching workspace and branch ownership', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'project')
+    const worktreeDirectory = path.join(sandbox, 'worktree')
+    const branchName = 'opencode/kimaki-owned-worktree'
+    const workspaceId = 'wrk_11111111-1111-1111-1111-111111111111'
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({ cwd: projectDirectory, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(projectDirectory, 'README.md'), 'owned\n')
+      await git({ cwd: projectDirectory, args: ['add', 'README.md'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'initial'] })
+      const baseCommit = await git({ cwd: projectDirectory, args: ['rev-parse', 'HEAD'] })
+      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
+        directory: projectDirectory,
+      })
+      if (expectedCommonGitDirectory instanceof Error) throw expectedCommonGitDirectory
+
+      const created = await createWorktreeCore({
+        projectDirectory,
+        targetDirectory: worktreeDirectory,
+        branchName,
+        baseCommit,
+        expectedCommonGitDirectory,
+        workspaceId,
+      })
+      if (created instanceof Error) throw created
+
+      const foreignCleanup = await removeWorktreeCore({
+        projectDirectory,
+        worktreeDirectory,
+        branchName,
+        workspaceId: 'wrk_22222222-2222-2222-2222-222222222222',
+      })
+      expect(foreignCleanup).toBeInstanceOf(Error)
+      expect(fs.existsSync(worktreeDirectory)).toBe(true)
+      await expect(git({ cwd: projectDirectory, args: ['rev-parse', branchName] })).resolves.toBe(
+        baseCommit,
+      )
+
+      const tokenlessCleanup = await removeWorktreeCore({
+        projectDirectory,
+        worktreeDirectory,
+        branchName,
+      })
+      expect(tokenlessCleanup).toBeInstanceOf(Error)
+
+      const legacyCleanup = await deleteWorktree({
+        projectDirectory,
+        worktreeDirectory,
+        worktreeName: branchName,
+      })
+      expect(legacyCleanup).toBeInstanceOf(Error)
+
+      const wrongBranchCleanup = await removeWorktreeCore({
+        projectDirectory,
+        worktreeDirectory,
+        branchName: `${branchName}-other`,
+        workspaceId,
+      })
+      expect(wrongBranchCleanup).toBeInstanceOf(Error)
+      expect(fs.existsSync(worktreeDirectory)).toBe(true)
+
+      const ownerCleanup = await removeWorktreeCore({
+        projectDirectory,
+        worktreeDirectory,
+        branchName,
+        workspaceId,
+      })
+      expect(ownerCleanup).toBeUndefined()
+      expect(fs.existsSync(worktreeDirectory)).toBe(false)
+      await expect(
+        git({ cwd: projectDirectory, args: ['rev-parse', branchName] }),
+      ).rejects.toThrow()
+    } finally {
+      await removeWorktreeCore({
+        projectDirectory,
+        worktreeDirectory,
+        branchName,
+        workspaceId,
+      })
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('removeWorktreeCore rejects a missing directory while its branch survives', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'project')
+    const worktreeDirectory = path.join(sandbox, 'worktree')
+    const branchName = 'opencode/kimaki-missing-directory'
+    const workspaceId = 'wrk_11111111-1111-1111-1111-111111111111'
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({ cwd: projectDirectory, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(projectDirectory, 'README.md'), 'owned\n')
+      await git({ cwd: projectDirectory, args: ['add', 'README.md'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'initial'] })
+      const baseCommit = await git({ cwd: projectDirectory, args: ['rev-parse', 'HEAD'] })
+      const expectedCommonGitDirectory = await resolveGitCommonDirectory({
+        directory: projectDirectory,
+      })
+      if (expectedCommonGitDirectory instanceof Error) throw expectedCommonGitDirectory
+      const created = await createWorktreeCore({
+        projectDirectory,
+        targetDirectory: worktreeDirectory,
+        branchName,
+        baseCommit,
+        expectedCommonGitDirectory,
+        workspaceId,
+      })
+      if (created instanceof Error) throw created
+      fs.rmSync(worktreeDirectory, { recursive: true, force: true })
+
+      const result = await removeWorktreeCore({
+        projectDirectory,
+        worktreeDirectory,
+        branchName,
+        workspaceId,
+      })
+
+      expect(result).toBeInstanceOf(Error)
+      await expect(git({ cwd: projectDirectory, args: ['rev-parse', branchName] })).resolves.toBe(
+        baseCommit,
+      )
+    } finally {
+      await git({ cwd: projectDirectory, args: ['worktree', 'prune'] }).catch(() => '')
+      await git({ cwd: projectDirectory, args: ['branch', '-D', branchName] }).catch(() => '')
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('workspace adapter removes markerless legacy worktrees with missing identity', async () => {
+    const sandbox = createTestRoot()
+    const projectDirectory = path.join(sandbox, 'project')
+    const worktreeDirectory = path.join(sandbox, 'legacy-worktree')
+    const branchName = 'opencode/kimaki-legacy-worktree'
+
+    try {
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      await git({ cwd: projectDirectory, args: ['init', '-b', 'main'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['config', 'user.email', 'kimaki-tests@example.com'],
+      })
+      await git({ cwd: projectDirectory, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(projectDirectory, 'README.md'), 'legacy\n')
+      await git({ cwd: projectDirectory, args: ['add', 'README.md'] })
+      await git({ cwd: projectDirectory, args: ['commit', '-m', 'initial'] })
+      await git({
+        cwd: projectDirectory,
+        args: ['worktree', 'add', worktreeDirectory, '-b', branchName, 'HEAD'],
+      })
+      const adapter = await getKimakiWorkspaceAdapter()
+      const info: WorkspaceInfo = {
+        id: 'wrk_11111111-1111-1111-1111-111111111111',
+        type: 'kimaki-worktree',
+        name: branchName,
+        branch: branchName,
+        directory: worktreeDirectory,
+        extra: null,
+        projectID: 'legacy-project',
+      }
+
+      await adapter.remove(info)
+
+      expect(fs.existsSync(worktreeDirectory)).toBe(false)
+      await expect(git({ cwd: projectDirectory, args: ['rev-parse', branchName] })).rejects.toThrow()
+    } finally {
+      await git({ cwd: projectDirectory, args: ['worktree', 'prune'] }).catch(() => '')
+      await git({ cwd: projectDirectory, args: ['branch', '-D', branchName] }).catch(() => '')
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('workspace adapter rejects malformed branches and mismatched workspace identity', async () => {
+    const sandbox = createTestRoot()
+    const previousDataDir = process.env['KIMAKI_DATA_DIR']
+    process.env['KIMAKI_DATA_DIR'] = path.join(sandbox, 'data')
+
+    try {
+      const adapter = await getKimakiWorkspaceAdapter()
+      const baseInfo: WorkspaceInfo = {
+        id: 'wrk_11111111-1111-1111-1111-111111111111',
+        type: 'kimaki-worktree',
+        name: 'opencode/kimaki-safe',
+        branch: 'opencode/kimaki-safe',
+        directory: path.join(sandbox, 'worktree'),
+        extra: {
+          projectDirectory: path.join(sandbox, 'project'),
+          baseCommit: '1'.repeat(40),
+          expectedCommonGitDirectory: path.join(sandbox, 'project', '.git'),
+          workspaceId: 'wrk_22222222-2222-2222-2222-222222222222',
+        },
+        projectID: 'project',
+      }
+
+      expect(() => {
+        adapter.configure({
+          ...baseInfo,
+          name: 'opencode/kimaki-../escape',
+          branch: 'opencode/kimaki-../escape',
+        })
+      }).toThrow('Invalid Kimaki worktree branch')
+      await expect(adapter.create(baseInfo, {})).rejects.toThrow(
+        'Kimaki worktree workspace ID does not match OpenCode workspace ID',
+      )
+    } finally {
+      if (previousDataDir === undefined) delete process.env['KIMAKI_DATA_DIR']
+      else process.env['KIMAKI_DATA_DIR'] = previousDataDir
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
   test('parseGitmodulesFileContent parses paths and urls', () => {
     const parsed = parseGitmodulesFileContent(`
 [submodule "errore"]

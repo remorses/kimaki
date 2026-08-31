@@ -24,6 +24,7 @@ import {
  * from the environment instead of config.ts (which is not available in the
  * opencode server process).
  */
+// ZAI 2026-08-31: Keep adapter paths and cleanup ownership inside Kimaki's managed boundary.
 function computeWorktreeDirectory({
   projectDirectory,
   branchName,
@@ -35,14 +36,22 @@ function computeWorktreeDirectory({
   if (!dataDir) {
     return new Error('KIMAKI_DATA_DIR not set — cannot compute worktree directory')
   }
+  const prefix = 'opencode/kimaki-'
+  const managedName = branchName.startsWith(prefix) ? branchName.slice(prefix.length) : ''
+  if (
+    !managedName ||
+    managedName.includes('\\') ||
+    /[:*?"<>|]/.test(managedName) ||
+    managedName.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+  ) {
+    return new Error(`Invalid Kimaki worktree branch: ${branchName}`)
+  }
   const projectHash = crypto
     .createHash('sha1')
     .update(projectDirectory)
     .digest('hex')
     .slice(0, 8)
-  const withoutPrefix = branchName
-    .replace(/^opencode\/kimaki-/, '')
-    .replaceAll('/', '-')
+  const withoutPrefix = managedName.replaceAll('/', '-')
   return path.join(dataDir, 'worktrees', projectHash, withoutPrefix)
 }
 
@@ -68,9 +77,7 @@ function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
         projectDirectory: identity.projectDirectory,
         branchName,
       })
-      if (directory instanceof Error) {
-        return { ...info, branch: branchName }
-      }
+      if (directory instanceof Error) throw directory
       return {
         ...info,
         name: info.name || branchName,
@@ -85,12 +92,16 @@ function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
       }
       const identity = getWorktreeIdentity(info)
       if (identity instanceof Error) throw identity
+      if (identity.workspaceId && identity.workspaceId !== info.id) {
+        throw new Error('Kimaki worktree workspace ID does not match OpenCode workspace ID')
+      }
       const result = await createWorktreeCore({
         projectDirectory: identity.projectDirectory,
         targetDirectory: info.directory,
         branchName: info.branch || info.name,
         baseCommit: identity.baseCommit,
         expectedCommonGitDirectory: identity.expectedCommonGitDirectory,
+        workspaceId: identity.workspaceId ?? info.id,
         // Silent log — plugin must not write to stdout/stderr
       })
       if (result instanceof Error) {
@@ -101,16 +112,31 @@ function createKimakiWorktreeAdaptor(): WorkspaceAdapter {
     async remove(info: WorkspaceInfo): Promise<void> {
       if (!info.directory) return
       const identity = getWorktreeIdentity(info)
-      const result = identity instanceof Error
-        ? await removeWorktreeFromOwnRepository({
-            worktreeDirectory: info.directory,
-            branchName: info.branch || '',
-          })
-        : await removeWorktreeCore({
-            projectDirectory: identity.projectDirectory,
-            worktreeDirectory: info.directory,
-            branchName: info.branch || '',
-          })
+      if (identity instanceof Error) {
+        const legacyResult = await removeWorktreeFromOwnRepository({
+          worktreeDirectory: info.directory,
+          branchName: info.branch || '',
+        })
+        if (legacyResult instanceof Error) throw legacyResult
+        return
+      }
+      if (identity.workspaceId && identity.workspaceId !== info.id) {
+        throw new Error('Kimaki worktree workspace ID does not match OpenCode workspace ID')
+      }
+      let result = await removeWorktreeCore({
+        projectDirectory: identity.projectDirectory,
+        worktreeDirectory: info.directory,
+        branchName: info.branch || '',
+        workspaceId: identity.workspaceId,
+      })
+      if (result instanceof Error && !identity.workspaceId) {
+        result = await removeWorktreeCore({
+          projectDirectory: identity.projectDirectory,
+          worktreeDirectory: info.directory,
+          branchName: info.branch || '',
+          workspaceId: info.id,
+        })
+      }
       if (result instanceof Error) {
         throw result
       }
