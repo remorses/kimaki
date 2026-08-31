@@ -250,6 +250,24 @@ export function deriveLatestUnansweredQuestion({
       }
     }
     if (event.type === 'question.asked') {
+      const messageId = event.properties.tool?.messageID
+      const latestUserMessage = getLatestUserMessage({
+        events,
+        sessionId,
+        upToIndex: end,
+      })
+      if (
+        messageId
+        && latestUserMessage
+        && !isAssistantMessageInLatestUserTurn({
+          events,
+          sessionId,
+          messageId,
+          upToIndex: end,
+        })
+      ) {
+        return undefined
+      }
       return {
         id: event.properties.id,
         questions: event.properties.questions,

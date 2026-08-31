@@ -1678,4 +1678,79 @@ describe('question waits for preceding text-end', () => {
       sessionId,
     })).toBeUndefined()
   })
+
+  test('question from an older user turn is not unanswered', () => {
+    const firstUser = eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: 'msg_user_first',
+          sessionID: sessionId,
+          role: 'user',
+          time: { created: 1 },
+          agent: 'build',
+          model: {
+            providerID: 'deterministic-provider',
+            modelID: 'deterministic-v2',
+          },
+        },
+      },
+    })
+    const questionAssistant = eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: messageId,
+          sessionID: sessionId,
+          role: 'assistant',
+          time: { created: 2 },
+          parentID: 'msg_user_first',
+          modelID: 'deterministic-v2',
+          providerID: 'deterministic-provider',
+          mode: 'build',
+          agent: 'build',
+          path: { cwd: '/test', root: '/test' },
+          cost: 0,
+          tokens: {
+            input: 1,
+            output: 1,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+        },
+      },
+    })
+    const nextUser = eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: 'msg_user_commit',
+          sessionID: sessionId,
+          role: 'user',
+          time: { created: 3 },
+          agent: 'build',
+          model: {
+            providerID: 'deterministic-provider',
+            modelID: 'deterministic-v2',
+          },
+        },
+      },
+    })
+    const events = [
+      firstUser,
+      questionAssistant,
+      textStart,
+      questionAsked,
+      textEnd,
+      nextUser,
+    ]
+
+    expect(deriveLatestUnansweredQuestion({
+      events,
+      sessionId,
+    })).toBeUndefined()
+  })
 })
