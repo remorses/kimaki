@@ -39,7 +39,7 @@ import {
 } from '../worktrees.js'
 import {
   KIMAKI_WORKTREE_ADAPTER_TYPE,
-  removeWorktreeFromOwnRepository,
+  removeWorktreeCore,
   resolveGitCommit,
   resolveGitCommonDirectory,
   validateWorktreeIdentity,
@@ -219,17 +219,22 @@ async function getProjectDirectoryFromChannel(
  * Returns the workspace directory on success, or an Error if the workspace
  * feature is not available or the creation fails.
  */
-export async function tryWorkspaceCreate({
-  worktreeName,
-  projectDirectory,
-  baseCommit,
-  expectedCommonGitDirectory,
-}: {
+type WorkspaceCreateInput = {
   worktreeName: string
   projectDirectory: string
   baseCommit: string
   expectedCommonGitDirectory: string
-}): Promise<{ directory: string; workspaceId: string } | Error> {
+}
+
+// ZAI 2026-08-31: Claim managed paths before the workspace SDK can race on them.
+const workspaceCreations = new Set<string>()
+
+async function tryWorkspaceCreateUnlocked({
+  worktreeName,
+  projectDirectory,
+  baseCommit,
+  expectedCommonGitDirectory,
+}: WorkspaceCreateInput): Promise<{ directory: string; workspaceId: string } | Error> {
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
@@ -251,13 +256,21 @@ export async function tryWorkspaceCreate({
       }
       return undefined
     })()
-    const gitCleanupError = fs.existsSync(worktreeDirectory)
-      ? await removeWorktreeFromOwnRepository({
-          worktreeDirectory,
-          branchName: worktreeName,
-        })
-      : undefined
-    return sdkCleanupError ?? gitCleanupError
+    const localCleanupError = await removeWorktreeCore({
+      projectDirectory,
+      worktreeDirectory,
+      branchName: worktreeName,
+      workspaceId,
+    })
+    if (sdkCleanupError && localCleanupError instanceof Error) {
+      return new Error(
+        `${sdkCleanupError.message}; local cleanup failed: ${localCleanupError.message}`,
+        {
+          cause: sdkCleanupError,
+        },
+      )
+    }
+    return sdkCleanupError ?? localCleanupError
   }
 
   const response = await client.experimental.workspace.create({
@@ -269,6 +282,7 @@ export async function tryWorkspaceCreate({
       projectDirectory,
       baseCommit,
       expectedCommonGitDirectory,
+      workspaceId,
     },
   }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
   if (response instanceof Error || response.error) {
@@ -313,6 +327,20 @@ export async function tryWorkspaceCreate({
     return identityResult
   }
   return { directory: workspace.directory, workspaceId: workspace.id }
+}
+
+export async function tryWorkspaceCreate(input: WorkspaceCreateInput) {
+  const targetDirectory = getManagedWorktreeDirectory({
+    directory: input.projectDirectory,
+    name: input.worktreeName,
+  })
+  if (workspaceCreations.has(targetDirectory)) {
+    return new Error(`Worktree creation already in progress: ${targetDirectory}`)
+  }
+  workspaceCreations.add(targetDirectory)
+  return tryWorkspaceCreateUnlocked(input).finally(() => {
+    workspaceCreations.delete(targetDirectory)
+  })
 }
 
 /**

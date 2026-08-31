@@ -13,7 +13,9 @@ import {
   resolveGitCommonDirectory,
 } from './git-worktree-core.js'
 
+// ZAI 2026-08-31: Regression coverage for exact-clone and collision isolation.
 const WORKTREE_BRANCH = 'opencode/kimaki-clone-isolation'
+const COLLISION_WORKTREE_BRANCH = 'opencode/kimaki-clone-collision'
 const REJECTED_WORKTREE_BRANCH = 'opencode/kimaki-rejected-clone-isolation'
 
 async function git({ cwd, args }: { cwd: string; args: string[] }) {
@@ -142,10 +144,83 @@ test('creates a workspace from the exact requested clone and commit', async () =
         }
       `)
   } finally {
-    await requestedClient.experimental.workspace.remove({
+    const removeResponse = await requestedClient.experimental.workspace.remove({
       id: workspace.id,
       directory: requestedClone,
     })
+    if (removeResponse.error) throw new Error(JSON.stringify(removeResponse.error))
+  }
+}, 30_000)
+
+test('same-name creation keeps one winner and no failed workspace residue', async () => {
+  const requestedCommit = await git({
+    cwd: requestedClone,
+    args: ['rev-parse', 'HEAD^{commit}'],
+  })
+  const requestedCommonDirectory = await resolveGitCommonDirectory({
+    directory: requestedClone,
+  })
+  if (requestedCommonDirectory instanceof Error) throw requestedCommonDirectory
+  const warmClientResult = await initializeOpencodeForDirectory(requestedClone)
+  if (warmClientResult instanceof Error) throw warmClientResult
+  await warmClientResult().config.get({ directory: requestedClone })
+
+  const results = await Promise.all([
+    tryWorkspaceCreate({
+      worktreeName: COLLISION_WORKTREE_BRANCH,
+      projectDirectory: requestedClone,
+      baseCommit: requestedCommit,
+      expectedCommonGitDirectory: requestedCommonDirectory,
+    }),
+    tryWorkspaceCreate({
+      worktreeName: COLLISION_WORKTREE_BRANCH,
+      projectDirectory: requestedClone,
+      baseCommit: requestedCommit,
+      expectedCommonGitDirectory: requestedCommonDirectory,
+    }),
+  ])
+  const successes = results.filter((result) => !(result instanceof Error))
+  const failures = results.filter((result) => result instanceof Error)
+  const collisionDirectory = getManagedWorktreeDirectory({
+    directory: requestedClone,
+    name: COLLISION_WORKTREE_BRANCH,
+  })
+  expect({
+    successCount: successes.length,
+    failureMessages: failures.map((failure) => failure.message),
+  }).toEqual({
+    successCount: 1,
+    failureMessages: [`Worktree creation already in progress: ${collisionDirectory}`],
+  })
+
+  const clientResult = await initializeOpencodeForDirectory(requestedClone)
+  if (clientResult instanceof Error) throw clientResult
+  const client = clientResult()
+  const listResponse = await client.experimental.workspace.list({
+    directory: requestedClone,
+  })
+  if (listResponse.error) throw new Error(JSON.stringify(listResponse.error))
+  const collisionWorkspaces = (listResponse.data ?? []).filter((workspace) => {
+    return workspace.branch === COLLISION_WORKTREE_BRANCH
+  })
+
+  try {
+    expect(collisionWorkspaces).toHaveLength(1)
+    const winner = successes[0]
+    if (!winner || winner instanceof Error) throw new Error('Missing collision winner')
+    expect(fs.existsSync(winner.directory)).toBe(true)
+    await expect(git({ cwd: winner.directory, args: ['rev-parse', 'HEAD'] })).resolves.toBe(
+      requestedCommit,
+    )
+  } finally {
+    await Promise.all(
+      collisionWorkspaces.map((workspace) => {
+        return client.experimental.workspace.remove({
+          id: workspace.id,
+          directory: requestedClone,
+        })
+      }),
+    )
   }
 }, 30_000)
 

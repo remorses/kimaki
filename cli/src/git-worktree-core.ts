@@ -15,11 +15,11 @@ const SUBMODULE_INIT_TIMEOUT_MS = 20 * 60_000
 const INSTALL_TIMEOUT_MS = 60_000
 
 const LOCKFILE_TO_INSTALL_COMMAND: Array<[string, string]> = [
-  ['pnpm-lock.yaml', 'pnpm install'],
-  ['bun.lock', 'bun install'],
-  ['bun.lockb', 'bun install'],
-  ['yarn.lock', 'yarn install'],
-  ['package-lock.json', 'npm install'],
+  ['pnpm-lock.yaml', 'pnpm install --frozen-lockfile'],
+  ['bun.lock', 'bun install --frozen-lockfile'],
+  ['bun.lockb', 'bun install --frozen-lockfile'],
+  ['yarn.lock', 'yarn install --frozen-lockfile'],
+  ['package-lock.json', 'npm ci'],
 ]
 
 export type WorktreeLog = {
@@ -39,6 +39,7 @@ export type KimakiWorktreeIdentity = {
   projectDirectory: string
   baseCommit: string
   expectedCommonGitDirectory: string
+  workspaceId?: string
 }
 
 export function parseKimakiWorktreeIdentity(
@@ -47,7 +48,7 @@ export function parseKimakiWorktreeIdentity(
   if (!extra) {
     return new Error('Kimaki worktree identity is missing')
   }
-  const { projectDirectory, baseCommit, expectedCommonGitDirectory } = extra
+  const { projectDirectory, baseCommit, expectedCommonGitDirectory, workspaceId } = extra
   if (typeof projectDirectory !== 'string' || !path.isAbsolute(projectDirectory)) {
     return new Error('Kimaki worktree project directory must be absolute')
   }
@@ -60,7 +61,13 @@ export function parseKimakiWorktreeIdentity(
   ) {
     return new Error('Kimaki worktree common Git directory must be absolute')
   }
-  return { projectDirectory, baseCommit, expectedCommonGitDirectory }
+  if (
+    workspaceId !== undefined &&
+    !/^wrk_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workspaceId)
+  ) {
+    return new Error('Kimaki worktree workspace ID is invalid')
+  }
+  return { projectDirectory, baseCommit, expectedCommonGitDirectory, workspaceId }
 }
 
 const silentLog: WorktreeLog = {
@@ -381,6 +388,26 @@ async function runDependencyInstall(directory: string, log: WorktreeLog): Promis
   }
 }
 
+function findExistingLockfiles(directory: string) {
+  return LOCKFILE_TO_INSTALL_COMMAND
+    .map(([lockfile]) => lockfile)
+    .filter((lockfile) => fs.existsSync(path.join(directory, lockfile)))
+}
+
+async function validateLockfilesClean(directory: string, lockfiles: string[]) {
+  if (lockfiles.length === 0) return
+  const result = await execAsync(
+    { command: 'git', args: ['status', '--porcelain', '--untracked-files=no', '--', ...lockfiles] },
+    { cwd: directory, timeout: 10_000 },
+  ).catch(
+    (e) => new Error('Failed to inspect tracked files after dependency install', { cause: e }),
+  )
+  if (result instanceof Error) return result
+  const changes = result.stdout.trim()
+  if (!changes) return
+  return new Error(`Dependency install modified lockfiles: ${changes.replaceAll('\n', ', ')}`)
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export type WorktreeResult = {
@@ -390,6 +417,48 @@ export type WorktreeResult = {
 
 async function canonicalizePath(value: string) {
   return await fs.promises.realpath(value).catch(() => path.resolve(value))
+}
+
+async function resolveGitDirectory(directory: string) {
+  const result = await execAsync('git rev-parse --path-format=absolute --git-dir', {
+    cwd: directory,
+    timeout: 10_000,
+  }).catch((e) => new Error(`Failed to resolve Git directory for ${directory}`, { cause: e }))
+  if (result instanceof Error) return result
+  return canonicalizePath(result.stdout.trim())
+}
+
+// ZAI 2026-08-31: Bind destructive cleanup to the workspace that created the worktree.
+async function writeWorktreeOwner(directory: string, workspaceId: string) {
+  const gitDirectory = await resolveGitDirectory(directory)
+  if (gitDirectory instanceof Error) return gitDirectory
+  return fs.promises
+    .writeFile(path.join(gitDirectory, 'kimaki-workspace-owner'), `${workspaceId}\n`, {
+      encoding: 'utf-8',
+      flag: 'wx',
+    })
+    .catch((e) => new Error('Failed to record Kimaki worktree ownership', { cause: e }))
+}
+
+async function readWorktreeOwner(directory: string) {
+  const gitDirectory = await resolveGitDirectory(directory)
+  if (gitDirectory instanceof Error) return gitDirectory
+  const ownerPath = path.join(gitDirectory, 'kimaki-workspace-owner')
+  if (!fs.existsSync(ownerPath)) return null
+  const owner = await fs.promises
+    .readFile(ownerPath, 'utf-8')
+    .catch((e) => new Error('Failed to read Kimaki worktree ownership', { cause: e }))
+  if (owner instanceof Error) return owner
+  return owner.trim()
+}
+
+export async function validateLegacyWorktreeRemoval(directory: string) {
+  if (!fs.existsSync(directory)) return
+  const owner = await readWorktreeOwner(directory)
+  if (owner instanceof Error) return owner
+  if (owner !== null) {
+    return new Error(`Kimaki workspace-owned worktree requires SDK cleanup: ${owner}`)
+  }
 }
 
 export async function resolveGitCommit({
@@ -503,6 +572,7 @@ export async function createWorktreeCore({
   branchName,
   baseCommit,
   expectedCommonGitDirectory,
+  workspaceId,
   onProgress,
   log = silentLog,
 }: {
@@ -511,6 +581,7 @@ export async function createWorktreeCore({
   branchName: string
   baseCommit: string
   expectedCommonGitDirectory: string
+  workspaceId?: string
   onProgress?: (phase: string) => void
   log?: WorktreeLog
 }): Promise<WorktreeResult | Error> {
@@ -519,13 +590,16 @@ export async function createWorktreeCore({
   }
   await fs.promises.mkdir(path.dirname(targetDirectory), { recursive: true })
 
-  const createCmd = `git worktree add ${JSON.stringify(targetDirectory)} -B ${JSON.stringify(branchName)} ${JSON.stringify(baseCommit)}`
-  const createResult = await execAsync(createCmd, {
-    cwd: projectDirectory,
-    timeout: SUBMODULE_INIT_TIMEOUT_MS,
-  }).catch((e) =>
-    new Error(`git worktree add failed: ${formatCommandError(e)}`, { cause: e }),
-  )
+  const createResult = await execAsync(
+    {
+      command: 'git',
+      args: ['worktree', 'add', targetDirectory, '-b', branchName, baseCommit],
+    },
+    {
+      cwd: projectDirectory,
+      timeout: SUBMODULE_INIT_TIMEOUT_MS,
+    },
+  ).catch((e) => new Error(`git worktree add failed: ${formatCommandError(e)}`, { cause: e }))
   if (createResult instanceof Error) return createResult
 
   const identityResult = await validateWorktreeIdentity({
@@ -547,6 +621,35 @@ export async function createWorktreeCore({
       })
     }
     return identityResult
+  }
+
+  if (workspaceId) {
+    const ownerResult = await writeWorktreeOwner(targetDirectory, workspaceId)
+    if (ownerResult instanceof Error) {
+      const recordedOwner = await readWorktreeOwner(targetDirectory)
+      if (recordedOwner instanceof Error) {
+        return new Error(`${ownerResult.message}; cleanup ownership check failed`, {
+          cause: recordedOwner,
+        })
+      }
+      if (recordedOwner !== null && recordedOwner !== workspaceId) {
+        return new Error(`${ownerResult.message}; worktree is owned by another workspace`, {
+          cause: ownerResult,
+        })
+      }
+      const cleanupResult = await removeWorktreeCore({
+        projectDirectory,
+        worktreeDirectory: targetDirectory,
+        branchName,
+        workspaceId: recordedOwner === workspaceId ? workspaceId : undefined,
+      })
+      if (cleanupResult instanceof Error) {
+        return new Error(`${ownerResult.message}; cleanup failed: ${cleanupResult.message}`, {
+          cause: ownerResult,
+        })
+      }
+      return ownerResult
+    }
   }
 
   // Remove broken submodule stubs before init
@@ -580,6 +683,7 @@ export async function createWorktreeCore({
       projectDirectory,
       worktreeDirectory: targetDirectory,
       branchName,
+      workspaceId,
     })
     if (cleanupResult instanceof Error) {
       return new Error(`${submoduleValidation.message}; cleanup failed: ${cleanupResult.message}`, {
@@ -591,9 +695,26 @@ export async function createWorktreeCore({
 
   // Dependency install (non-fatal)
   onProgress?.('Installing dependencies...')
+  const lockfiles = findExistingLockfiles(targetDirectory)
   const installResult = await runDependencyInstall(targetDirectory, log)
   if (installResult instanceof Error) {
     log.error(`Dependency install failed (non-fatal): ${installResult.message}`)
+  }
+
+  const trackedFilesClean = await validateLockfilesClean(targetDirectory, lockfiles)
+  if (trackedFilesClean instanceof Error) {
+    const cleanupResult = await removeWorktreeCore({
+      projectDirectory,
+      worktreeDirectory: targetDirectory,
+      branchName,
+      workspaceId,
+    })
+    if (cleanupResult instanceof Error) {
+      return new Error(`${trackedFilesClean.message}; cleanup failed: ${cleanupResult.message}`, {
+        cause: trackedFilesClean,
+      })
+    }
+    return trackedFilesClean
   }
 
   return { directory: targetDirectory, branch: branchName }
@@ -607,20 +728,70 @@ export async function removeWorktreeCore({
   projectDirectory,
   worktreeDirectory,
   branchName,
+  workspaceId,
 }: {
   projectDirectory: string
   worktreeDirectory: string
   branchName: string
+  workspaceId?: string
 }): Promise<void | Error> {
+  if (!fs.existsSync(worktreeDirectory)) {
+    const [worktreeList, branchList] = await Promise.all([
+      execAsync(
+        { command: 'git', args: ['worktree', 'list', '--porcelain'] },
+        { cwd: projectDirectory, timeout: 10_000 },
+      ).catch((e) => new Error('Failed to inspect missing worktree registration', { cause: e })),
+      execAsync(
+        { command: 'git', args: ['branch', '--list', '--format=%(refname)', branchName] },
+        { cwd: projectDirectory, timeout: 10_000 },
+      ).catch((e) => new Error('Failed to inspect missing worktree branch', { cause: e })),
+    ])
+    if (worktreeList instanceof Error) return worktreeList
+    if (branchList instanceof Error) return branchList
+    const targetPath = path.resolve(worktreeDirectory)
+    const registered = worktreeList.stdout
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .some((line) => path.resolve(line.slice('worktree '.length)) === targetPath)
+    const branchExists = branchList.stdout
+      .split('\n')
+      .some((line) => line.trim() === `refs/heads/${branchName}`)
+    if (!registered && !branchExists) return
+    return new Error(
+      `Cannot verify worktree removal because its directory is missing (registered: ${registered}, branch exists: ${branchExists})`,
+    )
+  }
+  const owner = await readWorktreeOwner(worktreeDirectory)
+  if (owner instanceof Error) return owner
+  if (workspaceId && owner !== workspaceId) {
+    return new Error(`Kimaki worktree is owned by another workspace: ${owner ?? 'legacy'}`)
+  }
+  if (!workspaceId && owner !== null) {
+    return new Error(`Kimaki worktree requires its owner workspace ID: ${owner}`)
+  }
+  const actualBranch = await execAsync(
+    {
+      command: 'git',
+      args: ['symbolic-ref', '-q', 'HEAD'],
+    },
+    {
+      cwd: worktreeDirectory,
+      timeout: 10_000,
+    },
+  ).catch((e) => new Error('Failed to resolve worktree branch before cleanup', { cause: e }))
+  if (actualBranch instanceof Error) return actualBranch
+  if (actualBranch.stdout.trim() !== `refs/heads/${branchName}`) {
+    return new Error(`Worktree branch mismatch: ${actualBranch.stdout.trim()}`)
+  }
   const removeResult = await execAsync(
-    `git worktree remove --force ${JSON.stringify(worktreeDirectory)}`,
+    { command: 'git', args: ['worktree', 'remove', '--force', worktreeDirectory] },
     { cwd: projectDirectory, timeout: 30_000 },
   ).catch((e) => new Error(`git worktree remove failed: ${formatCommandError(e)}`, { cause: e }))
   if (removeResult instanceof Error) return removeResult
 
   if (branchName) {
     const deleteResult = await execAsync(
-      `git branch -D ${JSON.stringify(branchName)}`,
+      { command: 'git', args: ['branch', '-D', branchName] },
       { cwd: projectDirectory, timeout: 10_000 },
     ).catch((e) =>
       new Error(`git branch delete failed: ${formatCommandError(e)}`, { cause: e }),
@@ -632,11 +803,15 @@ export async function removeWorktreeCore({
 export async function removeWorktreeFromOwnRepository({
   worktreeDirectory,
   branchName,
+  workspaceId,
 }: {
   worktreeDirectory: string
   branchName: string
+  workspaceId?: string
 }): Promise<void | Error> {
-  if (!fs.existsSync(worktreeDirectory)) return
+  if (!fs.existsSync(worktreeDirectory)) {
+    return new Error(`Cannot locate repository because worktree directory is missing: ${worktreeDirectory}`)
+  }
   const listResult = await execAsync('git worktree list --porcelain', {
     cwd: worktreeDirectory,
     timeout: 10_000,
@@ -654,5 +829,6 @@ export async function removeWorktreeFromOwnRepository({
     projectDirectory: mainWorktreeLine.slice('worktree '.length),
     worktreeDirectory,
     branchName,
+    workspaceId,
   })
 }
