@@ -25,6 +25,15 @@ afterEach(async () => {
 })
 
 describe('system-message', () => {
+  test('requires reading the report-bugs guide before filing kimaki issues', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain(
+      'Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue',
+    )
+  })
+
   test('includes callout guidance for important content', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
@@ -223,6 +232,7 @@ describe('system-message', () => {
 
       ## debugging kimaki issues
 
+      ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Kimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
       If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`<data-dir>/kimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
 
       ## uploading files to discord

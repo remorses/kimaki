@@ -116,6 +116,7 @@ kimaki task delete <id>
 kimaki session list
 kimaki session search 'query'
 kimaki session read <session-id>
+kimaki session export-events-jsonl --session <session-id> --out ./tmp/session.jsonl
 # Paths are absolute; a worktree file is not the same path as main
 kimaki session editors <file>
 kimaki session title 'Short title' --session <session-id>
@@ -138,4 +139,4 @@ kimaki sqlitedb
 kimaki upgrade
 ```
 
-See [CI & Automation](../guides/ci-automation) for the full `kimaki send` flag reference and scheduling options.
+See [CI & Automation](../guides/ci-automation) for the full `kimaki send` flag reference and scheduling options. See [Debug sessions and report bugs](../guides/report-bugs.mdx) to export jsonl and file an issue.

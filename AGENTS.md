@@ -266,6 +266,8 @@ the website shows the changelog and install instructions, so it must be updated 
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
 
+user-facing bug report workflow (export jsonl, share evidence in a gist, issue vs PR) lives in `website/src/docs/docs/guides/report-bugs.mdx` and at https://kimaki.dev/docs/guides/report-bugs. keep that page in sync when these debug commands change.
+
 ## libsql in-memory gotcha
 
 when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memory:?cache=shared`. without `cache=shared`, libsql's `transaction()` method sets its internal `#db = null` and lazily creates a `new Database("file::memory:")` on the next operation -- which gives a **separate empty in-memory database**. this silently breaks any Prisma operation that uses transactions internally (`upsert`, `$transaction`, etc.) while simple `create`/`findMany` keep working, making the bug hard to diagnose.

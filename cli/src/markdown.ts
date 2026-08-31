@@ -129,7 +129,10 @@ export class ShareMarkdown {
         }
       }
     } else if (message.role === 'assistant') {
-      lines.push(`### 🤖 Assistant (${message.modelID || 'unknown model'})`)
+      const modelId =
+        [message.providerID, message.modelID].filter(Boolean).join('/') ||
+        'unknown model'
+      lines.push(`### 🤖 Assistant (${modelId})`)
       lines.push('')
 
       // Filter and process parts
