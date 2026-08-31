@@ -119,6 +119,70 @@ export type ListedModel = {
   connected: boolean
 }
 
+type ProviderModelLookup = {
+  id: string
+  models?: Record<string, { name?: string } | undefined>
+}
+
+/** SDK display name from provider.list. Subrouter sets this to `build (claude-opus-4-6)`. */
+export function getProviderModelName({
+  providers,
+  providerID,
+  modelID,
+}: {
+  providers: ProviderModelLookup[]
+  providerID?: string
+  modelID?: string
+}): string | undefined {
+  if (!providerID || !modelID) return undefined
+  const provider = providers.find((p) => p.id === providerID)
+  const model = provider?.models?.[modelID]
+  if (!model) return undefined
+  if (typeof model.name === 'string' && model.name.trim()) return model.name
+  return modelID
+}
+
+/** Use the SDK name only when it is the model id, or the model id plus `(live-model)`. */
+export function displayedModelLabel({
+  modelID,
+  name,
+}: {
+  modelID: string
+  name?: string
+}): string {
+  if (name && (name === modelID || name.startsWith(`${modelID} (`))) return name
+  return modelID
+}
+
+export function formatDisplayedModelId({
+  providerID,
+  modelID,
+  name,
+}: {
+  providerID?: string
+  modelID?: string
+  name?: string
+}): string | undefined {
+  if (!providerID || !modelID) return undefined
+  return `${providerID}/${displayedModelLabel({ modelID, name })}`
+}
+
+export function resolveDisplayedModelId({
+  providers,
+  providerID,
+  modelID,
+}: {
+  providers: ProviderModelLookup[]
+  providerID?: string
+  modelID?: string
+}): string | undefined {
+  return formatDisplayedModelId({
+    providerID,
+    modelID,
+    name: getProviderModelName({ providers, providerID, modelID }),
+  })
+}
+
 type ModelListCacheEntry =
   | { status: 'pending'; promise: Promise<ListedModel[] | OpenCodeSdkError> }
   | { status: 'ready'; value: ListedModel[] }

@@ -34,6 +34,7 @@ import {
 } from './model.js'
 
 import { getThinkingValuesForModel } from '../thinking-utils.js'
+import { resolveDisplayedModelId } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.MODEL)
@@ -214,6 +215,12 @@ export async function showModelVariantPicker({
   const { providerID, modelID, model: fullModelId } = currentModelInfo
   const sourceLabel = formatSourceLabel(currentModelInfo)
   const variantLabel = cascadeVariant ? ` (${cascadeVariant})` : ''
+  const displayedModelId =
+    resolveDisplayedModelId({
+      providers: providersResponse.data.all,
+      providerID,
+      modelID,
+    }) ?? fullModelId
 
   const provider = providersResponse.data.all.find((p) => {
     return p.id === providerID
@@ -226,7 +233,7 @@ export async function showModelVariantPicker({
     modelId: modelID,
   })
 
-  const statusText = `**Current model:** \`${fullModelId}\`${variantLabel} — ${sourceLabel}`
+  const statusText = `**Current model:** \`${displayedModelId}\`${variantLabel} — ${sourceLabel}`
 
   if (variants.length === 0) {
     await editReply({

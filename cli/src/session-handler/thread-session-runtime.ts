@@ -94,7 +94,13 @@ import {
   getCurrentModelInfo,
   ensureSessionPreferencesSnapshot,
 } from '../commands/model.js'
-import { validateModelId } from './model-utils.js'
+import {
+  displayedModelLabel,
+  formatDisplayedModelId,
+  getProviderModelName,
+  listModels,
+  validateModelId,
+} from './model-utils.js'
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
@@ -4498,7 +4504,28 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const modelLabel = `${model.providerID}/${model.modelID}`
+    const client = getOpencodeClient(this.sdkDirectory)
+    const listed = client
+      ? await listModels({
+          getClient: () => client,
+          directory: this.sdkDirectory,
+        })
+      : undefined
+    const listedName =
+      listed && !(listed instanceof Error)
+        ? listed.find((entry) => {
+            return (
+              entry.providerID === model.providerID &&
+              entry.modelID === model.modelID
+            )
+          })?.name
+        : undefined
+    const modelLabel =
+      formatDisplayedModelId({
+        providerID: model.providerID,
+        modelID: model.modelID,
+        name: listedName,
+      }) ?? `${model.providerID}/${model.modelID}`
     const agentLabel = agent && agent.toLowerCase() !== 'build'
       ? ` ⋅ ${agent}`
       : ''
@@ -4538,7 +4565,6 @@ export class ThreadSessionRuntime {
       elapsedMs < 1000
         ? '<1s'
         : prettyMilliseconds(elapsedMs, { secondsDecimalDigits: 0 })
-    const modelInfo = runInfo.model ? ` ⋅ ${runInfo.model}` : ''
     const agentInfo =
       runInfo.agent && runInfo.agent.toLowerCase() !== 'build'
         ? ` ⋅ **${runInfo.agent}**`
@@ -4555,7 +4581,7 @@ export class ThreadSessionRuntime {
       }).catch((e) => new FilesystemOperationError({ operation: 'gitBranch', cause: e })),
       (async () => {
         if (!client || !sessionId) {
-          return
+          return []
         }
         let tokensUsed = runInfo.tokensUsed
         // Fetch final token count from API
@@ -4595,9 +4621,12 @@ export class ThreadSessionRuntime {
             })
           : undefined
 
+        const providers = providersResult && !(providersResult instanceof Error)
+          ? providersResult.data?.all ?? []
+          : []
         let contextLimit = fallbackLimit
-        if (providersResult && !(providersResult instanceof Error)) {
-          const provider = providersResult.data?.all?.find((p) => {
+        if (providers.length > 0) {
+          const provider = providers.find((p) => {
             return p.id === runInfo.providerID
           })
           const model = provider?.models?.[runInfo.model || '']
@@ -4610,6 +4639,7 @@ export class ThreadSessionRuntime {
           )
           contextInfo = ` ⋅ ${percentage}%`
         }
+        return providers
       })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
     ])
     const branchName =
@@ -4620,6 +4650,18 @@ export class ThreadSessionRuntime {
         contextResult,
       )
     }
+    const providers = contextResult instanceof Error ? [] : (contextResult ?? [])
+    const modelLabel = runInfo.model
+      ? displayedModelLabel({
+          modelID: runInfo.model,
+          name: getProviderModelName({
+            providers,
+            providerID: runInfo.providerID,
+            modelID: runInfo.model,
+          }),
+        })
+      : undefined
+    const modelInfo = modelLabel ? ` ⋅ ${modelLabel}` : ''
 
     const truncate = (s: string, max: number) => {
       return s.length > max ? s.slice(0, max - 1) + '\u2026' : s

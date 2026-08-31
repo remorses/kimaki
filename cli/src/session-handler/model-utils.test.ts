@@ -4,8 +4,11 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { InvalidModelError } from '../errors.js'
 import {
   clearModelListCache,
+  formatDisplayedModelId,
+  getProviderModelName,
   listModels,
   parseModelId,
+  resolveDisplayedModelId,
   validateCliModelOption,
   validateModelId,
   validateModelIdAgainstList,
@@ -35,6 +38,124 @@ const listed: ListedModel[] = [
 
 afterEach(() => {
   clearModelListCache()
+})
+
+describe('getProviderModelName', () => {
+  const providers = [
+    {
+      id: 'subrouter',
+      models: {
+        build: { name: 'build (claude-opus-4-6)' },
+        default: { name: 'default' },
+      },
+    },
+    {
+      id: 'deterministic-provider',
+      models: {
+        'deterministic-v2': { name: 'deterministic-v2' },
+      },
+    },
+  ]
+
+  test('uses the sdk display name when subrouter adds the live model', () => {
+    expect(
+      getProviderModelName({
+        providers,
+        providerID: 'subrouter',
+        modelID: 'build',
+      }),
+    ).toMatchInlineSnapshot(`"build (claude-opus-4-6)"`)
+  })
+
+  test('falls back to the model id when name is missing', () => {
+    expect(
+      getProviderModelName({
+        providers: [{ id: 'subrouter', models: { build: {} } }],
+        providerID: 'subrouter',
+        modelID: 'build',
+      }),
+    ).toMatchInlineSnapshot(`"build"`)
+  })
+
+  test('returns undefined when provider or model is missing', () => {
+    expect(
+      getProviderModelName({
+        providers,
+        providerID: 'subrouter',
+        modelID: 'missing',
+      }),
+    ).toBeUndefined()
+    expect(
+      getProviderModelName({
+        providers,
+        providerID: 'openai',
+        modelID: 'gpt-5.4',
+      }),
+    ).toBeUndefined()
+    expect(
+      getProviderModelName({
+        providers,
+      }),
+    ).toBeUndefined()
+  })
+})
+
+describe('formatDisplayedModelId', () => {
+  test('keeps provider/id when the sdk name matches the model id', () => {
+    expect(
+      formatDisplayedModelId({
+        providerID: 'deterministic-provider',
+        modelID: 'deterministic-v2',
+        name: 'deterministic-v2',
+      }),
+    ).toMatchInlineSnapshot(`"deterministic-provider/deterministic-v2"`)
+  })
+
+  test('uses the sdk name so subrouter live model shows in parentheses', () => {
+    expect(
+      formatDisplayedModelId({
+        providerID: 'subrouter',
+        modelID: 'build',
+        name: 'build (claude-opus-4-6)',
+      }),
+    ).toMatchInlineSnapshot(`"subrouter/build (claude-opus-4-6)"`)
+  })
+
+  test('falls back to provider/id when name is missing', () => {
+    expect(
+      formatDisplayedModelId({
+        providerID: 'subrouter',
+        modelID: 'build',
+      }),
+    ).toMatchInlineSnapshot(`"subrouter/build"`)
+  })
+
+  test('keeps provider/id when sdk name is a pretty label', () => {
+    expect(
+      formatDisplayedModelId({
+        providerID: 'anthropic',
+        modelID: 'claude-opus-4-6',
+        name: 'Claude Opus 4.6',
+      }),
+    ).toMatchInlineSnapshot(`"anthropic/claude-opus-4-6"`)
+  })
+})
+
+describe('resolveDisplayedModelId', () => {
+  test('uses subrouter sdk name with parentheses', () => {
+    expect(
+      resolveDisplayedModelId({
+        providers: [
+          {
+            id: 'subrouter',
+            models: { build: { name: 'build (claude-opus-4-6)' } },
+          },
+        ],
+        providerID: 'subrouter',
+        modelID: 'build',
+      }),
+    ).toMatchInlineSnapshot(`"subrouter/build (claude-opus-4-6)"`)
+  })
 })
 
 describe('parseModelId', () => {

@@ -28,7 +28,10 @@ import {
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
-import { getDefaultModel } from '../session-handler/model-utils.js'
+import {
+  getDefaultModel,
+  resolveDisplayedModelId,
+} from '../session-handler/model-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import {
@@ -545,21 +548,28 @@ export async function handleModelCommand({
     }
 
     const currentModelText = (() => {
+      if (currentModelInfo.type === 'none') {
+        return '**Current:** none'
+      }
+      const displayed =
+        resolveDisplayedModelId({
+          providers: allProviders,
+          providerID: currentModelInfo.providerID,
+          modelID: currentModelInfo.modelID,
+        }) ?? currentModelInfo.model
       switch (currentModelInfo.type) {
         case 'session':
-          return `**Current (this thread):** \`${currentModelInfo.model}\``
+          return `**Current (this thread):** \`${displayed}\``
         case 'agent':
-          return `**Current (agent "${currentModelInfo.agentName}"):** \`${currentModelInfo.model}\``
+          return `**Current (agent "${currentModelInfo.agentName}"):** \`${displayed}\``
         case 'channel':
-          return `**Current (channel override):** \`${currentModelInfo.model}\``
+          return `**Current (channel override):** \`${displayed}\``
         case 'global':
-          return `**Current (global default):** \`${currentModelInfo.model}\``
+          return `**Current (global default):** \`${displayed}\``
         case 'opencode-config':
         case 'opencode-recent':
         case 'opencode-provider-default':
-          return `**Current (opencode default):** \`${currentModelInfo.model}\``
-        case 'none':
-          return '**Current:** none'
+          return `**Current (opencode default):** \`${displayed}\``
       }
     })()
 
