@@ -96,9 +96,7 @@ import {
 } from '../commands/model.js'
 import {
   displayedModelLabel,
-  formatDisplayedModelId,
   getProviderModelName,
-  listModels,
   validateModelId,
 } from './model-utils.js'
 import {
@@ -4504,28 +4502,7 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const client = getOpencodeClient(this.sdkDirectory)
-    const listed = client
-      ? await listModels({
-          getClient: () => client,
-          directory: this.sdkDirectory,
-        })
-      : undefined
-    const listedName =
-      listed && !(listed instanceof Error)
-        ? listed.find((entry) => {
-            return (
-              entry.providerID === model.providerID &&
-              entry.modelID === model.modelID
-            )
-          })?.name
-        : undefined
-    const modelLabel =
-      formatDisplayedModelId({
-        providerID: model.providerID,
-        modelID: model.modelID,
-        name: listedName,
-      }) ?? `${model.providerID}/${model.modelID}`
+    const modelLabel = `${model.providerID}/${model.modelID}`
     const agentLabel = agent && agent.toLowerCase() !== 'build'
       ? ` ⋅ ${agent}`
       : ''
