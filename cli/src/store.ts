@@ -67,6 +67,11 @@ export type KimakiState = {
   // Read by: system-message.ts (conditionally appends critique instructions).
   critiqueEnabled: boolean
 
+  // Whether final session footers mention the thread creator.
+  // Changes: set once at startup from --skip-footer-mentions.
+  // Read by: ThreadSessionRuntime.emitFooter().
+  footerMentionsEnabled: boolean
+
   // User-specified skill whitelist. When non-empty, only these skill names
   // are injected into the model's system prompt (all others are hidden
   // behind an opencode permission.skill deny-all rule). Mutually exclusive
@@ -198,6 +203,7 @@ export const store = createStore<KimakiState>(() => ({
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   critiqueEnabled: true,
+  footerMentionsEnabled: true,
   enabledSkills: [],
   disabledSkills: [],
   allowedMentions: ['users'],

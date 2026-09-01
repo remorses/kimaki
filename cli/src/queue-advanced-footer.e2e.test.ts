@@ -6,6 +6,7 @@ import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
+import { store } from './store.js'
 import {
   waitForFooterMessage,
   waitForBotMessageContaining,
@@ -60,6 +61,45 @@ e2eTest('queue advanced: footer emission', () => {
           && m.content.includes('⋅')
       })
       expect(foundFooter).toBe(true)
+    },
+    8_000,
+  )
+
+  test(
+    'skip-footer-mentions omits the thread creator mention',
+    async () => {
+      store.setState({ footerMentionsEnabled: false })
+      try {
+        await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+          content: 'Reply with exactly: footer-without-mention',
+        })
+
+        const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+          timeout: 4_000,
+          predicate: (t) => {
+            return t.name === 'Reply with exactly: footer-without-mention'
+          },
+        })
+
+        const th = ctx.discord.thread(thread.id)
+        await th.waitForBotReply({ timeout: 4_000 })
+        await waitForFooterMessage({
+          discord: ctx.discord,
+          threadId: thread.id,
+          timeout: 4_000,
+        })
+
+        expect(await th.text()).toMatchInlineSnapshot(`
+          "--- from: user (queue-advanced-tester)
+          Reply with exactly: footer-without-mention
+          --- from: assistant (TestBot)
+          *using deterministic-provider/deterministic-v2*
+          ⬥ ok
+          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        `)
+      } finally {
+        store.setState({ footerMentionsEnabled: true })
+      }
     },
     8_000,
   )

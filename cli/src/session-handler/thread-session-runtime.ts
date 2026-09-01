@@ -108,6 +108,7 @@ import {
   type WorktreeInfo,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
+import { store } from '../store.js'
 import {
   trackEvent,
   type AnalyticsIngressMode,
@@ -4649,7 +4650,9 @@ export class ThreadSessionRuntime {
       ? `${truncatedFolder} ⋅ ${truncatedBranch} ⋅ `
       : `${truncatedFolder} ⋅ `
     const hasQueuedMessage = this.getQueueLength() > 0
-    const mention = !hasQueuedMessage && this.state?.sessionUserId
+    const mention = store.getState().footerMentionsEnabled
+      && !hasQueuedMessage
+      && this.state?.sessionUserId
       ? ` <@${this.state.sessionUserId}>`
       : ''
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`

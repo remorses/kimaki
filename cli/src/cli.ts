@@ -75,6 +75,10 @@ cli
     'Disable automatic diff upload to critique.work in system prompts',
   )
   .option(
+    '--skip-footer-mentions',
+    'Do not mention the thread creator in final session footers',
+  )
+  .option(
     '--auto-restart',
     'Automatically restart the bot on crash or OOM kill',
   )
@@ -154,6 +158,7 @@ cli
       verbosity?: string
       mentionMode?: boolean
       noCritique?: boolean
+      skipFooterMentions?: boolean
       allowAllUsers?: boolean
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
@@ -309,6 +314,7 @@ cli
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
+          ...(options.skipFooterMentions && { footerMentionsEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
@@ -357,6 +363,11 @@ cli
         if (options.noCritique) {
           cliLogger.log(
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
+          )
+        }
+        if (options.skipFooterMentions) {
+          cliLogger.log(
+            'Footer mentions disabled: final session footers will not mention thread creators',
           )
         }
         if (options.noAutoUpgrade) {
