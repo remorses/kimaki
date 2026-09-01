@@ -442,6 +442,107 @@ Done.`)
     `)
   })
 
+  test('renders a single-line callout inside an accented container', () => {
+    const result = splitTablesFromMarkdown(
+      `<callout accent="#f59e0b">Full suite: **622 passed, 6 unrelated existing failures, 8 skipped**.</callout>`,
+    )
+    expect(result.map((segment) => segment.type)).toEqual(['components'])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "accent_color": 16096779,
+              "components": [
+                {
+                  "content": "Full suite: **622 passed, 6 unrelated existing failures, 8 skipped**.",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
+
+  test('splits text around a single-line callout into separate segments', () => {
+    const result = splitTablesFromMarkdown(`Done.
+
+<callout accent="#f59e0b">Confidence: high.</callout>
+
+Diff: https://critique.work/v/example`)
+    expect(result.map((segment) => segment.type)).toEqual([
+      'text',
+      'components',
+      'text',
+    ])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "Done.
+
+      ",
+          "type": "text",
+        },
+        {
+          "components": [
+            {
+              "accent_color": 16096779,
+              "components": [
+                {
+                  "content": "Confidence: high.",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+        {
+          "text": "
+      Diff: https://critique.work/v/example",
+          "type": "text",
+        },
+      ]
+    `)
+  })
+
+  test('preserves single-line callout syntax inside fenced code', () => {
+    const result = splitTablesFromMarkdown(`\`\`\`html
+<callout accent="#f59e0b">inside</callout>
+\`\`\``)
+    expect(result.map((segment) => segment.type)).toEqual(['text'])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "\`\`\`html
+      <callout accent="#f59e0b">inside</callout>
+      \`\`\`",
+          "type": "text",
+        },
+      ]
+    `)
+  })
+
+  test('keeps malformed single-line callouts as plain text', () => {
+    const result = splitTablesFromMarkdown(
+      `<callout accent="#f59e0b">content</callout></callout>`,
+    )
+    expect(result.map((segment) => segment.type)).toEqual(['text'])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "<callout accent="#f59e0b">content</callout></callout>",
+          "type": "text",
+        },
+      ]
+    `)
+  })
+
   test('renders callout text inside an accented container', () => {
     const result = splitTablesFromMarkdown(`<callout accent="#2b7fff">
 ## Important

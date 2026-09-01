@@ -266,6 +266,11 @@ type MarkdownBlock =
   | { type: 'text'; text: string }
   | { type: 'callout'; content: string; callout: CalloutDescriptor }
 
+type MarkdownFence = {
+  marker: '`' | '~'
+  length: number
+}
+
 function splitMarkdownByCallouts({
   markdown,
 }: {
@@ -276,9 +281,33 @@ function splitMarkdownByCallouts({
   }) ?? [markdown]
   const blocks: MarkdownBlock[] = []
   let textBuffer = ''
+  let fence: MarkdownFence | null = null
 
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!
+    if (fence) {
+      textBuffer += line
+      if (isMarkdownFenceClose({ line, fence })) fence = null
+      continue
+    }
+
+    const openingFence = parseMarkdownFenceOpen({ line })
+    if (openingFence) {
+      fence = openingFence
+      textBuffer += line
+      continue
+    }
+
+    const singleLineCallout = parseSingleLineCallout({ line })
+    if (singleLineCallout) {
+      if (textBuffer.length > 0) {
+        blocks.push({ type: 'text', text: textBuffer })
+        textBuffer = ''
+      }
+      blocks.push(singleLineCallout)
+      continue
+    }
+
     const callout = parseCalloutOpenLine({ line })
     if (!callout) {
       textBuffer += line
@@ -501,6 +530,52 @@ function collectCalloutBodyFromLines({
   }
 
   return new Error('Unclosed <callout> block')
+}
+
+function parseMarkdownFenceOpen({
+  line,
+}: {
+  line: string
+}): MarkdownFence | null {
+  const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1]
+  if (!marker) return null
+  return {
+    marker: marker.startsWith('`') ? '`' : '~',
+    length: marker.length,
+  }
+}
+
+function isMarkdownFenceClose({
+  line,
+  fence,
+}: {
+  line: string
+  fence: MarkdownFence
+}): boolean {
+  const marker = line.trim()
+  return marker.length >= fence.length &&
+    [...marker].every((character) => character === fence.marker)
+}
+
+function parseSingleLineCallout({
+  line,
+}: {
+  line: string
+}): Extract<MarkdownBlock, { type: 'callout' }> | null {
+  const match = line.trim().match(/^(<callout(?:\s+[^>]*)?>)(.*?)<\/callout>$/i)
+  if (!match) return null
+
+  const content = match[2]!
+  if (/<\/?callout(?:\s|>)/i.test(content)) return null
+
+  const callout = parseCalloutOpenLine({ line: match[1]! })
+  if (!callout) return null
+
+  return {
+    type: 'callout',
+    content,
+    callout,
+  }
 }
 
 function parseCalloutOpenLine({
