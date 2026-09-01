@@ -1,5 +1,177 @@
 # Changelog
 
+## 0.27.0
+
+1. **Pool all AI subscriptions with Subrouter:** `/login` now shows **Subrouter** first. Add multiple accounts from multiple providers, then use `subrouter/default` or a custom preset. Subrouter first rotates accounts inside one provider, then moves to the next provider.
+
+   ```text
+     model: subrouter/default
+          │
+          ▼
+     anthropic/claude-opus-4-6 ──429──▶ second Claude account
+                                                │
+                                                ▼
+                                      openai/gpt-5.5
+                                                │
+                                         exhausted
+                                                ▼
+                                         xai/grok-4.6
+   ```
+
+   Cooldowns are shared by all sessions on the machine. Subrouter uses `retry-after` or `retry-after-ms` when the provider sends one, including zero. Without a usable retry delay, the fallback is five minutes. A `402` balance-exhausted response uses a six-hour cooldown.
+
+   ```bash
+   npx -y @subrouter/cli status
+   npx -y @subrouter/cli cooldown clear
+
+   npx -y @subrouter/cli preset create fast \
+     --models 'anthropic/claude-opus-4-6,xai/grok-4.6'
+   ```
+
+   Kimaki also shows the current routed model in `/model` and final footers. Published builds register the exact `@subrouter/opencode` package identity, so OpenCode deduplicates Kimaki and user plugin declarations. Rate-limited task subagents stay active so Subrouter can finish account rotation or cross-provider failover. Existing `kimaki multioauth` commands remain available as legacy single-provider rotation.
+
+2. **Put sessions to sleep and resume them later:** the new `kimaki_sleep` tool lets a session pause for hours or days, go idle without using tokens, and wake in the same session with its full conversation history.
+
+   Ask for it in plain language:
+
+   > deploy is running, check back in 2 hours and confirm it went green
+
+   The tool accepts either a relative `duration` or an absolute UTC `until` value:
+
+   ```text
+   duration: 30s | 10m | 2h | 1d
+   until:    2030-01-01T09:00:00Z
+   reason:   waiting for the deploy
+   ```
+
+   Sleeps survive bot restarts because they are stored in SQLite. Delivery uses a stable Discord-compatible nonce and retries safely. A new chat message, `/queue`, `/abort`, a slash command that starts a new turn, or `kimaki send` cancels the pending sleep. `/btw` does not cancel it because `/btw` starts a separate side conversation.
+
+3. **Merge worktrees with rebase or squash:** `/merge-worktree` now offers **Keep commits (rebase)** and **Squash into one commit** strategies. Squash mode rebases first, then creates one target commit, so the existing agent-assisted conflict flow still works.
+
+   ```text
+   /merge-worktree strategy:Squash into one commit target-branch:main
+   ```
+
+   The same merge pipeline is available from the root CLI:
+
+   ```bash
+   kimaki merge-worktree --strategy squash --target-branch main
+   ```
+
+   If a rebase has conflicts, Kimaki asks the agent to resolve them, continue the rebase, and retry the command. A successful retry clears the worktree marker from the Discord thread title. Completion messages include the source commit count.
+
+4. **Coordinate concurrent sessions from the CLI:** active-session filtering, file editor attribution, and explicit title updates make parallel agent work easier to manage.
+
+   ```bash
+   kimaki session list --active
+
+   while kimaki session list --active \
+     --exclude "$CURRENT_SESSION_ID"; do
+     sleep 5
+   done
+
+   kimaki session editors src/cli.ts
+   kimaki session editors src/cli.ts --json
+
+   kimaki session title 'Fix queue draining' --session ses_xxx
+   ```
+
+   `--active` includes each selected session status and exits with status `1` when no matching active sessions remain. Editor tracking records successful `edit`, `write`, and `apply_patch` calls. Session title updates change the OpenCode title, and the mapped Discord thread follows it.
+
+5. **Expose the OpenCode server for remote attachment:** add `--opencode-hostname` and `--opencode-port` for remote OpenCode clients.
+
+   ```bash
+   OPENCODE_SERVER_PASSWORD=replace-me \
+     kimaki --opencode-hostname 0.0.0.0 --opencode-port 4096
+
+   opencode attach http://YOUR_VPS_IP:4096 --password replace-me
+   ```
+
+   These flags only control the OpenCode child server. Kimaki's lock and Hrana servers remain on `127.0.0.1`. Kimaki refuses a non-loopback OpenCode bind if `OPENCODE_SERVER_PASSWORD` is missing. `OPENCODE_SERVER_USERNAME` defaults to `opencode`. Without these flags, Kimaki explicitly binds OpenCode to `127.0.0.1` on a random free port.
+
+6. **Validate CLI model IDs before work starts:** Kimaki now validates `--model` against OpenCode's live provider and model list before sending prompts, creating or editing tasks, and starting sessions.
+
+   ```bash
+   kimaki send \
+     --model anthropic/claude-opus-4-6 \
+     --prompt 'review this'
+
+   kimaki task edit 12 --model openai/gpt-5.4
+   ```
+
+   Invalid values fail immediately with provider or similar-model hints. The required format is `provider/model`. An empty `--model` value on `task edit` still clears the task override.
+
+7. **Notify thread creators when final work completes:** the final session footer now mentions the thread creator, which creates a Discord completion notification. Intermediate footers stay silent while queued messages remain.
+
+   Use the new root flag to keep final footers visible without mention notifications:
+
+   ```bash
+   kimaki --skip-footer-mentions
+   ```
+
+   Footer mentions remain enabled by default.
+
+8. **Add a ground-truth bug-report workflow:** the public guide covers event-stream export, logs, session Markdown, exact prompts, exact model IDs, and secret gists.
+
+   ```bash
+   kimaki session export-events-jsonl \
+     --session ses_xxx \
+     --out ./tmp/ses_xxx.jsonl
+
+   kimaki session read ses_xxx > ./tmp/ses_xxx.md
+   kimaki --version
+   ```
+
+   `kimaki session read` now includes the exact `providerID/modelID` in each assistant heading.
+
+9. **Repair incomplete `kimaki@0.26.0` npm installations:** standard npm installs now declare `@subrouter/opencode` as a runtime dependency. The generated `schema.sql` also matches every table in the current Drizzle schema and includes `session_sleeps`. Regression tests cover both package contracts. Fixes [#199](https://github.com/remorses/kimaki/issues/199).
+
+10. **Keep AskUserQuestion prompts available and correctly ordered:** AskUserQuestion dropdowns no longer expire after ten minutes. A question remains active until the user answers it, sends a newer message, or runs `/abort`.
+
+    Assistant text emitted before a question now appears before the dropdown and before a queued `» user:` handoff. If Kimaki restarts and retains an old unanswered `question.asked` event, a newer user turn makes that old question inactive. `/abort` clears the pending dropdown. If Discord cannot send the dropdown, Kimaki clears its context and aborts the blocked OpenCode session. Permission prompts still keep their configurable timeout. Fixes [#192](https://github.com/remorses/kimaki/issues/192).
+
+11. **Keep worktree creation bound to the correct checkout:** worktree setup now binds each request to the exact registered project checkout and resolved commit SHA. Kimaki verifies the Git common directory, linked-worktree identity, requested `HEAD`, and submodule ownership before the session starts. A mismatch is cleaned up and reported instead of starting work in an independent clone of the same remote.
+
+    Kimaki also copies the source model, applies permissions, and binds the forked OpenCode session before the worktree becomes usable. An immediate message can no longer race setup and start a replacement session with the channel default model.
+
+12. **Recover from Discord outages and stuck self-restarts:** Discord connect timeouts and temporary Undici socket errors now use a temporary-failure exit code. The restart wrapper retries with progressive backoff and does not count a long network outage as a crash loop.
+
+    Self-restarts also have a 15-second exit deadline. If cleanup finishes but Node hangs while joining native worker threads, Kimaki force-kills the correct child generation and continues the restart. Thanks [@Cyberlane](https://github.com/Cyberlane) for [#190](https://github.com/remorses/kimaki/pull/190).
+
+13. **Show delegated tasks when they start:** Kimaki now posts each delegated task line as soon as OpenCode marks it running. It no longer waits for a child session ID, so large task batches show tasks that are waiting for an OpenCode subagent slot.
+
+    OpenAI task names can come from `state.title` instead of `input.description`; Kimaki supports both:
+
+    ```text
+    ┣ general **Classify pending changes**
+    ```
+
+    Completed task events do not post a late duplicate after the agent's follow-up text.
+
+14. **Route resumed sessions to the current Discord thread:** `/resume` can map one OpenCode session to several historical Discord threads. Reverse lookup now selects the most recently bound thread. `kimaki_file_upload`, `kimaki_action_buttons`, sleep wakes, and other session-to-thread operations no longer post into an old thread and wait for interaction there.
+
+15. **Keep sessions running when threads are archived:** archiving a Discord thread no longer aborts its mapped OpenCode session. Active work and queued prompts continue in order.
+
+    To stop the run explicitly:
+
+    ```bash
+    kimaki session abort <session-id>
+    ```
+
+16. **Keep video uploads out of voice transcription:** `.mov`, `.mp4`, and other video attachments are no longer treated as voice notes only because Discord includes a duration. Voice notes and uploaded audio (`.ogg`, `.m4a`, `.mp3`, `.wav`, `.oga`, `.opus`) still transcribe.
+
+17. **Render compact callouts correctly:** single-line callout blocks now render as Discord Components V2 containers instead of showing raw tags.
+
+    ```html
+    <callout accent="#f59e0b">Confidence: high.</callout>
+    ```
+
+    Callout syntax inside fenced code remains literal. Nested, adjacent, or malformed one-line callouts remain plain text instead of producing an incorrect container.
+
+18. **Show useful worktree merge failures:** `/merge-worktree` and `kimaki merge-worktree` now show the failed Git command, exit code, stderr, stdout when useful, and remaining cause details. When the final local target update fails after a successful rebase, Kimaki explains that the worktree rebase is preserved, the local target branch was not updated, and no push to origin occurred.
+
+19. **Count delegated task tokens accurately:** Strada `tokens_used` events now include billed usage from task child sessions, not only the parent session. Child idle events report their own usage, while the parent reports any remaining child delta without double-counting.
+
 ## 0.26.0
 
 1. **xAI (Grok) multi-account OAuth rotation** — kimaki now rotates xAI accounts the same way it already rotates Anthropic and OpenAI accounts.

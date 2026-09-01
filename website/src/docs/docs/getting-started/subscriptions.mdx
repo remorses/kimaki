@@ -53,7 +53,7 @@ When a run hits a rate limit, Subrouter tries the **next account**. When every a
                                                         exhausted ──────┴──▶ xai/grok-4.6
 ```
 
-Rate-limited accounts go into a **cooldown** shared by every session on the machine, so nothing retries a subscription that is known to be out. A `429` honors `retry-after` with a five minute floor; a `402` (balance exhausted) waits six hours.
+Rate-limited accounts go into a **cooldown** shared by every session on the machine, so nothing retries a subscription that is known to be out. A `429` honors `retry-after` or `retry-after-ms` when the provider sends one, including zero. Without a usable retry delay, the fallback is five minutes. A `402` (balance exhausted) waits six hours.
 
 After logging in, pick the model with `/model` and choose **`subrouter/default`**.
 
