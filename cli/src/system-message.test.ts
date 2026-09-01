@@ -271,7 +271,7 @@ describe('system-message', () => {
 
       ## archiving the current thread
 
-      To archive the current Discord thread (hide it from sidebar) and stop the session, run:
+      To archive the current Discord thread (hide it from sidebar) without stopping the session, run:
 
       kimaki session archive thread_123 (or --session ses_123)
 

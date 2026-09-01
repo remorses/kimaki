@@ -557,7 +557,7 @@ A new user message cancels the sleep. After wake, continue the wait reason.
 
 ## archiving the current thread
 
-To archive the current Discord thread (hide it from sidebar) and stop the session, run:
+To archive the current Discord thread (hide it from sidebar) without stopping the session, run:
 
 kimaki session archive ${archiveTarget}
 

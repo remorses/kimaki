@@ -254,12 +254,6 @@ export async function archiveThread({
     if (updateResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${updateResult.message}`)
     }
-
-    const abortResult = await client.session.abort({ sessionID: sessionId })
-      .catch((e) => new Error('Failed to abort session', { cause: e }))
-    if (abortResult instanceof Error) {
-      discordLogger.warn(`[archive-thread] ${abortResult.message}`)
-    }
   }
 
   if (archiveDelay > 0) {

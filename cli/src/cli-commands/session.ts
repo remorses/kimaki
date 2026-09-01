@@ -711,7 +711,7 @@ cli
 cli
   .command(
     'session archive [threadId]',
-    'Archive a Discord thread and stop its mapped OpenCode session',
+    'Archive a Discord thread without stopping its mapped OpenCode session',
   )
   .option('--session <sessionId>', 'Resolve thread from an OpenCode session ID')
   .action(async (threadIdArg: string | undefined, options: { session?: string }) => {

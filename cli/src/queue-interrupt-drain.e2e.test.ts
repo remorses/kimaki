@@ -23,6 +23,9 @@ import {
   waitForBotMessageContaining,
   waitForMessageById,
 } from './test-utils.js'
+import { getThreadSession } from './database.js'
+import { archiveThread } from './discord-utils.js'
+import { getOpencodeClient } from './opencode.js'
 
 const TEXT_CHANNEL_ID = '200000000000001099'
 
@@ -35,6 +38,124 @@ e2eTest('queue + interrupt drain ordering', () => {
     dirName: 'qa-interrupt-drain-e2e',
     username: 'interrupt-tester',
   })
+
+  test(
+    'archiving keeps the active run alive so queued messages drain',
+    async () => {
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: setup-archive-drain',
+      })
+
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (candidate) => {
+          return candidate.name === 'Reply with exactly: setup-archive-drain'
+        },
+      })
+      const th = ctx.discord.thread(thread.id)
+      await th.waitForBotReply({ timeout: 4_000 })
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain',
+      })
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'starting sleep',
+        afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain',
+        timeout: 4_000,
+      })
+
+      const { id: queueInteractionId } = await th.user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'queue',
+          options: [{
+            name: 'message',
+            type: 3,
+            value: 'Reply with exactly: archived-queue-survives',
+          }],
+        })
+      const queueAck = await th.waitForInteractionAck({
+        interactionId: queueInteractionId,
+        timeout: 4_000,
+      })
+      if (!queueAck.messageId) {
+        throw new Error('Expected /queue response message id')
+      }
+      const queueStatusMessage = await waitForMessageById({
+        discord: ctx.discord,
+        threadId: thread.id,
+        messageId: queueAck.messageId,
+        timeout: 4_000,
+      })
+      expect(queueStatusMessage.content).toContain('Queued message')
+
+      const sessionId = await getThreadSession(thread.id)
+      if (!sessionId) throw new Error('Expected mapped OpenCode session')
+      const client = getOpencodeClient(ctx.directories.projectDirectory)
+      if (!client) throw new Error('Expected initialized OpenCode client')
+      await archiveThread({
+        rest: ctx.botClient.rest,
+        threadId: thread.id,
+        parentChannelId: TEXT_CHANNEL_ID,
+        sessionId,
+        client,
+      })
+
+      const statusResponse = await client.session.status({
+        directory: ctx.directories.projectDirectory,
+      })
+      expect(statusResponse.data?.[sessionId]?.type).toBe('busy')
+
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: continue-after-archive',
+      })
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 12_000,
+        afterMessageIncludes: 'continue-after-archive',
+        afterAuthorId: TEST_USER_ID,
+      })
+
+      await waitForFooterMessage({
+        discord: ctx.discord,
+        threadId: thread.id,
+        timeout: 12_000,
+        afterMessageIncludes: 'archived-queue-survives',
+        afterAuthorId: ctx.discord.botUserId,
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (interrupt-tester)
+        Reply with exactly: setup-archive-drain
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        --- from: user (interrupt-tester)
+        PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
+        --- from: assistant (TestBot)
+        ⬥ starting sleep 100
+        Queued message (position 1)
+        --- from: user (interrupt-tester)
+        Reply with exactly: continue-after-archive
+        --- from: assistant (TestBot)
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        » **interrupt-tester:** Reply with exactly: archived-queue-survives
+        ⬥ ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+      `)
+    },
+    20_000,
+  )
 
   test(
     'queued message via /queue + normal interrupt: interrupt reply should appear, then queue drains',
