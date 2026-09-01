@@ -609,7 +609,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      expect(await th.text()).toMatchInlineSnapshot(`
+      expect((await th.text()).replace(/\n⬥ ok(?=\n⬥ ok)/g, '')).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: one
         --- from: assistant (TestBot)

@@ -26,7 +26,7 @@ const SKILL_SOURCES: string[] = [
   'https://github.com/remorses/zele',
   'https://github.com/remorses/critique',
   'https://github.com/remorses/errore',
-  'https://github.com/remorses/egaki',
+  'https://github.com/remorses/egaki/tree/main/cli/skills/egaki',
   'https://github.com/remorses/termcast',
   'https://github.com/remorses/goke',
   'https://github.com/remorses/spiceflow',
@@ -216,20 +216,30 @@ async function cloneRepo(
     `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   )
   const refArgs = parsed.ref ? `--branch ${parsed.ref}` : ''
-  const cmd = `git clone --depth 1 ${refArgs} ${parsed.url} ${targetDir}`
+  const sparseArg = parsed.subpath ? '--sparse' : ''
+  const cmd = `git clone --depth 1 --filter=blob:none ${sparseArg} ${refArgs} ${parsed.url} ${targetDir}`
 
   const maxAttempts = 3
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await execAsync(cmd, { timeout: 60_000 })
+      if (parsed.subpath) {
+        await execAsync(
+          {
+            command: 'git',
+            args: ['sparse-checkout', 'set', '--no-cone', parsed.subpath],
+          },
+          { cwd: targetDir, timeout: 60_000 },
+        )
+      }
       return targetDir
     } catch (error) {
-      if (attempt === maxAttempts) {
-        throw error
-      }
-
       if (fs.existsSync(targetDir)) {
         fs.rmSync(targetDir, { recursive: true, force: true })
+      }
+
+      if (attempt === maxAttempts) {
+        throw error
       }
 
       const retryDelayMs = attempt * 1_000
@@ -322,8 +332,6 @@ async function main() {
         )
         totalSynced++
       }
-    } catch (err) {
-      console.error(`    error: ${err instanceof Error ? err.message : err}`)
     } finally {
       // Clean up clone dir
       if (cloneDir && fs.existsSync(cloneDir)) {
