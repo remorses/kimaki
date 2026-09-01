@@ -11,7 +11,7 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { PROVIDER_IDS, type AccountsFile } from '@subrouter/cli'
+import { PROVIDER_IDS, type ConfigFile } from '@subrouter/cli'
 import { resolveOpencodeCommand } from './opencode.js'
 import { getSpawnCommandAndArgs } from './opencode-command.js'
 import { chooseLockPort } from './test-utils.js'
@@ -138,11 +138,11 @@ test('subrouter is a connected provider so /model accepts subrouter/default', as
   const subrouter = providers.all.find((entry) => {
     return entry.id === 'subrouter'
   })
-  expect(subrouter?.name).toBe('Subrouter')
+  expect(subrouter?.name).toBe('subrouter.org')
   expect(subrouter?.models.default).toMatchObject({
     capabilities: {
-      attachment: true,
-      input: { image: true, pdf: true },
+      attachment: false,
+      input: { image: false, pdf: false },
     },
   })
 })
@@ -181,7 +181,7 @@ test('authorize and callback add an opencode-go subscription', async () => {
   expect(response.ok).toBe(true)
   const authorization = (await response.json()) as { url: string; method: string; instructions: string }
   expect(authorization.method).toBe('code')
-  expect(authorization.url).toBe('https://console.opencode.ai')
+  expect(authorization.url).toBe('https://opencode.ai/auth')
   expect(authorization.instructions).toContain('API key')
 
   const callbackUrl = new URL(
@@ -199,10 +199,10 @@ test('authorize and callback add an opencode-go subscription', async () => {
   })
 
   expect(callbackResponse.ok).toBe(true)
-  const accounts = JSON.parse(
-    fs.readFileSync(path.join(subrouterHome, 'accounts.json'), 'utf8'),
-  ) as AccountsFile
-  expect(accounts.providers['opencode-go']?.accounts).toMatchObject([
+  const config = JSON.parse(
+    fs.readFileSync(path.join(subrouterHome, 'config.json'), 'utf8'),
+  ) as ConfigFile
+  expect(config.providers['opencode-go']?.accounts).toMatchObject([
     { type: 'api', key: 'zen-key-1' },
   ])
 })
