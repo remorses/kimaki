@@ -318,6 +318,34 @@ function waitForClientReady({
   })
 }
 
+function waitForGatewayUnavailable({
+  client,
+  timeoutMs = 10_000,
+}: {
+  client: Client
+  timeoutMs?: number
+}): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let reconnectAttempts = 0
+    const timeout = setTimeout(() => {
+      client.off(Events.ShardReconnecting, onReconnecting)
+      reject(
+        new Error(
+          `Client did not observe gateway unavailability within ${timeoutMs}ms`,
+        ),
+      )
+    }, timeoutMs)
+    const onReconnecting = () => {
+      reconnectAttempts += 1
+      if (reconnectAttempts < 2) return
+      clearTimeout(timeout)
+      client.off(Events.ShardReconnecting, onReconnecting)
+      resolve()
+    }
+    client.on(Events.ShardReconnecting, onReconnecting)
+  })
+}
+
 function waitForReconnection({
   client,
   events,
@@ -336,14 +364,14 @@ function waitForReconnection({
       resolve(false)
     }, timeoutMs)
 
-    client.on(Events.ShardReady, () => {
+    const finish = () => {
       clearTimeout(timeout)
+      client.off(Events.ShardReady, finish)
+      client.off(Events.ShardResume, finish)
       resolve(true)
-    })
-    client.on(Events.ShardResume, () => {
-      clearTimeout(timeout)
-      resolve(true)
-    })
+    }
+    client.on(Events.ShardReady, finish)
+    client.on(Events.ShardResume, finish)
   })
 }
 
@@ -419,15 +447,17 @@ describeLocal('gateway-proxy reconnection (local binary)', () => {
 
       // Kill proxy
       const firstProxy = proxyProcess
+      const gatewayUnavailable = waitForGatewayUnavailable({ client })
       await killProxy(proxyProcess)
-      await new Promise((r) => { setTimeout(r, 1000) })
+      await gatewayUnavailable
 
       // Restart proxy on same port
+      const reconnection = waitForReconnection({ client, events, label: 'local' })
       proxyProcess = startProxy(proxyOpts)
       await waitForProxyReady({ port: proxyPort })
       console.log('[local] Proxy restarted')
 
-      const reconnected = await waitForReconnection({ client, events, label: 'local' })
+      const reconnected = await reconnection
       console.log('[local] All events:', events)
       if (!reconnected) {
         dumpProxyLogs(firstProxy)

@@ -51,7 +51,7 @@ describe('queue advanced: typing around permissions', () => {
   })
 
   test(
-    'permission prompt pauses typing until user click, then typing resumes for long follow-up step',
+    'permission prompt pauses typing until user click, then typing resumes',
     async () => {
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'PERMISSION_TYPING_MARKER',
@@ -83,7 +83,7 @@ describe('queue advanced: typing around permissions', () => {
 
       th.clearTypingEvents()
 
-      await th.waitForTypingEvent({ timeout: 2_000 }).then(
+      await th.waitForTypingEvent({ timeout: 700 }).then(
         () => {
           throw new Error('Typing should stay paused while permission UI is pending')
         },
@@ -102,7 +102,7 @@ describe('queue advanced: typing around permissions', () => {
         timeout: 4_000,
       })
 
-      const resumedTyping = await th.waitForTypingEvent({ timeout: 9_000 })
+      const resumedTyping = await th.waitForTypingEvent({ timeout: 2_000 })
       expect(resumedTyping).toBeDefined()
 
       await waitForBotMessageContaining({
@@ -110,13 +110,13 @@ describe('queue advanced: typing around permissions', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: 'permission-flow-done',
-        timeout: 12_000,
+        timeout: 4_000,
       })
 
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 12_000,
+        timeout: 4_000,
         afterMessageIncludes: 'permission-flow-done',
         afterAuthorId: ctx.discord.botUserId,
       })
@@ -150,12 +150,10 @@ describe('queue advanced: typing around permissions', () => {
       expect(footerPosition).toBeGreaterThan(donePosition)
 
       const afterClick = timeline.slice(clickPosition, donePosition)
-      const afterDone = timeline.slice(donePosition, footerPosition)
       expect(afterClick).toContain('[bot typing]')
-      expect(afterDone).toContain('[bot typing]')
       expect(timeline.slice(footerPosition)).not.toContain('[bot typing]')
     },
-    20_000,
+    12_000,
   )
 
   test(

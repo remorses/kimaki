@@ -214,24 +214,31 @@ describe('extractTranscription', () => {
   })
 })
 
-describe('transcribeAudio with real API', () => {
+const liveVoiceTest = describe.skipIf(
+  process.env['KIMAKI_LIVE_VOICE_TESTS'] !== '1',
+)
+
+liveVoiceTest('transcribeAudio with real API', () => {
   const audioPath = path.join(
     import.meta.dirname,
     '..',
     'scripts',
     'example-audio.mp3',
   )
+  const oggPath = path.join(import.meta.dirname, '..', 'scripts', 'example-audio.ogg')
+  const geminiLiveTest = test.skipIf(
+    !process.env.GEMINI_API_KEY || !fs.existsSync(audioPath),
+  )
+  const openAiLiveTest = test.skipIf(
+    !process.env.OPENAI_API_KEY || !fs.existsSync(audioPath),
+  )
+  const openAiOggLiveTest = test.skipIf(
+    !process.env.OPENAI_API_KEY || !fs.existsSync(oggPath),
+  )
 
-  test('transcribes with Gemini', { timeout: 30_000 }, async () => {
+  geminiLiveTest('transcribes with Gemini', { timeout: 30_000 }, async () => {
     const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
-      console.log('Skipping: GEMINI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(audioPath)) {
-      console.log('Skipping: example-audio.mp3 not found')
-      return
-    }
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required')
 
     const audio = fs.readFileSync(audioPath)
     const result = await transcribeAudio({
@@ -247,16 +254,9 @@ describe('transcribeAudio with real API', () => {
     console.log('Gemini transcription:', result)
   })
 
-  test('transcribes with OpenAI', { timeout: 30_000 }, async () => {
+  openAiLiveTest('transcribes with OpenAI', { timeout: 30_000 }, async () => {
     const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      console.log('Skipping: OPENAI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(audioPath)) {
-      console.log('Skipping: example-audio.mp3 not found')
-      return
-    }
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required')
 
     const audio = fs.readFileSync(audioPath)
     const result = await transcribeAudio({
@@ -272,17 +272,9 @@ describe('transcribeAudio with real API', () => {
     console.log('OpenAI transcription:', result)
   })
 
-  test('transcribes OGG with OpenAI (converts to WAV)', { timeout: 30_000 }, async () => {
+  openAiOggLiveTest('transcribes OGG with OpenAI (converts to WAV)', { timeout: 30_000 }, async () => {
     const apiKey = process.env.OPENAI_API_KEY
-    const oggPath = path.join(import.meta.dirname, '..', 'scripts', 'example-audio.ogg')
-    if (!apiKey) {
-      console.log('Skipping: OPENAI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(oggPath)) {
-      console.log('Skipping: example-audio.ogg not found')
-      return
-    }
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required')
 
     const audio = fs.readFileSync(oggPath)
     const result = await transcribeAudio({

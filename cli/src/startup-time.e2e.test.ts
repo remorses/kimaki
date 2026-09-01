@@ -106,7 +106,11 @@ function createMinimalMatchers(): DeterministicMatcher[] {
 const TEST_USER_ID = '900000000000000777'
 const TEXT_CHANNEL_ID = '900000000000000778'
 
-describe('startup time measurement', () => {
+const startupBenchmark = describe.skipIf(
+  process.env['KIMAKI_STARTUP_BENCHMARK'] !== '1',
+)
+
+startupBenchmark('startup time measurement', () => {
   let directories: ReturnType<typeof createRunDirectories>
   let discord: DigitalDiscord
   let botClient: Client | null = null

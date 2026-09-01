@@ -105,6 +105,32 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const questionSelectDrainMatcher: DeterministicMatcher = {
+    id: 'question-select-drain-first',
+    priority: 109,
+    when: {
+      latestUserTextIncludes: 'QUESTION_SELECT_DRAIN_FIRST_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'question-select-drain-first' },
+        {
+          type: 'text-delta',
+          id: 'question-select-drain-first',
+          delta: 'question-drain-first',
+        },
+        { type: 'text-end', id: 'question-select-drain-first' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 0, 0, 400, 0],
+    },
+  }
+
   const slowAbortMatcher: DeterministicMatcher = {
     id: 'slow-abort-marker',
     priority: 100,
@@ -294,9 +320,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
       ],
-      // Keep run busy long enough after permission reply so typing keepalive
-      // must pulse again. This makes typing resume assertions deterministic.
-      partDelaysMs: [0, 0, 0, 0, 8_000],
+      partDelaysMs: [0, 400, 0, 0, 0],
     },
   }
 
@@ -423,6 +447,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     when: {
       lastMessageRole: 'user',
       latestUserTextIncludes: 'QUESTION_TEXT_ANSWER_MARKER',
+      rawPromptRegex: '^(?!.*question-text-answer-call)',
     },
     then: {
       parts: [
@@ -459,6 +484,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     when: {
       lastMessageRole: 'user',
       latestUserTextIncludes: 'QUESTION_SELECT_QUEUE_MARKER',
+      rawPromptRegex: '^(?!.*question-select-queue-call)',
     },
     then: {
       parts: [
@@ -850,6 +876,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   return [
+    questionSelectDrainMatcher,
     slowAbortMatcher,
     slowBusyMatcher,
     typingRepulseMatcher,

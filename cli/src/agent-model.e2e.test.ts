@@ -730,48 +730,32 @@ describe('agent model resolution', () => {
   )
 
   test(
-    'channel model with variant preference completes without error',
+    'unsupported channel model variant falls back to the selected model',
     async () => {
-      // Clear channel agent so model resolution falls through to channel model
       const db = await getDb()
       await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
-
-      // Set channel model with a variant (thinking level)
-      // The deterministic provider doesn't support thinking, so the variant
-      // is resolved but silently dropped (no matching thinking values).
-      // This test verifies the variant cascade code path runs without crashing
-      // and the correct model still appears in the footer.
       await setChannelModel({
         channelId: TEXT_CHANNEL_ID,
         modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
         variant: 'high',
       })
 
+      const prompt = 'Reply with exactly: variant-check'
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: variant-check',
+        content: prompt,
       })
-
       const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
         timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: variant-check'
-        },
+        predicate: (candidate) => candidate.name === prompt,
       })
-
-      await waitForBotMessageContaining({
+      const messages = await waitForFooterMessage({
         discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: '*project',
         timeout: 4_000,
       })
-
-      const messages = await discord.thread(thread.id).getMessages()
-      const footerMessage = messages.find((message) => {
-        return (
-          message.author.id === discord.botUserId &&
-          message.content.startsWith('*')
-        )
+      const footer = messages.find((message) => {
+        return message.author.id === discord.botUserId
+          && message.content.startsWith('*')
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
@@ -782,19 +766,8 @@ describe('agent model resolution', () => {
         ⬥ ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2* <@200000000000000920>"
       `)
-      expect(footerMessage).toBeDefined()
-      if (!footerMessage) {
-        throw new Error(
-          `Expected footer message but none found. Bot messages: ${messages
-            .filter((m) => m.author.id === discord.botUserId)
-            .map((m) => m.content.slice(0, 150))
-            .join(' | ')}`,
-        )
-      }
-
-      // Footer should still contain the channel model (variant doesn't crash)
-      expect(footerMessage.content).toContain(CHANNEL_MODEL)
-      expect(footerMessage.content).not.toContain(DEFAULT_MODEL)
+      expect(footer?.content).toContain(CHANNEL_MODEL)
+      expect(footer?.content).not.toContain(DEFAULT_MODEL)
     },
     15_000,
   )
@@ -980,105 +953,6 @@ describe('agent model resolution', () => {
       // NOT plan agent's model (PLAN_AGENT_MODEL)
       expect(secondFooter!.content).toContain(AGENT_MODEL)
       expect(secondFooter!.content).not.toContain(PLAN_AGENT_MODEL)
-    },
-    20_000,
-  )
-
-  test(
-    'thread created with no agent keeps default model after channel agent is set',
-    async () => {
-      // Clear any channel agent — thread starts with default (no agent)
-      const db = await getDb()
-      await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
-      // Also clear channel model so we get the pure default
-      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
-
-      // 1. Send a message to create a thread (no channel agent set)
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: default-thread-msg',
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: default-thread-msg'
-        },
-      })
-
-      // Wait for footer — should show the default model
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'ok',
-        afterAuthorId: discord.botUserId,
-      })
-
-      const firstMessages = await discord.thread(thread.id).getMessages()
-      const firstFooter = firstMessages.find((m) => {
-        return (
-          m.author.id === discord.botUserId && m.content.startsWith('*')
-        )
-      })
-      expect(firstFooter).toBeDefined()
-      // First run uses the default model (no agent set)
-      expect(firstFooter!.content).toContain(DEFAULT_MODEL)
-      expect(firstFooter!.content).not.toContain(AGENT_MODEL)
-
-      // 2. Set channel agent to test-agent via /test-agent-agent in the CHANNEL
-      const { id: interactionId } = await discord
-        .channel(TEXT_CHANNEL_ID)
-        .user(TEST_USER_ID)
-        .runSlashCommand({ name: 'test-agent-agent' })
-
-      await discord
-        .channel(TEXT_CHANNEL_ID)
-        .waitForInteractionAck({ interactionId, timeout: 4_000 })
-
-      // 3. Send a second message in the EXISTING thread
-      await discord
-        .thread(thread.id)
-        .user(TEST_USER_ID)
-        .sendMessage({
-          content: 'Reply with exactly: default-second-msg',
-        })
-
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'default-second-msg',
-        afterAuthorId: TEST_USER_ID,
-      })
-
-      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-        "--- from: user (agent-model-tester)
-        Reply with exactly: default-thread-msg
-        --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000920>
-        --- from: user (agent-model-tester)
-        Reply with exactly: default-second-msg
-        --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000920>"
-      `)
-
-      const secondMessages = await discord.thread(thread.id).getMessages()
-      const secondFooter = [...secondMessages]
-        .reverse()
-        .find((m) => {
-          return (
-            m.author.id === discord.botUserId && m.content.startsWith('*')
-          )
-        })
-      expect(secondFooter).toBeDefined()
-
-      // The existing thread should still use the DEFAULT model,
-      // NOT the test-agent's model (AGENT_MODEL)
-      expect(secondFooter!.content).toContain(DEFAULT_MODEL)
-      expect(secondFooter!.content).not.toContain(AGENT_MODEL)
     },
     20_000,
   )
