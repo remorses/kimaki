@@ -81,21 +81,13 @@ function createMatchers(): DeterministicMatcher[] {
       },
     },
     {
-      id: 'classifier-fast-allow',
-      priority: 150,
-      when: { latestUserTextIncludes: 'STAGE=fast' },
-      then: { parts: textParts('0', 'fast-allow') },
-    },
-    {
       id: 'tool-followup',
       priority: 50,
-      when: { lastMessageRole: 'tool' },
+      when: {
+        lastMessageRole: 'tool',
+        latestUserTextIncludes: 'AUTO_MODE_LS',
+      },
       then: { parts: textParts('tool-followup-done', 'followup') },
-    },
-    {
-      id: 'default',
-      priority: 1,
-      then: { parts: textParts('ok', 'default') },
     },
   ]
 }
@@ -198,7 +190,7 @@ beforeAll(async () => {
     providerNpm,
     model: 'deterministic-v2',
     smallModel: 'deterministic-v2',
-    settings: { strict: false, matchers: createMatchers() },
+    settings: { strict: true, matchers: createMatchers() },
   })
 
   await writeFile(

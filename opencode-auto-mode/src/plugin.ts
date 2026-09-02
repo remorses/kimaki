@@ -1,8 +1,9 @@
 // Shared plugin factory. OpenCode treats every export of a plugin module as
 // an initializer, so this file must not be the registered entry.
 
-import type { Plugin } from '@opencode-ai/plugin'
+import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import { AutoModeClassifier } from './classify.ts'
+import { CLASSIFIER_POLICY } from './classifier.ts'
 import { getDefaultConfig, loadConfig, resolveModel } from './config.ts'
 import { decide } from './decide.ts'
 
@@ -11,36 +12,70 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+async function loadUserText({
+  client,
+  sessionID,
+  directory,
+}: {
+  client: PluginInput['client']
+  sessionID: string
+  directory: string
+}) {
+  const messages = await client.session
+    .messages({
+      path: { id: sessionID },
+      query: { directory },
+    })
+    .catch(() => undefined)
+  const texts: string[] = []
+  for (const message of messages?.data ?? []) {
+    const info = (message as { info?: { role?: string } }).info
+    if (info?.role !== 'user') continue
+    for (const part of message.parts ?? []) {
+      if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
+        texts.push(part.text)
+      }
+    }
+  }
+  return texts.at(-1) ?? ''
+}
+
 export function createAutoModePlugin({ alwaysEnabled }: { alwaysEnabled: boolean }): Plugin {
   return async (input) => {
-    const fileConfig = loadConfig({ projectDir: input.directory })
-    if (!alwaysEnabled && !fileConfig) return {}
-
-    const config = fileConfig ?? getDefaultConfig()
+    const loaded = loadConfig({ projectDir: input.directory })
+    if (loaded.kind === 'disabled' && !alwaysEnabled) return {}
+    const invalidReason = loaded.kind === 'invalid' ? loaded.reason : undefined
+    const config = loaded.kind === 'enabled' ? loaded.config : getDefaultConfig()
     const classifier = new AutoModeClassifier({
       client: input.client,
       directory: input.directory,
     })
-    let modelResolved = false
-    let resolvedModel = config.model
-
-    const resolveModelOnce = async () => {
-      if (modelResolved) return
-      modelResolved = true
-      const providers = await input.client.provider.list({
-        query: { directory: input.directory },
-      })
-      const availableModels = new Set<string>()
-      for (const provider of providers.data?.all ?? []) {
-        for (const modelId of Object.keys(provider.models ?? {})) {
-          availableModels.add(`${provider.id}/${modelId}`)
+    const resolvedModelPromise = input.client.provider
+      .list({ query: { directory: input.directory } })
+      .then((providers) => {
+        const availableModels = new Set<string>()
+        for (const provider of providers.data?.all ?? []) {
+          for (const modelId of Object.keys(provider.models ?? {})) {
+            availableModels.add(`${provider.id}/${modelId}`)
+          }
         }
-      }
-      resolvedModel = resolveModel({ config, availableModels })
-    }
+        return resolveModel({ config, availableModels })
+      })
+      .catch(() => config.model)
 
     return {
+      'experimental.chat.system.transform': async (transformInput, output) => {
+        if (!transformInput.sessionID) return
+        if (!classifier.isClassifierSession(transformInput.sessionID)) return
+        output.system = [CLASSIFIER_POLICY]
+      },
       'tool.execute.before': async (toolInput, output) => {
+        if (invalidReason) {
+          throw new Error(`[auto-mode] ${invalidReason}`)
+        }
+        if (classifier.isClassifierSession(toolInput.sessionID)) {
+          throw new Error('[auto-mode] Classifier sessions cannot execute tools')
+        }
         const decision = decide({
           tool: toolInput.tool,
           args: asRecord(output.args),
@@ -50,14 +85,19 @@ export function createAutoModePlugin({ alwaysEnabled }: { alwaysEnabled: boolean
         if (decision.kind === 'deny') {
           throw new Error(`[auto-mode] ${decision.reason}`)
         }
-        await resolveModelOnce()
+        const resolvedModel = await resolvedModelPromise
+        const userText = await loadUserText({
+          client: input.client,
+          sessionID: toolInput.sessionID,
+          directory: input.directory,
+        })
         const result = await classifier
           .classify({
             config: { ...config, model: resolvedModel },
             input: {
               tool: toolInput.tool,
               args: output.args,
-              userText: '',
+              userText,
             },
           })
           .catch((error) => {

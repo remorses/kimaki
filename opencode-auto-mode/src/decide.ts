@@ -1,8 +1,14 @@
 // Pure auto-mode decision. No I/O. Skip, hard-deny, or classify.
 
+import fs from 'node:fs'
 import path from 'node:path'
 import { analyzeBash } from './bash.ts'
-import { hardDenyReason, hardDenyWritePath, pipelineHardDeny } from './hard-deny.ts'
+import {
+  hardDenyReason,
+  hardDenyRedirect,
+  hardDenyWritePath,
+  pipelineHardDeny,
+} from './hard-deny.ts'
 import { isReadOnlyCommand } from './read-only.ts'
 
 const SKIP_TOOLS = new Set([
@@ -34,10 +40,34 @@ function asString(value: unknown) {
   return typeof value === 'string' ? value : undefined
 }
 
-function isInsideCwd(filePath: string, cwd: string) {
+function realpathOrResolve(filePath: string) {
+  try {
+    return fs.realpathSync.native(filePath)
+  } catch {
+    return path.resolve(filePath)
+  }
+}
+
+function canonicalInsideCwd(filePath: string, cwd: string) {
+  const root = realpathOrResolve(cwd)
   const resolved = path.resolve(cwd, filePath)
-  const root = path.resolve(cwd)
-  return resolved === root || resolved.startsWith(`${root}${path.sep}`)
+  const existing = (() => {
+    try {
+      return fs.realpathSync.native(resolved)
+    } catch {
+      let current = path.dirname(resolved)
+      while (true) {
+        try {
+          return path.join(fs.realpathSync.native(current), path.relative(current, resolved))
+        } catch {
+          const parent = path.dirname(current)
+          if (parent === current) return resolved
+          current = parent
+        }
+      }
+    }
+  })()
+  return existing === root || existing.startsWith(`${root}${path.sep}`)
 }
 
 export function decide(input: ToolCall): Decision {
@@ -46,9 +76,9 @@ export function decide(input: ToolCall): Decision {
   if (WRITE_TOOLS.has(input.tool)) {
     const filePath = asString(input.args.filePath) ?? asString(input.args.path)
     if (!filePath) return { kind: 'classify' }
-    const denied = hardDenyWritePath(filePath)
+    const denied = hardDenyWritePath(filePath, input.cwd)
     if (denied) return { kind: 'deny', reason: denied }
-    if (isInsideCwd(filePath, input.cwd)) return { kind: 'skip' }
+    if (canonicalInsideCwd(filePath, input.cwd)) return { kind: 'skip' }
     return { kind: 'classify' }
   }
 
@@ -59,13 +89,22 @@ export function decide(input: ToolCall): Decision {
     if (analysis.errors.length > 0) {
       return { kind: 'deny', reason: analysis.errors[0]! }
     }
-    const pipelineDenied = pipelineHardDeny(analysis.commands)
+    const pipelineDenied = pipelineHardDeny(analysis.pipelines)
     if (pipelineDenied) return { kind: 'deny', reason: pipelineDenied }
     for (const leaf of analysis.commands) {
       const denied = hardDenyReason(leaf)
       if (denied) return { kind: 'deny', reason: denied }
     }
-    if (analysis.hasFileRedirect || analysis.hasCommandSubstitution) {
+    for (const redirect of analysis.redirects) {
+      const denied = hardDenyRedirect(redirect, input.cwd)
+      if (denied) return { kind: 'deny', reason: denied }
+    }
+    if (
+      analysis.hasFileRedirect ||
+      analysis.hasCommandSubstitution ||
+      analysis.hasDynamicContent ||
+      !analysis.structureSafe
+    ) {
       return { kind: 'classify' }
     }
     if (analysis.commands.length === 0) return { kind: 'classify' }

@@ -1,5 +1,5 @@
 {
-  "name": "opencode-auto-mode",
+  "name": "@kimaki/automode",
   "version": "0.1.0",
   "type": "module",
   "description": "OpenCode plugin that gates tool execution with a two-stage LLM classifier, like Claude Code auto mode.",
@@ -24,6 +24,9 @@
     "src",
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "rimraf dist \"*.tsbuildinfo\" && pnpm build",
