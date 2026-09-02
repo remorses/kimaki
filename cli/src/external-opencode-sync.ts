@@ -56,7 +56,7 @@ type SessionMessagesResponse = Awaited<
   ReturnType<OpencodeClient['session']['messages']>
 >
 type SessionMessage = NonNullable<SessionMessagesResponse['data']>[number]
-type SessionMessageLike = {
+export type SessionMessageLike = {
   info: {
     role: string
   }
@@ -136,7 +136,7 @@ function getDiscordOriginMetadataFromMessage({
   return null
 }
 
-function getRenderableUserTextParts({
+export function getRenderableUserTextParts({
   message,
 }: {
   message: SessionMessageLike
@@ -149,7 +149,7 @@ function getRenderableUserTextParts({
     if (part.type !== 'text') {
       return [] as RenderableUserTextPart[]
     }
-    if (isSyntheticTextPart(part)) {
+    if (isSyntheticTextPart(part) || part.ignored === true) {
       return [] as RenderableUserTextPart[]
     }
     const cleanedText = extractNonXmlContent(part.text || '').trim()
@@ -176,7 +176,7 @@ function getExternalUserMirrorText({
 // (kimaki manages it) and external sync should skip it. If absent (CLI/TUI),
 // external sync should mirror it — this naturally handles the "reclaim" case
 // (external → discord → external) without any DB source toggling.
-function isLatestUserTurnFromDiscord({
+export function isLatestUserTurnFromDiscord({
   messages,
 }: {
   messages: SessionMessageLike[]
