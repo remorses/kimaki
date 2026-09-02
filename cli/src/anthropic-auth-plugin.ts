@@ -42,6 +42,7 @@ import {
   withAuthStateLock,
 } from "./anthropic-auth-state.js";
 import {
+  applyClaudeCodeRequestIdentity,
   extractAnthropicAccountIdentity,
   type AnthropicAccountIdentity,
 } from "./anthropic-account-identity.js";
@@ -91,7 +92,6 @@ const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
 const SCOPES =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
-const CLAUDE_CODE_VERSION = "2.1.75";
 const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 
@@ -345,14 +345,12 @@ async function fetchAnthropicAccountIdentity(accessToken: string) {
   for (const url of urls) {
     const responseText = await requestText(url, {
       method: "GET",
-      headers: {
-        Accept: "application/json",
-        authorization: `Bearer ${accessToken}`,
-        "user-agent":
-          process.env.OPENCODE_ANTHROPIC_USER_AGENT ||
-          `claude-cli/${CLAUDE_CODE_VERSION}`,
-        "x-app": "cli",
-      },
+      headers: Object.fromEntries(
+        applyClaudeCodeRequestIdentity({
+          headers: new Headers({ Accept: "application/json" }),
+          accessToken,
+        }).entries(),
+      ),
     }).catch(() => {
       return undefined;
     });
@@ -1088,13 +1086,10 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
                 "anthropic-dangerous-direct-browser-access",
                 "true",
               );
-              requestHeaders.set("authorization", `Bearer ${auth.access}`);
-              requestHeaders.set(
-                "user-agent",
-                process.env.OPENCODE_ANTHROPIC_USER_AGENT ||
-                  `claude-cli/${CLAUDE_CODE_VERSION}`,
-              );
-              requestHeaders.set("x-app", "cli");
+              applyClaudeCodeRequestIdentity({
+                headers: requestHeaders,
+                accessToken: auth.access,
+              });
               requestHeaders.delete("x-api-key");
 
               return fetch(input, {

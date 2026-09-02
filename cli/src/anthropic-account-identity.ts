@@ -1,5 +1,23 @@
 // LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
-// Helpers for extracting and normalizing Anthropic OAuth account identity.
+// Helpers for Anthropic OAuth account and Claude Code client identity.
+
+const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.257 (external, cli)'
+
+export function applyClaudeCodeRequestIdentity({
+  headers,
+  accessToken,
+}: {
+  headers: Headers
+  accessToken: string
+}) {
+  headers.set('authorization', `Bearer ${accessToken}`)
+  headers.set(
+    'user-agent',
+    process.env.OPENCODE_ANTHROPIC_USER_AGENT || CLAUDE_CODE_USER_AGENT,
+  )
+  headers.set('x-app', 'cli')
+  return headers
+}
 
 export type AnthropicAccountIdentity = {
   email?: string
