@@ -24,7 +24,7 @@ import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-u
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
-import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
+import { applyScheduledTaskUserEdit, getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
   EXIT_NO_RESTART,
   formatMemberLookupUnavailableMessage,
@@ -193,7 +193,7 @@ cli
   )
   .option(
     '-u, --user <user>',
-    'Discord user ID, mention, or username added to the task thread',
+    'Discord user ID, mention, or username added to the task thread (empty string clears)',
   )
   .action(async (id, options) => {
     try {
@@ -203,11 +203,12 @@ cli
       const hasModel = options.model !== undefined
       const hasPreRun = options.preRun !== undefined
       const hasAllowConcurrency = options.allowConcurrency !== undefined
+      const hasUser = options.user !== undefined
 
       if (
         !trimmedPrompt &&
         !options.sendAt &&
-        !options.user &&
+        !hasUser &&
         !hasAgent &&
         !hasModel &&
         !hasPreRun &&
@@ -252,7 +253,7 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const resolvedUser = options.user
+      const resolvedUser = hasUser && options.user.trim()
         ? await resolveTaskUser({
             user: options.user,
             channelId: task.channel_id,
@@ -279,20 +280,24 @@ cli
       const updatedPayload: ScheduledTaskPayload = {
         ...existingPayload,
         prompt: newPrompt,
-        ...(resolvedUser
-          ? { userId: resolvedUser.id, username: resolvedUser.username || null }
-          : {}),
         ...(hasAgent ? { agent: options.agent!.trim() || null } : {}),
-         ...(hasModel ? { model: nextModel } : {}),
+        ...(hasModel ? { model: nextModel } : {}),
         ...(hasPreRun ? { preRunCommand: options.preRun!.trim() || null } : {}),
         ...(hasAllowConcurrency
           ? { allowConcurrency: options.allowConcurrency === 'true' }
           : {}),
       }
+      const payloadWithUser = hasUser
+        ? applyScheduledTaskUserEdit({
+            payload: updatedPayload,
+            userOption: options.user,
+            resolvedUser,
+          })
+        : updatedPayload
 
       const updateData: Parameters<typeof updateScheduledTask>[0] = {
         taskId,
-        payloadJson: serializeScheduledTaskPayload(updatedPayload),
+        payloadJson: serializeScheduledTaskPayload(payloadWithUser),
         promptPreview: getPromptPreview(newPrompt),
       }
 
@@ -321,20 +326,22 @@ cli
       }
 
       const parts: string[] = [`Updated task ${taskId}`]
-      if (resolvedUser) {
+      if (hasUser) {
         parts.push(
-          `user ${resolvedUser.username || resolvedUser.id} will be added to the thread`,
+          payloadWithUser.userId
+            ? `user ${payloadWithUser.username || payloadWithUser.userId} will be added to the thread`
+            : 'user cleared; nobody will be added to the thread',
         )
       }
       if (hasAgent) {
-        parts.push(`agent=${updatedPayload.agent || '-'}`)
+        parts.push(`agent=${payloadWithUser.agent || '-'}`)
       }
       if (hasModel) {
-        parts.push(`model=${updatedPayload.model || '-'}`)
+        parts.push(`model=${payloadWithUser.model || '-'}`)
       }
-      if (hasPreRun) parts.push(`preRun=${updatedPayload.preRunCommand || '-'}`)
+      if (hasPreRun) parts.push(`preRun=${payloadWithUser.preRunCommand || '-'}`)
       if (hasAllowConcurrency) {
-        parts.push(`allowConcurrency=${updatedPayload.allowConcurrency}`)
+        parts.push(`allowConcurrency=${payloadWithUser.allowConcurrency}`)
       }
       cliLogger.log(parts.join(' | '))
       process.exit(0)

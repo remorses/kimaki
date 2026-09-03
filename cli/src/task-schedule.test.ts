@@ -16,6 +16,7 @@ import { closeDb } from './db.js'
 import { runTaskCommand } from './task-runner.js'
 import {
   appendTaskCommandOutput,
+  applyScheduledTaskUserEdit,
   parseScheduledTaskPayload,
   parseSendAtValue,
   parseSleepWakeAt,
@@ -208,6 +209,61 @@ describe('scheduled task execution options', () => {
         "username": null,
       }
     `)
+  })
+
+  test('clears the stored user when task edit passes an empty --user', () => {
+    const payload = parseScheduledTaskPayload(JSON.stringify({
+      kind: 'thread',
+      threadId: 'thread-1',
+      prompt: 'Handle support requests',
+      userId: '535922349652836367',
+      username: 'Tommy',
+    }))
+    expect(payload).not.toBeInstanceOf(Error)
+    if (payload instanceof Error) throw payload
+
+    expect(applyScheduledTaskUserEdit({
+      payload,
+      userOption: '',
+    })).toMatchInlineSnapshot(`
+      {
+        "agent": null,
+        "allowConcurrency": false,
+        "injectionGuardPatterns": null,
+        "kind": "thread",
+        "model": null,
+        "parentSessionId": null,
+        "permissions": null,
+        "preRunCommand": null,
+        "prompt": "Handle support requests",
+        "threadId": "thread-1",
+        "userId": null,
+        "username": null,
+      }
+    `)
+    expect(applyScheduledTaskUserEdit({
+      payload,
+      userOption: '   ',
+    }).userId).toBeNull()
+  })
+
+  test('sets the stored user when task edit passes a resolved --user', () => {
+    const payload = parseScheduledTaskPayload(JSON.stringify({
+      kind: 'channel',
+      channelId: 'chan-1',
+      prompt: 'Daily digest',
+    }))
+    expect(payload).not.toBeInstanceOf(Error)
+    if (payload instanceof Error) throw payload
+
+    expect(applyScheduledTaskUserEdit({
+      payload,
+      userOption: '535922349652836367',
+      resolvedUser: { id: '535922349652836367', username: 'Tommy' },
+    })).toMatchObject({
+      userId: '535922349652836367',
+      username: 'Tommy',
+    })
   })
 
   test('adds command stdout to the prompt', () => {

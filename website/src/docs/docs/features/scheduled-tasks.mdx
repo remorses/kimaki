@@ -71,6 +71,8 @@ Make reminder prompts **detailed**: the future reader has no context, so include
 
 All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The exception is `--wait`, which is incompatible since the task runs in the future.
 
+Pass **`--user`** when someone should see the thread in Discord. Omit it for quiet autonomous work so the thread stays out of the sidebar. Clear a stored user later with `kimaki task edit <id> --user ''`.
+
 ## Run only when needed
 
 Use **`--pre-run`** to run a shell command in the project directory before a scheduled occurrence starts. This example uses [crisp-cli](https://github.com/remorses/crisp-cli) to start a support session only when Crisp has unread customer messages.
@@ -130,7 +132,8 @@ Scheduled tasks **do not overlap by default**. If one occurrence still has an ac
 ```bash
 kimaki task list
 kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] \
-  [--pre-run "command"] [--allow-concurrency true|false]
+  [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"]
+kimaki task edit <id> --user ''
 kimaki task delete <id>
 ```
 

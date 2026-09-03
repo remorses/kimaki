@@ -142,6 +142,25 @@ describe('system-message', () => {
     expect(message).toContain('--parent-session ses_child')
   })
 
+  test('lets agents omit --user for quiet scheduled work', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+      channelId: 'chan_123',
+      threadId: 'thread_123',
+    })
+    expect(message).not.toContain(
+      'ALWAYS pass `--user` when scheduling a task.',
+    )
+    expect(message).not.toContain('(always pass this)')
+    expect(message).toContain("kimaki task edit <id> --user ''")
+    expect(message).toContain(
+      "kimaki send --channel chan_123 --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123",
+    )
+    expect(message).not.toContain(
+      "kimaki send --channel chan_123 --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'",
+    )
+  })
+
   test('omits parent session system block by default (btw/task/fork cache)', () => {
     // /btw, task subagents, and normal sessions must not get a parent block in
     // the system message. That block is opt-in via --parent-session only.
@@ -397,13 +416,13 @@ describe('system-message', () => {
       Use \`--send-at\` to schedule a one-time or recurring task:
 
       kimaki send --channel chan_123 --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
-      kimaki send --channel chan_123 --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
+      kimaki send --channel chan_123 --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123
 
       Use \`--pre-run '<command>'\` to check whether a scheduled task should start. Kimaki runs the command in the project directory. Exit code 0 starts the session and appends stdout to the prompt. Any other exit code skips that occurrence. Command output is written to the Kimaki log.
 
       Scheduled tasks do not overlap by default. Add \`--allow-concurrency\` only when concurrent sessions from the same task are safe.
 
-      **ALWAYS pass \`--user\` when scheduling a task.** Discord only shows a thread in the left sidebar to its members. Without \`--user\`, kimaki does not ensure anyone is a member, so the task can fire completely unnoticed if the user never joined the thread or already left it. This applies to \`--channel\` and \`--thread\` scheduling alike.
+      Pass \`--user\` when the user should see or act on the thread. Omit \`--user\` for routine autonomous work (digests, monitors, housekeeping) so the thread does not appear in the user's Discord sidebar. Discord only shows a thread in the left sidebar to its members. Without \`--user\`, kimaki does not ensure anyone is a member. This applies to \`--channel\` and \`--thread\` scheduling alike.
 
       ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday).
       When the user specifies a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
@@ -415,14 +434,14 @@ describe('system-message', () => {
       - \`--pre-run\` to start only when a project command exits with code 0
       - \`--allow-concurrency\` to permit overlapping runs from the same task
       - \`--parent-session\` to pass this session as parent of the scheduled child
-      - \`--user\` to add a specific user to the scheduled thread (always pass this)
+      - \`--user\` to add a specific user to the scheduled thread. Omit this for quiet autonomous work
 
       \`--wait\` is incompatible with \`--send-at\` because scheduled tasks run in the future.
 
       Keep scheduled task prompts **short**. The prompt text becomes the first message in the Discord thread, so long prompts clutter the channel. Instead of inlining the full task description in \`--prompt\`, write a markdown file in the project's \`tasks/\` folder and reference it:
 
       \`\`\`bash
-      kimaki send --channel chan_123 --prompt 'Read tasks/weekly-test-suite.md and follow instructions' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
+      kimaki send --channel chan_123 --prompt 'Read tasks/weekly-test-suite.md and follow instructions' --send-at '0 9 * * 1' --agent <current_agent> --parent-session ses_123
       \`\`\`
 
       The task file should contain all the detail: goal, constraints, expected output, completion criteria. Use this frontmatter format:
@@ -441,7 +460,7 @@ describe('system-message', () => {
       Notification strategy:
       - NEVER use \`@username\` (e.g. \`@Tommy\`) directly in task prompts. The prompt text becomes the first message in the thread, so a raw \`@\` mention triggers an actual Discord ping every time the task fires. Instead, wrap it in inline code like \`\\\`@Tommy\\\`\`, or use Discord user ID mentions like \`<@USER_ID>\` only in the body of the prompt where the agent will process it, not in the opening line.
       - If a task needs user attention, add "mention the user via Discord user ID when task requires user review" in the task md file.
-      - With \`--user\`, the user is added to the thread and receives thread-level notifications.
+      - With \`--user\`, the user is added to the thread and receives thread-level notifications. Omit \`--user\` when the work should stay out of the sidebar.
       - If a scheduled task completes with no actionable result, archive the session: \`kimaki session archive thread_123 (or --session ses_123)\`
 
       Manage scheduled tasks with:
@@ -450,7 +469,7 @@ describe('system-message', () => {
       kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"] [--model "provider/model"] [--agent "<agent>"]
       kimaki task delete <id>
 
-      \`kimaki task list\` prints \`userId\`, \`agent\`, and \`model\` columns. A \`-\` in \`userId\` means nobody is added to the thread when that task fires, so the user may never see it. Fix it with \`kimaki task edit <id> --user '<discord-user-id>'\` instead of deleting and recreating the task. Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
+      \`kimaki task list\` prints \`userId\`, \`agent\`, and \`model\` columns. A \`-\` in \`userId\` means nobody is added to the thread when that task fires, so the user may never see it. Add a user with \`kimaki task edit <id> --user '<discord-user-id>'\`. Clear a stored user with \`kimaki task edit <id> --user ''\`. Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
 
       \`kimaki session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.
 

@@ -14,6 +14,7 @@ async function parseWithGoke(argv: string[]) {
     "cli.command('session export-events-jsonl', 'Export in-memory events to JSONL').option('--session <sessionId>', 'Session ID').option('--out <file>', 'Output path')",
     "cli.command('add-project', 'Add a project').option('-g, --guild <guildId>', 'Discord guild/server ID')",
     "cli.command('task delete <id>', 'Delete task')",
+    "cli.command('task edit <id>', 'Edit task').option('-u, --user <user>', 'Discord user')",
     "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
     "cli.command('multioauth anthropic remove <indexOrEmail>', 'Remove stored Anthropic account')",
     "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
@@ -194,6 +195,21 @@ describe('goke CLI ID parsing', () => {
 
     expect(result.args[0]).toBe(taskId)
     expect(typeof result.args[0]).toBe('string')
+  })
+
+  test('parses empty --user on task edit so the stored user can be cleared', async () => {
+    const result = await parseWithGoke([
+      'node',
+      'kimaki',
+      'task',
+      'edit',
+      '11',
+      '--user',
+      '',
+    ])
+
+    expect(result.args[0]).toBe('11')
+    expect(result.options.user).toBe('')
   })
 
   test('multioauth account remove parses index and email as strings', async () => {

@@ -303,6 +303,30 @@ export function serializeScheduledTaskPayload(
   return JSON.stringify(payload)
 }
 
+export function applyScheduledTaskUserEdit({
+  payload,
+  userOption,
+  resolvedUser,
+}: {
+  payload: ScheduledTaskPayload
+  userOption: string
+  resolvedUser?: { id: string; username?: string } | null
+}): ScheduledTaskPayload {
+  if (!userOption.trim()) {
+    return {
+      ...payload,
+      userId: null,
+      username: null,
+    }
+  }
+  if (!resolvedUser) return payload
+  return {
+    ...payload,
+    userId: resolvedUser.id,
+    username: resolvedUser.username || null,
+  }
+}
+
 export function appendTaskCommandOutput({
   prompt,
   stdout,
