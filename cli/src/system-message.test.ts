@@ -345,6 +345,10 @@ describe('system-message', () => {
 
       kimaki send --channel chan_123 --prompt 'Review the latest CI failure' --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
 
+      Use --background to run a session without adding any user to the thread. The thread is still created in the channel and stays public, but it never appears in a sidebar and never notifies anyone — the user can open it from the channel later if they want to review it. Use this for routine automated work (daily digests, monitors, housekeeping) that does not need the user's attention. Do not combine --background with --user or --notify-only:
+
+      kimaki send --channel chan_123 --prompt 'Run daily digest' --background --agent <current_agent> --parent-session ses_123
+
       Use --worktree to create a git worktree for the session (ONLY when the user explicitly asks for a worktree):
 
       kimaki send --channel chan_123 --prompt 'Add dark mode support' --worktree dark-mode --agent <current_agent> --parent-session ses_123 --user '<discord-user-id>'
@@ -403,7 +407,7 @@ describe('system-message', () => {
 
       Scheduled tasks do not overlap by default. Add \`--allow-concurrency\` only when concurrent sessions from the same task are safe.
 
-      **ALWAYS pass \`--user\` when scheduling a task.** Discord only shows a thread in the left sidebar to its members. Without \`--user\`, kimaki does not ensure anyone is a member, so the task can fire completely unnoticed if the user never joined the thread or already left it. This applies to \`--channel\` and \`--thread\` scheduling alike.
+      **Pass \`--user\` or \`--background\` for every scheduled task — pick one deliberately.** Discord only shows a thread in the left sidebar to its members. Pass \`--user\` when the user should see the thread and act on it (reminders, reviews, anything awaiting a reply). Pass \`--background\` when the task is routine autonomous work (digests, monitors) where the thread just needs to exist in the channel for later review; kimaki then never adds anyone as a member, so the task fires without cluttering anyone's sidebar. This applies to \`--channel\` and \`--thread\` scheduling alike.
 
       ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday).
       When the user specifies a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
@@ -415,7 +419,8 @@ describe('system-message', () => {
       - \`--pre-run\` to start only when a project command exits with code 0
       - \`--allow-concurrency\` to permit overlapping runs from the same task
       - \`--parent-session\` to pass this session as parent of the scheduled child
-      - \`--user\` to add a specific user to the scheduled thread (always pass this)
+      - \`--user\` to add a specific user to the scheduled thread (for work the user should see)
+      - \`--background\` to run the scheduled task without adding any user to the thread (for routine autonomous work; combine with \`--permission\` grants since nobody may be watching for permission prompts)
 
       \`--wait\` is incompatible with \`--send-at\` because scheduled tasks run in the future.
 
@@ -447,10 +452,10 @@ describe('system-message', () => {
       Manage scheduled tasks with:
 
       kimaki task list
-      kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"] [--model "provider/model"] [--agent "<agent>"]
+      kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"] [--background true|false] [--model "provider/model"] [--agent "<agent>"]
       kimaki task delete <id>
 
-      \`kimaki task list\` prints \`userId\`, \`agent\`, and \`model\` columns. A \`-\` in \`userId\` means nobody is added to the thread when that task fires, so the user may never see it. Fix it with \`kimaki task edit <id> --user '<discord-user-id>'\` instead of deleting and recreating the task. Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
+      \`kimaki task list\` prints \`userId\`, \`agent\`, and \`model\` columns. A \`-\` in \`userId\` means nobody is added to the thread when that task fires, so the user may never see it. Fix it with \`kimaki task edit <id> --user '<discord-user-id>'\` instead of deleting and recreating the task. A \`(bg)\` next to \`userId\` means the task is background: nobody is added to the thread even when a userId is stored (flip it back with \`--background false\`). Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
 
       \`kimaki session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.
 

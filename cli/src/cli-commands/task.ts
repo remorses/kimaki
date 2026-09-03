@@ -69,7 +69,13 @@ cli
         // the user's Discord sidebar (no thread member is ever added for them).
         // agent/model live only in payload_json; list them so edits don't need SQLite.
         const payload = parseScheduledTaskPayload(task.payload_json)
-        const userId = payload instanceof Error ? '?' : payload.userId || '-'
+        const background = payload instanceof Error ? false : payload.background
+        const userIdCell =
+          payload instanceof Error
+            ? '?'
+            : background
+              ? `${payload.userId || '-'} (bg)`
+              : payload.userId || '-'
         const agent = payload instanceof Error ? '?' : payload.agent || '-'
         const model = payload instanceof Error ? '?' : payload.model || '-'
         const preRun = payload instanceof Error ? '?' : payload.preRunCommand || '-'
@@ -91,7 +97,7 @@ cli
           task.schedule_kind === 'cron' ? task.cron_expr || '-' : '-'
 
         console.log(
-          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${userId} | ${projectName} | ${folderName} | ${agent} | ${model} | ${preRun} | ${allowConcurrency} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
+          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${userIdCell} | ${projectName} | ${folderName} | ${agent} | ${model} | ${preRun} | ${allowConcurrency} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
         )
       })
 
@@ -177,7 +183,7 @@ async function resolveTaskUser({
 cli
   .command(
     'task edit <id>',
-    'Edit prompt, schedule, model, agent, or notified user of a planned task',
+    'Edit prompt, schedule, model, agent, notified user, or background mode of a planned task',
   )
   .option('--prompt <prompt>', 'New prompt text')
   .option('--send-at <sendAt>', 'New schedule (UTC ISO date or cron expression)')
@@ -195,6 +201,14 @@ cli
     '-u, --user <user>',
     'Discord user ID, mention, or username added to the task thread',
   )
+  .option(
+    '--background <enabled>',
+    z
+      .enum(['true', 'false'])
+      .describe(
+        'Run the task without adding any user to the thread (background): true or false',
+      ),
+  )
   .action(async (id, options) => {
     try {
       const trimmedPrompt =
@@ -203,6 +217,7 @@ cli
       const hasModel = options.model !== undefined
       const hasPreRun = options.preRun !== undefined
       const hasAllowConcurrency = options.allowConcurrency !== undefined
+      const hasBackground = options.background !== undefined
 
       if (
         !trimmedPrompt &&
@@ -211,11 +226,18 @@ cli
         !hasAgent &&
         !hasModel &&
         !hasPreRun &&
-        !hasAllowConcurrency
+        !hasAllowConcurrency &&
+        !hasBackground
       ) {
         cliLogger.error(
-          'Provide at least --prompt, --send-at, --user, --agent, --model, --pre-run or --allow-concurrency',
+          'Provide at least --prompt, --send-at, --user, --agent, --model, --pre-run, --allow-concurrency or --background',
         )
+        process.exit(EXIT_NO_RESTART)
+      }
+      // Setting --background true and --user in one command is contradictory;
+      // --background false --user is fine (makes the task fully visible again).
+      if (hasBackground && options.background === 'true' && options.user) {
+        cliLogger.error('Cannot use --background true together with --user')
         process.exit(EXIT_NO_RESTART)
       }
       if (trimmedPrompt !== undefined && trimmedPrompt.length === 0) {
@@ -288,6 +310,9 @@ cli
         ...(hasAllowConcurrency
           ? { allowConcurrency: options.allowConcurrency === 'true' }
           : {}),
+        ...(hasBackground
+          ? { background: options.background === 'true' }
+          : {}),
       }
 
       const updateData: Parameters<typeof updateScheduledTask>[0] = {
@@ -335,6 +360,9 @@ cli
       if (hasPreRun) parts.push(`preRun=${updatedPayload.preRunCommand || '-'}`)
       if (hasAllowConcurrency) {
         parts.push(`allowConcurrency=${updatedPayload.allowConcurrency}`)
+      }
+      if (hasBackground) {
+        parts.push(`background=${updatedPayload.background}`)
       }
       cliLogger.log(parts.join(' | '))
       process.exit(0)

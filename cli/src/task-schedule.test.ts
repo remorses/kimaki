@@ -19,6 +19,7 @@ import {
   parseScheduledTaskPayload,
   parseSendAtValue,
   parseSleepWakeAt,
+  serializeScheduledTaskPayload,
 } from './task-schedule.js'
 
 describe('parseSendAtValue', () => {
@@ -196,6 +197,7 @@ describe('scheduled task execution options', () => {
       {
         "agent": null,
         "allowConcurrency": false,
+        "background": false,
         "injectionGuardPatterns": null,
         "kind": "thread",
         "model": null,
@@ -208,6 +210,46 @@ describe('scheduled task execution options', () => {
         "username": null,
       }
     `)
+  })
+
+  test('keeps background flag on thread payloads', () => {
+    const payload = parseScheduledTaskPayload(JSON.stringify({
+      kind: 'thread',
+      threadId: 'thread-1',
+      prompt: 'Run daily digest',
+      userId: '123',
+      background: true,
+    }))
+    expect(payload).not.toBeInstanceOf(Error)
+    if (payload instanceof Error) throw payload
+    expect(payload.background).toBe(true)
+    expect(payload.userId).toBe('123')
+  })
+
+  test('round-trips background channel payloads', () => {
+    const payload = parseScheduledTaskPayload(serializeScheduledTaskPayload({
+      kind: 'channel',
+      channelId: 'channel-1',
+      prompt: 'Run daily digest',
+      name: null,
+      notifyOnly: false,
+      worktreeName: null,
+      cwd: null,
+      agent: null,
+      model: null,
+      username: 'tester',
+      userId: '123',
+      permissions: null,
+      injectionGuardPatterns: null,
+      parentSessionId: null,
+      preRunCommand: null,
+      allowConcurrency: false,
+      background: true,
+    }))
+    expect(payload).not.toBeInstanceOf(Error)
+    if (payload instanceof Error) throw payload
+    expect(payload.background).toBe(true)
+    expect(payload.userId).toBe('123')
   })
 
   test('adds command stdout to the prompt', () => {
