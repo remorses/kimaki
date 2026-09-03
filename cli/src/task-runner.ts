@@ -65,7 +65,7 @@ function parseMessageId(value: unknown): string | Error {
   return value.id
 }
 
-async function executeThreadScheduledTask({
+export async function executeThreadScheduledTask({
   rest,
   task,
   payload,
@@ -267,7 +267,7 @@ export async function wakeDueSessionSleeps({
   }
 }
 
-async function executeChannelScheduledTask({
+export async function executeChannelScheduledTask({
   rest,
   task,
   payload,

@@ -345,6 +345,41 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
+      // Going background on a thread task must also drop the stored user's
+      // existing thread membership, or the thread stays in their sidebar.
+      // Best-effort: a failure here must not fail the edit itself.
+      if (
+        hasBackground &&
+        options.background === 'true' &&
+        existingPayload.kind === 'thread' &&
+        existingPayload.userId
+      ) {
+        const credentials = await resolveBotCredentials().catch((error) => {
+          return new Error('Failed to resolve bot credentials', { cause: error })
+        })
+        if (credentials instanceof Error) {
+          cliLogger.warn(
+            `Updated task ${taskId} to background, but could not remove the stored user from the thread: ${credentials.message}`,
+          )
+        } else {
+          const rest = createDiscordRest(credentials.token)
+          const removal = await rest
+            .delete(Routes.threadMembers(existingPayload.threadId, existingPayload.userId))
+            .catch((error: unknown) => {
+              return new Error('Failed to remove thread member', { cause: error })
+            })
+          if (removal instanceof Error) {
+            cliLogger.warn(
+              `Updated task ${taskId} to background, but could not remove the stored user from the thread: ${removal.message}`,
+            )
+          } else {
+            cliLogger.log(
+              `Removed user ${existingPayload.userId} from thread ${existingPayload.threadId} (task ${taskId} is now background)`,
+            )
+          }
+        }
+      }
+
       const parts: string[] = [`Updated task ${taskId}`]
       if (resolvedUser) {
         parts.push(
