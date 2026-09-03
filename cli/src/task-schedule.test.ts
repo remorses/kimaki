@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, afterEach, describe, expect, test } from 'vitest'
+import type { REST } from 'discord.js'
 import {
   completeScheduledTaskRunsForSession,
   createScheduledTask,
@@ -13,12 +14,13 @@ import {
   startScheduledTaskRunSession,
 } from './database.js'
 import { closeDb } from './db.js'
-import { runTaskCommand } from './task-runner.js'
+import { executeChannelScheduledTask, executeThreadScheduledTask, runTaskCommand } from './task-runner.js'
 import {
   appendTaskCommandOutput,
   parseScheduledTaskPayload,
   parseSendAtValue,
   parseSleepWakeAt,
+  serializeScheduledTaskPayload,
 } from './task-schedule.js'
 
 describe('parseSendAtValue', () => {
@@ -196,6 +198,7 @@ describe('scheduled task execution options', () => {
       {
         "agent": null,
         "allowConcurrency": false,
+        "background": false,
         "injectionGuardPatterns": null,
         "kind": "thread",
         "model": null,
@@ -208,6 +211,54 @@ describe('scheduled task execution options', () => {
         "username": null,
       }
     `)
+  })
+
+  test('keeps background flag on thread payloads', () => {
+    const payload = parseScheduledTaskPayload(serializeScheduledTaskPayload({
+      kind: 'thread',
+      threadId: 'thread-1',
+      prompt: 'Run daily digest',
+      agent: null,
+      model: null,
+      username: 'tester',
+      userId: '123',
+      permissions: null,
+      injectionGuardPatterns: null,
+      parentSessionId: null,
+      preRunCommand: null,
+      allowConcurrency: false,
+      background: true,
+    }))
+    expect(payload).not.toBeInstanceOf(Error)
+    if (payload instanceof Error) throw payload
+    expect(payload.background).toBe(true)
+    expect(payload.userId).toBe('123')
+  })
+
+  test('round-trips background channel payloads', () => {
+    const payload = parseScheduledTaskPayload(serializeScheduledTaskPayload({
+      kind: 'channel',
+      channelId: 'channel-1',
+      prompt: 'Run daily digest',
+      name: null,
+      notifyOnly: false,
+      worktreeName: null,
+      cwd: null,
+      agent: null,
+      model: null,
+      username: 'tester',
+      userId: '123',
+      permissions: null,
+      injectionGuardPatterns: null,
+      parentSessionId: null,
+      preRunCommand: null,
+      allowConcurrency: false,
+      background: true,
+    }))
+    expect(payload).not.toBeInstanceOf(Error)
+    if (payload instanceof Error) throw payload
+    expect(payload.background).toBe(true)
+    expect(payload.userId).toBe('123')
   })
 
   test('adds command stdout to the prompt', () => {
@@ -322,6 +373,144 @@ describe('scheduled task execution options', () => {
     expect(await getActiveScheduledTaskRuns(taskId)).toHaveLength(1)
     await completeScheduledTaskRunsForSession('session-1')
     expect(await getActiveScheduledTaskRuns(taskId)).toHaveLength(0)
+  })
+})
+
+describe('background task execution', () => {
+  // Minimal REST double that records member operations. The executors only
+  // need post/put; the cast keeps the double typed without `as any`.
+  function createRecordingRest() {
+    const calls: Array<{ method: 'post' | 'put'; route: string }> = []
+    const rest = {
+      post: async (route: string) => {
+        calls.push({ method: 'post', route })
+        return { id: 'fake-message-id' }
+      },
+      put: async (route: string) => {
+        calls.push({ method: 'put', route })
+      },
+    } as unknown as REST
+    return { rest, calls }
+  }
+
+  function memberAdds(calls: Array<{ method: string; route: string }>) {
+    return calls.filter((call) => {
+      return call.method === 'put' && call.route.includes('/thread-members/')
+    })
+  }
+
+  test('channel task with background never adds a thread member', async () => {
+    const taskId = await createScheduledTask({
+      scheduleKind: 'cron',
+      cronExpr: '0 9 * * *',
+      timezone: 'UTC',
+      nextRunAt: new Date('2026-08-12T18:00:00Z'),
+      payloadJson: JSON.stringify({
+        kind: 'channel',
+        channelId: 'channel-bg-1',
+        prompt: 'Run daily digest',
+        userId: '123',
+        background: true,
+      }),
+      promptPreview: 'Run daily digest',
+    })
+    const task = await getScheduledTask(taskId)
+    if (!task) throw new Error('Expected scheduled task')
+    const payload = parseScheduledTaskPayload(task.payload_json)
+    if (payload instanceof Error) throw payload
+    if (payload.kind !== 'channel') throw new Error('Expected channel task payload')
+    const { rest, calls } = createRecordingRest()
+
+    const result = await executeChannelScheduledTask({ rest, task, payload, prompt: payload.prompt })
+
+    expect(typeof result).toBe('string')
+    expect(memberAdds(calls)).toHaveLength(0)
+    expect(calls.some((call) => call.method === 'post' && call.route.includes('/threads'))).toBe(true)
+  })
+
+  test('channel task without background adds the stored user as member', async () => {
+    const taskId = await createScheduledTask({
+      scheduleKind: 'cron',
+      cronExpr: '0 9 * * *',
+      timezone: 'UTC',
+      nextRunAt: new Date('2026-08-12T18:00:00Z'),
+      payloadJson: JSON.stringify({
+        kind: 'channel',
+        channelId: 'channel-bg-2',
+        prompt: 'Run daily digest',
+        userId: '123',
+        background: false,
+      }),
+      promptPreview: 'Run daily digest',
+    })
+    const task = await getScheduledTask(taskId)
+    if (!task) throw new Error('Expected scheduled task')
+    const payload = parseScheduledTaskPayload(task.payload_json)
+    if (payload instanceof Error) throw payload
+    if (payload.kind !== 'channel') throw new Error('Expected channel task payload')
+    const { rest, calls } = createRecordingRest()
+
+    const result = await executeChannelScheduledTask({ rest, task, payload, prompt: payload.prompt })
+
+    expect(typeof result).toBe('string')
+    expect(memberAdds(calls)).toHaveLength(1)
+  })
+
+  test('thread task with background skips re-adding the stored user', async () => {
+    const taskId = await createScheduledTask({
+      scheduleKind: 'cron',
+      cronExpr: '0 9 * * *',
+      timezone: 'UTC',
+      nextRunAt: new Date('2026-08-12T18:00:00Z'),
+      payloadJson: JSON.stringify({
+        kind: 'thread',
+        threadId: 'thread-bg-1',
+        prompt: 'Run daily digest',
+        userId: '123',
+        background: true,
+      }),
+      promptPreview: 'Run daily digest',
+    })
+    const task = await getScheduledTask(taskId)
+    if (!task) throw new Error('Expected scheduled task')
+    const payload = parseScheduledTaskPayload(task.payload_json)
+    if (payload instanceof Error) throw payload
+    if (payload.kind !== 'thread') throw new Error('Expected thread task payload')
+    const { rest, calls } = createRecordingRest()
+
+    const result = await executeThreadScheduledTask({ rest, task, payload, prompt: payload.prompt })
+
+    expect(result).toBe('thread-bg-1')
+    expect(memberAdds(calls)).toHaveLength(0)
+    expect(calls.some((call) => call.method === 'post' && call.route.includes('/messages'))).toBe(true)
+  })
+
+  test('thread task without background re-adds the stored user', async () => {
+    const taskId = await createScheduledTask({
+      scheduleKind: 'cron',
+      cronExpr: '0 9 * * *',
+      timezone: 'UTC',
+      nextRunAt: new Date('2026-08-12T18:00:00Z'),
+      payloadJson: JSON.stringify({
+        kind: 'thread',
+        threadId: 'thread-bg-2',
+        prompt: 'Run daily digest',
+        userId: '123',
+        background: false,
+      }),
+      promptPreview: 'Run daily digest',
+    })
+    const task = await getScheduledTask(taskId)
+    if (!task) throw new Error('Expected scheduled task')
+    const payload = parseScheduledTaskPayload(task.payload_json)
+    if (payload instanceof Error) throw payload
+    if (payload.kind !== 'thread') throw new Error('Expected thread task payload')
+    const { rest, calls } = createRecordingRest()
+
+    const result = await executeThreadScheduledTask({ rest, task, payload, prompt: payload.prompt })
+
+    expect(result).toBe('thread-bg-2')
+    expect(memberAdds(calls)).toHaveLength(1)
   })
 })
 

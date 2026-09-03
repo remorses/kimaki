@@ -65,7 +65,7 @@ function parseMessageId(value: unknown): string | Error {
   return value.id
 }
 
-async function executeThreadScheduledTask({
+export async function executeThreadScheduledTask({
   rest,
   task,
   payload,
@@ -90,6 +90,7 @@ async function executeThreadScheduledTask({
     ...(payload.model ? { model: payload.model } : {}),
     ...(payload.username ? { username: payload.username } : {}),
     ...(payload.userId ? { userId: payload.userId } : {}),
+    ...(payload.background ? { background: true } : {}),
     ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
     ...(payload.injectionGuardPatterns?.length
       ? { injectionGuardPatterns: payload.injectionGuardPatterns }
@@ -103,8 +104,9 @@ async function executeThreadScheduledTask({
 
   // Re-join the user before posting, so the message they get notified about is
   // in a thread they are already a member of. Works on archived threads too;
-  // the post below auto-unarchives.
-  if (payload.userId) {
+  // the post below auto-unarchives. Background tasks skip this on purpose:
+  // nobody should be added to (or re-added to) the thread as a member.
+  if (payload.userId && !payload.background) {
     const addMemberResult = await ensureThreadMember({
       rest,
       threadId: payload.threadId,
@@ -116,6 +118,10 @@ async function executeThreadScheduledTask({
         { cause: addMemberResult },
       )
     }
+  } else if (payload.userId && payload.background) {
+    taskLogger.log(
+      `[task-runner] task ${task.id} is background, keeping user ${payload.userId} out of thread members`,
+    )
   }
 
   const postResult = await rest
@@ -261,7 +267,7 @@ export async function wakeDueSessionSleeps({
   }
 }
 
-async function executeChannelScheduledTask({
+export async function executeChannelScheduledTask({
   rest,
   task,
   payload,
@@ -288,6 +294,7 @@ async function executeChannelScheduledTask({
         ...(payload.model ? { model: payload.model } : {}),
         ...(payload.username ? { username: payload.username } : {}),
         ...(payload.userId ? { userId: payload.userId } : {}),
+        ...(payload.background ? { background: true } : {}),
         ...(payload.permissions?.length ? { permissions: payload.permissions } : {}),
         ...(payload.injectionGuardPatterns?.length
           ? { injectionGuardPatterns: payload.injectionGuardPatterns }
@@ -344,6 +351,15 @@ async function executeChannelScheduledTask({
     return new Error(`Invalid thread response for task ${task.id}`, {
       cause: threadIdResult,
     })
+  }
+
+  // Background tasks never ensure a thread member: the thread stays public in
+  // the channel but out of every sidebar.
+  if (payload.background) {
+    taskLogger.log(
+      `[task-runner] task ${task.id} is background, skipping thread member add`,
+    )
+    return threadIdResult
   }
 
   if (!payload.userId) return threadIdResult

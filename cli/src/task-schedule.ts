@@ -18,6 +18,7 @@ export type ScheduledTaskPayload = {
       permissions: string[] | null
       injectionGuardPatterns: string[] | null
       parentSessionId: string | null
+      background: boolean
     }
   | {
       kind: 'channel'
@@ -34,6 +35,7 @@ export type ScheduledTaskPayload = {
       permissions: string[] | null
       injectionGuardPatterns: string[] | null
       parentSessionId: string | null
+      background: boolean
     })
 
 export type ParsedSendAt =
@@ -354,6 +356,9 @@ export function parseScheduledTaskPayload(
   const kind = asString(parsed.kind)
   const preRunCommand = asString(parsed.preRunCommand)
   const allowConcurrency = parsed.allowConcurrency === true
+  // Payloads written before `--background` existed have no field; treat them
+  // as regular (member-adding) tasks so old databases keep their behavior.
+  const background = parsed.background === true
   if (kind === 'thread') {
     const threadId = asString(parsed.threadId)
     const prompt = asString(parsed.prompt)
@@ -380,6 +385,7 @@ export function parseScheduledTaskPayload(
       parentSessionId,
       preRunCommand,
       allowConcurrency,
+      background,
     }
   }
 
@@ -418,6 +424,7 @@ export function parseScheduledTaskPayload(
       parentSessionId,
       preRunCommand,
       allowConcurrency,
+      background,
     }
   }
 

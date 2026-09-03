@@ -85,6 +85,10 @@ cli
     'Start session in an existing project subfolder or git worktree directory',
   )
   .option('-u, --user <user>', 'Discord user ID, mention, or username to add to thread')
+  .option(
+    '--background',
+    'Run the session without adding any user to the thread. The thread stays public in the channel but never appears in a sidebar or notifies anyone. For routine automated work (digests, monitors).',
+  )
   .option('--agent <agent>', 'Agent to use for the session')
   .option('--model <model>', 'Model to use (format: provider/model)')
   .option(
@@ -159,6 +163,18 @@ cli
 
         if (threadId && sessionId) {
           cliLogger.error('Use either --thread or --session, not both')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        // --background means "never ensure a thread member"; it is the explicit
+        // opposite of --user and pointless for notifications.
+        if (options.background && options.user) {
+          cliLogger.error('Cannot use --background with --user')
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        if (options.background && notifyOnly) {
+          cliLogger.error('Cannot use --background with --notify-only')
           process.exit(EXIT_NO_RESTART)
         }
 
@@ -527,6 +543,7 @@ cli
               parentSessionId: options.parentSession || null,
               preRunCommand: options.preRun || null,
               allowConcurrency: Boolean(options.allowConcurrency),
+              background: Boolean(options.background),
             }
             const taskId = await createScheduledTask({
               scheduleKind: parsedSchedule.scheduleKind,
@@ -733,6 +750,7 @@ cli
             parentSessionId: options.parentSession || null,
             preRunCommand: options.preRun || null,
             allowConcurrency: Boolean(options.allowConcurrency),
+            background: Boolean(options.background),
           }
           const taskId = await createScheduledTask({
             scheduleKind: parsedSchedule.scheduleKind,
@@ -767,6 +785,7 @@ cli
                 userId: resolvedUser.id,
                 ...(resolvedUser.username && { username: resolvedUser.username }),
               }),
+              ...(options.background && { background: true }),
               ...(options.agent && { agent: options.agent }),
               ...(options.model && { model: options.model }),
               ...(options.permission?.length && { permissions: options.permission }),
