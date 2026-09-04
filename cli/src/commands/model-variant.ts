@@ -216,11 +216,12 @@ export async function showModelVariantPicker({
   const sourceLabel = formatSourceLabel(currentModelInfo)
   const variantLabel = cascadeVariant ? ` (${cascadeVariant})` : ''
   const displayedModelId =
-    resolveDisplayedModelId({
+    (await resolveDisplayedModelId({
       providers: providersResponse.data.all,
       providerID,
       modelID,
-    }) ?? fullModelId
+      sessionID: sessionId,
+    })) ?? fullModelId
 
   const provider = providersResponse.data.all.find((p) => {
     return p.id === providerID

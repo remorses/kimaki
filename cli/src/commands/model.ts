@@ -547,16 +547,17 @@ export async function handleModelCommand({
       return
     }
 
-    const currentModelText = (() => {
+    const currentModelText = await (async () => {
       if (currentModelInfo.type === 'none') {
         return '**Current:** none'
       }
       const displayed =
-        resolveDisplayedModelId({
+        (await resolveDisplayedModelId({
           providers: allProviders,
           providerID: currentModelInfo.providerID,
           modelID: currentModelInfo.modelID,
-        }) ?? currentModelInfo.model
+          sessionID: sessionId,
+        })) ?? currentModelInfo.model
       switch (currentModelInfo.type) {
         case 'session':
           return `**Current (this thread):** \`${displayed}\``

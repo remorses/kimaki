@@ -98,7 +98,7 @@ import {
 } from '../commands/model.js'
 import {
   displayedModelLabel,
-  getProviderModelName,
+  resolveDisplayedModelName,
   validateModelId,
 } from './model-utils.js'
 import {
@@ -4684,10 +4684,11 @@ export class ThreadSessionRuntime {
     const modelLabel = runInfo.model
       ? displayedModelLabel({
           modelID: runInfo.model,
-          name: getProviderModelName({
+          name: await resolveDisplayedModelName({
             providers,
             providerID: runInfo.providerID,
             modelID: runInfo.model,
+            sessionID: sessionId,
           }),
         })
       : undefined

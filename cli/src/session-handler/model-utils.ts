@@ -7,6 +7,11 @@ import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
 import type { OpencodeClient, Provider } from '@opencode-ai/sdk/v2'
+import {
+  formatCandidateRef,
+  PROVIDER_ID as SUBROUTER_PROVIDER_ID,
+  resolveLiveModel,
+} from '@subrouter/cli'
 import { InvalidModelError, OpenCodeSdkError } from '../errors.js'
 import {
   initializeOpencodeForDirectory,
@@ -124,7 +129,7 @@ type ProviderModelLookup = {
   models?: Record<string, { name?: string } | undefined>
 }
 
-/** SDK display name from provider.list. Subrouter sets this to `build (claude-opus-4-6)`. */
+/** SDK display name from provider.list. */
 export function getProviderModelName({
   providers,
   providerID,
@@ -167,19 +172,46 @@ export function formatDisplayedModelId({
   return `${providerID}/${displayedModelLabel({ modelID, name })}`
 }
 
-export function resolveDisplayedModelId({
+/** Subrouter presets resolve to the live cooldown-aware candidate. */
+export async function resolveDisplayedModelName({
   providers,
   providerID,
   modelID,
+  sessionID,
 }: {
   providers: ProviderModelLookup[]
   providerID?: string
   modelID?: string
-}): string | undefined {
+  sessionID?: string
+}): Promise<string | undefined> {
+  if (providerID === SUBROUTER_PROVIDER_ID && modelID) {
+    const candidate = await resolveLiveModel({ preset: modelID, sessionID }).catch((e) => {
+      sessionLogger.warn(
+        `[MODEL] Failed to resolve subrouter candidate for ${modelID}:`,
+        e instanceof Error ? e.message : e,
+      )
+      return null
+    })
+    if (candidate) return `${modelID} (${formatCandidateRef(candidate)})`
+  }
+  return getProviderModelName({ providers, providerID, modelID })
+}
+
+export async function resolveDisplayedModelId({
+  providers,
+  providerID,
+  modelID,
+  sessionID,
+}: {
+  providers: ProviderModelLookup[]
+  providerID?: string
+  modelID?: string
+  sessionID?: string
+}): Promise<string | undefined> {
   return formatDisplayedModelId({
     providerID,
     modelID,
-    name: getProviderModelName({ providers, providerID, modelID }),
+    name: await resolveDisplayedModelName({ providers, providerID, modelID, sessionID }),
   })
 }
 

@@ -1,6 +1,16 @@
 // Tests for model ID parsing, cached provider.list wrapping, and validation.
 
-import { afterEach, describe, expect, test } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import {
+  addAccount,
+  markCooldown,
+  savePreset,
+  setLiveRoute,
+  type StoredAccount,
+} from '@subrouter/cli'
 import { InvalidModelError } from '../errors.js'
 import {
   clearModelListCache,
@@ -14,6 +24,18 @@ import {
   validateModelIdAgainstList,
   type ListedModel,
 } from './model-utils.js'
+
+function oauthAccount(overrides: Partial<StoredAccount> = {}): StoredAccount {
+  return {
+    type: 'oauth',
+    refresh: 'refresh-1',
+    access: 'access-1',
+    expires: Date.now() + 1_000_000_000,
+    addedAt: 1000,
+    lastUsed: 1000,
+    ...overrides,
+  }
+}
 
 const listed: ListedModel[] = [
   {
@@ -142,9 +164,23 @@ describe('formatDisplayedModelId', () => {
 })
 
 describe('resolveDisplayedModelId', () => {
-  test('uses subrouter sdk name with parentheses', () => {
+  let home: string
+  const previousHome = process.env.SUBROUTER_HOME
+
+  beforeEach(async () => {
+    home = await mkdtemp(path.join(tmpdir(), 'kimaki-subrouter-model-'))
+    process.env.SUBROUTER_HOME = home
+  })
+
+  afterEach(async () => {
+    if (previousHome === undefined) delete process.env.SUBROUTER_HOME
+    else process.env.SUBROUTER_HOME = previousHome
+    await rm(home, { recursive: true, force: true })
+  })
+
+  test('uses subrouter sdk name with parentheses', async () => {
     expect(
-      resolveDisplayedModelId({
+      await resolveDisplayedModelId({
         providers: [
           {
             id: 'subrouter',
@@ -155,6 +191,92 @@ describe('resolveDisplayedModelId', () => {
         modelID: 'build',
       }),
     ).toMatchInlineSnapshot(`"subrouter/build (claude-opus-4-6)"`)
+  })
+
+  test('shows the live subrouter candidate, not the preset name', async () => {
+    await addAccount({
+      provider: 'anthropic',
+      account: oauthAccount({ email: 'a@x.com' }),
+    })
+    await addAccount({
+      provider: 'opencode-go',
+      account: { type: 'api', key: 'zen-key', addedAt: 1, lastUsed: 1 },
+    })
+    await savePreset({
+      name: 'build',
+      models: ['anthropic/claude-fake', 'opencode-go/fake-model'],
+    })
+
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
+        providerID: 'subrouter',
+        modelID: 'build',
+      }),
+    ).toMatchInlineSnapshot(`"subrouter/build (anthropic/claude-fake)"`)
+  })
+
+  test('shows the cooldown fallback candidate as the current model', async () => {
+    const anthropic = oauthAccount({ email: 'a@x.com' })
+    await addAccount({ provider: 'anthropic', account: anthropic })
+    await addAccount({
+      provider: 'opencode-go',
+      account: { type: 'api', key: 'zen-key', addedAt: 1, lastUsed: 1 },
+    })
+    await savePreset({
+      name: 'build',
+      models: ['anthropic/claude-fake', 'opencode-go/fake-model'],
+    })
+    await markCooldown({
+      provider: 'anthropic',
+      account: anthropic,
+      untilMs: Date.now() + 60_000,
+    })
+
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
+        providerID: 'subrouter',
+        modelID: 'build',
+      }),
+    ).toMatchInlineSnapshot(`"subrouter/build (opencode-go/fake-model)"`)
+  })
+
+  test('shows the in-flight session route, not the first free preset model', async () => {
+    await addAccount({
+      provider: 'anthropic',
+      account: oauthAccount({ email: 'a@x.com' }),
+    })
+    await addAccount({
+      provider: 'opencode-go',
+      account: { type: 'api', key: 'zen-key', addedAt: 1, lastUsed: 1 },
+    })
+    await savePreset({
+      name: 'build',
+      models: ['anthropic/claude-fake', 'opencode-go/fake-model'],
+    })
+    await setLiveRoute({
+      sessionID: 'ses_1',
+      preset: 'build',
+      provider: 'opencode-go',
+      modelId: 'fake-model',
+    })
+
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
+        providerID: 'subrouter',
+        modelID: 'build',
+        sessionID: 'ses_1',
+      }),
+    ).toMatchInlineSnapshot(`"subrouter/build (opencode-go/fake-model)"`)
+    expect(
+      await resolveDisplayedModelId({
+        providers: [{ id: 'subrouter', models: { build: { name: 'build' } } }],
+        providerID: 'subrouter',
+        modelID: 'build',
+      }),
+    ).toMatchInlineSnapshot(`"subrouter/build (anthropic/claude-fake)"`)
   })
 })
 
