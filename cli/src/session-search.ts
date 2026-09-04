@@ -1,8 +1,6 @@
 // Session search helpers for kimaki CLI commands.
 // Parses string/regex queries and builds readable snippets from matched content.
 
-import type { Part } from '@opencode-ai/sdk/v2'
-
 export type SessionSearchPattern =
   | {
       mode: 'literal'
@@ -18,6 +16,44 @@ export type SessionSearchPattern =
 export type SessionSearchHit = {
   index: number
   length: number
+}
+
+export type SessionSearchPart = {
+  type: string
+  synthetic?: boolean
+  text?: string
+  tool?: string
+  filename?: string
+  url?: string
+  state?: {
+    input?: unknown
+    status?: string
+    output?: unknown
+    error?: string
+  }
+}
+
+export type SessionSearchableMessage = {
+  info: { role: string }
+  parts: SessionSearchPart[]
+}
+
+export type SessionSearchableSession = {
+  id: string
+  title?: string
+  directory: string
+  updated: number
+  messages: SessionSearchableMessage[]
+}
+
+export type SessionSearchMatch = {
+  id: string
+  title: string
+  directory: string
+  updated: string
+  source: 'kimaki' | 'opencode'
+  threadId: string | null
+  snippets: string[]
 }
 
 export function parseSessionSearchPattern(
@@ -120,21 +156,21 @@ function stringifyUnknown(value: unknown): string {
   }
 }
 
-export function getPartSearchTexts(part: Part): string[] {
+export function getPartSearchTexts(part: SessionSearchPart): string[] {
   switch (part.type) {
     case 'text':
       return part.text ? [part.text] : []
     case 'reasoning':
       return part.text ? [part.text] : []
     case 'tool': {
-      const inputText = stringifyUnknown(part.state.input)
+      const inputText = stringifyUnknown(part.state?.input)
       const outputText =
-        part.state.status === 'completed'
+        part.state?.status === 'completed'
           ? stringifyUnknown(part.state.output)
-          : part.state.status === 'error'
+          : part.state?.status === 'error'
             ? part.state.error || ''
             : ''
-      return [`tool:${part.tool}`, inputText, outputText].filter((entry) => {
+      return [`tool:${part.tool || ''}`, inputText, outputText].filter((entry) => {
         return entry.trim().length > 0
       })
     }
@@ -145,4 +181,149 @@ export function getPartSearchTexts(part: Part): string[] {
     default:
       return []
   }
+}
+
+export function validateSessionSearchScope({
+  all,
+  project,
+  channel,
+}: {
+  all?: boolean
+  project?: string
+  channel?: string
+}): Error | null {
+  if (all && (project || channel)) {
+    return new Error(
+      'Use --all alone. Do not combine it with --project or --channel. Search one project with: kimaki session search "query" --project /path',
+    )
+  }
+  if (project && channel) {
+    return new Error('Use either --project or --channel, not both')
+  }
+  return null
+}
+
+export function resolveSessionSearchDirectories({
+  all,
+  registeredDirectories,
+  cwd,
+  explicitDirectory,
+}: {
+  all: boolean
+  registeredDirectories: string[]
+  cwd: string
+  explicitDirectory?: string
+}): string[] | Error {
+  if (!all) {
+    return [explicitDirectory || cwd]
+  }
+
+  const uniqueDirectories = [...new Set(registeredDirectories)]
+  if (uniqueDirectories.length === 0) {
+    return new Error(
+      'No registered projects found. Add a project first with `kimaki project add`, or search one directory with --project.',
+    )
+  }
+  return uniqueDirectories
+}
+
+export function getSessionSearchSnippets({
+  messages,
+  searchPattern,
+}: {
+  messages: SessionSearchableMessage[]
+  searchPattern: SessionSearchPattern
+}): string[] {
+  return messages
+    .flatMap((message) => {
+      const rolePrefix =
+        message.info.role === 'assistant'
+          ? 'assistant'
+          : message.info.role === 'user'
+            ? 'user'
+            : 'message'
+
+      return message.parts
+        .filter((part) => !(part.type === 'text' && part.synthetic))
+        .flatMap((part) => {
+          return getPartSearchTexts(part).flatMap((text) => {
+            const hit = findFirstSessionSearchHit({
+              text,
+              searchPattern,
+            })
+            if (!hit) {
+              return []
+            }
+            const snippet = buildSessionSearchSnippet({ text, hit })
+            if (!snippet) {
+              return []
+            }
+            return [`${rolePrefix}: ${snippet}`]
+          })
+        })
+    })
+    .slice(0, 3)
+}
+
+export async function collectSessionSearchMatches({
+  sessions,
+  searchPattern,
+  sessionToThread,
+  limit,
+  loadMessages,
+}: {
+  sessions: Array<
+    Omit<SessionSearchableSession, 'messages'> & {
+      messages?: SessionSearchableMessage[]
+    }
+  >
+  searchPattern: SessionSearchPattern
+  sessionToThread: Map<string, string>
+  limit: number
+  loadMessages?: (session: {
+    id: string
+    directory: string
+  }) => Promise<SessionSearchableMessage[]>
+}): Promise<{
+  matches: SessionSearchMatch[]
+  scannedSessions: number
+}> {
+  const sortedSessions = [...sessions].sort((a, b) => {
+    return b.updated - a.updated
+  })
+  const matches: SessionSearchMatch[] = []
+  let scannedSessions = 0
+
+  for (const session of sortedSessions) {
+    scannedSessions++
+    const messages = session.messages
+      ? session.messages
+      : loadMessages
+        ? await loadMessages(session)
+        : []
+    const snippets = getSessionSearchSnippets({
+      messages,
+      searchPattern,
+    })
+    if (snippets.length === 0) {
+      continue
+    }
+
+    const threadId = sessionToThread.get(session.id)
+    matches.push({
+      id: session.id,
+      title: session.title || 'Untitled Session',
+      directory: session.directory,
+      updated: new Date(session.updated).toISOString(),
+      source: threadId ? 'kimaki' : 'opencode',
+      threadId: threadId || null,
+      snippets,
+    })
+
+    if (matches.length >= limit) {
+      break
+    }
+  }
+
+  return { matches, scannedSessions }
 }

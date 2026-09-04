@@ -10,7 +10,7 @@ async function parseWithGoke(argv: string[]) {
     "cli.command('send', 'Send a message').option('-c, --channel <channelId>', 'Discord channel ID').option('--thread <threadId>', 'Thread ID').option('--session <sessionId>', 'Session ID').option('--send-at <schedule>', 'Schedule')",
     "cli.command('session archive <threadId>', 'Archive a thread')",
     "cli.command('session title <title>', 'Update title').option('--session <sessionId>', 'Session ID').option('--thread <threadId>', 'Thread ID')",
-    "cli.command('session search <query>', 'Search sessions').option('--channel <channelId>', 'Discord channel ID').option('--project <path>', 'Project path')",
+    "cli.command('session search <query>', 'Search sessions').option('--channel <channelId>', 'Discord channel ID').option('--project <path>', 'Project path').option('--all', 'Search all registered projects')",
     "cli.command('session export-events-jsonl', 'Export in-memory events to JSONL').option('--session <sessionId>', 'Session ID').option('--out <file>', 'Output path')",
     "cli.command('add-project', 'Add a project').option('-g, --guild <guildId>', 'Discord guild/server ID')",
     "cli.command('task delete <id>', 'Delete task')",
@@ -154,6 +154,15 @@ describe('goke CLI ID parsing', () => {
     expect(typeof result.args[0]).toBe('string')
     expect(result.options.channel).toBe(channelId)
     expect(typeof result.options.channel).toBe('string')
+  })
+
+  test('parses session search --all as a boolean', async () => {
+    const result = await parseWithGoke(
+      ['node', 'kimaki', 'session', 'search', 'auth timeout', '--all'],
+    )
+
+    expect(result.args[0]).toBe('auth timeout')
+    expect(result.options.all).toBe(true)
   })
 
   test('keeps session export options as strings', async () => {

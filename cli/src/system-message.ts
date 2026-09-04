@@ -857,13 +857,14 @@ kimaki session list --project /path/to/project  # specific project
 kimaki session list --active
 \`\`\`
 
-To search past sessions for this project (supports plain text or /regex/flags):
+To search past sessions (supports plain text or /regex/flags). Defaults to this project. Use \`--all\` to search every locally registered project:
 
 \`\`\`bash
 kimaki session search "auth timeout"
 kimaki session search "/error\\s+42/i"
 kimaki session search "rate limit" --project /path/to/project
 kimaki session search "/panic|crash/i" --channel <channel_id>
+kimaki session search "auth timeout" --all
 \`\`\`
 
 To read a session's full conversation as markdown, pipe to a file and grep it to avoid wasting context.
