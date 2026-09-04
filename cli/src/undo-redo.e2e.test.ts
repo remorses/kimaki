@@ -27,7 +27,7 @@ import {
 import { getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 
-const TEXT_CHANNEL_ID = '200000000000001200'
+const TEXT_CHANNEL_ID = '200000000000003205'
 
 const e2eTest = describe
 
@@ -66,7 +66,13 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         })
 
       const th = ctx.discord.thread(thread.id)
-      await th.waitForBotReply({ timeout: 4_000 })
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'creating undo file',
+        timeout: 8_000,
+      })
 
       await waitForFooterMessage({
         discord: ctx.discord,
