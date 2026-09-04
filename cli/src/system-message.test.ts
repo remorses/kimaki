@@ -159,6 +159,11 @@ describe('system-message', () => {
     expect(message).toContain('Schedule: cron `0 6,14 * * *` in Europe/Rome.')
     expect(message).toContain('Do NOT use `kimaki_sleep` to wait for the next run')
     expect(message).toContain('starts a fresh session automatically')
+    const section = message.slice(
+      message.indexOf('## scheduled task session'),
+      message.indexOf('## archiving the current thread'),
+    )
+    expect(section).not.toContain('archive')
   })
 
   test('cron task without timezone says UTC', () => {

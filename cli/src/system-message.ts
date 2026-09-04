@@ -370,7 +370,7 @@ function getScheduledTaskSection(context: ScheduledTaskSystemContext): string {
 
 This session was started automatically by ${origin}.
 ${schedule}
-When your run is done, post the summary and archive the thread: the task fires again on its schedule and starts a fresh session automatically.
+When your run is done, just stop: the task fires again on its schedule and starts a fresh session automatically.
 Do NOT use \`kimaki_sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the task starts a new session on its own.
 `
 }
