@@ -59,6 +59,8 @@ import {
   clearSessionModel,
   getVariantCascade,
   setSessionStartSource,
+  getSessionStartSource,
+  getScheduledTask,
   completeScheduledTaskRunsForSession,
   failScheduledTaskRunsForSession,
   startScheduledTaskRunSession,
@@ -106,6 +108,7 @@ import {
   type AgentInfo,
   type RepliedMessageContext,
   type WorktreeInfo,
+  type ScheduledTaskSystemContext,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
 import { store } from '../store.js'
@@ -3239,6 +3242,7 @@ export class ThreadSessionRuntime {
           username: this.state?.sessionUsername || input.username,
           userId: this.state?.sessionUserId || input.userId,
           parentSessionId: this.state?.parentSessionId || input.parentSessionId,
+          scheduledTask: await this.resolveScheduledTaskContext(session.id),
         }),
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
@@ -4108,6 +4112,7 @@ export class ThreadSessionRuntime {
         username: this.state?.sessionUsername || input.username,
         userId: this.state?.sessionUserId || input.userId,
         parentSessionId: this.state?.parentSessionId || input.parentSessionId,
+        scheduledTask: await this.resolveScheduledTaskContext(session.id),
       })
       const systemWriteResult = await writeSessionSystemPrompt({
         sessionId: session.id,
@@ -4245,6 +4250,7 @@ export class ThreadSessionRuntime {
         username: this.state?.sessionUsername || input.username,
         userId: this.state?.sessionUserId || input.userId,
         parentSessionId: this.state?.parentSessionId || input.parentSessionId,
+        scheduledTask: await this.resolveScheduledTaskContext(session.id),
       }),
       model: earlyModelParam,
       agent: earlyAgentPreference,
@@ -4284,6 +4290,52 @@ export class ThreadSessionRuntime {
 
   // ── Session Ensure ──────────────────────────────────────────
   // Creates or reuses the OpenCode session for this thread.
+
+  /** Cached per-session scheduled task info for the system message. */
+  private scheduledTaskContextCache = new Map<
+    string,
+    ScheduledTaskSystemContext | undefined
+  >()
+
+  /**
+   * Resolve the scheduled-task context for the system message, once per
+   * session. The row in session_start_sources is immutable, so caching the
+   * result keeps the system prompt identical across turns (prompt-cache safe).
+   * One-shot 'at' tasks are deleted after their run, so only schedule_kind
+   * survives for them.
+   */
+  private async resolveScheduledTaskContext(
+    sessionId: string,
+  ): Promise<ScheduledTaskSystemContext | undefined> {
+    const cache = this.scheduledTaskContextCache
+    if (cache.has(sessionId)) {
+      return cache.get(sessionId)
+    }
+    const context = await (async (): Promise<
+      ScheduledTaskSystemContext | undefined
+    > => {
+      const source = await getSessionStartSource({ sessionId })
+      if (!source) {
+        return undefined
+      }
+      const task = source.scheduled_task_id
+        ? await getScheduledTask(source.scheduled_task_id)
+        : null
+      return {
+        taskId: source.scheduled_task_id ?? undefined,
+        scheduleKind: source.schedule_kind,
+        cronExpr: task?.cron_expr,
+        timezone: task?.timezone,
+      }
+    })().catch((error) => {
+      logger.warn(
+        `[SCHEDULED TASK CONTEXT] Failed to resolve for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return undefined
+    })
+    cache.set(sessionId, context)
+    return context
+  }
 
   private async updateExistingSessionPermissions({
     client,

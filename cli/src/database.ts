@@ -547,6 +547,13 @@ export async function getSessionStartSourcesBySessionIds(sessionIds: string[]) {
   return new Map(rows.map((row) => [row.session_id, row]))
 }
 
+export async function getSessionStartSource({ sessionId }: { sessionId: string }) {
+  const db = await getDb()
+  return await db.query.session_start_sources.findFirst({
+    where: { session_id: sessionId },
+  }) ?? null
+}
+
 export async function getChannelModel(channelId: string) {
   const db = await getDb()
   const row = await db.query.channel_models.findFirst({ where: { channel_id: channelId } })

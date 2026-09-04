@@ -341,6 +341,40 @@ export type AgentInfo = {
   description?: string
 }
 
+/**
+ * Info about the scheduled task that started this session, resolved once per
+ * session and kept stable across turns so the system prompt prefix stays
+ * cacheable.
+ */
+export type ScheduledTaskSystemContext = {
+  /** Scheduled task ID. Missing for one-shot 'at' tasks (deleted after run). */
+  taskId?: number
+  scheduleKind: 'at' | 'cron'
+  /** Cron expression in the task's timezone. Only set for 'cron' tasks. */
+  cronExpr?: string | null
+  /** IANA timezone the cron fires in. Defaults to UTC when unset. */
+  timezone?: string | null
+}
+
+function getScheduledTaskSection(context: ScheduledTaskSystemContext): string {
+  const origin = context.taskId
+    ? `kimaki scheduled task #${context.taskId}`
+    : 'a one-time kimaki scheduled task'
+  const schedule = context.scheduleKind === 'cron' && context.cronExpr
+    ? `Schedule: cron \`${context.cronExpr}\`${context.timezone ? ` in ${context.timezone}` : ' in UTC'}.`
+    : context.scheduleKind === 'at'
+      ? 'This task runs once and does not repeat.'
+      : ''
+  return `
+## scheduled task session
+
+This session was started automatically by ${origin}.
+${schedule}
+When your run is done, post the summary and archive the thread: the task fires again on its schedule and starts a fresh session automatically.
+Do NOT use \`kimaki_sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the task starts a new session on its own.
+`
+}
+
 function escapePromptAttribute(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -431,6 +465,7 @@ export function getOpencodeSystemMessage({
   agents,
   userId,
   parentSessionId,
+  scheduledTask,
 }: {
   sessionId: string
   channelId?: string
@@ -449,6 +484,11 @@ export function getOpencodeSystemMessage({
    * per-parent block. Never auto-derive this from OpenCode parent session IDs.
    */
   parentSessionId?: string
+  /**
+   * Set only when the session was started by a scheduled task. Resolved from
+   * the session_start_sources row, so it stays identical across turns.
+   */
+  scheduledTask?: ScheduledTaskSystemContext
 }) {
   const userArg = ` --user '${userId || '<discord-user-id>'}'`
   const parentSessionArg = ` --parent-session ${sessionId}`
@@ -554,7 +594,7 @@ Use \`kimaki_sleep\` to pause this session for hours or days, then continue when
 Pass either \`duration\` (\`30s\`, \`2h\`, \`1d\`) or \`until\` (UTC ISO ending with \`Z\`, example \`2026-08-20T09:00:00Z\`).
 You MUST call \`kimaki_sleep\` LAST, after ALL text. Do not call more tools after it.
 A new user message cancels the sleep. After wake, continue the wait reason.
-
+${scheduledTask ? getScheduledTaskSection(scheduledTask) : ''}
 ## archiving the current thread
 
 To archive the current Discord thread (hide it from sidebar) without stopping the session, run:

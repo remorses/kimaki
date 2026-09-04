@@ -142,6 +142,54 @@ describe('system-message', () => {
     expect(message).toContain('--parent-session ses_child')
   })
 
+  test('scheduled cron task section shows task id, cron and no-sleep rule', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_task',
+      channelId: 'chan_123',
+      threadId: 'thread_123',
+      scheduledTask: {
+        taskId: 23,
+        scheduleKind: 'cron',
+        cronExpr: '0 6,14 * * *',
+        timezone: 'Europe/Rome',
+      },
+    })
+    expect(message).toContain('## scheduled task session')
+    expect(message).toContain('kimaki scheduled task #23')
+    expect(message).toContain('Schedule: cron `0 6,14 * * *` in Europe/Rome.')
+    expect(message).toContain('Do NOT use `kimaki_sleep` to wait for the next run')
+    expect(message).toContain('starts a fresh session automatically')
+  })
+
+  test('cron task without timezone says UTC', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_task_utc',
+      scheduledTask: { taskId: 7, scheduleKind: 'cron', cronExpr: '0 9 * * 1' },
+    })
+    expect(message).toContain('Schedule: cron `0 9 * * 1` in UTC.')
+  })
+
+  test('one-shot at task says it does not repeat and skips sleep', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_oneshot',
+      scheduledTask: { scheduleKind: 'at' },
+    })
+    expect(message).toContain('## scheduled task session')
+    expect(message).toContain('a one-time kimaki scheduled task')
+    expect(message).toContain('This task runs once and does not repeat.')
+    expect(message).toContain('Do NOT use `kimaki_sleep` to wait for the next run')
+    expect(message).not.toContain('Schedule: cron')
+  })
+
+  test('no scheduled task section by default (normal sessions)', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_normal',
+      channelId: 'chan_123',
+      threadId: 'thread_123',
+    })
+    expect(message).not.toContain('## scheduled task session')
+  })
+
   test('lets agents omit --user for quiet scheduled work', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
