@@ -263,6 +263,9 @@ const interruptOpencodeSessionOnUserMessage: Plugin = async (ctx) => {
       const sessionID = input.sessionID
       if (!sessionID) return
       if (output.parts.length === 0) return
+      // Hidden context notices are not user turns. Subrouter posts these while
+      // a session is already busy; aborting would cancel running subagents.
+      if (output.parts.every((part) => part.type === 'text' && part.ignored === true)) return
 
       const messageID = input.messageID || output.message.id
       if (!messageID) return

@@ -294,6 +294,38 @@ describe('interruptOpencodeSessionOnUserMessage', () => {
     expect(stub.promptAsyncCalls).toEqual([])
   })
 
+  test('ignored context notices do not abort a busy session', async () => {
+    process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
+
+    const { chatHook } = await requireHooks()
+    const sessionID = 'ses-oracle'
+    const messageID = 'msg-fallback-notice'
+
+    stub.setStatus(sessionID, { type: 'busy' })
+
+    await chatHook(
+      { sessionID, messageID } as InterruptChatInput,
+      createChatOutput({
+        sessionID,
+        messageID,
+        parts: [
+          {
+            id: 'prt-fallback',
+            sessionID,
+            messageID,
+            type: 'text',
+            text: 'Subrouter: Using xai/grok-4.6 because openai/gpt-5.6-sol is rate limited.',
+            ignored: true,
+          },
+        ],
+      }),
+    )
+    await delay({ ms: 80 })
+
+    expect(stub.abortCalls).toEqual([])
+    expect(stub.promptAsyncCalls).toEqual([])
+  })
+
   test('replayed message does not schedule another interrupt (no abort loop)', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
 
