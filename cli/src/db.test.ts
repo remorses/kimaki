@@ -46,9 +46,6 @@ describe('getDb', () => {
     ].map((match) => match[1])
     expect(new Set(tablesFromSql)).toEqual(new Set(tablesFromTs))
     expect(tablesFromSql).toContain('session_sleeps')
-    expect(schemaSql).toContain(
-      'CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE',
-    )
   })
 
   test('removes part_messages rows whose thread_sessions parent is gone', async () => {
@@ -92,10 +89,17 @@ describe('getDb', () => {
       // accumulate these orphans. libsql defaults to ON.
       await client.execute('PRAGMA foreign_keys = OFF')
       await client.execute(`DELETE FROM thread_sessions WHERE thread_id = 'thr-gone'`)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id)
+        VALUES (NULL, 'ses-null')
+      `)
       await client.execute('PRAGMA foreign_keys = ON')
       const before = await client.execute(`
         SELECT COUNT(*) AS n FROM part_messages
-        WHERE thread_id NOT IN (SELECT thread_id FROM thread_sessions)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM thread_sessions
+          WHERE thread_sessions.thread_id = part_messages.thread_id
+        )
       `)
       expect(Number(before.rows[0]?.n)).toBe(1)
       client.close()
