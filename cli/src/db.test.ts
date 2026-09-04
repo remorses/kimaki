@@ -46,6 +46,107 @@ describe('getDb', () => {
     ].map((match) => match[1])
     expect(new Set(tablesFromSql)).toEqual(new Set(tablesFromTs))
     expect(tablesFromSql).toContain('session_sleeps')
+    expect(schemaSql).toContain(
+      'CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE',
+    )
+  })
+
+  test('removes part_messages rows whose thread_sessions parent is gone', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-orphan-parts-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE thread_sessions (
+          thread_id text PRIMARY KEY,
+          session_id text NOT NULL
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE part_messages (
+          part_id text PRIMARY KEY,
+          message_id text NOT NULL,
+          thread_id text NOT NULL,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT fk_part_messages_thread_id_thread_sessions_thread_id_fk
+            FOREIGN KEY (thread_id) REFERENCES thread_sessions(thread_id) ON UPDATE CASCADE
+        )
+      `)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id)
+        VALUES ('thr-keep', 'ses-keep'), ('thr-gone', 'ses-gone')
+      `)
+      await client.execute(`
+        INSERT INTO part_messages (part_id, message_id, thread_id)
+        VALUES
+          ('part-keep', 'msg-keep', 'thr-keep'),
+          ('part-orphan', 'msg-orphan', 'thr-gone')
+      `)
+      // sqlite3 CLI leaves foreign_keys OFF, which is how real installs
+      // accumulate these orphans. libsql defaults to ON.
+      await client.execute('PRAGMA foreign_keys = OFF')
+      await client.execute(`DELETE FROM thread_sessions WHERE thread_id = 'thr-gone'`)
+      await client.execute('PRAGMA foreign_keys = ON')
+      const before = await client.execute(`
+        SELECT COUNT(*) AS n FROM part_messages
+        WHERE thread_id NOT IN (SELECT thread_id FROM thread_sessions)
+      `)
+      expect(Number(before.rows[0]?.n)).toBe(1)
+      client.close()
+
+      process.env['KIMAKI_DB_URL'] = `file:${dbPath}`
+      const db = await getDb()
+      const remaining = await db.query.part_messages.findMany({
+        columns: { part_id: true },
+        orderBy: { part_id: 'asc' },
+      })
+      expect(remaining).toMatchInlineSnapshot(`
+        [
+          {
+            "part_id": "part-keep",
+          },
+        ]
+      `)
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('deleting a thread_sessions row also deletes its part_messages', async () => {
+    const db = await getDb()
+    const threadId = `test-part-cascade-${crypto.randomUUID()}`
+    await db.insert(schema.thread_sessions).values({
+      thread_id: threadId,
+      session_id: 'ses-part-cascade',
+    })
+    await db.insert(schema.part_messages).values({
+      part_id: `${threadId}-part`,
+      message_id: 'msg-part-cascade',
+      thread_id: threadId,
+    })
+    await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
+    const leftover = await db.query.part_messages.findFirst({
+      where: { thread_id: threadId },
+    })
+    expect(leftover).toBeUndefined()
   })
 
   test('adds session_sleeps delivery columns on databases created before that schema', async () => {

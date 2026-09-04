@@ -204,6 +204,8 @@ async function migrateSchema({
     "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
     "UPDATE session_sleeps SET delivery_id = lower(hex(randomblob(16))) WHERE delivery_id IS NULL",
     'UPDATE session_sleeps SET attempts = 0 WHERE attempts IS NULL',
+    // Existing part_messages tables never get a rewritten FK. Drop orphans.
+    'DELETE FROM part_messages WHERE thread_id NOT IN (SELECT thread_id FROM thread_sessions)',
   ]
   for (const stmt of migrationStatements) {
     await client.execute(stmt).catch(() => undefined)

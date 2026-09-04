@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS `part_messages` (
 	`message_id` text NOT NULL,
 	`thread_id` text NOT NULL,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
+	CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS `scheduled_task_runs` (

@@ -54,7 +54,7 @@ export const session_events = sqliteCore.sqliteTable('session_events', {
 export const part_messages = sqliteCore.sqliteTable('part_messages', {
   part_id: sqliteCore.text('part_id').primaryKey().notNull(),
   message_id: sqliteCore.text('message_id').notNull(),
-  thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onUpdate: 'cascade' }),
+  thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onDelete: 'cascade', onUpdate: 'cascade' }),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
