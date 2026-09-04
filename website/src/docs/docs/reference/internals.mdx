@@ -21,3 +21,5 @@ icon: cpu
 **Log File** — Kimaki writes logs to `<data-dir>/kimaki.log` (default: `~/.kimaki/kimaki.log`). The log file is reset on every bot startup, so it only contains logs from the current run. Read this file to debug internal issues, session failures, or unexpected behavior.
 
 **Graceful Restart** — Send `SIGUSR2` to restart the bot with new code without losing connections.
+
+**Live CPU profiling** — In the terminal where Kimaki is running, type `cpuprof` and press Enter. Type it again to stop, or wait 20 seconds for auto-stop. Profiles land in `<data-dir>/cpu-profiles/` (default `~/.kimaki/cpu-profiles/`). Open the `.cpuprofile` file in Chrome DevTools (Performance tab) or with `bunx profano`. Stdin must be a TTY.

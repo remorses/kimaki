@@ -145,6 +145,11 @@ import path from 'node:path'
 import dedent from 'string-dedent'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { writeHeapSnapshot, startHeapMonitor } from './heap-monitor.js'
+import {
+  flushCpuProfiling,
+  startStdinCpuProfListener,
+  stopStdinCpuProfListener,
+} from './cpu-profiler.js'
 import { startTaskRunner } from './task-runner.js'
 // Increase connection pool to prevent deadlock when multiple sessions have open SSE streams.
 // Each session's event.subscribe() holds a connection; without enough connections,
@@ -1512,6 +1517,7 @@ export async function startDiscordBot({
   }
 
   startHeapMonitor()
+  startStdinCpuProfListener()
   const stopTaskRunner = startTaskRunner({ token })
   const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
 
@@ -1540,6 +1546,14 @@ export async function startDiscordBot({
     global.shuttingDown = true
 
     try {
+      stopStdinCpuProfListener()
+      const flushed = await flushCpuProfiling()
+      if (flushed instanceof Error) {
+        discordLogger.warn(
+          'Failed to flush CPU profile on shutdown:',
+          flushed.message,
+        )
+      }
       await stopRuntimeIdleSweeper()
       await stopTaskRunner()
 

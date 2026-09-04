@@ -107,6 +107,23 @@ The log file is reset on every bot startup, so it only contains logs from the cu
 
 To file a GitHub issue with session jsonl, logs, and the model id, follow [Debug sessions and report bugs](./report-bugs.mdx).
 
+## Live CPU profiling
+
+To see where the running bot spends CPU time, type this in the **same terminal** as Kimaki and press Enter:
+
+```
+cpuprof
+```
+
+Type `cpuprof` again to stop, or wait **20 seconds**. Kimaki writes a Chrome DevTools `.cpuprofile` file to `~/.kimaki/cpu-profiles/` (or `<data-dir>/cpu-profiles/` if you passed `--data-dir`).
+
+```bash
+# top functions by self-time
+bunx profano ~/.kimaki/cpu-profiles/cpu-*.cpuprofile
+```
+
+This does not restart the bot. Heap snapshots still use `kill -SIGUSR1 <PID>`.
+
 ## Restarting the bot process
 
 In rare cases where the bot itself is unresponsive (not just OpenCode), you can restart the entire process:

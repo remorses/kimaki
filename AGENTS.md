@@ -396,6 +396,26 @@ signal summary:
 
 the implementation is in `cli/src/heap-monitor.ts`.
 
+## live cpu profiling
+
+to capture a CPU profile from a **running** kimaki bot without restarting, type this in the same terminal and press Enter:
+
+```
+cpuprof
+```
+
+type `cpuprof` again to stop, or wait **20 seconds** for auto-stop. the profile is written to `<dataDir>/cpu-profiles/cpu-<date>.cpuprofile` (default `~/.kimaki/cpu-profiles/`).
+
+open the file in Chrome DevTools (Performance tab > Load) or:
+
+```bash
+bunx profano ~/.kimaki/cpu-profiles/cpu-*.cpuprofile
+```
+
+this uses `node:inspector` `Profiler.start` / `Profiler.stop` inside the bot process. it does not use SIGUSR1 (that remains heap snapshots). stdin must be a TTY; piped stdin is ignored.
+
+the implementation is in `cli/src/cpu-profiler.ts`.
+
 ## cpu profiling tests
 
 set `VITEST_CPU_PROF=1` to generate `.cpuprofile` files when running vitest. profiles land in `cli/tmp/cpu-profiles/`. always run a single test file to avoid hanging the machine — the config forces `maxForks: 1` when profiling.
