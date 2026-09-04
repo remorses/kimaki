@@ -126,7 +126,8 @@ describe('queue advanced: typing around permissions', () => {
         PERMISSION_TYPING_MARKER
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ requesting external read permission
+        requesting external read permission
+        ---
         ┣ read *.zprofile*
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
@@ -134,7 +135,8 @@ describe('queue advanced: typing around permissions', () => {
         **Pattern:** \`/Users/morse/*\`
         ✅ Permission **accepted**
         [user clicks button]
-        ⬥ permission-flow-done
+        ---
+        permission-flow-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 
@@ -143,7 +145,7 @@ describe('queue advanced: typing around permissions', () => {
         showInteractions: true,
       })
       const clickPosition = timeline.indexOf('[user clicks button]')
-      const donePosition = timeline.indexOf('⬥ permission-flow-done')
+      const donePosition = timeline.indexOf('permission-flow-done')
       const footerPosition = timeline.lastIndexOf('*project ⋅')
       expect(clickPosition).toBeGreaterThanOrEqual(0)
       expect(donePosition).toBeGreaterThan(clickPosition)
@@ -230,7 +232,7 @@ describe('queue advanced: typing around permissions', () => {
 
       const timeline = await th.text({ showInteractions: true })
       const normalizedTimeline = timeline.replace(
-        '⬥ requesting external read permission\n',
+        'requesting external read permission\n',
         '',
       )
       expect(normalizedTimeline).toContain('PERMISSION_TYPING_MARKER dismiss-flow')
@@ -240,7 +242,7 @@ describe('queue advanced: typing around permissions', () => {
       const followupUserPosition = normalizedTimeline.indexOf(
         'Reply with exactly: post-permission-user-message',
       )
-      const followupReplyPosition = normalizedTimeline.indexOf('⬥ ok', followupUserPosition)
+      const followupReplyPosition = normalizedTimeline.indexOf('ok', followupUserPosition)
       const followupFooterPosition = normalizedTimeline.indexOf(
         '*project ⋅',
         followupReplyPosition,

@@ -166,11 +166,29 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ')
 }
 
+export type SessionPartKind = 'text' | 'tool'
+
+export function sessionPartKind(part: { type: string }): SessionPartKind {
+  return part.type === 'text' ? 'text' : 'tool'
+}
+
+export function shouldLeadWithSeparator({
+  previousKind,
+  nextKind,
+}: {
+  previousKind: SessionPartKind | undefined
+  nextKind: SessionPartKind
+}): boolean {
+  if (!previousKind) return false
+  return previousKind === 'text' && nextKind === 'tool'
+}
+
 // A chunk of formatted content with associated part IDs, ready to be
 // batched into as few Discord messages as possible.
 export type SessionChunk = {
   partIds: string[]
   content: string
+  kind: SessionPartKind
 }
 
 /**
@@ -206,7 +224,11 @@ export function collectSessionChunks({
       if (!content.trim()) {
         continue
       }
-      allChunks.push({ partIds: [part.id], content: content.trimEnd() })
+      allChunks.push({
+        partIds: [part.id],
+        content: content.trimEnd(),
+        kind: sessionPartKind(part),
+      })
     }
   }
 
@@ -228,19 +250,37 @@ export function batchChunksForDiscord(chunks: SessionChunk[]): SessionChunk[] {
     return []
   }
   const batched: SessionChunk[] = []
-  let current: SessionChunk = { partIds: [...chunks[0]!.partIds], content: chunks[0]!.content }
+  let current: SessionChunk = {
+    partIds: [...chunks[0]!.partIds],
+    content: chunks[0]!.content,
+    kind: chunks[0]!.kind,
+  }
 
   for (let i = 1; i < chunks.length; i++) {
     const next = chunks[i]!
+    if (next.kind !== current.kind) {
+      batched.push(current)
+      current = {
+        partIds: [...next.partIds],
+        content: next.content,
+        kind: next.kind,
+      }
+      continue
+    }
     const merged = current.content + '\n' + next.content
     if (merged.length <= DISCORD_BATCH_MAX_LENGTH) {
       current = {
         partIds: [...current.partIds, ...next.partIds],
         content: merged,
+        kind: current.kind,
       }
     } else {
       batched.push(current)
-      current = { partIds: [...next.partIds], content: next.content }
+      current = {
+        partIds: [...next.partIds],
+        content: next.content,
+        kind: next.kind,
+      }
     }
   }
   batched.push(current)
@@ -647,20 +687,10 @@ export function formatPart(part: Part, prefix?: string): string {
   if (part.type === 'text') {
     const text = part.text?.trim()
     if (!text) return ''
-    // For subtask text, always use bullet with prefix
     if (prefix) {
-      return `⬥ ${pfx}${text}`
+      return `${pfx}${text}`
     }
-    const firstChar = text[0] || ''
-    const markdownStarters = ['#', '*', '_', '-', '>', '`', '[', '|']
-    const startsWithMarkdown =
-      markdownStarters.includes(firstChar) ||
-      /^\d+\./.test(text) ||
-      /^<callout[\s>]/i.test(text)
-    if (startsWithMarkdown) {
-      return `\n${text}`
-    }
-    return `⬥ ${text}`
+    return text
   }
 
   if (part.type === 'reasoning') {

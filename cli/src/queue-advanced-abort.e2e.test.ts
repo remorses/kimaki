@@ -112,7 +112,7 @@ e2eTest('queue advanced: abort and retry', () => {
       const timeline = await th.text()
       expect(timeline).toContain('Reply with exactly: oscar')
       expect(timeline).toContain('PLUGIN_TIMEOUT_SLEEP_MARKER')
-      expect(timeline).toContain('⬥ starting sleep 100')
+      expect(timeline).toContain('starting sleep 100')
       expect(timeline).toContain('Reply with exactly: papa')
       expect(timeline).toContain('*project ⋅ main ⋅')
       // oscar comes before the sleep marker, sleep before papa
@@ -203,7 +203,7 @@ e2eTest('queue advanced: abort and retry', () => {
         Reply with exactly: abort-no-footer-setup
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
@@ -332,7 +332,7 @@ e2eTest('queue advanced: abort and retry', () => {
       const text = await th.text()
       // The follow-up reply ("ok") must be present with deterministic-v3
       expect(text).toContain('Reply with exactly: model-switch-followup')
-      expect(text).toContain('⬥ ok')
+      expect(text).toContain('ok')
       // The old sleep text should be visible from the first turn
       expect(text).toContain('starting sleep 100')
     },

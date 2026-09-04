@@ -112,6 +112,34 @@ export function countComponentCost(
   return 1
 }
 
+export function leadingSeparatorComponents(): APIMessageTopLevelComponent[] {
+  return [
+    {
+      type: ComponentType.Separator,
+      divider: true,
+      spacing: SeparatorSpacingSize.Small,
+    },
+  ]
+}
+
+export function prependLeadingSeparator({
+  components,
+}: {
+  components: APIMessageTopLevelComponent[]
+}): APIMessageTopLevelComponent[] {
+  if (components.length === 0) {
+    return components
+  }
+  const next = [...leadingSeparatorComponents(), ...components]
+  const cost = next.reduce((sum, component) => {
+    return sum + countComponentCost(component)
+  }, 0)
+  if (cost > MAX_COMPONENTS) {
+    return components
+  }
+  return next
+}
+
 // Truncate an array of top-level components to stay within Discord limits:
 // - 40 total components (nested children count)
 // - 4000 chars total displayable text

@@ -39,6 +39,7 @@ import {
   chooseLockPort,
   cleanupTestSessions,
   initTestGitRepo,
+  getMessageVisibleText,
   waitForFooterMessage,
 } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
@@ -420,11 +421,11 @@ describeIf('gateway-proxy e2e', () => {
         hello from gateway proxy test
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ gateway-proxy-reply
+        gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@900000000000000001>"
       `)
       expect(reply).toBeDefined()
-      expect(reply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)
     },
     15_000,
   )
@@ -456,16 +457,16 @@ describeIf('gateway-proxy e2e', () => {
         hello from gateway proxy test
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ gateway-proxy-reply
+        gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@900000000000000001>
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
-        ⬥ gateway-proxy-reply
+        gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@900000000000000001>"
       `)
       expect(reply).toBeDefined()
-      expect(reply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)
     },
     15_000,
   )
@@ -497,12 +498,12 @@ describeIf('gateway-proxy e2e', () => {
         hello from gateway proxy test
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ gateway-proxy-reply
+        gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@900000000000000001>
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
-        ⬥ gateway-proxy-reply
+        gateway-proxy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@900000000000000001>
         --- from: user (proxy-tester)
         !echo proxy-shell-test
@@ -544,7 +545,7 @@ describeIf('gateway-proxy e2e', () => {
         *using deterministic-provider/deterministic-v2*"
       `)
       expect(reply).toBeDefined()
-      expect(reply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)
     },
     15_000,
   )

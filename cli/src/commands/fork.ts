@@ -20,6 +20,7 @@ import {
   resolveWorkingDirectory,
   resolveTextChannel,
   sendThreadMessage,
+  sendSessionPartBatches,
 } from '../discord-utils.js'
 import {
   collectSessionChunks,
@@ -356,12 +357,12 @@ export async function handleForkSelectMenu(
         limit: 30,
       })
       const batched = batchChunksForDiscord(chunks)
-      for (const batch of batched) {
-        const discordMessage = await sendThreadMessage(thread, batch.content)
+      const sent = await sendSessionPartBatches({ thread, batches: batched })
+      for (const batch of sent) {
         await setPartMessagesBatch(
           batch.partIds.map((partId) => ({
             partId,
-            messageId: discordMessage.id,
+            messageId: batch.message.id,
             threadId: thread.id,
           })),
         )

@@ -7,7 +7,7 @@ import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import { waitForBotMessageContaining } from './test-utils.js'
+import { getMessageVisibleText, waitForBotMessageContaining } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001042'
 
@@ -47,17 +47,17 @@ describe('question text before dropdown', () => {
         QUESTION_AFTER_TEXT_MARKER
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ PLAN_TEXT_BEFORE_QUESTION
+        PLAN_TEXT_BEFORE_QUESTION
         **Next step**
         What next?"
       `)
 
       const messages = await th.getMessages()
       const planIndex = messages.findIndex((message) => {
-        return message.content.includes('PLAN_TEXT_BEFORE_QUESTION')
+        return getMessageVisibleText(message).includes('PLAN_TEXT_BEFORE_QUESTION')
       })
       const questionIndex = messages.findIndex((message) => {
-        return message.content.includes('What next?')
+        return getMessageVisibleText(message).includes('What next?')
       })
       expect(planIndex).toBeGreaterThanOrEqual(0)
       expect(questionIndex).toBeGreaterThan(planIndex)

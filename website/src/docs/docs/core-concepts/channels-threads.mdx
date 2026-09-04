@@ -55,7 +55,7 @@ npx -y kimaki project add /code/web-app
 
 ## How a message becomes a session
 
-The first message you send in a project channel **creates a thread** and starts an OpenCode session bound to that channel's directory. The agent replies inside the thread, prefixing text with `⬥` and showing tool activity as it works.
+The first message you send in a project channel **creates a thread** and starts an OpenCode session bound to that channel's directory. The agent replies inside the thread. Text has no prefix. A separator appears when the reply switches between text and tool output.
 
 From then on, messages **in that thread** continue the same session. Messages **in the channel** (outside any thread) start new threads and new sessions. This is what keeps tasks isolated.
 

@@ -89,7 +89,7 @@ e2eTest('queue delete message', () => {
         *using deterministic-provider/deterministic-v2*
         Queued at position 1. Edit or delete your message to update the queue
         ⬦ **queue-delete-tester** removed message from queue
-        ⬥ slow-busy-reply
+        slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       const finalText = await th.text()

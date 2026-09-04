@@ -18,6 +18,7 @@ import {
   resolveTextChannel,
   resolveWorkingDirectory,
   sendThreadMessage,
+  sendSessionPartBatches,
 } from '../discord-utils.js'
 import {
   collectSessionChunks,
@@ -240,9 +241,7 @@ export async function handleForkSubagentSelectMenu(
         limit: 30,
       })
       const batched = batchChunksForDiscord(chunks)
-      for (const batch of batched) {
-        await sendThreadMessage(forkedThread, batch.content)
-      }
+      await sendSessionPartBatches({ thread: forkedThread, batches: batched })
     }
   } catch (error) {
     forkLogger.error('Error replaying forked subagent history:', error)

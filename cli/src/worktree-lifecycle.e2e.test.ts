@@ -392,7 +392,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: 'before-worktree',
         timeout: 10_000,
       })
@@ -509,7 +509,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: worktreeThread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: 'after-worktree-thread',
         timeout: 4_000,
       })
@@ -517,7 +517,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: 'after-source-thread',
         timeout: 4_000,
       })
@@ -546,19 +546,19 @@ describe('worktree lifecycle', () => {
         Reply with exactly: before-worktree
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         Creating worktree in <#THREAD_ID>
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         --- from: user (worktree-tester)
         Reply with exactly: after-source-thread
         --- from: assistant (TestBot)
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(sourceText).toContain('Reply with exactly: before-worktree')
       expect(sourceText).toContain('Reply with exactly: after-source-thread')
       expect(sourceText).not.toContain('Worktree:')
-      expect((sourceText.match(/⬥ ok/g) || []).length).toBe(2)
+      expect((sourceText.match(/ok/g) || []).length).toBe(2)
 
       const worktreeText = await worktreeTh.text()
       expect(normalizeWorktreeLifecycleText(worktreeText)).toMatchInlineSnapshot(`
@@ -570,14 +570,14 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
-        ⬥ ok
+        ok
         *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Worktree:')
       expect(worktreeText).toContain('Branch:')
       expect(worktreeText).toContain('Reusing context from')
       expect(worktreeText).toContain('Reply with exactly: after-worktree-thread')
-      expect(worktreeText).toContain('⬥ ok')
+      expect(worktreeText).toContain('ok')
     },
     30_000,
   )
@@ -635,7 +635,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: worktreeThread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: 'channel-worktree-msg',
         timeout: 10_000,
       })
@@ -667,10 +667,10 @@ describe('worktree lifecycle', () => {
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok"
+        ok"
       `)
       expect(worktreeText).toContain('Branch:')
-      expect(worktreeText).toContain('⬥ ok')
+      expect(worktreeText).toContain('ok')
       expect(worktreeText).toContain('Reply with exactly: channel-worktree-msg')
     },
     30_000,
@@ -704,7 +704,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: AUTO_WORKTREE_SUFFIX,
         timeout: 25_000,
       })
@@ -729,17 +729,17 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: 'auto-followup',
         timeout: 4_000,
       })
 
       const text = await th.text()
-      expect(text).toContain('⬥ ok')
+      expect(text).toContain('ok')
       expect(text).toContain(AUTO_WORKTREE_SUFFIX)
       expect(text).toContain('Reply with exactly: auto-followup')
       // Should have at least 2 ok replies
-      expect((text.match(/⬥ ok/g) || []).length).toBeGreaterThanOrEqual(2)
+      expect((text.match(/ok/g) || []).length).toBeGreaterThanOrEqual(2)
     },
     35_000,
   )
@@ -764,7 +764,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
       })
@@ -777,7 +777,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         afterUserMessageIncludes: 'non-git-second',
         timeout: 4_000,
       })
@@ -798,17 +798,17 @@ describe('worktree lifecycle', () => {
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
         *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
-        ⬥ ok"
+        ok"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
       expect(text).toContain('Reply with exactly: non-git-second')
       expect(text).not.toContain('Worktree creation failed')
-      const okCount = (text.match(/⬥ ok/g) || []).length
+      const okCount = (text.match(/ok/g) || []).length
       expect(okCount).toBe(2)
     },
     20_000,
@@ -864,7 +864,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: threadData.id,
         userId: discord.botUserId,
-        text: '⬥ ok',
+        text: 'ok',
         timeout: 10_000,
       })
 
@@ -881,7 +881,7 @@ describe('worktree lifecycle', () => {
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok"
+        ok"
       `)
 
       // Verify DB has worktree info

@@ -38,13 +38,19 @@ import {
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   sendThreadMessage,
+  sendSessionPartMessage,
   SILENT_MESSAGE_FLAGS,
   NOTIFY_MESSAGE_FLAGS,
   raceDiscordRename,
   DISCORD_THREAD_RENAME_TIMEOUT_MS,
 } from '../discord-utils.js'
-import type { DiscordFileAttachment } from '../message-formatting.js'
-import { formatPart, formatTaskToolTitle } from '../message-formatting.js'
+import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
+import {
+  formatPart,
+  formatTaskToolTitle,
+  sessionPartKind,
+  shouldLeadWithSeparator,
+} from '../message-formatting.js'
 import {
   getChannelVerbosity,
   getPartMessageIds,
@@ -710,6 +716,7 @@ export class ThreadSessionRuntime {
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
   private lastPromptWorktreeKey: string | null | undefined
+  private lastSentPartKind: SessionPartKind | undefined
 
   // Bounded buffer of recent SSE events with timestamps.
   // Used by waitForEvent() to scan for specific events that arrived
@@ -1773,7 +1780,13 @@ export class ThreadSessionRuntime {
       return { ...t, sentPartIds: newIds }
     })
 
-    const sendResult = await sendThreadMessage(this.thread, content)
+    const kind = sessionPartKind(part)
+    const sendResult = await sendSessionPartMessage(this.thread, content, {
+      leadWithSeparator: shouldLeadWithSeparator({
+        previousKind: this.lastSentPartKind,
+        nextKind: kind,
+      }),
+    })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       threadState.updateThread(this.threadId, (t) => {
@@ -1787,6 +1800,7 @@ export class ThreadSessionRuntime {
       )
       return
     }
+    this.lastSentPartKind = kind
     await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
     if (repulseTyping) {
       this.requestTypingRepulse()
@@ -2089,7 +2103,12 @@ export class ThreadSessionRuntime {
             newIds.add(part.id)
             return { ...t, sentPartIds: newIds }
           })
-          const sendResult = await sendThreadMessage(this.thread, taskDisplay + '\n\n')
+          const sendResult = await sendSessionPartMessage(this.thread, taskDisplay, {
+            leadWithSeparator: shouldLeadWithSeparator({
+              previousKind: this.lastSentPartKind,
+              nextKind: 'tool',
+            }),
+          })
             .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
           if (sendResult instanceof Error) {
             threadState.updateThread(this.threadId, (t) => {
@@ -2103,6 +2122,7 @@ export class ThreadSessionRuntime {
             )
             return
           }
+          this.lastSentPartKind = 'tool'
           await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
         }
       }
@@ -2282,7 +2302,13 @@ export class ThreadSessionRuntime {
     if (!content.trim() || this.state?.sentPartIds.has(part.id)) {
       return
     }
-    const sendResult = await sendThreadMessage(this.thread, content + '\n\n')
+    const kind = sessionPartKind(part)
+    const sendResult = await sendSessionPartMessage(this.thread, content, {
+      leadWithSeparator: shouldLeadWithSeparator({
+        previousKind: this.lastSentPartKind,
+        nextKind: kind,
+      }),
+    })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       discordLogger.error(
@@ -2291,6 +2317,7 @@ export class ThreadSessionRuntime {
       )
       return
     }
+    this.lastSentPartKind = kind
     threadState.updateThread(this.threadId, (t) => {
       const newIds = new Set(t.sentPartIds)
       newIds.add(part.id)
@@ -3806,6 +3833,7 @@ export class ThreadSessionRuntime {
   private async dispatchPrompt(input: QueuedMessage): Promise<void> {
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
+    this.lastSentPartKind = undefined
 
     // ── Ensure session ────────────────────────────────────────
     const sessionResult = await this.ensureSession({
@@ -4725,6 +4753,7 @@ export class ThreadSessionRuntime {
     this.modelContextLimitKey = undefined
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
+    this.lastSentPartKind = undefined
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────

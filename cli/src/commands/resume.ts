@@ -17,6 +17,7 @@ import {
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   sendThreadMessage,
+  sendSessionPartBatches,
   resolveProjectDirectoryFromAutocomplete,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
@@ -135,12 +136,12 @@ export async function handleResumeCommand({
       }
 
       const batched = batchChunksForDiscord(chunks)
-      for (const batch of batched) {
-        const discordMessage = await sendThreadMessage(thread, batch.content)
+      const sent = await sendSessionPartBatches({ thread, batches: batched })
+      for (const batch of sent) {
         await setPartMessagesBatch(
           batch.partIds.map((partId) => ({
             partId,
-            messageId: discordMessage.id,
+            messageId: batch.message.id,
             threadId: thread.id,
           })),
         )

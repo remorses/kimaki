@@ -45,6 +45,7 @@ import {
   waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
   waitForThreadState,
+  getMessageVisibleText,
 } from './test-utils.js'
 
 
@@ -439,7 +440,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⬥ ok',
+        text: 'ok',
         timeout: 10_000,
       })
 
@@ -454,7 +455,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },
@@ -482,7 +483,7 @@ e2eTest('thread message queue ordering', () => {
       const firstReply = await th.waitForBotReply({
         timeout: 4_000,
       })
-      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(firstReply).trim().length).toBeGreaterThan(0)
 
       // Snapshot bot message count before sending follow-up
       const before = await th.getMessages()
@@ -522,7 +523,7 @@ e2eTest('thread message queue ordering', () => {
       const timeline = await th.text()
       expect(timeline).toContain('Reply with exactly: alpha')
       expect(timeline).toContain('Reply with exactly: beta')
-      expect(timeline).toContain('⬥ ok')
+      expect(timeline).toContain('ok')
       expect(timeline).toContain('*project ⋅ main ⋅')
       // User B's message must appear before the new bot response
       const userBIndex = after.findIndex((m) => {
@@ -541,7 +542,7 @@ e2eTest('thread message queue ordering', () => {
 
       // New bot response has non-empty content
       const newBotReply = afterBotMessages[afterBotMessages.length - 1]!
-      expect(newBotReply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(newBotReply).trim().length).toBeGreaterThan(0)
     },
     12_000,
   )
@@ -569,7 +570,7 @@ e2eTest('thread message queue ordering', () => {
       const firstReply = await th.waitForBotReply({
         timeout: 4_000,
       })
-      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(firstReply).trim().length).toBeGreaterThan(0)
 
       await waitForFooterMessage({
         discord,
@@ -609,18 +610,18 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      expect((await th.text()).replace(/\n⬥ ok(?=\n⬥ ok)/g, '')).toMatchInlineSnapshot(`
+      expect((await th.text()).replace(/\nok(?=\nok)/g, '')).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: one
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ok"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -637,7 +638,7 @@ e2eTest('thread message queue ordering', () => {
 
       const newBotReplies = afterBotMessages.slice(beforeBotCount)
       expect(newBotReplies.some((reply) => {
-        return reply.content.trim().length > 0
+        return getMessageVisibleText(reply).trim().length > 0
       })).toBe(true)
 
       const finalState = await waitForThreadState({
@@ -703,9 +704,10 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ running create file
+        running create file
+        ---
         ┣ bash _mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt_
-        ⬥ file created
+        file created
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
@@ -731,7 +733,7 @@ e2eTest('thread message queue ordering', () => {
 
       const th = discord.thread(thread.id)
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(firstReply).trim().length).toBeGreaterThan(0)
 
       // Ensure the setup run is fully settled before slash-queue checks.
       // Otherwise the first /queue call can race with a still-busy run window.
@@ -814,7 +816,7 @@ e2eTest('thread message queue ordering', () => {
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
-        text: '⬥ ok',
+        text: 'ok',
         afterMessageId: dispatchIndicatorMessage.id,
         timeout: 8_000,
       })
@@ -823,7 +825,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         timeout: 8_000,
-        afterMessageIncludes: '⬥ ok',
+        afterMessageIncludes: 'ok',
         afterAuthorId: discord.botUserId,
       })
 
@@ -832,14 +834,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         » **queue-tester:** Reply with exactly: race-final
         Queued message (position 1)
-        ⬥ race-final
+        race-final
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: queued-from-slash
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },
@@ -955,7 +957,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         timeout: 8_000,
-        afterMessageIncludes: '⬥ ok',
+        afterMessageIncludes: 'ok',
         afterAuthorId: discord.botUserId,
       })
 
@@ -965,12 +967,12 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: clear-queue-setup
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         » **queue-tester:** Reply with exactly: race-final
         Removed queued message (was position 1): Reply with exactly: removed-queued-message
         Queued message (position 2)
-        ⬥ race-final
+        race-final
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: kept-queued-message"
       `)
@@ -1000,7 +1002,7 @@ e2eTest('thread message queue ordering', () => {
 
       const th = discord.thread(thread.id)
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(firstReply).trim().length).toBeGreaterThan(0)
 
       // Wait for golf's footer so the golf→hotel transition is deterministic
       await waitForFooterMessage({
@@ -1047,13 +1049,13 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: golf
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         --- from: user (queue-tester)
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ok"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
@@ -1086,7 +1088,7 @@ e2eTest('thread message queue ordering', () => {
 
       const th = discord.thread(thread.id)
       const firstReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(firstReply.content.trim().length).toBeGreaterThan(0)
+      expect(getMessageVisibleText(firstReply).trim().length).toBeGreaterThan(0)
 
       const before = await th.getMessages()
       const beforeBotCount = before.filter((m) => {
@@ -1137,7 +1139,7 @@ e2eTest('thread message queue ordering', () => {
       const normalizedTextWithoutFooters = textWithoutFooters.replace(
         [
           '--- from: assistant (TestBot)',
-          '⬥ ok',
+          'ok',
           '--- from: user (queue-tester)',
           'Reply with exactly: november',
         ].join('\n'),
@@ -1161,7 +1163,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)
-        ⬥ ok"
+        ok"
       `)
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {
@@ -1266,10 +1268,10 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         Queued at position 1. Edit or delete your message to update the queue
         ⬦ **queue-tester** edited queued message
-        ⬥ slow-busy-reply
+        slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: edited-queued
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
 
@@ -1374,7 +1376,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         Queued at position 1. Edit or delete your message to update the queue
         ⬦ **queue-tester** removed message from queue
-        ⬥ slow-busy-reply
+        slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },

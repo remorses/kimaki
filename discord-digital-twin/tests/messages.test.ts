@@ -5,7 +5,8 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { Client, GatewayIntentBits, ChannelType, Events, Partials } from 'discord.js'
 import type { Message as DjsMessage, TextChannel } from 'discord.js'
-import { DigitalDiscord } from '../src/index.js'
+import { ComponentType } from 'discord-api-types/v10'
+import { DigitalDiscord, getMessageVisibleText } from '../src/index.js'
 
 describe('messages and reactions', () => {
   let discord: DigitalDiscord
@@ -254,5 +255,20 @@ describe('messages and reactions', () => {
     expect(reactions).toHaveLength(1)
     expect(reactions[0]!.emoji).toBe('🔥')
     expect(reactions[0]!.userId).toBe(discord.botUserId)
+  })
+
+  test('getMessageVisibleText flattens Separator and TextDisplay', () => {
+    expect(
+      getMessageVisibleText({
+        content: '',
+        components: [
+          { type: ComponentType.Separator },
+          { type: ComponentType.TextDisplay, content: 'cv2 body' },
+        ],
+      }),
+    ).toMatchInlineSnapshot(`
+      "---
+      cv2 body"
+    `)
   })
 })

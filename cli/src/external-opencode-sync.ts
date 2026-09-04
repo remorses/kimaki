@@ -19,7 +19,7 @@ import {
   setPartMessagesBatch,
   upsertThreadSession,
 } from './database.js'
-import { sendThreadMessage } from './discord-utils.js'
+import { sendSessionPartBatches } from './discord-utils.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
   formatPart,
@@ -404,6 +404,7 @@ function collectUnsyncedChunks({
           return p.id
         }),
         content: getExternalUserMirrorText({ username: 'user', prompt: promptText }),
+        kind: 'text',
       })
       continue
     }
@@ -502,13 +503,14 @@ async function syncSessionToThread({
   }
 
   const batched = batchChunksForDiscord(chunks)
-  for (const batch of batched) {
+  if (signal.aborted) return
+  const sent = await sendSessionPartBatches({ thread, batches: batched })
+  for (const batch of sent) {
     if (signal.aborted) return
-    const sentMessage = await sendThreadMessage(thread, batch.content)
     await setPartMessagesBatch(
       batch.partIds.map((partId) => ({
         partId,
-        messageId: sentMessage.id,
+        messageId: batch.message.id,
         threadId: thread.id,
       })),
     )

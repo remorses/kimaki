@@ -4,6 +4,8 @@ import {
   buildTableComponents,
   truncateComponents,
   countComponentCost,
+  prependLeadingSeparator,
+  leadingSeparatorComponents,
   type ContentSegment,
 } from './format-tables.js'
 import { Lexer, type Tokens } from 'marked'
@@ -353,6 +355,54 @@ describe('buildTableComponents', () => {
         },
       ]
     `)
+  })
+})
+
+describe('leadingSeparatorComponents', () => {
+  test('is a single Separator with no text', () => {
+    expect(leadingSeparatorComponents()).toMatchInlineSnapshot(`
+      [
+        {
+          "divider": true,
+          "spacing": 1,
+          "type": 14,
+        },
+      ]
+    `)
+  })
+})
+
+describe('prependLeadingSeparator', () => {
+  test('puts separator first and never last', () => {
+    const result = prependLeadingSeparator({
+      components: [
+        { type: ComponentType.TextDisplay as const, content: 'hello' },
+      ],
+    })
+    expect(result[0]!.type).toBe(ComponentType.Separator)
+    expect(result[result.length - 1]!.type).not.toBe(ComponentType.Separator)
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "divider": true,
+          "spacing": 1,
+          "type": 14,
+        },
+        {
+          "content": "hello",
+          "type": 10,
+        },
+      ]
+    `)
+  })
+
+  test('skips prepend when the extra separator would exceed the component budget', () => {
+    const components = Array.from({ length: 40 }, () => {
+      return { type: ComponentType.TextDisplay as const, content: 'x' }
+    })
+    const result = prependLeadingSeparator({ components })
+    expect(result).toHaveLength(40)
+    expect(result[0]!.type).toBe(ComponentType.TextDisplay)
   })
 })
 

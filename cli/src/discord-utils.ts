@@ -20,7 +20,11 @@ const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Route
 import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
-import { splitTablesFromMarkdown } from './format-tables.js'
+import { leadingSeparatorComponents, splitTablesFromMarkdown } from './format-tables.js'
+import {
+  shouldLeadWithSeparator,
+  type SessionChunk,
+} from './message-formatting.js'
 import { getChannelDirectory, getThreadWorktreeOrWorkspace } from './database.js'
 import { DiscordOperationError } from './errors.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
@@ -688,6 +692,46 @@ export async function sendThreadMessage(
   }
 
   return firstMessage!
+}
+
+export async function sendSessionPartMessage(
+  thread: ThreadChannel,
+  content: string,
+  options?: {
+    leadWithSeparator?: boolean
+    flags?: number
+  },
+): Promise<Message> {
+  if (options?.leadWithSeparator === true) {
+    const baseFlags = options.flags ?? SILENT_MESSAGE_FLAGS
+    await thread.send({
+      components: leadingSeparatorComponents(),
+      flags: MessageFlags.IsComponentsV2 | baseFlags,
+    })
+  }
+  return sendThreadMessage(thread, content, { flags: options?.flags })
+}
+
+export async function sendSessionPartBatches({
+  thread,
+  batches,
+}: {
+  thread: ThreadChannel
+  batches: SessionChunk[]
+}) {
+  const sent: Array<{ partIds: string[]; message: Message }> = []
+  let previousKind: SessionChunk['kind'] | undefined
+  for (const batch of batches) {
+    const message = await sendSessionPartMessage(thread, batch.content, {
+      leadWithSeparator: shouldLeadWithSeparator({
+        previousKind,
+        nextKind: batch.kind,
+      }),
+    })
+    previousKind = batch.kind
+    sent.push({ partIds: batch.partIds, message })
+  }
+  return sent
 }
 
 export function isThreadChannelType(type: number): boolean {

@@ -7,6 +7,7 @@ import {
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
 import {
+  getMessageVisibleText,
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
@@ -91,7 +92,7 @@ e2eTest('queue advanced: typing interrupt', () => {
         if (index <= finalUserIndex) {
           return false
         }
-        return message.author.id === ctx.discord.botUserId && message.content.includes('ok')
+        return message.author.id === ctx.discord.botUserId && getMessageVisibleText(message).includes('ok')
       })
       const finalFooterIndex = messages.findIndex((message, index) => {
         if (index <= finalReplyIndex) {
@@ -107,16 +108,16 @@ e2eTest('queue advanced: typing interrupt', () => {
         Reply with exactly: typing-stop-interrupt-setup
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        ⬥ starting sleep 100
+        starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
         --- from: assistant (TestBot)
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 
@@ -129,7 +130,7 @@ e2eTest('queue advanced: typing interrupt', () => {
       const finalPromptPosition = timeline.indexOf(
         'Reply with exactly: typing-stop-interrupt-final',
       )
-      const finalReplyPosition = timeline.indexOf('--- from: assistant (TestBot)\n⬥ ok', finalPromptPosition)
+      const finalReplyPosition = timeline.indexOf('--- from: assistant (TestBot)\nok', finalPromptPosition)
       const lastFooterPosition = timeline.lastIndexOf('*project ⋅')
       expect(finalPromptPosition).toBeGreaterThanOrEqual(0)
       expect(finalReplyPosition).toBeGreaterThan(finalPromptPosition)

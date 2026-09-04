@@ -48,6 +48,51 @@ function normalizeWaitTimeout(timeout: number): number {
   return timeout
 }
 
+function collectComponentText({
+  components,
+  lines,
+}: {
+  components: unknown[]
+  lines: string[]
+}): void {
+  for (const component of components) {
+    if (!component || typeof component !== 'object') {
+      continue
+    }
+    if (!('type' in component) || typeof component.type !== 'number') {
+      continue
+    }
+    if (component.type === ComponentType.Separator) {
+      lines.push('---')
+      continue
+    }
+    if (
+      'content' in component &&
+      typeof component.content === 'string' &&
+      component.content
+    ) {
+      lines.push(component.content)
+    }
+    if ('components' in component && Array.isArray(component.components)) {
+      collectComponentText({ components: component.components, lines })
+    }
+  }
+}
+
+export function getMessageVisibleText(message: {
+  content?: string | null
+  components?: readonly unknown[] | null
+}): string {
+  const lines: string[] = []
+  if (message.content) {
+    lines.push(message.content)
+  }
+  if (message.components) {
+    collectComponentText({ components: [...message.components], lines })
+  }
+  return lines.join('\n')
+}
+
 export type DigitalDiscordChannelOption = {
   id?: string
   name: string
@@ -1047,8 +1092,9 @@ export class ChannelScope {
         lines.push(`--- from: ${role} (${msg.author.username})`)
       }
       lastAuthorId = msg.author.id
-      if (msg.content) {
-        let content = msg.content
+      const visibleText = getMessageVisibleText(msg)
+      if (visibleText) {
+        let content = visibleText
         // Footer lines look like: *project ⋅ main ⋅ <1s ⋅ 2% ⋅ model-name*
         // Replace duration and percentage with stable placeholders.
         if (deterministicFooters && content.startsWith('*') && content.includes('⋅')) {

@@ -7,7 +7,7 @@
 //   2. User queues a message via /queue (enters kimaki local queue)
 //   3. User sends a normal message (interrupt)
 //   4. Session aborts the slow task, processes the interrupt message immediately
-//   5. Interrupt response appears in Discord with a ⬥ ok reply
+//   5. Interrupt response appears in Discord with a ok reply
 //   6. When interrupt response completes, the queued message drains and runs
 //
 // Uses opencode-deterministic-provider (no real LLM calls).
@@ -137,20 +137,20 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: setup-archive-drain
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
         --- from: assistant (TestBot)
-        ⬥ starting sleep 100
+        starting sleep 100
         Queued message (position 1)
         --- from: user (interrupt-tester)
         Reply with exactly: continue-after-archive
         --- from: assistant (TestBot)
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: archived-queue-survives
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
@@ -229,7 +229,7 @@ e2eTest('queue + interrupt drain ordering', () => {
       })
 
       // 5. Wait for the final state: the interrupt message should get its own
-      //    ⬥ ok reply, then the queued message should drain and get processed.
+      //    ok reply, then the queued message should drain and get processed.
       //    We wait for the queued message's footer as the final signal.
       await waitForFooterMessage({
         discord: ctx.discord,
@@ -245,24 +245,24 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: setup-interrupt-drain
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        ⬥ starting sleep 100
+        starting sleep 100
         Queued message (position 1)
         --- from: user (interrupt-tester)
         Reply with exactly: interrupt-now
         --- from: assistant (TestBot)
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: queued-behind-slow
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 
-      // 7. Assert the interrupt message got its own ⬥ ok reply between the
+      // 7. Assert the interrupt message got its own ok reply between the
       //    user's interrupt message and the queue dispatch indicator.
       const text = await th.text()
       const lines = text.split('\n')
@@ -279,7 +279,7 @@ e2eTest('queue + interrupt drain ordering', () => {
 
       const linesBetween = lines.slice(interruptUserLine + 1, queueDispatchLine)
       const hasInterruptReply = linesBetween.some((line) => {
-        return line.includes('⬥ ok')
+        return line.includes('ok')
       })
       expect(hasInterruptReply).toBe(true)
     },

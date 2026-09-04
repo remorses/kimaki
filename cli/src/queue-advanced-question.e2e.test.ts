@@ -193,7 +193,7 @@ describe('queue advanced: question tool answer', () => {
 
     // The user's text answer must appear in Discord
     expect(timeline).toContain(answer)
-    expect(timeline).toContain('⬥ ok')
+    expect(timeline).toContain('ok')
     // The original question must have appeared
     expect(timeline).toContain('Which option do you prefer?')
     // The user's marker message triggered the question
@@ -314,7 +314,7 @@ describe('queue advanced: question tool answer', () => {
     expect(timeline).toContain('VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL')
     expect(timeline).toContain('🎤 Transcribing voice message...')
     expect(timeline).toContain('📝 **Transcribed message:** I want option Alpha please')
-    expect(timeline).toContain('⬥ ok')
+    expect(timeline).toContain('ok')
 
     // Voice content must be present as a real transcribed message, not lost
     expect(timeline).toContain('I want option Alpha please')

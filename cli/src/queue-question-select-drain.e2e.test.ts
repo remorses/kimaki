@@ -188,18 +188,18 @@ describe('queue drain after question select answer', () => {
         Queued message (position 1)
         [user selects dropdown: 0]
         » **question-select-tester:** Alpha
-        ⬥ question-drain-first
+        question-drain-first
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **question-select-tester:** Reply with exactly: post-question-second
-        ⬥ ok
+        ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(timeline).toContain('How to proceed?')
       expect(timeline).toContain('[user selects dropdown: 0]')
       expect(timeline).toContain(`» **question-select-tester:** ${firstQueuedPrompt}`)
-      expect(timeline).toContain('⬥ question-drain-first')
+      expect(timeline).toContain('question-drain-first')
       expect(timeline).toContain(`» **question-select-tester:** ${secondQueuedPrompt}`)
-      expect(timeline).toContain('⬥ ok')
+      expect(timeline).toContain('ok')
     },
     15_000,
   )

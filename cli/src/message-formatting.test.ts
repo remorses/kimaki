@@ -1,13 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, serializeEmbeds, serializePoll, serializeMessageSnapshots, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { batchChunksForDiscord, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, serializeEmbeds, serializePoll, serializeMessageSnapshots, shouldLeadWithSeparator, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
 describe('formatPart', () => {
-  test('callout text does not get ⬥ prefix', () => {
+  test('callout text is returned without a diamond prefix', () => {
     const part: Part = {
       id: 'test',
       type: 'text',
@@ -16,15 +16,14 @@ describe('formatPart', () => {
       text: `<callout accent="#ef4444">\n## Top priority\n- **Stripe dispute** deadline\n</callout>`,
     }
     expect(formatPart(part)).toMatchInlineSnapshot(`
-      "
-      <callout accent="#ef4444">
+      "<callout accent="#ef4444">
       ## Top priority
       - **Stripe dispute** deadline
       </callout>"
     `)
   })
 
-  test('regular text gets ⬥ prefix', () => {
+  test('regular text has no diamond prefix', () => {
     const part: Part = {
       id: 'test',
       type: 'text',
@@ -32,10 +31,10 @@ describe('formatPart', () => {
       messageID: 'msg_test',
       text: 'hello world',
     }
-    expect(formatPart(part)).toMatchInlineSnapshot(`"⬥ hello world"`)
+    expect(formatPart(part)).toMatchInlineSnapshot(`"hello world"`)
   })
 
-  test('text starting with heading does not get ⬥ prefix', () => {
+  test('heading text has no diamond prefix', () => {
     const part: Part = {
       id: 'test',
       type: 'text',
@@ -44,9 +43,91 @@ describe('formatPart', () => {
       text: '## Summary\nDone.',
     }
     expect(formatPart(part)).toMatchInlineSnapshot(`
-      "
-      ## Summary
+      "## Summary
       Done."
+    `)
+  })
+})
+
+describe('shouldLeadWithSeparator', () => {
+  test('never leads on the first part', () => {
+    expect(
+      shouldLeadWithSeparator({ previousKind: undefined, nextKind: 'text' }),
+    ).toBe(false)
+    expect(
+      shouldLeadWithSeparator({ previousKind: undefined, nextKind: 'tool' }),
+    ).toBe(false)
+  })
+
+  test('leads only when a tool follows text', () => {
+    expect(
+      shouldLeadWithSeparator({ previousKind: 'text', nextKind: 'tool' }),
+    ).toBe(true)
+    expect(
+      shouldLeadWithSeparator({ previousKind: 'tool', nextKind: 'text' }),
+    ).toBe(false)
+    expect(
+      shouldLeadWithSeparator({ previousKind: 'text', nextKind: 'text' }),
+    ).toBe(false)
+    expect(
+      shouldLeadWithSeparator({ previousKind: 'tool', nextKind: 'tool' }),
+    ).toBe(false)
+  })
+})
+
+describe('batchChunksForDiscord', () => {
+  test('does not merge text chunks with tool chunks', () => {
+    expect(
+      batchChunksForDiscord([
+        { partIds: ['t1'], content: 'hello', kind: 'text' },
+        { partIds: ['b1'], content: '┣ bash ls', kind: 'tool' },
+        { partIds: ['t2'], content: 'done', kind: 'text' },
+      ]),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "content": "hello",
+          "kind": "text",
+          "partIds": [
+            "t1",
+          ],
+        },
+        {
+          "content": "┣ bash ls",
+          "kind": "tool",
+          "partIds": [
+            "b1",
+          ],
+        },
+        {
+          "content": "done",
+          "kind": "text",
+          "partIds": [
+            "t2",
+          ],
+        },
+      ]
+    `)
+  })
+
+  test('merges consecutive same-kind chunks', () => {
+    expect(
+      batchChunksForDiscord([
+        { partIds: ['t1'], content: 'hello', kind: 'text' },
+        { partIds: ['t2'], content: 'world', kind: 'text' },
+      ]),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "content": "hello
+      world",
+          "kind": "text",
+          "partIds": [
+            "t1",
+            "t2",
+          ],
+        },
+      ]
     `)
   })
 })

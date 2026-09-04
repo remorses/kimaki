@@ -77,9 +77,9 @@ describe('bot workflows - thread creation and messaging', () => {
     })
 
     const messages: string[] = [
-      '⬥ I will read the file first.',
+      'I will read the file first.',
       '┣ bash: cat src/main.ts',
-      '⬥ The file contains a simple function. Let me edit it.',
+      'The file contains a simple function. Let me edit it.',
       '◼︎ edit: src/main.ts',
       '⬦ 15% context used',
       'kimakivoice ⋅ main ⋅ 0m 30s ⋅ 15% ⋅ claude-opus-4-6',
@@ -176,7 +176,7 @@ describe('bot workflows - thread creation and messaging', () => {
 
     const finalMsg = await client.chat.postMessage({
       channel: channelId,
-      text: '⬥ Here is the answer.',
+      text: 'Here is the answer.',
       thread_ts: parent.ts!,
     })
 
@@ -658,7 +658,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
     // Bot creates a thread by replying to the user message
     await client.chat.postMessage({
       channel: channelId,
-      text: '⬥ Looking at the login code...',
+      text: 'Looking at the login code...',
       thread_ts: userMsg.ts,
     })
 
@@ -676,7 +676,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
 
     await client.chat.postMessage({
       channel: channelId,
-      text: '⬥ Fixed the null check in the login handler.',
+      text: 'Fixed the null check in the login handler.',
       thread_ts: userMsg.ts,
     })
 
@@ -697,10 +697,10 @@ describe('bot workflows - user message then bot reply pattern', () => {
     const snapshot = await twin.channel('general').text()
     expect(snapshot).toMatchInlineSnapshot(`
       "alice: fix the login bug
-        ↳ test-bot: ⬥ Looking at the login code...
+        ↳ test-bot: Looking at the login code...
         ↳ test-bot: ┣ read: src/auth/login.ts
         ↳ test-bot: ◼︎ edit: src/auth/login.ts
-        ↳ test-bot: ⬥ Fixed the null check in the login handler.
+        ↳ test-bot: Fixed the null check in the login handler.
         ↳ test-bot: kimakivoice ⋅ main ⋅ 0m 15s ⋅ 8% ⋅ claude-opus-4-6"
     `)
   })
@@ -719,7 +719,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
     // Bot replies
     await client.chat.postMessage({
       channel: channelId,
-      text: '⬥ Adding tests...',
+      text: 'Adding tests...',
       thread_ts: userMsg.ts,
     })
 
@@ -739,17 +739,17 @@ describe('bot workflows - user message then bot reply pattern', () => {
 
     await client.chat.postMessage({
       channel: channelId,
-      text: '⬥ Adding documentation...',
+      text: 'Adding documentation...',
       thread_ts: userMsg.ts,
     })
 
     const snapshot = await twin.channel('general').text()
     expect(snapshot).toMatchInlineSnapshot(`
       "alice: add tests
-        ↳ test-bot: ⬥ Adding tests...
+        ↳ test-bot: Adding tests...
         ↳ alice: also add docs
         ↳ test-bot: » alice: also add docs
-        ↳ test-bot: ⬥ Adding documentation..."
+        ↳ test-bot: Adding documentation..."
     `)
   })
 
@@ -764,7 +764,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
 
     const streamMsg = await client.chat.postMessage({
       channel: channelId,
-      text: '⬥ I',
+      text: 'I',
       thread_ts: parent.ts!,
     })
 
@@ -772,19 +772,19 @@ describe('bot workflows - user message then bot reply pattern', () => {
     await client.chat.update({
       channel: channelId,
       ts: streamMsg.ts!,
-      text: '⬥ I will fix',
+      text: 'I will fix',
     })
 
     await client.chat.update({
       channel: channelId,
       ts: streamMsg.ts!,
-      text: '⬥ I will fix the login',
+      text: 'I will fix the login',
     })
 
     await client.chat.update({
       channel: channelId,
       ts: streamMsg.ts!,
-      text: '⬥ I will fix the login bug now.',
+      text: 'I will fix the login bug now.',
     })
 
     // Verify final state
@@ -794,7 +794,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
     })
 
     const editedMsg = replies.messages?.find((m) => m.ts === streamMsg.ts)
-    expect(editedMsg?.text).toBe('⬥ I will fix the login bug now.')
+    expect(editedMsg?.text).toBe('I will fix the login bug now.')
     expect(editedMsg?.edited).toBeTruthy()
   })
 })

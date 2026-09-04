@@ -73,7 +73,12 @@ export function initTestGitRepo(directory: string): void {
   execSync('git commit --allow-empty -m "init"', { cwd: directory, stdio: 'pipe' })
 }
 
-import type { DigitalDiscord } from 'discord-digital-twin/src'
+import {
+  getMessageVisibleText,
+  type DigitalDiscord,
+} from 'discord-digital-twin/src'
+
+export { getMessageVisibleText }
 import {
   getOpencodeClient,
   initializeOpencodeForDirectory,
@@ -210,7 +215,7 @@ export async function waitForBotReplyAfterUserMessage({
     const userMessageIndex = messages.findIndex((message) => {
       return (
         message.author.id === userId &&
-        message.content.includes(userMessageIncludes)
+        getMessageVisibleText(message).includes(userMessageIncludes)
       )
     })
     const botReplyIndex = messages.findIndex((message, index) => {
@@ -265,7 +270,7 @@ export async function waitForBotMessageContaining({
         return messages.findLastIndex((message) => {
           return (
             message.author.id === userId &&
-            message.content.includes(afterUserMessageIncludes)
+            getMessageVisibleText(message).includes(afterUserMessageIncludes)
           )
         })
       }
@@ -285,7 +290,7 @@ export async function waitForBotMessageContaining({
       }
       return (
         message.author.id === discord.botUserId &&
-        message.content.includes(text)
+        getMessageVisibleText(message).includes(text)
       )
     })
     if (match) {
@@ -299,7 +304,7 @@ export async function waitForBotMessageContaining({
     .slice(-12)
     .map((message) => {
       const role = message.author.id === discord.botUserId ? 'bot' : 'user'
-      return `${role}: ${message.content.slice(0, 120)}`
+      return `${role}: ${getMessageVisibleText(message).slice(0, 120)}`
     })
     .join('\n')
   throw new Error(
@@ -380,7 +385,7 @@ export async function waitForFooterMessage({
     lastMessages = messages
     const afterIndex = afterMessageIncludes
       ? messages.findLastIndex((message) => {
-          if (!message.content.includes(afterMessageIncludes)) {
+          if (!getMessageVisibleText(message).includes(afterMessageIncludes)) {
             return false
           }
           if (!afterAuthorId) {
@@ -413,7 +418,7 @@ export async function waitForFooterMessage({
     .slice(-12)
     .map((message) => {
       const role = message.author.id === discord.botUserId ? 'bot' : 'user'
-      return `${role}: ${message.content.slice(0, 120)}`
+      return `${role}: ${getMessageVisibleText(message).slice(0, 120)}`
     })
     .join('\n')
   const anchorText = afterMessageIncludes || 'start'

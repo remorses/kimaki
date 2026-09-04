@@ -411,7 +411,7 @@ describe('kimaki send --channel thread creation', () => {
         thread empty content seed
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        ⬥ caught-by-model
+        caught-by-model
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000830>
         --- from: user (cli-send-tester)
         --- from: assistant (TestBot)
@@ -570,13 +570,13 @@ describe('kimaki send --channel thread creation', () => {
         Routes.threadMembers(threadData.id, TEST_USER_ID),
       )
 
-      // Wait for the bot to reply with the ⬥ prefix (proves ThreadCreate
-      // handler picked up the starter message and started a session)
+      // Wait for the bot to reply (proves ThreadCreate handler picked up
+      // the starter message and started a session)
       await waitForBotMessageContaining({
         discord,
         threadId: threadData.id,
         userId: discord.botUserId,
-        text: '⬥',
+        text: 'ok',
         timeout: 4_000,
       })
 
@@ -585,7 +585,7 @@ describe('kimaki send --channel thread creation', () => {
         discord,
         threadId: threadData.id,
         timeout: 4_000,
-        afterMessageIncludes: '⬥',
+        afterMessageIncludes: 'ok',
         afterAuthorId: discord.botUserId,
       })
 
@@ -598,11 +598,9 @@ describe('kimaki send --channel thread creation', () => {
       })
       expect(errorMessages).toHaveLength(0)
 
-      // Verify at least one ⬥ reply exists (session produced output)
+      // Verify at least one reply exists (session produced output)
       const botReplies = messages.filter((m) => {
-        return (
-          m.author.id === discord.botUserId && m.content.startsWith('⬥')
-        )
+        return m.author.id === discord.botUserId
       })
       expect(botReplies.length).toBeGreaterThanOrEqual(1)
     },

@@ -11,7 +11,7 @@ This document explains how Kimaki determines which OpenCode tools are "essential
 
 Kimaki implements three verbosity levels for Discord channels:
 
-1. **`text-only`** - Only text responses (the ⬥ diamond messages)
+1. **`text-only`** - Only text responses
 2. **`text-and-essential-tools`** - Text + essential tools (edits, custom MCP tools, etc.)
 3. **`tools-and-text`** - All tools shown (complete verbosity)
 
@@ -97,7 +97,7 @@ This is where verbosity filtering is applied during message streaming:
 ```typescript
 const sendPartMessage = async (part: Part) => {
   const verbosity = await getVerbosity()
-  // In text-only mode, only send text parts (the ⬥ diamond messages)
+  // In text-only mode, only send text parts
   if (verbosity === 'text-only' && part.type !== 'text') {
     return
   }
