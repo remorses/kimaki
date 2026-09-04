@@ -207,7 +207,8 @@ cli
             guildId = data.guild_id || ''
           } catch (error) {
             // Only mark as deleted for Unknown Channel (10003) or 404,
-            // not transient errors like rate limits or 5xx
+            // not transient errors like rate limits or 5xx.
+            // Gateway-proxy must return Discord 404 for unknown channels, not 403.
             const code = error instanceof Error ? Reflect.get(error, 'code') : undefined
             const status = error instanceof Error ? Reflect.get(error, 'status') : undefined
             const isUnknownChannel = code === 10003 || status === 404
