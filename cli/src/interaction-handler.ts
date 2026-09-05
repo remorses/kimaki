@@ -115,6 +115,10 @@ import { hasKimakiAdminPermission, hasKimakiBotPermission } from './discord-util
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import { getChannelDirectory } from './database.js'
+import {
+  reserveThreadIngress,
+  runInThreadIngressSlot,
+} from './session-handler/thread-session-runtime.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
@@ -124,6 +128,41 @@ const SETUP_COMMANDS = new Set([
   'add-project',
   'create-new-project',
 ])
+
+const SERIAL_THREAD_SELECT_PREFIXES = [
+  'agent_select:',
+  'model_select:',
+  'model_scope:',
+  'model_variant:',
+  'variant_quick:',
+  'variant_scope:',
+]
+
+function serialIngressChannelId(interaction: Interaction): string | undefined {
+  if (interaction.isAutocomplete()) {
+    return undefined
+  }
+  if (interaction.isChatInputCommand()) {
+    const name = interaction.commandName
+    if (!name.endsWith('-agent') || name === 'agent') {
+      return undefined
+    }
+    if (interaction.options.getString('prompt')) {
+      return undefined
+    }
+    return interaction.channelId ?? undefined
+  }
+  if (interaction.isStringSelectMenu()) {
+    const isSerialSelect = SERIAL_THREAD_SELECT_PREFIXES.some((prefix) => {
+      return interaction.customId.startsWith(prefix)
+    })
+    if (!isSerialSelect) {
+      return undefined
+    }
+    return interaction.channelId ?? undefined
+  }
+  return undefined
+}
 
 /**
  * Check if the interaction's channel is owned by this machine (has a project
@@ -175,6 +214,11 @@ export function registerInteractionHandler({
   discordClient.on(
     Events.InteractionCreate,
     async (interaction: Interaction) => {
+      const ingressChannelId = serialIngressChannelId(interaction)
+      const ingressSlot = ingressChannelId
+        ? reserveThreadIngress(ingressChannelId)
+        : undefined
+      await runInThreadIngressSlot(ingressSlot, async () => {
       try {
         interactionLogger.log(
           `[INTERACTION] Received: ${interaction.type} - ${
@@ -740,6 +784,7 @@ export function registerInteractionHandler({
           )
         }
       }
+      })
     },
   )
 }

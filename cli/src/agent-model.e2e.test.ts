@@ -1156,6 +1156,78 @@ describe('agent model resolution', () => {
   )
 
   test(
+    '/plan-agent then an immediate follow-up uses the new agent',
+    async () => {
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: race-switch-first-msg',
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: race-switch-first-msg'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const th = discord.thread(thread.id)
+      const { id: interactionId } = await th
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'plan-agent' })
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: race-switch-follow-up',
+      })
+
+      await th.waitForInteractionAck({ interactionId, timeout: 4_000 })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'race-switch-follow-up',
+        afterAuthorId: TEST_USER_ID,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: race-switch-first-msg
+        --- from: assistant (TestBot)
+        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        --- from: user (agent-model-tester)
+        Reply with exactly: race-switch-follow-up
+        --- from: assistant (TestBot)
+        Switched to **plan** agent for this session (was **test-agent**)
+        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        The agent will change on the next message.
+        ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+      `)
+
+      const secondFooter = [...(await discord.thread(thread.id).getMessages())]
+        .reverse()
+        .find((m) => {
+          return (
+            m.author.id === discord.botUserId && m.content.startsWith('*')
+          )
+        })
+      expect(secondFooter).toBeDefined()
+      expect(secondFooter!.content).toContain(PLAN_AGENT_MODEL)
+      expect(secondFooter!.content).not.toContain(AGENT_MODEL)
+    },
+    20_000,
+  )
+
+  test(
     '/plan-agent on the same agent refreshes a stale session model',
     async () => {
       await setChannelAgent(TEXT_CHANNEL_ID, 'plan')

@@ -89,6 +89,8 @@ import {
   getRuntime,
   getOrCreateRuntime,
   disposeRuntime,
+  reserveThreadIngress,
+  runInThreadIngressSlot,
 } from './session-handler/thread-session-runtime.js'
 import { runShellCommand } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
@@ -479,6 +481,10 @@ export async function startDiscordBot({
   })
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
+    const threadIngressSlot = message.channel.isThread()
+      ? reserveThreadIngress(message.channel.id)
+      : undefined
+    await runInThreadIngressSlot(threadIngressSlot, async () => {
     try {
       const isSelfBotMessage = Boolean(
         discordClient.user && message.author?.id === discordClient.user.id,
@@ -733,6 +739,7 @@ export async function startDiscordBot({
         ) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
+            threadIngressSlot?.release()
             const shellDir =
               worktreeInfo?.status === 'ready' &&
               worktreeInfo.workspace_directory
@@ -758,6 +765,7 @@ export async function startDiscordBot({
             ? extractBtwSuffix(message.content || '')
             : null
         if (btwResult?.forceBtw && projectDirectory && !isLeadingMentionToOtherUser) {
+          threadIngressSlot?.release()
           const btwSdkDir =
             worktreeInfo?.status === 'ready' &&
             worktreeInfo.workspace_directory
@@ -1114,6 +1122,7 @@ export async function startDiscordBot({
         )
       }
     }
+    })
   })
 
   // Handle user message edits to update queued messages.

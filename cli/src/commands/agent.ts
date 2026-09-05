@@ -31,7 +31,11 @@ import {
   getKimakiMetadata,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
+import {
+  getOrCreateRuntime,
+  releaseCurrentThreadIngress,
+  waitForCurrentThreadIngress,
+} from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import {
   formatModelSource,
@@ -256,6 +260,7 @@ export async function setAgentForContext({
   context: AgentCommandContext
   agentName: string
 }): Promise<void> {
+  await waitForCurrentThreadIngress()
   if (context.isThread && context.sessionId) {
     await setSessionAgent(context.sessionId, agentName)
     // Clear session model so the new agent's model takes effect
@@ -267,6 +272,7 @@ export async function setAgentForContext({
     await setChannelAgent(context.channelId, agentName)
     agentLogger.log(`Set agent ${agentName} for channel ${context.channelId}`)
   }
+  releaseCurrentThreadIngress()
 }
 
 function formatAgentModelLine(modelInfo: CurrentModelInfo): string {

@@ -7,6 +7,7 @@
 // run internals.
 
 import crypto from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { ChannelType, type ThreadChannel } from 'discord.js'
 import type {
   Event as OpenCodeEvent,
@@ -210,6 +211,63 @@ const shouldLogSessionEvents =
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
 
+// Per-thread FIFO for Discord arrival order of preference writes vs messages.
+// OpenCode already queues promptAsync. This only covers Kimaki SQLite writes
+// that promptAsync would otherwise race, like /plan-agent then a follow-up.
+const threadIngressChains = new Map<string, Promise<void>>()
+const threadIngressSlotAls = new AsyncLocalStorage<ThreadIngressSlot | undefined>()
+
+export type ThreadIngressSlot = {
+  wait: Promise<void>
+  release: () => void
+}
+
+export function reserveThreadIngress(threadId: string): ThreadIngressSlot {
+  const previous = threadIngressChains.get(threadId) ?? Promise.resolve()
+  let released = false
+  let releaseHeld = () => {}
+  const held = new Promise<void>((resolve) => {
+    releaseHeld = resolve
+  })
+  threadIngressChains.set(
+    threadId,
+    previous.then(() => held),
+  )
+  return {
+    wait: previous,
+    release: () => {
+      if (released) {
+        return
+      }
+      released = true
+      releaseHeld()
+    },
+  }
+}
+
+export async function runInThreadIngressSlot<T>(
+  slot: ThreadIngressSlot | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await threadIngressSlotAls.run(slot, run)
+  } finally {
+    slot?.release()
+  }
+}
+
+export async function waitForCurrentThreadIngress(): Promise<void> {
+  const slot = threadIngressSlotAls.getStore()
+  if (!slot) {
+    return
+  }
+  await slot.wait
+}
+
+export function releaseCurrentThreadIngress(): void {
+  threadIngressSlotAls.getStore()?.release()
+}
+
 export function getRuntime(
   threadId: string,
 ): ThreadSessionRuntime | undefined {
@@ -251,6 +309,7 @@ export function disposeRuntime(threadId: string): void {
   runtime.dispose()
   runtimes.delete(threadId)
   threadState.removeThread(threadId) // remove from global store
+  threadIngressChains.delete(threadId)
 }
 
 export function disposeRuntimesForDirectory({
@@ -271,6 +330,7 @@ export function disposeRuntimesForDirectory({
     runtime.dispose()
     runtimes.delete(threadId)
     threadState.removeThread(threadId)
+    threadIngressChains.delete(threadId)
     count++
   }
   return count
@@ -301,6 +361,7 @@ export function disposeInactiveRuntimes({
     runtime.dispose()
     runtimes.delete(threadId)
     threadState.removeThread(threadId)
+    threadIngressChains.delete(threadId)
     disposedThreadIds.push(threadId)
     disposedDirectories.add(runtime.projectDirectory)
   }
@@ -3120,6 +3181,7 @@ export class ThreadSessionRuntime {
       }
       const resolvedAgent = agentResult.agentPreference
       const availableAgents = agentResult.agents
+      releaseCurrentThreadIngress()
 
       const [modelResult, preferredVariant] = await Promise.all([
         (async () => {
@@ -3413,6 +3475,7 @@ export class ThreadSessionRuntime {
    * discord-bot.ts.
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
+    await waitForCurrentThreadIngress()
     threadState.setSessionUsername(this.threadId, input.username)
     threadState.setSessionUserId(this.threadId, input.userId)
     await this.ensureParentSessionId({
