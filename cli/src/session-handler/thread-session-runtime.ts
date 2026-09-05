@@ -460,7 +460,9 @@ function getThreadNameCandidateFromSessionTitle({
   sessionTitle: string | undefined | null
   currentName: string
 }) {
-  const trimmed = sessionTitle?.trim()
+  const trimmed = sessionTitle
+    ?.replace(/<\/?callout\b[^>]*>/gi, '')
+    .trim()
   if (!trimmed) {
     return null
   }
