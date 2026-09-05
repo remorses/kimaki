@@ -115,6 +115,8 @@ import { hasKimakiAdminPermission, hasKimakiBotPermission } from './discord-util
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import { getChannelDirectory } from './database.js'
+import { handleModelShortcutCommand } from './model-shortcuts.js'
+import { store } from './store.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
@@ -443,7 +445,19 @@ export function registerInteractionHandler({
               return
           }
 
-          // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
+        const modelShortcut = store
+          .getState()
+          .modelShortcuts.find((shortcut) => shortcut.name === interaction.commandName)
+        if (modelShortcut) {
+          await handleModelShortcutCommand({
+            interaction,
+            appId,
+            shortcut: modelShortcut,
+          })
+          return
+        }
+
+        // Handle quick agent commands (ending with -agent suffix, but not the base /agent command)
           if (
             interaction.commandName.endsWith('-agent') &&
             interaction.commandName !== 'agent'

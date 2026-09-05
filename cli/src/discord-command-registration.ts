@@ -477,12 +477,55 @@ export async function registerCommands({
   ]
 
   // Dynamic commands are registered in priority order:
-  // agents → user config commands → MCP prompts → skills.
+  // model shortcuts → agents → user config commands → MCP prompts → skills.
   // This ordering matters because we slice to MAX_DISCORD_COMMANDS (100) at the end,
   // so lower-priority dynamic commands get trimmed first if the total exceeds the limit.
   // Skills are last because they are the largest/most disposable set under the cap.
 
-  // 1. Agent-specific quick commands like /plan-agent, /build-agent
+  const registeredCommandNames = new Set(commands.map((command) => command.name))
+
+  // 1. Operator-defined model shortcuts like /glm and /sonnet
+  const { modelShortcuts } = store.getState()
+  for (const shortcut of modelShortcuts) {
+    if (registeredCommandNames.has(shortcut.name)) {
+      cliLogger.warn(
+        `COMMANDS: Skipping model shortcut /${shortcut.name} because that command name is already registered`,
+      )
+      continue
+    }
+    commands.push(
+      new SlashCommandBuilder()
+        .setName(shortcut.name)
+        .setDescription(truncateCommandDescription(`Switch model to ${shortcut.model}`))
+        .setDMPermission(false)
+        .addStringOption((option) => {
+          option
+            .setName('effort')
+            .setDescription('Thinking effort (uses the configured default when omitted)')
+            .setRequired(false)
+            .setMaxLength(100)
+          if (shortcut.variants.length > 0) {
+            option.addChoices(
+              ...shortcut.variants.map((variant) => ({
+                name: variant,
+                value: variant,
+              })),
+            )
+          }
+          return option
+        })
+        .addStringOption((option) =>
+          option
+            .setName('prompt')
+            .setDescription('Start a session with this model and prompt')
+            .setRequired(false),
+        )
+        .toJSON(),
+    )
+    registeredCommandNames.add(shortcut.name)
+  }
+
+  // 2. Agent-specific quick commands like /plan-agent, /build-agent
   // Filter to primary/all mode agents (same as /agent command shows), excluding hidden agents
   const primaryAgents = agents.filter(
     (a) => (a.mode === 'primary' || a.mode === 'all') && !a.hidden,
@@ -519,7 +562,7 @@ export async function registerCommands({
     )
   }
 
-  // 2. User-defined commands, MCP prompts, and skills (ordered by priority)
+  // 3. User-defined commands, MCP prompts, and skills (ordered by priority)
   // Also populate registeredUserCommands in the store for /queue-command autocomplete
   const newRegisteredCommands: RegisteredUserCommand[] = []
   // Sort: regular commands first, then MCP prompts, then skills last

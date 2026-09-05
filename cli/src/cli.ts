@@ -17,6 +17,7 @@ import {
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
 import { publicOpencodeBindRequiresPassword } from './opencode.js'
+import { parseModelShortcuts } from './model-shortcuts.js'
 import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
@@ -146,6 +147,15 @@ cli
         'Blacklist a built-in skill by name. Listed skills are hidden from the model. Repeatable: pass --disable-skill multiple times. Mutually exclusive with --enable-skill. See https://github.com/remorses/kimaki/tree/main/skills for available skills.',
       ),
   )
+  .option(
+    '--model-shortcut <name=provider/model[,default-effort[,allowed-effort...]]>',
+    z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Register a model slash-command shortcut. Repeatable. Example: --model-shortcut glm=zai/glm-5.3,max,low,high,max',
+      ),
+  )
   .action(
     async (options: {
       restartOnboarding?: boolean
@@ -171,6 +181,7 @@ cli
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
       disableSkill?: string[]
+      modelShortcut?: string[]
       opencodeHostname?: string
       opencodePort?: string
     }) => {
@@ -235,6 +246,11 @@ cli
         // rules via computeSkillPermission().
         const enabledSkills = options.enableSkill ?? []
         const disabledSkills = options.disableSkill ?? []
+        const modelShortcuts = parseModelShortcuts(options.modelShortcut ?? [])
+        if (modelShortcuts instanceof Error) {
+          cliLogger.error(modelShortcuts.message)
+          process.exit(EXIT_NO_RESTART)
+        }
         if (enabledSkills.length > 0 && disabledSkills.length > 0) {
           cliLogger.error(
             'Cannot use --enable-skill and --disable-skill at the same time. Use one or the other.',
@@ -322,6 +338,7 @@ cli
           ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
+          ...(modelShortcuts.length > 0 && { modelShortcuts }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
           ...(opencodeHostname && { opencodeHostname }),
           ...(opencodePort !== undefined && { opencodePort }),

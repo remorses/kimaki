@@ -197,6 +197,7 @@ export async function ensureSessionPreferencesSnapshot({
   directory,
   agentOverride,
   modelOverride,
+  variantOverride,
   force,
 }: {
   sessionId: string
@@ -206,6 +207,7 @@ export async function ensureSessionPreferencesSnapshot({
   directory?: string
   agentOverride?: string
   modelOverride?: string
+  variantOverride?: string | null
   force?: boolean
 }): Promise<void> {
   const [sessionAgentPreference, sessionModelPreference] = await Promise.all([
@@ -213,7 +215,7 @@ export async function ensureSessionPreferencesSnapshot({
     getSessionModel(sessionId),
   ])
   const shouldBootstrapSessionPreferences =
-    force || (!sessionAgentPreference && !sessionModelPreference)
+    force || Boolean(modelOverride) || (!sessionAgentPreference && !sessionModelPreference)
   if (!shouldBootstrapSessionPreferences) {
     return
   }
@@ -236,11 +238,14 @@ export async function ensureSessionPreferencesSnapshot({
   if (modelOverride) {
     const parsedModelOverride = parseModelId(modelOverride)
     if (parsedModelOverride) {
-      const bootstrappedVariant = await getVariantCascade({
-        sessionId,
-        channelId,
-        appId,
-      })
+      const bootstrappedVariant =
+        variantOverride !== undefined
+          ? variantOverride
+          : await getVariantCascade({
+              sessionId,
+              channelId,
+              appId,
+            })
       await setSessionModel({
         sessionId,
         modelId: modelOverride,

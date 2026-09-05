@@ -21,7 +21,7 @@ import {
   test,
   expect,
 } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder } from 'discord.js'
+import { ChannelType, Client, GatewayIntentBits, Partials, type TextChannel } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencodeConfig,
@@ -38,11 +38,13 @@ import {
   setChannelVerbosity,
   setChannelAgent,
   setChannelModel,
+  getChannelModel,
   getThreadSession,
   getSessionModel,
   getSessionAgent,
   getChannelAgent,
   setSessionModel,
+  setThreadSession,
   type VerbosityLevel,
 } from './database.js'
 import { getDb } from './db.js'
@@ -57,7 +59,7 @@ import {
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
-import { buildQuickAgentCommandDescription } from './commands/agent.js'
+import { registerCommands } from './discord-command-registration.js'
 
 
 const TEST_USER_ID = '200000000000000920'
@@ -67,6 +69,8 @@ const PLAN_AGENT_MODEL = 'plan-model-v2'
 const CHANNEL_MODEL = 'channel-model-v2'
 const DEFAULT_MODEL = 'deterministic-v2'
 const PROVIDER_NAME = 'deterministic-provider'
+const MODEL_SHORTCUT_NAME = 'channel-model'
+const MODEL_SHORTCUT_NO_EFFORT_NAME = 'channel-model-clean'
 
 function createRunDirectories() {
   const root = path.resolve(process.cwd(), 'tmp', 'agent-model-e2e')
@@ -259,6 +263,8 @@ describe('agent model resolution', () => {
   let discord: DigitalDiscord
   let botClient: Client
   let previousDefaultVerbosity: VerbosityLevel | null = null
+  let previousModelShortcuts = store.getState().modelShortcuts
+  let previousDiscordBaseUrl = store.getState().discordBaseUrl
   let testStartTime = Date.now()
 
   beforeAll(async () => {
@@ -269,7 +275,24 @@ describe('agent model resolution', () => {
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
+    previousModelShortcuts = store.getState().modelShortcuts
+    previousDiscordBaseUrl = store.getState().discordBaseUrl
+    store.setState({
+      defaultVerbosity: 'tools_and_text',
+      modelShortcuts: [
+        {
+          name: MODEL_SHORTCUT_NAME,
+          model: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+          defaultVariant: 'high',
+          variants: ['low', 'high', 'max'],
+        },
+        {
+          name: MODEL_SHORTCUT_NO_EFFORT_NAME,
+          model: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+          variants: [],
+        },
+      ],
+    })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,
@@ -298,6 +321,7 @@ describe('agent model resolution', () => {
     })
 
     await discord.start()
+    store.setState({ discordBaseUrl: new URL(discord.restUrl).origin })
 
     const providerNpm = url
       .pathToFileURL(
@@ -339,24 +363,16 @@ describe('agent model resolution', () => {
     }
     providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
     providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
-    providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
+    const channelModelConfig = {
+      name: CHANNEL_MODEL,
+      variants: { low: {}, high: {}, max: {} },
+    }
+    providerConfig.models[CHANNEL_MODEL] = channelModelConfig
 
     fs.writeFileSync(
       path.join(directories.projectDirectory, 'opencode.json'),
       JSON.stringify(opencodeConfig, null, 2),
     )
-
-    // Leading /command detection only rewrites when registeredUserCommands is set
-    store.setState({
-      registeredUserCommands: [
-        {
-          name: COMMAND_SYSTEM_CHECK_NAME,
-          discordCommandName: `${COMMAND_SYSTEM_CHECK_NAME}-cmd`,
-          description: 'Test command for kimaki system prompt injection',
-          source: 'command',
-        },
-      ],
-    })
 
     // Create agent .md files with custom models
     createAgentFile({
@@ -397,33 +413,26 @@ describe('agent model resolution', () => {
       discordClient: botClient,
     })
 
-    // Register quick agent slash commands so /plan-agent and /test-agent-agent
-    // are resolvable by handleQuickAgentCommand via guild.commands.fetch().
-    const agentCommands = ['test-agent', 'plan', 'plain'].map((agentName) => {
-      return new SlashCommandBuilder()
-        .setName(`${agentName}-agent`)
-        .setDescription(
-          buildQuickAgentCommandDescription({
-            agentName,
-            description: `Switch to ${agentName} agent`,
-          }),
-        )
-        .setDMPermission(false)
-        .addStringOption((opt) =>
-          opt
-            .setName('prompt')
-            .setDescription('Send a prompt with this agent')
-            .setRequired(false),
-        )
-        .toJSON()
+    await registerCommands({
+      token: discord.botToken,
+      appId: discord.botUserId,
+      guildIds: [discord.guildId],
+      agents: ['test-agent', 'plan', 'plain'].map((name) => ({
+        name,
+        description: `Switch to ${name} agent`,
+        mode: 'primary',
+      })),
     })
-    const rest = new REST({ version: '10', api: discord.restUrl }).setToken(
-      discord.botToken,
-    )
-    await rest.put(
-      Routes.applicationGuildCommands(discord.botUserId, discord.guildId),
-      { body: agentCommands },
-    )
+    store.setState({
+      registeredUserCommands: [
+        {
+          name: COMMAND_SYSTEM_CHECK_NAME,
+          discordCommandName: `${COMMAND_SYSTEM_CHECK_NAME}-cmd`,
+          description: 'Test command for kimaki system prompt injection',
+          source: 'command',
+        },
+      ],
+    })
 
     // Pre-warm the opencode server so agent discovery happens
     const warmup = await initializeOpencodeForDirectory(
@@ -459,12 +468,211 @@ describe('agent model resolution', () => {
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
     if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity })
+      store.setState({
+        defaultVerbosity: previousDefaultVerbosity,
+        modelShortcuts: previousModelShortcuts,
+        discordBaseUrl: previousDiscordBaseUrl,
+      })
     }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
   }, 5_000)
+
+  test('model shortcut sets channel model and configured effort', async () => {
+    const { id: interactionId } = await discord
+      .channel(TEXT_CHANNEL_ID)
+      .user(TEST_USER_ID)
+      .runSlashCommand({ name: MODEL_SHORTCUT_NAME })
+    await discord.channel(TEXT_CHANNEL_ID).waitForInteractionAck({ interactionId, timeout: 4_000 })
+    await waitForBotMessageContaining({
+      discord,
+      threadId: TEXT_CHANNEL_ID,
+      text: 'Model for this channel set',
+      timeout: 4_000,
+    })
+
+    expect(await discord.channel(TEXT_CHANNEL_ID).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Model for this channel set to \`deterministic-provider/channel-model-v2\` with effort \`high\`"
+    `)
+    expect(await getChannelModel(TEXT_CHANNEL_ID)).toEqual({
+      modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      variant: 'high',
+    })
+    expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('build')
+
+    const db = await getDb()
+    await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
+    await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
+  })
+
+  test('model shortcut in a linked thread sets session model and explicit effort', async () => {
+    const channel = (await botClient.channels.fetch(TEXT_CHANNEL_ID)) as TextChannel
+    const starterMessage = await channel.send('Model shortcut test thread')
+    const thread = await starterMessage.startThread({ name: 'model-shortcut-test', autoArchiveDuration: 60 })
+    const sessionId = 'ses_model_shortcut_test'
+    await setThreadSession(thread.id, sessionId)
+
+    const { id: interactionId } = await discord.thread(thread.id).user(TEST_USER_ID).runSlashCommand({
+      name: MODEL_SHORTCUT_NAME,
+      options: [{ name: 'effort', type: 3, value: 'max' }],
+    })
+    await discord.thread(thread.id).waitForInteractionAck({ interactionId, timeout: 4_000 })
+    await waitForBotMessageContaining({
+      discord,
+      threadId: thread.id,
+      text: 'Model for this thread set',
+      timeout: 4_000,
+    })
+
+    expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Model shortcut test thread
+      Model for this thread set to \`deterministic-provider/channel-model-v2\` with effort \`max\`"
+    `)
+    expect(await getSessionModel(sessionId)).toEqual({
+      modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      variant: 'max',
+    })
+    expect(await getSessionAgent(sessionId)).toBe('build')
+  }, 20_000)
+
+  test('model shortcut rejects an unlinked thread without persisting a model', async () => {
+    const channel = (await botClient.channels.fetch(TEXT_CHANNEL_ID)) as TextChannel
+    const starterMessage = await channel.send('Unlinked model shortcut test')
+    const thread = await starterMessage.startThread({
+      name: 'unlinked-model-shortcut-test',
+      autoArchiveDuration: 60,
+    })
+    const { id: interactionId } = await discord
+      .thread(thread.id)
+      .user(TEST_USER_ID)
+      .runSlashCommand({ name: MODEL_SHORTCUT_NAME })
+    await discord.thread(thread.id).waitForInteractionAck({ interactionId, timeout: 4_000 })
+    await waitForBotMessageContaining({
+      discord,
+      threadId: thread.id,
+      text: 'not linked to an OpenCode session',
+      timeout: 4_000,
+    })
+
+    expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Unlinked model shortcut test
+      This thread is not linked to an OpenCode session"
+    `)
+    expect(await getThreadSession(thread.id)).toBeUndefined()
+  })
+
+  async function launchShortcutPrompt({
+    shortcutName,
+    prompt,
+    effort,
+  }: {
+    shortcutName: string
+    prompt: string
+    effort?: string
+  }) {
+    const threadIdsBefore = new Set(
+      (await discord.channel(TEXT_CHANNEL_ID).getThreads()).map((thread) => thread.id),
+    )
+    const options = [
+      ...(effort ? [{ name: 'effort', type: 3, value: effort }] : []),
+      { name: 'prompt', type: 3, value: prompt },
+    ]
+    const { id: interactionId } = await discord
+      .channel(TEXT_CHANNEL_ID)
+      .user(TEST_USER_ID)
+      .runSlashCommand({ name: shortcutName, options })
+    await discord.channel(TEXT_CHANNEL_ID).waitForInteractionAck({ interactionId, timeout: 4_000 })
+    return discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (thread) => thread.name === prompt && !threadIdsBefore.has(thread.id),
+    })
+  }
+
+  test('model shortcut prompt launches an isolated model-pinned session', async () => {
+    await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+    await setChannelModel({
+      channelId: TEXT_CHANNEL_ID,
+      modelId: `${PROVIDER_NAME}/${AGENT_MODEL}`,
+      variant: 'low',
+    })
+    const channelModelBefore = await getChannelModel(TEXT_CHANNEL_ID)
+    const channelAgentBefore = await getChannelAgent(TEXT_CHANNEL_ID)
+    const prompt = 'Reply with exactly: isolated-model-shortcut'
+    const thread = await launchShortcutPrompt({
+      shortcutName: MODEL_SHORTCUT_NAME,
+      prompt,
+      effort: 'max',
+    })
+    await waitForFooterMessage({
+      discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'ok',
+      afterAuthorId: discord.botUserId,
+    })
+
+    expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      » **agent-model-tester** (channel-model): Reply with exactly: isolated-model-shortcut
+      *using deterministic-provider/channel-model-v2 ⋅ build*
+      ⬥ ok
+      *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2 ⋅ **build*** <@200000000000000920>"
+    `)
+    const sessionId = await getThreadSession(thread.id)
+    expect(sessionId ? await getSessionModel(sessionId) : undefined).toEqual({
+      modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      variant: 'max',
+    })
+    expect(sessionId ? await getSessionAgent(sessionId) : undefined).toBe('build')
+    expect(await getChannelModel(TEXT_CHANNEL_ID)).toEqual(channelModelBefore)
+    expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe(channelAgentBefore)
+
+    const db = await getDb()
+    await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
+    await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, TEXT_CHANNEL_ID))
+  }, 20_000)
+
+  test('model shortcut without an effort clears inherited effort for an isolated prompt', async () => {
+    await setChannelModel({
+      channelId: TEXT_CHANNEL_ID,
+      modelId: `${PROVIDER_NAME}/${AGENT_MODEL}`,
+      variant: 'low',
+    })
+    const channelModelBefore = await getChannelModel(TEXT_CHANNEL_ID)
+    const prompt = 'Reply with exactly: no-inherited-effort'
+    const thread = await launchShortcutPrompt({
+      shortcutName: MODEL_SHORTCUT_NO_EFFORT_NAME,
+      prompt,
+    })
+    await waitForFooterMessage({
+      discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'ok',
+      afterAuthorId: discord.botUserId,
+    })
+
+    expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      » **agent-model-tester** (channel-model-clean): Reply with exactly: no-inherited-effort
+      *using deterministic-provider/channel-model-v2 ⋅ build*
+      ⬥ ok
+      *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2 ⋅ **build*** <@200000000000000920>"
+    `)
+    const sessionId = await getThreadSession(thread.id)
+    expect(sessionId ? await getSessionModel(sessionId) : undefined).toEqual({
+      modelId: `${PROVIDER_NAME}/${CHANNEL_MODEL}`,
+      variant: null,
+    })
+    expect(await getChannelModel(TEXT_CHANNEL_ID)).toEqual(channelModelBefore)
+
+    const db = await getDb()
+    await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
+  }, 20_000)
 
   test(
     'new thread uses agent model when channel agent is set',

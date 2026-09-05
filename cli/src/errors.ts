@@ -122,6 +122,11 @@ export class InvalidModelError extends errore.createTaggedError({
   message: 'Invalid model "$model": $reason',
 }) {}
 
+export class InvalidModelShortcutError extends errore.createTaggedError({
+  name: 'InvalidModelShortcutError',
+  message: 'Invalid model shortcut "$value": $reason',
+}) {}
+
 export class FilesystemOperationError extends errore.createTaggedError({
   name: 'FilesystemOperationError',
   message: 'Filesystem operation failed: $operation',

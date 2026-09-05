@@ -6,6 +6,7 @@
 import { createStore } from 'zustand/vanilla'
 import type { VerbosityLevel } from './schema.js'
 import type { ThreadRunState } from './session-handler/thread-runtime-state.js'
+import type { ModelShortcut } from './model-shortcuts.js'
 
 // Registered user commands, populated by registerCommands() in cli.ts.
 // discordCommandName is the full sanitized Discord slash command name
@@ -176,6 +177,11 @@ export type KimakiState = {
   // Read by: /queue-command autocomplete, user-command handler dispatch.
   registeredUserCommands: RegisteredUserCommand[]
 
+  // Operator-defined Discord slash commands that select a model directly.
+  // Changes: set once at startup from repeatable --model-shortcut flags.
+  // Read by: command registration and interaction dispatch.
+  modelShortcuts: ModelShortcut[]
+
   // ── Per-thread runtime state ────────────────────────────────────────
   // The main mutable state at runtime. One ThreadRunState per active thread.
   // All mutations are immutable: each updateThread() creates a new Map + new
@@ -218,6 +224,7 @@ export const store = createStore<KimakiState>(() => ({
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],
+  modelShortcuts: [],
   threads: new Map(),
   test: { deterministicTranscription: null },
 }))

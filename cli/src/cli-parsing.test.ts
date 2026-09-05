@@ -57,8 +57,9 @@ async function getHelpOutput() {
 async function parseRootBotOptions(argv: string[]) {
   const script = [
     "import { goke } from 'goke'",
+    "import { z } from 'zod'",
     'const cli = goke(\'kimaki\')',
-    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--skip-footer-mentions', 'Do not mention the thread creator in final footers')",
+    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--skip-footer-mentions', 'Do not mention the thread creator in final footers').option('--model-shortcut <shortcut>', z.array(z.string()).optional())",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
@@ -74,6 +75,22 @@ async function parseRootBotOptions(argv: string[]) {
 }
 
 describe('goke CLI ID parsing', () => {
+  test('collects repeated model shortcut options', async () => {
+    const result = await parseRootBotOptions([
+      'node',
+      'kimaki',
+      '--model-shortcut',
+      'glm=zai/glm-5.3,max,low,high,max',
+      '--model-shortcut',
+      'sol=openai/gpt-5.6-sol,high,low,high,max',
+    ])
+
+    expect(result.options.modelShortcut).toEqual([
+      'glm=zai/glm-5.3,max,low,high,max',
+      'sol=openai/gpt-5.6-sol,high,low,high,max',
+    ])
+  })
+
   test('keeps large Discord IDs as strings', async () => {
     const channelId = '1234567890123456789'
     const threadId = '9876543210987654321'
