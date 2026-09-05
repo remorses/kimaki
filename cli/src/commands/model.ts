@@ -32,11 +32,7 @@ import {
   getDefaultModel,
   resolveDisplayedModelId,
 } from '../session-handler/model-utils.js'
-import {
-  getRuntime,
-  releaseCurrentThreadIngress,
-  waitForCurrentThreadIngress,
-} from '../session-handler/thread-session-runtime.js'
+import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import {
   buildHtmlActionCustomId,
@@ -1168,9 +1164,7 @@ export async function applyToCurrentSession({
   if (!sessionId) {
     return false
   }
-  await waitForCurrentThreadIngress()
   await setSessionModel({ sessionId, modelId, variant })
-  releaseCurrentThreadIngress()
   if (!thread) {
     return false
   }

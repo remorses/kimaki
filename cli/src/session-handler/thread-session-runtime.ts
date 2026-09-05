@@ -211,9 +211,9 @@ const shouldLogSessionEvents =
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
 
-// Per-thread FIFO for Discord arrival order of preference writes vs messages.
-// OpenCode already queues promptAsync. This only covers Kimaki SQLite writes
-// that promptAsync would otherwise race, like /plan-agent then a follow-up.
+// Per-thread FIFO for Discord arrival order of one-shot slash calls vs messages.
+// Covers /plan-agent (no prompt) and /foo-cmd /foo-skill. OpenCode already
+// queues promptAsync. /model, /agent, and /compact are not on this queue.
 const threadIngressChains = new Map<string, Promise<void>>()
 const threadIngressSlotAls = new AsyncLocalStorage<ThreadIngressSlot | undefined>()
 

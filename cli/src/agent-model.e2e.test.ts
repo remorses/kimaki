@@ -1228,6 +1228,59 @@ describe('agent model resolution', () => {
   )
 
   test(
+    '/plan-agent in a channel then an immediate message uses the new agent',
+    async () => {
+      await setChannelAgent(TEXT_CHANNEL_ID, 'test-agent')
+
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({ name: 'plan-agent' })
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: race-channel-follow-up',
+      })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'Reply with exactly: race-channel-follow-up'
+        },
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (agent-model-tester)
+        Reply with exactly: race-channel-follow-up
+        --- from: assistant (TestBot)
+        *using deterministic-provider/plan-model-v2 ⋅ plan*
+        ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+      `)
+
+      const footer = [...(await discord.thread(thread.id).getMessages())]
+        .reverse()
+        .find((m) => {
+          return m.author.id === discord.botUserId && m.content.startsWith('*')
+        })
+      expect(footer).toBeDefined()
+      expect(footer!.content).toContain(PLAN_AGENT_MODEL)
+      expect(footer!.content).not.toContain(AGENT_MODEL)
+    },
+    20_000,
+  )
+
+  test(
     '/plan-agent on the same agent refreshes a stale session model',
     async () => {
       await setChannelAgent(TEXT_CHANNEL_ID, 'plan')

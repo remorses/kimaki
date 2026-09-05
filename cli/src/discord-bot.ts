@@ -481,9 +481,10 @@ export async function startDiscordBot({
   })
 
   discordClient.on(Events.MessageCreate, async (message: Message) => {
-    const threadIngressSlot = message.channel.isThread()
-      ? reserveThreadIngress(message.channel.id)
-      : undefined
+    const threadIngressSlot =
+      message.channel.isThread() || message.channel.type === ChannelType.GuildText
+        ? reserveThreadIngress(message.channel.id)
+        : undefined
     await runInThreadIngressSlot(threadIngressSlot, async () => {
     try {
       const isSelfBotMessage = Boolean(
@@ -988,6 +989,7 @@ export async function startDiscordBot({
         if (message.content?.startsWith('!')) {
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
+            threadIngressSlot?.release()
             const loadingReply = await message.reply({
               content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
             })

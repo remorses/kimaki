@@ -129,39 +129,21 @@ const SETUP_COMMANDS = new Set([
   'create-new-project',
 ])
 
-const SERIAL_THREAD_SELECT_PREFIXES = [
-  'agent_select:',
-  'model_select:',
-  'model_scope:',
-  'model_variant:',
-  'variant_quick:',
-  'variant_scope:',
-]
-
 function serialIngressChannelId(interaction: Interaction): string | undefined {
-  if (interaction.isAutocomplete()) {
+  if (!interaction.isChatInputCommand()) {
     return undefined
   }
-  if (interaction.isChatInputCommand()) {
-    const name = interaction.commandName
-    if (!name.endsWith('-agent') || name === 'agent') {
-      return undefined
-    }
-    if (interaction.options.getString('prompt')) {
-      return undefined
-    }
+  const name = interaction.commandName
+  if (name.endsWith('-cmd') || name.endsWith('-skill') || name.endsWith('-mcp-prompt')) {
     return interaction.channelId ?? undefined
   }
-  if (interaction.isStringSelectMenu()) {
-    const isSerialSelect = SERIAL_THREAD_SELECT_PREFIXES.some((prefix) => {
-      return interaction.customId.startsWith(prefix)
-    })
-    if (!isSerialSelect) {
-      return undefined
-    }
-    return interaction.channelId ?? undefined
+  if (!name.endsWith('-agent') || name === 'agent') {
+    return undefined
   }
-  return undefined
+  if (interaction.options.getString('prompt')) {
+    return undefined
+  }
+  return interaction.channelId ?? undefined
 }
 
 /**
