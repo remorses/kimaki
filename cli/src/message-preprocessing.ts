@@ -32,6 +32,46 @@ const voiceLogger = createLogger(LogPrefix.VOICE)
 export const VOICE_MESSAGE_TRANSCRIPTION_PREFIX =
   'Voice message transcription from Discord user:\n'
 
+// A short trigger a user replies to a voice note with, to re-transcribe it
+// (e.g. after the transcription service was offline when it was first sent).
+// Discord attachment URLs expire, but fetchReference() returns a fresh message
+// with a newly-signed URL, so the original audio is always recoverable.
+const RETRANSCRIBE_TRIGGER =
+  /^\s*(?:re-?transcribe|retry(?:\s+transcription)?|transcribe(?:\s+(?:this|that|again))?)\s*$/i
+
+/**
+ * If `message` is a reply whose parent has a voice attachment AND its text is a
+ * re-transcribe trigger, fetch the parent (fresh signed URL) and return it so the
+ * caller can re-run transcription on the original audio. Returns null otherwise.
+ */
+async function getVoiceNoteToRetranscribe({
+  message,
+  text,
+}: {
+  message: Message
+  text: string
+}): Promise<Message | null> {
+  if (!message.reference?.messageId) return null
+  if (!RETRANSCRIBE_TRIGGER.test(text)) return null
+
+  const referenced = await message
+    .fetchReference()
+    .catch((e) => new DiscordOperationError({ operation: 'fetchReference', cause: e }))
+  if (referenced instanceof Error) {
+    voiceLogger.warn(
+      `[RETRANSCRIBE] Failed to fetch replied message ${message.reference.messageId}: ${referenced.message}`,
+    )
+    return null
+  }
+
+  const hasVoice = Array.from(referenced.attachments.values()).some((attachment) =>
+    isVoiceAttachment(attachment),
+  )
+  if (!hasVoice) return null
+
+  return referenced
+}
+
 /** Fetch available agents from OpenCode for voice transcription agent selection. */
 async function fetchAvailableAgents(
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>,
@@ -237,8 +277,18 @@ export async function preprocessExistingThreadMessage({
     }
   }
 
-  const voiceResult = await processVoiceAttachment({
+  // Reply-to-retry: if the user replied to an existing voice note with a
+  // re-transcribe trigger, transcribe THAT message's audio (re-fetched with a
+  // fresh signed URL) instead of the reply itself. Recovers voice notes that
+  // were missed while the transcription service was offline.
+  const retranscribeTarget = await getVoiceNoteToRetranscribe({
     message,
+    text: messageContent,
+  })
+  const voiceSourceMessage = retranscribeTarget ?? message
+
+  const voiceResult = await processVoiceAttachment({
+    message: voiceSourceMessage,
     thread,
     projectDirectory,
     appId,
@@ -248,6 +298,14 @@ export async function preprocessExistingThreadMessage({
   })
   if (voiceResult) {
     messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
+  }
+
+  // A retry request's own text ("retranscribe") is just the trigger, not a
+  // prompt — if the re-transcription itself failed, drop it rather than sending
+  // the trigger word to the model.
+  const isRetryRequest = retranscribeTarget !== null
+  if (isRetryRequest && !voiceResult) {
+    return { prompt: '', mode: 'opencode', skip: true }
   }
 
   // Voice transcription failed and no text — drop silently
