@@ -294,7 +294,7 @@ describe('system-message', () => {
       }
       \`\`\`
 
-      \`description\` is shown to the user in Discord as a summary of the bash call.
+      \`description\` is shown in Discord when the bash command is longer than 50 characters.
       \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
 
       Your current OpenCode session ID is: ses_123

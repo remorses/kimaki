@@ -258,6 +258,41 @@ describe('formatBashToolTitle', () => {
     ).toMatchInlineSnapshot(`" _Print greeting_"`)
   })
 
+  test('50-char single-line command is shown in full', () => {
+    const command = 'a'.repeat(50)
+    expect(formatBashToolTitle({ command, description: 'Ignored' })).toBe(
+      ` _${command}_`,
+    )
+  })
+
+  test('51-char single-line command uses description', () => {
+    expect(
+      formatBashToolTitle({
+        command: 'a'.repeat(51),
+        description: 'Run long command',
+      }),
+    ).toMatchInlineSnapshot(`" _Run long command_"`)
+  })
+
+  test('51-char single-line command uses summary when description is missing', () => {
+    expect(
+      formatBashToolTitle({
+        command: 'a'.repeat(51),
+        summary: 'Install packages',
+      }),
+    ).toMatchInlineSnapshot(`" _Install packages_"`)
+  })
+
+  test('description wins over summary for long commands', () => {
+    expect(
+      formatBashToolTitle({
+        command: 'a'.repeat(51),
+        description: 'Preferred label',
+        summary: 'Ignored label',
+      }),
+    ).toMatchInlineSnapshot(`" _Preferred label_"`)
+  })
+
   test('stateTitle used as last resort', () => {
     expect(
       formatBashToolTitle({ command: '', stateTitle: 'Running tests' }),

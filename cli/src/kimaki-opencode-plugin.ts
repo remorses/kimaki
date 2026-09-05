@@ -10,6 +10,7 @@
 // - opencode-interrupt-plugin: interrupt queued messages at step boundaries
 // - kitty-graphics-plugin: extract Kitty Graphics Protocol images from bash output
 // - file-edit-log: record edit/write/apply_patch files per session
+// - bash-tool-schema-plugin: add description and hasSideEffect to bash
 
 export { ipcToolsPlugin } from './ipc-tools-plugin.js'
 export { contextAwarenessPlugin } from './context-awareness-plugin.js'
@@ -28,3 +29,4 @@ export { kittyGraphicsPlugin } from 'kitty-graphics-agent'
 export { injectionGuardInternal as injectionGuard } from 'opencode-injection-guard'
 export { kimakiWorkspaceAdaptorPlugin } from './kimaki-workspace-adaptor.js'
 export { fileEditTrackerPlugin } from './file-edit-log.js'
+export { bashToolSchemaPlugin } from './bash-tool-schema-plugin.js'

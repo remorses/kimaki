@@ -705,10 +705,9 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         running create file
-        ---
-        ┣ bash _mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt_
+        ┣ bash _Create marker file for e2e test_
         file created
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')

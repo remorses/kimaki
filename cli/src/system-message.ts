@@ -530,7 +530,7 @@ interface BashToolInput {
 }
 \`\`\`
 
-\`description\` is shown to the user in Discord as a summary of the bash call.
+\`description\` is shown in Discord when the bash command is longer than 50 characters.
 \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
 
 Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${parentSessionContext}

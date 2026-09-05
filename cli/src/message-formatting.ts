@@ -459,31 +459,23 @@ export async function getFileAttachments(
   return results.filter((r) => r !== null) as DiscordFileAttachment[]
 }
 
-const MAX_BASH_COMMAND_INLINE_LENGTH = 100
+const MAX_BASH_COMMAND_INLINE_LENGTH = 50
 
-/**
- * Format the inline title for a bash tool part. Handles three cases:
- * 1. Short single-line command → show full command
- * 2. Long/multiline command with description → show description
- * 3. Long/multiline command without description → truncate first line of command
- *
- * The description field was removed from the opencode v2 bash tool schema but
- * kimaki's system prompt instructs models to always send it as an extra field.
- * Case 3 is the fallback when a model omits it.
- */
 export function formatBashToolTitle({
   command,
   description,
+  summary,
   stateTitle,
 }: {
   command: string
   description?: string
+  summary?: string
   stateTitle?: string
 }): string {
-  if (!command && !description && !stateTitle) return ''
+  const label = description || summary
+  if (!command && !label && !stateTitle) return ''
 
   const isSingleLine = !command.includes('\n')
-  // Find first non-empty line to handle commands with leading blank lines
   const firstMeaningfulLine =
     command
       .split('\n')
@@ -493,8 +485,8 @@ export function formatBashToolTitle({
   if (command && isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH) {
     return ` _${escapeInlineMarkdown(command)}_`
   }
-  if (description) {
-    return ` _${escapeInlineMarkdown(description)}_`
+  if (label) {
+    return ` _${escapeInlineMarkdown(label)}_`
   }
   if (firstMeaningfulLine.length > 0) {
     const needsTruncation = firstMeaningfulLine.length > MAX_BASH_COMMAND_INLINE_LENGTH
@@ -752,9 +744,11 @@ export function formatPart(part: Part, prefix?: string): string {
       }
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
+      const summary = (part.state.input?.summary as string) || ''
       const toolTitle = formatBashToolTitle({
         command,
         description,
+        summary,
       })
       return `┣ ${pfx}bash${toolTitle}`
     }
@@ -768,9 +762,11 @@ export function formatPart(part: Part, prefix?: string): string {
     } else if (part.tool === 'bash') {
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
+      const summary = (part.state.input?.summary as string) || ''
       const formatted = formatBashToolTitle({
         command,
         description,
+        summary,
         stateTitle,
       })
       toolTitle = formatted.startsWith(' ') ? formatted.slice(1) : formatted
