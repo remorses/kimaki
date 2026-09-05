@@ -204,7 +204,7 @@ e2eTest('queue advanced: abort and retry', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
       `)

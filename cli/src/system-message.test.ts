@@ -60,6 +60,16 @@ describe('system-message', () => {
     expect(message).toContain('`kimaki_sleep`')
   })
 
+  test('tells the model to ping the user on the final reply', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('## ending a turn')
+    expect(message).toContain('the last line of the final reply MUST ping the current user')
+    expect(message).toContain('`<@535922349652836367> tests passed`')
+    expect(message).toContain('Do not ping after tool output, mid-turn text, questions, action buttons, file upload, or sleep')
+  })
+
   test('persists and reads session system prompt for command path', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
     tempDirs.push(dataDir)
@@ -390,6 +400,19 @@ describe('system-message', () => {
       kimaki user list --guild guild_123 --query "username"
 
       This returns user IDs you can use for Discord mentions. It can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions when possible.
+
+      ## ending a turn
+
+      When your turn is done, the last line of the final reply MUST ping the current user and add a short summary of what just happened.
+      Use the Discord user ID from the per-turn \`<discord-user user-id="..." />\` metadata:
+
+      \`<@535922349652836367> tests passed\`
+
+      Rules:
+      - Ping only on the final reply of a completed turn, so Discord shows a red sidebar dot for finished sessions
+      - Keep the summary to one short sentence so it shows in the Discord notification
+      - Do not ping after tool output, mid-turn text, questions, action buttons, file upload, or sleep
+      - Do not ping if you are about to keep working
 
       ## starting new sessions from CLI
 

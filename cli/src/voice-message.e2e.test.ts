@@ -296,7 +296,7 @@ e2eTest('voice message handling', () => {
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
+    store.setState({ defaultVerbosity: 'tools_and_text', sessionFootersEnabled: true })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,
@@ -415,7 +415,7 @@ e2eTest('voice message handling', () => {
 
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
-    store.setState({ defaultVerbosity: previousDefaultVerbosity })
+    store.setState({ defaultVerbosity: previousDefaultVerbosity, sessionFootersEnabled: false })
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
     }
@@ -505,7 +505,7 @@ e2eTest('voice message handling', () => {
         📝 **Transcribed message:** Fix the login bug in auth.ts
         *using deterministic-provider/deterministic-v2*
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
 
@@ -609,7 +609,7 @@ e2eTest('voice message handling', () => {
         📝 **Transcribed message:** Resume the original voice note
         *using deterministic-provider/deterministic-v2*
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const finalState = getThreadState(thread.id)
@@ -687,7 +687,7 @@ e2eTest('voice message handling', () => {
         📝 **Transcribed message:** Investigate the missing content type path
         *using deterministic-provider/deterministic-v2*
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const messages = await waitForSessionMessages({
@@ -796,14 +796,14 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Add error handling to the parser
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState?.sessionId).toBeDefined()
       if (!finalState?.sessionId) {
@@ -1065,7 +1065,7 @@ e2eTest('voice message handling', () => {
         » **voice-tester:** Voice message transcription from Discord user:
         Queue this task for later
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.queueItems.length).toBe(0)
 
@@ -1183,14 +1183,14 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Delayed transcription result
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
@@ -1321,14 +1321,14 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Queued voice after idle
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)

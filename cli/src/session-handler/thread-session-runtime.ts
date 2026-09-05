@@ -2552,16 +2552,18 @@ export class ThreadSessionRuntime {
       trackEvent('turn_completed', {
         duration_sec: durationSec,
       })
-      await this.emitFooter({
-        completedAt,
-        runStartTime: turnStartTime,
-      })
+      if (store.getState().sessionFootersEnabled) {
+        await this.emitFooter({
+          completedAt,
+          runStartTime: turnStartTime,
+        })
+      }
     }
 
     this.resetPerRunState()
     this.clearBufferedPartsForMessages(assistantMessageIds)
     logger.log(
-      `[ASSISTANT COMPLETED] footer emitted for message ${completedMessageId} sessionId=${sessionId} ${this.formatRunStateForLog()}`,
+      `[ASSISTANT COMPLETED] ${store.getState().sessionFootersEnabled ? 'footer emitted' : 'footer skipped'} for message ${completedMessageId} sessionId=${sessionId} ${this.formatRunStateForLog()}`,
     )
   }
 
@@ -4794,12 +4796,7 @@ export class ThreadSessionRuntime {
       ? `${truncatedFolder} ⋅ ${truncatedBranch} ⋅ `
       : `${truncatedFolder} ⋅ `
     const hasQueuedMessage = this.getQueueLength() > 0
-    const mention = store.getState().footerMentionsEnabled
-      && !hasQueuedMessage
-      && this.state?.sessionUserId
-      ? ` <@${this.state.sessionUserId}>`
-      : ''
-    const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`
+    const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`
     this.stopTyping()
 
     await sendThreadMessage(this.thread, footerText, {

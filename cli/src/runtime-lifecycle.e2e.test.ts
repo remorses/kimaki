@@ -148,7 +148,7 @@ describe('runtime lifecycle', () => {
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
+    store.setState({ defaultVerbosity: 'tools_and_text', sessionFootersEnabled: true })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,
@@ -256,7 +256,7 @@ describe('runtime lifecycle', () => {
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
     if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity })
+      store.setState({ defaultVerbosity: previousDefaultVerbosity, sessionFootersEnabled: false })
     }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
@@ -329,12 +329,12 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(runtimeAfterB).toBe(runtimeAfterA)
     },
@@ -382,7 +382,7 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -454,12 +454,12 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)

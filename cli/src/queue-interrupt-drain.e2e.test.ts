@@ -138,7 +138,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
         --- from: assistant (TestBot)
@@ -151,7 +151,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: archived-queue-survives
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
     20_000,
@@ -246,7 +246,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -259,7 +259,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: queued-behind-slow
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       // 7. Assert the interrupt message got its own ok reply between the

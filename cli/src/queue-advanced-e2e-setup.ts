@@ -971,7 +971,11 @@ export function setupQueueAdvancedSuite({
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     previousRestrictExternalDirectories = store.getState().restrictExternalDirectories
-    store.setState({ defaultVerbosity: 'tools_and_text', restrictExternalDirectories })
+    store.setState({
+      defaultVerbosity: 'tools_and_text',
+      restrictExternalDirectories,
+      sessionFootersEnabled: true,
+    })
 
     const digitalDiscordDbPath = path.join(
       ctx.directories.dataDir,
@@ -1074,6 +1078,7 @@ export function setupQueueAdvancedSuite({
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
+    store.setState({ sessionFootersEnabled: false })
     if (previousRestrictExternalDirectories !== null) {
       store.setState({
         restrictExternalDirectories: previousRestrictExternalDirectories,

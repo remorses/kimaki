@@ -633,6 +633,19 @@ To search for Discord users in a guild as a best-effort fallback, run:
 kimaki user list --guild ${guildId || '<guildId>'} --query "username"
 
 This returns user IDs you can use for Discord mentions. It can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions when possible.
+
+## ending a turn
+
+When your turn is done, the last line of the final reply MUST ping the current user and add a short summary of what just happened.
+Use the Discord user ID from the per-turn \`<discord-user user-id="..." />\` metadata:
+
+\`<@535922349652836367> tests passed\`
+
+Rules:
+- Ping only on the final reply of a completed turn, so Discord shows a red sidebar dot for finished sessions
+- Keep the summary to one short sentence so it shows in the Discord notification
+- Do not ping after tool output, mid-turn text, questions, action buttons, file upload, or sleep
+- Do not ping if you are about to keep working
 ${
   channelId
     ? `

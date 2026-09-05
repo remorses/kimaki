@@ -47,7 +47,9 @@ Long sessions fill the model's context window. Keep them healthy:
 - **`/context-usage`** — show token usage and the percentage of the context window used.
 - **`/compact`** — summarize the conversation so far to free up context while keeping the gist.
 
-Kimaki also shows context usage automatically in the thread at roughly 10% increments (prefixed `⬦`), and at the end of each assistant turn in a footer like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus`.
+Kimaki also shows context usage automatically in the thread at roughly 10% increments (prefixed `⬦`).
+The agent ends a finished turn by pinging you with a short summary, which creates the Discord sidebar notification.
+Start Kimaki with `--session-footers` if you also want the old metadata line like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus`.
 
 ## Undo and redo
 

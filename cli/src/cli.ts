@@ -75,8 +75,8 @@ cli
     'Disable automatic diff upload to critique.work in system prompts',
   )
   .option(
-    '--skip-footer-mentions',
-    'Do not mention the thread creator in final session footers',
+    '--session-footers',
+    'Post a run footer after each completed assistant turn (folder, branch, duration, context, model). Off by default',
   )
   .option(
     '--auto-restart',
@@ -158,7 +158,7 @@ cli
       verbosity?: string
       mentionMode?: boolean
       noCritique?: boolean
-      skipFooterMentions?: boolean
+      sessionFooters?: boolean
       allowAllUsers?: boolean
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
@@ -314,7 +314,7 @@ cli
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
-          ...(options.skipFooterMentions && { footerMentionsEnabled: false }),
+          ...(options.sessionFooters && { sessionFootersEnabled: true }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
@@ -365,9 +365,9 @@ cli
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
           )
         }
-        if (options.skipFooterMentions) {
+        if (options.sessionFooters) {
           cliLogger.log(
-            'Footer mentions disabled: final session footers will not mention thread creators',
+            'Session footers enabled: completed turns post folder, branch, duration, context, and model',
           )
         }
         if (options.noAutoUpgrade) {

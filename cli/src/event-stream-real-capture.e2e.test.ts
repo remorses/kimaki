@@ -326,7 +326,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
     setDataDir(directories.dataDir)
 
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
+    store.setState({ defaultVerbosity: 'tools_and_text', sessionFootersEnabled: true })
 
     await Promise.all([proxy.start(), discord.start()])
 
@@ -415,7 +415,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
     delete process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR']
 
     if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity })
+      store.setState({ defaultVerbosity: previousDefaultVerbosity, sessionFootersEnabled: false })
     }
 
     fs.rmSync(directories.dataDir, { recursive: true, force: true })

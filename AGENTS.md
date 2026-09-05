@@ -652,11 +652,11 @@ sometimes we need to interrupt the opencode session and restart it. for example 
 
 ## how kimaki messages look like in Discord
 
-Kimaki works by creating threads on the first user message. The bot then replies in that thread. Text parts have no prefix and use classic Discord content so they stay full width. Tool parts use classic Discord content too. When a tool follows text, Kimaki sends a Components V2 message that is only a Separator, then the tool as content. Consecutive tools have no extra separator. Text after a tool has no separator. Messages never end with a separator.
+Kimaki works by creating threads on the first user message. The bot then replies in that thread. Text parts have no prefix and use classic Discord content so they stay full width. Tool parts use classic Discord content too. When a tool follows text, or text follows a tool, that new message is Components V2 with a leading Separator then the part text. Consecutive same-kind parts stay classic content. Messages never end with a separator.
 
 tool parts are also displayed in Discord as messages, either prefixed with ┣ or ◼︎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⬦. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking`, file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
 
-at assistant message normal completion we also display a footer message like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6`. with folder, branch, time, context used, model id. we should not show this message on interruptions or aborts.
+at assistant message normal completion the system prompt tells the agent to end with a ping plus a short summary, like `<@userId> tests passed`. that ping is the completion notification. a metadata footer like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6` is off by default and only posted when kimaki is started with `--session-footers`. we should not show this footer on interruptions or aborts.
 
 we also support voice user messages, these are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
 
