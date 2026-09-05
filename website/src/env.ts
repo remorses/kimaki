@@ -28,4 +28,5 @@ export type Env = {
   STRADA_TOKEN?: string
   /** deployment environment label for Strada (development/preview/production). */
   ENVIRONMENT?: string
+  FLY_API_TOKEN?: string
 }
