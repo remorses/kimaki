@@ -16,33 +16,20 @@ function GithubIcon({ size = 14 }: { size?: number }) {
 import { InstallCommand } from './install-command.tsx'
 import { StradaBrowser } from '../strada-browser.tsx'
 import { DiscordPlayground } from './discord-playground.tsx'
-// import { VideoBackgroundShader } from '@holocron.so/vite/mdx'
+import { HeroDither } from './hero-dither.tsx'
 
 const GITHUB_URL = 'https://github.com/remorses/kimaki'
 const DISCORD_URL = 'https://discord.gg/qz3hapKcMM'
 
 export function HeroSection() {
   return (
-    <div className='relative mt-10 mb-16 lg:mt-14 lg:mb-20 w-full'>
+    <div className='relative isolate mt-10 mb-16 lg:mt-14 lg:mb-20 w-full'>
       <StradaBrowser />
-      {/* <VideoBackgroundShader
-        src='/assets/hero-bg.mp4'
-        className='absolute inset-0 w-full h-full'
-        canvasClassName=''
-        dotColor='#8da4ffb3'
-        dotSize={6}
-        minDotSize={1}
-        dotMargin={1}
-        animSpeed={3}
-        gamma={0.5}
-        enableMask={false}
-        fluidStrength={0.2}
-        fluidCurl={80}
-      /> */}
+      <HeroDither offsetX={-90} />
 
       <div className='relative z-[2] flex w-full flex-col items-stretch gap-8 lg:flex-row lg:items-center lg:gap-10'>
         <div className='flex w-full max-w-[280px] shrink-0 flex-col items-start text-left'>
-          <h1 className='flex flex-col items-start leading-none text-left'>
+          <h1 className='flex flex-col items-start leading-[1.08] text-left'>
             <span
               className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
               style={{
@@ -50,10 +37,10 @@ export function HeroSection() {
                   "'Playfair Display', Georgia, 'Times New Roman', serif",
               }}
             >
-              Kimaki
+              Kimaki:
             </span>
             <span
-              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground -mt-1 sm:-mt-2'
+              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
               style={{
                 fontFamily:
                   "'Playfair Display', Georgia, 'Times New Roman', serif",
@@ -62,7 +49,7 @@ export function HeroSection() {
               your AI dev team,
             </span>
             <span
-              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground -mt-1 sm:-mt-2'
+              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
               style={{
                 fontFamily:
                   "'Playfair Display', Georgia, 'Times New Roman', serif",

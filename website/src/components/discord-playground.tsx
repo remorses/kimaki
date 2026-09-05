@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 type PlaygroundMessage = {
-  author: 'user' | 'kimaki' | 'system'
+  author: 'user' | 'kimaki'
   time?: string
   text: string
   image?: {
@@ -42,10 +42,6 @@ const CHANNELS: {
         id: 'book-the-venue',
         name: 'book the venue',
         messages: [
-          {
-            author: 'system',
-            text: 'Created routine · Morning briefing',
-          },
           {
             author: 'kimaki',
             time: 'Yesterday at 3:59 PM',
@@ -118,10 +114,6 @@ const CHANNELS: {
             author: 'user',
             time: 'Today at 4:00 PM',
             text: 'The top 10 look good. Send it. Run this every week.',
-          },
-          {
-            author: 'system',
-            text: 'Created routine · Overnight outbound',
           },
           {
             author: 'kimaki',
@@ -277,10 +269,6 @@ const CHANNELS: {
             text: "send the acme invite. hold globex until i've read the note",
           },
           {
-            author: 'system',
-            text: 'Memory updated',
-          },
-          {
             author: 'kimaki',
             time: 'Today at 10:59 AM',
             text: "invite's out to vicky. the globex note is holding in drafts, and quiet-account sends wait for your read from now on.",
@@ -350,10 +338,6 @@ const CHANNELS: {
             text: "i'll match every charge to a receipt and file the report. anything that doesn't line up, i ask instead of guessing.",
           },
           {
-            author: 'system',
-            text: 'Created routine · Month-end close',
-          },
-          {
             author: 'kimaki',
             time: 'Today at 10:59 AM',
             text: '✓ Receipts → 9 matched to card charges\n✓ Report → drafted · $2,340 across 3 trips\n✓ Flagged → 1 charge · harbor hotel, $412 twice',
@@ -410,10 +394,10 @@ function ThreadTree({ count }: { count: number }) {
   return (
     <span
       aria-hidden='true'
-      className='pointer-events-none absolute left-[2.85em] w-0 border-l-[2px] border-[#4e5058]'
+      className='pointer-events-none absolute left-[1.125em] w-0 border-l-[2px] border-[#4e5058]'
       style={{
-        top: '0.15em',
-        height: `calc(${count} * 2em - 1.15em)`,
+        top: '-0.15em',
+        height: `calc(${count} * 2em - 0.85em)`,
       }}
     />
   )
@@ -639,6 +623,33 @@ function DiscordButton() {
   )
 }
 
+function TypingDots() {
+  const [frame, setFrame] = useState(0)
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setFrame((current) => (current + 1) % 3)
+    }, 480)
+    return () => window.clearInterval(id)
+  }, [])
+
+  return (
+    <span className='mr-[0.4em] inline-flex items-center gap-[0.18em]'>
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className='size-[0.4em] rounded-full bg-[#b5bac1]'
+          style={{
+            backgroundColor: frame === index ? '#dbdee1' : '#4e5058',
+            transform: frame === index ? 'scale(1.15)' : 'scale(0.85)',
+            transition: 'background-color 240ms ease-out, transform 240ms ease-out',
+          }}
+        />
+      ))}
+    </span>
+  )
+}
+
 export function DiscordPlayground() {
   const [selectedThreadId, setSelectedThreadId] = useState(DEFAULT_THREAD_ID)
   const [draft, setDraft] = useState('')
@@ -679,7 +690,7 @@ export function DiscordPlayground() {
       className='relative flex w-full flex-col overflow-hidden rounded-[1.5em] bg-[#1e1f22] font-normal text-[#dbdee1] shadow-[0_1.5em_5em_rgba(0,0,0,0.45)] ring-1 ring-white/10 pointer-events-none lg:pointer-events-auto'
       style={{
         fontFamily:
-          '"gg sans", "Noto Sans", Inter, "Helvetica Neue", Helvetica, Arial, sans-serif',
+          'Inter, "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif',
         fontWeight: 400,
         fontSynthesis: 'none',
         fontSize: 'clamp(11px, 1.35cqw, 13px)',
@@ -758,7 +769,7 @@ export function DiscordPlayground() {
                       return (
                         <div
                           key={itemThread.id}
-                          className='flex h-[2em] items-stretch pl-[2.85em]'
+                          className='flex h-[2em] items-stretch pl-[1.125em]'
                         >
                           <span
                             aria-hidden='true'
@@ -849,16 +860,6 @@ export function DiscordPlayground() {
               </p>
             </div>
             {messages.map((message, index) => {
-              if (message.author === 'system') {
-                return (
-                  <div
-                    key={`system-${index}`}
-                    className='px-[1em] py-[0.5em] text-center text-[0.75em] text-[#949ba4]'
-                  >
-                    {message.text}
-                  </div>
-                )
-              }
               const prev = messages[index - 1]
               const grouped = prev && prev.author === message.author
               return (
@@ -922,29 +923,8 @@ export function DiscordPlayground() {
           </div>
 
           <div className='shrink-0 px-[1em] pb-[1.5em] pt-[0.25em]'>
-            <div className='mb-[0.4em] flex h-[1.5em] items-center gap-[0.5em] pl-[0.15em] text-[0.875em] leading-none'>
-              <span className='flex items-center gap-[0.18em]'>
-                <span
-                  className='size-[0.4em] rounded-full bg-[#b5bac1]'
-                  style={{
-                    animation: 'discord-typing-dot 1.4s ease-in-out infinite',
-                  }}
-                />
-                <span
-                  className='size-[0.4em] rounded-full bg-[#b5bac1]'
-                  style={{
-                    animation:
-                      'discord-typing-dot 1.4s ease-in-out 0.16s infinite',
-                  }}
-                />
-                <span
-                  className='size-[0.4em] rounded-full bg-[#b5bac1]'
-                  style={{
-                    animation:
-                      'discord-typing-dot 1.4s ease-in-out 0.32s infinite',
-                  }}
-                />
-              </span>
+            <div className='mb-[0.4em] flex h-[1.5em] items-center pl-[0.15em] text-[0.875em] leading-none'>
+              <TypingDots />
               <span className='text-[#dbdee1]'>
                 <span className='font-medium'>Kimaki</span>
                 <span className='text-[#949ba4]'> is typing...</span>
