@@ -6,7 +6,7 @@ do not use spawnSync. use our util execAsync. which uses spawn under the hood
 
 the important package in this repo is cli. it contains the discord bot code.
 
-after making important changes to queueing or message handling always run the full test suite inside cli to make sure our changes did not break anything. also run with -u and see snapshots updates in git diff if needed. `pnpm test -u --run`
+after making important changes to queueing or message handling always run the full test suite inside cli to make sure our changes did not break anything. use `pnpm run test --run -u`, then inspect snapshot updates in git diff. for one file, use `pnpm run test --run src/example.test.ts`. always include `run` after `pnpm`; `pnpm test --run` makes pnpm consume the flag, and `pnpm run test -- --run` passes a literal `--` that can make vitest ignore the filter.
 
 # repo architecture
 
@@ -223,6 +223,16 @@ do NOT add simple prisma query wrappers to database.ts. if a query is a straight
 
 prisma version in package.json MUST be pinned. no ^. this makes sure the generated prisma code is compatible with the prisma client used in the npm package
 
+## pre-publish checklist
+
+before publishing to npm, always sync skills as the first step:
+
+```bash
+cd cli && pnpm sync-skills
+```
+
+this ensures the npm package ships the latest synced skills from their source repos. commit any skill changes before proceeding with the publish.
+
 ## post-publish release notification
 
 after every publish, once the `gh release create` step is done:
@@ -242,19 +252,45 @@ the notification message should use the version as a heading 1 title (e.g. `# v1
 
 when `--notify-only` targets a non-project channel, the message is posted directly without creating a thread. for project channels, a thread is still created so users can reply to start a session.
 
+## deploy website after publish
+
+after every kimaki publish, once the changelog is generated and the gh release is created, deploy the website to production:
+
+```bash
+cd website && pnpm deployment:production
+```
+
+the website shows the changelog and install instructions, so it must be updated right after each release so users see the latest version.
+
 ## github issues
 
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
+
+user-facing bug report workflow (export jsonl, share evidence in a gist, issue vs PR) lives in `website/src/docs/docs/guides/report-bugs.mdx` and at https://kimaki.dev/docs/guides/report-bugs. keep that page in sync when these debug commands change.
 
 ## libsql in-memory gotcha
 
 when using `@prisma/adapter-libsql` with `file::memory:`, always use `file::memory:?cache=shared`. without `cache=shared`, libsql's `transaction()` method sets its internal `#db = null` and lazily creates a `new Database("file::memory:")` on the next operation -- which gives a **separate empty in-memory database**. this silently breaks any Prisma operation that uses transactions internally (`upsert`, `$transaction`, etc.) while simple `create`/`findMany` keep working, making the bug hard to diagnose.
 
+## git submodules
+
+this repo has git submodules (`errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`). their configured branches are in `.gitmodules`.
+
+**never rewrite or force-push a submodule branch in a way that drops commits kimaki still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
+
+workflow when changing a submodule:
+
+1. commit and **push** the submodule branch first so GitHub has the objects
+2. only then bump the gitlink in kimaki (`git add gateway-proxy` etc.) and commit that pointer update
+3. before changing a gitlink, prove the remote has the target SHA, e.g. `gh api repos/remorses/gateway-proxy/commits/<sha> --jq .sha` (must not 422)
+
+when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
+
+if a submodule tip was lost on the remote but still exists in a local checkout, restore it by fast-forwarding (or cherry-picking) the branch back onto the missing tip and pushing. do not "fix" kimaki by pointing at an older reachable commit unless those tip commits are intentionally abandoned.
+
 ## errore
 
 errore is a submodule. should always be in main. make sure it is never in detached state.
-
-when pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. otherwise critique diffs later will include the noisy submodule jump along with the real changes.
 
 it is a package for using errors as values in ts.
 
@@ -311,6 +347,12 @@ instead:
 - store only short identifiers in `custom_id` (eg `contextHash`, a db id, or a session id)
 - resolve anything else at interaction time (eg call `resolveWorkingDirectory({ channel })` from the thread)
 - if you need extra context, store it server-side keyed by the short hash/id rather than encoding it into `custom_id`
+
+## discord message nonces
+
+Discord message `nonce` values have a strict maximum length of **25 characters**. never send a UUID directly as a nonce; Discord rejects it with `nonce[NONCE_TYPE_TOO_LONG]`.
+
+for durable delivery, keep the full delivery id in storage or message metadata and derive a stable nonce of at most 25 characters for Discord. add a regression test that asserts the nonce length before changing any message retry or deduplication flow.
 
 ## discord components v2 limits
 
@@ -433,6 +475,17 @@ jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_x
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
+## product analytics (Strada)
+
+anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` fires on `session.idle` (each turn end, including abort and subagents) with billed token breakdowns so total Kimaki token usage can be summed.
+
+- prod project slug: `kimaki`
+- local/dev bot (this repo `cli/.env`): `kimaki-local`
+- disable: `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`
+- query with `strada` CLI; login as the org owner (t.de Google account)
+
+full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-paste SQL: see `docs/strada-product-analytics.md`.
+
 ## kimaki command shim (`~/.kimaki/bin/kimaki`)
 
 `ensureKimakiCommandShim()` in `cli/src/opencode-command.ts` generates a shell script at `~/.kimaki/bin/kimaki` (or `kimaki.cmd` on Windows) every time the bot starts. it captures `process.execPath`, `process.execArgv`, and `process.argv[1]` into an `exec` one-liner so the shim always mirrors the current process.
@@ -486,7 +539,8 @@ always add `expect(await th.text()).toMatchInlineSnapshot()` (or `discord.channe
 see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
 
 - **always assert on Discord messages (what the user sees), not internal state or logs.** use digital-discord helpers like `th.getMessages()`, `waitForBotReply`, `waitForBotReplyAfterUserMessage`, `waitForBotMessageContaining` to verify actual Discord thread content. never use `getLogEntriesSince` + string matching for test expectations — logs are brittle, can bleed across sequential tests, and don't verify actual behavior. use `getLogEntriesSince` only in `onTestFailed` for diagnostics.
-- e2e tests use `opencode-deterministic-provider` which returns canned responses instantly (no real LLM). poll timeouts should be **4s max** and polling interval **100ms**. the only real latency is opencode server startup (`beforeAll`, 60s is fine) and intentional `partDelaysMs` in matchers.
+- e2e tests use `opencode-deterministic-provider` which returns canned responses instantly (no real LLM). write poll timeouts as **4s** and polling interval **100ms**. the only real latency is opencode server startup (`beforeAll`, 60s is fine) and intentional `partDelaysMs` in matchers.
+- the wait helpers in `test-utils.ts` clamp every timeout into **8s..10s** under vitest. the first turn against a fresh opencode server costs 2-4s (session create, config and agent discovery, provider load, kimaki plugin load), so a literal 4s budget made the first assertion of a file fail randomly. a wait only burns its full budget when the test is already failing, so the floor costs nothing on green runs. tests asserting something never appears must use their own polling loop instead of these helpers.
 - deterministic provider matchers can still trigger **real tool execution** when they emit `tool-call` parts (for example `bash` + `sleep`). do not use long sleeps (`sleep 500` means 500 seconds). prefer `partDelaysMs` for timing windows in tests.
 - avoid broad matchers like only `lastMessageRole: 'tool'` in shared e2e matcher lists. always scope with an explicit marker (`rawPromptIncludes`, exact latest user text, etc.) or they can cascade across unrelated turns and create flaky tests.
 - prefer `latestUserTextIncludes` over `rawPromptIncludes` for deterministic matcher markers that should only trigger once. `rawPromptIncludes` scans full session history, so after abort+retry in the same session the old marker re-fires and causes deadlocks or timeouts. `latestUserTextIncludes` only checks the most recent user message.
@@ -586,7 +640,7 @@ at assistant message normal completion we also display a footer message like `ki
 
 we also support voice user messages, these are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
 
-we also support a /queue command to queue user messages to be sent at current session end. and a /clear-queue command to clear the queue. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
+we also support a /queue command to queue user messages to be sent at current session end. each queue confirmation has a Remove button to drop that item. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
 
 this information is useful for your tests. you can use this knowledge to write tests, tests should use expect and find messages that match a specific pattern.
 
@@ -660,3 +714,18 @@ when working on the slack bridge, consult these docs:
 **slack mrkdwn format:**
 - Slack uses `*bold*` (not `**bold**`), `~strike~` (not `~~strike~~`), `<url|text>` (not `[text](url)`)
 - Full reference: https://api.slack.com/reference/surfaces/formatting
+
+# official discord demo
+
+`kimaki-demo/` is the Fly.io app for the public try-Kimaki bot in the official Kimaki Discord. People use it to try Kimaki without a local install.
+
+Always bump `kimaki-demo/Dockerfile` (`kimaki@x.y.z`) to `npm view kimaki version` before deploy.
+
+```bash
+cd kimaki-demo
+pnpm fly logs            # live logs
+pnpm fly ssh console     # inspect /data/kimaki.log
+pnpm fly deploy          # rebuild + deploy
+```
+
+If `fly` says no access token, the local 30-day flyctl session expired. Export `FLY_ACCESS_TOKEN` from `access_token` in `~/.fly/config.yml`, or run `fly auth login`.

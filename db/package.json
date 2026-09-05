@@ -27,11 +27,13 @@
     }
   },
   "scripts": {
-    "studio": "doppler run -- prisma studio",
-    "push": "doppler run -c dev --command 'prisma db push --url $DATABASE_URL && pnpm tsc'",
+    "dev": "prisma dev -n kimaki -d",
+    "studio": "doppler run -c dev --command 'prisma studio --url $DATABASE_URL'",
+    "push:dev": "doppler run -c dev --command 'prisma db push --url $DATABASE_URL && pnpm tsc'",
+    "push:prod": "doppler run -c production --command 'prisma db push --url $DATABASE_URL && pnpm tsc'",
     "gen": "prisma generate && pnpm tsc",
     "postinstall": "prisma generate",
-    "pull": "doppler run -c dev -- prisma db pull --url $DATABASE_URL && prisma generate"
+    "pull:prod": "doppler run -c production --command 'prisma db pull --url $DATABASE_URL && prisma generate'"
   },
   "devDependencies": {
     "prisma": "7.4.2"

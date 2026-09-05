@@ -65,6 +65,48 @@ describe('voice attachment detection', () => {
       ]
     `)
   })
+
+  test('does not treat iOS and Discord videos as voice', () => {
+    expect(
+      [
+        getVoiceAttachmentMatchReason({
+          name: 'ScreenRecording_08-26-2026_11-10-29_1.mov',
+          contentType: 'video/quicktime',
+          duration: 12.4,
+          width: 1170,
+          height: 2532,
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'IMG_1234.MOV',
+          contentType: null,
+          duration: 8,
+          width: 1920,
+          height: 1080,
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'clip.mp4',
+          contentType: 'video/mp4',
+          duration: 4,
+        }),
+        getVoiceAttachmentMatchReason({
+          name: 'clip.mp4',
+          contentType: null,
+        }),
+        isVoiceAttachment({
+          name: 'memo.m4a',
+          contentType: null,
+          duration: 3.2,
+        }),
+      ]).toMatchInlineSnapshot(`
+        [
+          null,
+          null,
+          null,
+          null,
+          true,
+        ]
+      `)
+  })
 })
 
 describe('extractTranscription', () => {
@@ -172,24 +214,31 @@ describe('extractTranscription', () => {
   })
 })
 
-describe('transcribeAudio with real API', () => {
+const liveVoiceTest = describe.skipIf(
+  process.env['KIMAKI_LIVE_VOICE_TESTS'] !== '1',
+)
+
+liveVoiceTest('transcribeAudio with real API', () => {
   const audioPath = path.join(
     import.meta.dirname,
     '..',
     'scripts',
     'example-audio.mp3',
   )
+  const oggPath = path.join(import.meta.dirname, '..', 'scripts', 'example-audio.ogg')
+  const geminiLiveTest = test.skipIf(
+    !process.env.GEMINI_API_KEY || !fs.existsSync(audioPath),
+  )
+  const openAiLiveTest = test.skipIf(
+    !process.env.OPENAI_API_KEY || !fs.existsSync(audioPath),
+  )
+  const openAiOggLiveTest = test.skipIf(
+    !process.env.OPENAI_API_KEY || !fs.existsSync(oggPath),
+  )
 
-  test('transcribes with Gemini', { timeout: 30_000 }, async () => {
+  geminiLiveTest('transcribes with Gemini', { timeout: 30_000 }, async () => {
     const apiKey = process.env.GEMINI_API_KEY
-    if (!apiKey) {
-      console.log('Skipping: GEMINI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(audioPath)) {
-      console.log('Skipping: example-audio.mp3 not found')
-      return
-    }
+    if (!apiKey) throw new Error('GEMINI_API_KEY is required')
 
     const audio = fs.readFileSync(audioPath)
     const result = await transcribeAudio({
@@ -205,16 +254,9 @@ describe('transcribeAudio with real API', () => {
     console.log('Gemini transcription:', result)
   })
 
-  test('transcribes with OpenAI', { timeout: 30_000 }, async () => {
+  openAiLiveTest('transcribes with OpenAI', { timeout: 30_000 }, async () => {
     const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      console.log('Skipping: OPENAI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(audioPath)) {
-      console.log('Skipping: example-audio.mp3 not found')
-      return
-    }
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required')
 
     const audio = fs.readFileSync(audioPath)
     const result = await transcribeAudio({
@@ -230,17 +272,9 @@ describe('transcribeAudio with real API', () => {
     console.log('OpenAI transcription:', result)
   })
 
-  test('transcribes OGG with OpenAI (converts to WAV)', { timeout: 30_000 }, async () => {
+  openAiOggLiveTest('transcribes OGG with OpenAI (converts to WAV)', { timeout: 30_000 }, async () => {
     const apiKey = process.env.OPENAI_API_KEY
-    const oggPath = path.join(import.meta.dirname, '..', 'scripts', 'example-audio.ogg')
-    if (!apiKey) {
-      console.log('Skipping: OPENAI_API_KEY not set')
-      return
-    }
-    if (!fs.existsSync(oggPath)) {
-      console.log('Skipping: example-audio.ogg not found')
-      return
-    }
+    if (!apiKey) throw new Error('OPENAI_API_KEY is required')
 
     const audio = fs.readFileSync(oggPath)
     const result = await transcribeAudio({

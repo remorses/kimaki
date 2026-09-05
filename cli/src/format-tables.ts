@@ -49,6 +49,7 @@ type RenderedTableRow = {
     APITextDisplayComponent | APIActionRowComponent<APIButtonComponent>
   >
   componentCost: number
+  textSize: number
 }
 
 type CalloutDescriptor = {
@@ -265,6 +266,11 @@ type MarkdownBlock =
   | { type: 'text'; text: string }
   | { type: 'callout'; content: string; callout: CalloutDescriptor }
 
+type MarkdownFence = {
+  marker: '`' | '~'
+  length: number
+}
+
 function splitMarkdownByCallouts({
   markdown,
 }: {
@@ -275,9 +281,33 @@ function splitMarkdownByCallouts({
   }) ?? [markdown]
   const blocks: MarkdownBlock[] = []
   let textBuffer = ''
+  let fence: MarkdownFence | null = null
 
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!
+    if (fence) {
+      textBuffer += line
+      if (isMarkdownFenceClose({ line, fence })) fence = null
+      continue
+    }
+
+    const openingFence = parseMarkdownFenceOpen({ line })
+    if (openingFence) {
+      fence = openingFence
+      textBuffer += line
+      continue
+    }
+
+    const singleLineCallout = parseSingleLineCallout({ line })
+    if (singleLineCallout) {
+      if (textBuffer.length > 0) {
+        blocks.push({ type: 'text', text: textBuffer })
+        textBuffer = ''
+      }
+      blocks.push(singleLineCallout)
+      continue
+    }
+
     const callout = parseCalloutOpenLine({ line })
     if (!callout) {
       textBuffer += line
@@ -406,7 +436,7 @@ function flattenCalloutChildren({
       return [
         {
           type: ComponentType.TextDisplay,
-          content: segment.text.trim(),
+          content: clampTextDisplayContent(segment.text.trim()),
         } satisfies APITextDisplayComponent,
       ]
     }
@@ -420,6 +450,10 @@ function flattenCalloutChildren({
   })
 }
 
+// Splits callout children into chunks that fit both the 40-component budget
+// (reserving 1 for the Container wrapper itself, including nested children
+// like ActionRow buttons via childComponentCost) and the 4000-char text
+// budget. Mirrors chunkRowsByComponentLimit's approach for table rows.
 function chunkCalloutChildrenByComponentLimit({
   children,
 }: {
@@ -427,13 +461,27 @@ function chunkCalloutChildrenByComponentLimit({
 }): APIComponentInContainer[][] {
   const chunks: APIComponentInContainer[][] = []
   let currentChunk: APIComponentInContainer[] = []
+  let currentCost = 1 // reserve for the Container wrapper
+  let currentText = 0
 
   for (const child of children) {
-    if (currentChunk.length > 0 && currentChunk.length + 2 > MAX_COMPONENTS) {
+    const childCost = childComponentCost(child)
+    const childText = componentTextSize(child as { type: number })
+
+    if (
+      currentChunk.length > 0 &&
+      (currentCost + childCost > MAX_COMPONENTS ||
+        currentText + childText > MAX_TEXT_SIZE)
+    ) {
       chunks.push(currentChunk)
       currentChunk = []
+      currentCost = 1
+      currentText = 0
     }
+
     currentChunk.push(child)
+    currentCost += childCost
+    currentText += childText
   }
 
   if (currentChunk.length > 0) {
@@ -482,6 +530,52 @@ function collectCalloutBodyFromLines({
   }
 
   return new Error('Unclosed <callout> block')
+}
+
+function parseMarkdownFenceOpen({
+  line,
+}: {
+  line: string
+}): MarkdownFence | null {
+  const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1]
+  if (!marker) return null
+  return {
+    marker: marker.startsWith('`') ? '`' : '~',
+    length: marker.length,
+  }
+}
+
+function isMarkdownFenceClose({
+  line,
+  fence,
+}: {
+  line: string
+  fence: MarkdownFence
+}): boolean {
+  const marker = line.trim()
+  return marker.length >= fence.length &&
+    [...marker].every((character) => character === fence.marker)
+}
+
+function parseSingleLineCallout({
+  line,
+}: {
+  line: string
+}): Extract<MarkdownBlock, { type: 'callout' }> | null {
+  const match = line.trim().match(/^(<callout(?:\s+[^>]*)?>)(.*?)<\/callout>$/i)
+  if (!match) return null
+
+  const content = match[2]!
+  if (/<\/?callout(?:\s|>)/i.test(content)) return null
+
+  const callout = parseCalloutOpenLine({ line: match[1]! })
+  if (!callout) return null
+
+  return {
+    type: 'callout',
+    content,
+    callout,
+  }
 }
 
 function parseCalloutOpenLine({
@@ -625,16 +719,38 @@ function buildTextRow({
     const value = cell ? getRenderedCellText({ cell }) : ''
     return `**${key}** ${value}`
   })
+  const content = clampTextDisplayContent(lines.join('\n'))
 
   return {
     components: [
       {
         type: ComponentType.TextDisplay,
-        content: lines.join('\n'),
+        content,
       },
     ],
     componentCost: 1,
+    textSize: content.length,
   }
+}
+
+// Discord's TextDisplay component enforces the same 4000-char content limit
+// as the overall message text budget. A single row with one huge cell value
+// (e.g. a long stack trace) could otherwise exceed it on its own, which no
+// amount of row-level chunking can fix. `maxLength` lets callers reserve
+// budget for sibling content (e.g. button labels) that shares the same
+// message-wide text limit.
+function clampTextDisplayContent(
+  content: string,
+  maxLength: number = MAX_TEXT_SIZE,
+): string {
+  const safeMax = Math.max(0, maxLength)
+  if (content.length <= safeMax) {
+    return content
+  }
+  if (safeMax === 0) {
+    return ''
+  }
+  return content.slice(0, safeMax - 1) + '…'
 }
 
 function buildButtonRow({
@@ -678,18 +794,33 @@ function buildButtonRow({
     components: buttons,
   }
 
+  const buttonLabelSize = buttonCells.reduce((sum, cell) => {
+    return sum + (cell.type === 'button' ? cell.label.length : 0)
+  }, 0)
+  // Reserve budget for button labels first since they can't be truncated,
+  // then clamp the TextDisplay content to whatever remains of MAX_TEXT_SIZE.
+  const content = clampTextDisplayContent(
+    lines.join('\n'),
+    MAX_TEXT_SIZE - buttonLabelSize,
+  )
+
   return {
     components: [
       {
         type: ComponentType.TextDisplay,
-        content: lines.join('\n'),
+        content,
       },
       actionRow,
     ],
     componentCost: 2 + buttons.length,
+    textSize: content.length + buttonLabelSize,
   }
 }
 
+// Splits rows into chunks that fit both the 40-component budget and the
+// 4000-char displayable text budget. Wide/long tables (many long cell values)
+// can stay under the component count while still exceeding Discord's text
+// limit, which previously caused sendMessage to fail with a 400 error.
 function chunkRowsByComponentLimit({
   rows,
 }: {
@@ -698,20 +829,27 @@ function chunkRowsByComponentLimit({
   const chunks: RenderedTableRow[][] = []
   let currentChunk: RenderedTableRow[] = []
   let currentCost = 1
+  let currentText = 0
 
   for (const row of rows) {
     const separatorCost = currentChunk.length > 0 ? 1 : 0
     const nextCost = currentCost + separatorCost + row.componentCost
+    const nextText = currentText + row.textSize
 
-    if (currentChunk.length > 0 && nextCost > MAX_COMPONENTS) {
+    if (
+      currentChunk.length > 0 &&
+      (nextCost > MAX_COMPONENTS || nextText > MAX_TEXT_SIZE)
+    ) {
       chunks.push(currentChunk)
       currentChunk = [row]
       currentCost = 1 + row.componentCost
+      currentText = row.textSize
       continue
     }
 
     currentChunk.push(row)
     currentCost = nextCost
+    currentText = nextText
   }
 
   if (currentChunk.length > 0) {

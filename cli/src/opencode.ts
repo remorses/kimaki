@@ -5,11 +5,32 @@
 // specific project. The server lazily creates and caches an Instance per unique
 // directory path internally.
 //
-// Per-directory permissions (external_directory rules for worktrees, tmpdir,
-// etc.) are passed via session.create({ permission }) at session creation time,
-// NOT via the server config. The server config has permissive defaults
-// (edit: allow, bash: allow, external_directory: ask) and session-level rules
-// override them via opencode's findLast() evaluation (last matching rule wins).
+// Permission layering — READ THIS BEFORE ADDING A PERMISSION RULE.
+//
+// opencode evaluates permissions with findLast() over a flattened list, so the
+// last matching rule wins. The order is:
+//
+//   opencode built-in defaults
+//     ▼
+//   merged config files  ── kimaki's generated config, THEN the user's
+//     ▼                     project opencode.json (deep-merged on top)
+//   config.agent.<name>.permission
+//     ▼
+//   session.permission   ── buildSessionPermissions(), always wins
+//
+// Directory ALLOW rules therefore belong in the generated server config, never
+// in session rules or an agent block: a project opencode.json must still be
+// able to `deny` or `ask` for specific folders. Anything placed in
+// session.permission silently overrides the user.
+//
+// external_directory is `{ '*': 'allow' }` by default. opencode's own default
+// is `ask`, which meant the agent had to interrupt the user for ordinary reads
+// outside the project, and an unanswered prompt was auto-rejected on TTL. Users
+// who want stricter behaviour add `deny`/`ask` rules to their own
+// opencode.json, or start kimaki with --restrict-directories.
+//
+// session.permission carries exactly one thing: the worktree original-checkout
+// deny, which must beat user config on purpose.
 //
 // Uses errore for type-safe error handling.
 
@@ -20,7 +41,8 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
-import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import {
@@ -30,13 +52,32 @@ import {
   type PermissionRuleset,
 } from '@opencode-ai/sdk/v2'
 
-import { restartGlobalEventListener } from './session-handler/global-event-listener.js'
+import {
+  restartGlobalEventListener,
+  waitForGlobalEventListener,
+} from './session-handler/global-event-listener.js'
 import {
   getDataDir,
   getLockPort,
+  getRestrictExternalDirectories,
+  getOpencodeHostname,
+  getOpencodePort,
 } from './config.js'
 import { store } from './store.js'
 import { getHranaUrl } from './hrana-server.js'
+
+export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
+  const require = createRequire(import.meta.url)
+  const entry = require.resolve('@subrouter/opencode')
+  if (isDev) return pathToFileURL(entry).href
+
+  const packageJsonPath = require.resolve('@subrouter/opencode/package.json')
+  const version = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version
+  if (typeof version !== 'string' || !version) {
+    throw new Error(`Missing @subrouter/opencode version in ${packageJsonPath}`)
+  }
+  return `@subrouter/opencode@${version}`
+}
 
 // SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
@@ -83,6 +124,39 @@ export function getOpencodeServerAuthHeaders(): Record<string, string> {
   return { Authorization: `Basic ${encoded}` }
 }
 
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1'])
+
+export function publicOpencodeBindRequiresPassword({
+  hostname,
+}: {
+  hostname: string | null | undefined
+}): boolean {
+  if (!hostname) return false
+  return !LOOPBACK_HOSTNAMES.has(hostname)
+}
+
+// Always pass --hostname so opencode.json server.hostname / mdns cannot bind 0.0.0.0.
+const DEFAULT_OPENCODE_HOSTNAME = '127.0.0.1'
+
+export function buildOpencodeServeArgs({
+  port,
+  hostname,
+}: {
+  port: number
+  hostname?: string | null
+}): string[] {
+  return [
+    'serve',
+    '--port',
+    port.toString(),
+    '--hostname',
+    hostname || DEFAULT_OPENCODE_HOSTNAME,
+    '--print-logs',
+    '--log-level',
+    'WARN',
+  ]
+}
+
 // Tracks directories that have been initialized, to avoid repeated log spam
 // from the external sync polling loop.
 const initializedDirectories = new Set<string>()
@@ -118,6 +192,7 @@ export async function requestHealthcheck({
         method: 'GET',
         headers: {
           connection: 'close',
+          ...getOpencodeServerAuthHeaders(),
         },
       },
       (res) => {
@@ -281,9 +356,12 @@ function buildStartupTimeoutReason({
 // Clients are created per-directory with the x-opencode-directory header.
 
 type SingleServer = {
-  process: ChildProcess
+  process: ChildProcess | null
   port: number
   baseUrl: string
+  /** True when this server was discovered from the bot's hrana endpoint,
+   *  not spawned by this process. We must not kill it on cleanup. */
+  discovered?: boolean
 }
 
 type ServerLifecycleEvent =
@@ -318,6 +396,11 @@ function killSingleServerProcessNow({
   reason: string
 }): void {
   if (!singleServer) {
+    return
+  }
+
+  // Never kill a server we didn't spawn (discovered from another process)
+  if (singleServer.discovered || !singleServer.process) {
     return
   }
 
@@ -542,8 +625,8 @@ async function waitForServer({
 
 // ── Single server lifecycle ──────────────────────────────────────
 // The server is started lazily on first initializeOpencodeForDirectory() call.
-// It uses permissive defaults (edit: allow, bash: allow, external_directory: ask).
-// Per-directory permissions are applied at session creation time instead.
+// It uses permissive defaults (edit: allow, bash: allow, webfetch: allow, and
+// external_directory: '*' allow unless --restrict-directories is set).
 
 // In-flight promise to prevent concurrent startups from racing
 let startingServer: Promise<ServerStartError | SingleServer> | null = null
@@ -559,22 +642,82 @@ function ensureOpencodeHomeDirectories({
   })
 }
 
+/**
+ * Try to discover an OpenCode server already running in the bot process.
+ * Queries the hrana server on the lock port for the OpenCode server port,
+ * then verifies the server is healthy. Returns null if no server found.
+ */
+async function discoverExistingServer(): Promise<SingleServer | null> {
+  const lockPort = getLockPort()
+  try {
+    const portResponse = await requestHealthcheck({
+      url: `http://127.0.0.1:${lockPort}/kimaki/opencode-port`,
+      timeoutMs: 2000,
+    })
+    if (portResponse.status !== 200) {
+      return null
+    }
+    const parsed = JSON.parse(portResponse.body)
+    const port = parsed?.port
+    if (typeof port !== 'number') {
+      return null
+    }
+
+    // Verify the OpenCode server is actually healthy
+    const healthResponse = await requestHealthcheck({
+      url: `http://127.0.0.1:${port}/api/health`,
+      timeoutMs: 2000,
+    })
+    if (healthResponse.status >= 500) {
+      return null
+    }
+
+    opencodeLogger.log(
+      `Discovered existing OpenCode server on port ${port} via hrana lock port ${lockPort}`,
+    )
+    return {
+      process: null,
+      port,
+      baseUrl: `http://127.0.0.1:${port}`,
+      discovered: true,
+    }
+  } catch {
+    // Connection refused or other network error — no bot running
+    return null
+  }
+}
+
 async function ensureSingleServer({
   directory,
 }: {
   directory?: string
 } = {}): Promise<ServerStartError | SingleServer> {
   const startupDirectory = directory || preferredStartupDirectory || undefined
-  if (singleServer && !singleServer.process.killed) {
+  if (singleServer && !singleServer.process?.killed) {
     return singleServer
   }
 
-  // Deduplicate concurrent startup attempts
+  // Deduplicate concurrent startup attempts (covers both discovery and spawn)
   if (startingServer) {
     return startingServer
   }
 
-  startingServer = startSingleServer({ directory: startupDirectory })
+  // Wrap discovery + spawn in a single shared promise so concurrent callers
+  // don't each run discoverExistingServer() and then each spawn a server.
+  startingServer = (async () => {
+    // Try to discover an already-running server from the bot process via
+    // the hrana server's /kimaki/opencode-port endpoint. This lets CLI
+    // subcommands (kimaki session list, archive, wait, etc.) reuse the
+    // bot's OpenCode server instead of spawning a redundant one.
+    const discovered = await discoverExistingServer()
+    if (discovered) {
+      singleServer = discovered
+      return discovered
+    }
+
+    return startSingleServer({ directory: startupDirectory })
+  })()
+
   try {
     return await startingServer
   } finally {
@@ -589,16 +732,21 @@ async function startSingleServer({
 } = {}): Promise<ServerStartError | SingleServer> {
   ensureProcessCleanupHandlersRegistered()
 
-  const port = await getOpenPort()
+  const configuredPort = getOpencodePort()
+  const port = configuredPort ?? (await getOpenPort())
+  const hostname = getOpencodeHostname() ?? DEFAULT_OPENCODE_HOSTNAME
 
-  const serveArgs = [
-    'serve',
-    '--port',
-    port.toString(),
-    '--print-logs',
-    '--log-level',
-    'WARN',
-  ]
+  if (
+    publicOpencodeBindRequiresPassword({ hostname }) &&
+    !process.env.OPENCODE_SERVER_PASSWORD
+  ) {
+    return new ServerStartError({
+      port,
+      reason: `OPENCODE_SERVER_PASSWORD is required when --opencode-hostname is ${hostname}`,
+    })
+  }
+
+  const serveArgs = buildOpencodeServeArgs({ port, hostname })
 
   const {
     command: spawnCommand,
@@ -609,37 +757,15 @@ async function startSingleServer({
     baseArgs: serveArgs,
   })
 
-  // Server config uses permissive defaults. Per-directory external_directory
-  // permissions are set at session creation time via session.create({ permission }).
-  // Common directories (tmpdir, ~/.config/opencode, ~/.kimaki) are pre-allowed
-  // at the server level so they never trigger permission prompts regardless of
-  // whether session-level rules compose correctly.
-  const tmpdir = os.tmpdir().replaceAll('\\', '/')
-  const opencodeConfigDir = path
-    .join(os.homedir(), '.config', 'opencode')
-    .replaceAll('\\', '/')
-  const opensrcDir = path
-    .join(os.homedir(), '.opensrc')
-    .replaceAll('\\', '/')
-  const kimakiDataDir = path
-    .join(os.homedir(), '.kimaki')
-    .replaceAll('\\', '/')
-  // No catch-all '*': 'ask' here — the user's opencode.json default is respected.
-  // Only allowlist specific known-safe directories at the server level.
-  const externalDirectoryPermissions: Record<string, 'ask' | 'allow' | 'deny'> = {
-    '/tmp': 'allow',
-    '/tmp/*': 'allow',
-    '/private/tmp': 'allow',
-    '/private/tmp/*': 'allow',
-    [tmpdir]: 'allow',
-    [`${tmpdir}/*`]: 'allow',
-    [opencodeConfigDir]: 'allow',
-    [`${opencodeConfigDir}/*`]: 'allow',
-    [opensrcDir]: 'allow',
-    [`${opensrcDir}/*`]: 'allow',
-    [kimakiDataDir]: 'allow',
-    [`${kimakiDataDir}/*`]: 'allow',
-  }
+  // Server config uses permissive defaults. By default every external directory
+  // is allowed: opencode's own 'ask' default produced constant permission
+  // prompts for ordinary reads, and users who want protection can add their own
+  // `deny`/`ask` rules in opencode.json (project config is loaded after this
+  // file, so it wins).
+  // With --restrict-directories the old behaviour comes back: only a small set
+  // of known-safe paths is pre-allowed and everything else falls through to the
+  // user's opencode.json default (which is 'ask' unless they changed it).
+  const externalDirectoryPermissions = buildServerExternalDirectoryPermissions()
   const kimakiShimDirectory = ensureKimakiCommandShim({
     dataDir: getDataDir(),
     execPath: process.execPath,
@@ -701,6 +827,9 @@ async function startSingleServer({
         isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
         import.meta.url,
       ).href,
+      // npm identity lets opencode dedupe a user-installed copy by package
+      // name. Development still loads this workspace's built package directly.
+      resolveSubrouterPluginSpec({ isDev }),
     ],
     permission: {
       edit: 'allow',
@@ -725,7 +854,11 @@ async function startSingleServer({
           webfetch: 'allow',
           websearch: 'allow',
           codesearch: 'allow',
-          external_directory: externalDirectoryPermissions,
+          // No external_directory here on purpose. opencode composes agents as
+          // merge(defaults, agentSpecific, userConfig) and then appends
+          // config.agent.<name>.permission LAST, so anything set here would beat
+          // the user's own top-level opencode.json rules. The top-level
+          // permission block above already covers this agent.
         },
       },
     },
@@ -787,6 +920,10 @@ async function startSingleServer({
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
+        // The browser is not on this machine, so no localhost callback fires.
+        SUBROUTER_MANUAL_OAUTH: '1',
+        OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
+        OPENCODE_ENABLE_EXA: '1',
         KIMAKI_DATA_DIR: getDataDir(),
         KIMAKI_LOCK_PORT: getLockPort().toString(),
         KIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),
@@ -812,7 +949,7 @@ async function startSingleServer({
   let serverReady = false
 
   logBuffer.push(
-    `Spawned opencode serve --port ${port} (pid: ${serverProcess.pid})`,
+    `Spawned opencode ${serveArgs.join(' ')} (pid: ${serverProcess.pid})`,
   )
 
   const stdoutReader = subscribeToProcessLogStream({
@@ -862,7 +999,7 @@ async function startSingleServer({
     // - SIGINT propagated from Ctrl+C (parent process group signal)
     // - any exit during bot shutdown (shuttingDown flag)
     // Only unexpected crashes (non-zero exit without signal) get retried.
-    if (signal === 'SIGTERM' || signal === 'SIGINT' || (global as any).shuttingDown) {
+    if (signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
       serverRetryCount = 0
       return
     }
@@ -1007,12 +1144,89 @@ export async function initializeOpencodeForDirectory(
 }
 
 /**
- * Build per-session permission rules for external_directory access.
- * These rules are passed to session.create({ permission }) and override
- * the server-level defaults via opencode's findLast() evaluation.
+ * Known-safe paths that never need an external_directory prompt, used only when
+ * --restrict-directories is active. Without the flag every path is allowed and
+ * this list is irrelevant.
+ */
+function knownSafeExternalDirectories(): string[] {
+  const tmpdir = os.tmpdir().replaceAll('\\', '/')
+  const homeDirectory = ({ relativePath }: { relativePath: string }) => {
+    return path.resolve(os.homedir(), relativePath.replaceAll('\\', '/'))
+  }
+  return [
+    '/tmp',
+    '/private/tmp',
+    tmpdir,
+    // The agent can read the global AGENTS.md and opencode config; the path is
+    // visible in the system prompt so models routinely try to open it.
+    homeDirectory({ relativePath: '.config/opencode' }),
+    // The Anthropic plugin rewrites the name in the system prompt, so some
+    // models try this misspelled path instead.
+    homeDirectory({ relativePath: '.config/openc0de' }),
+    // Cached opensrc checkouts.
+    homeDirectory({ relativePath: '.opensrc' }),
+    // Kimaki data dir (logs, db, etc).
+    homeDirectory({ relativePath: '.kimaki' }),
+    // Prior opencode tool outputs.
+    homeDirectory({ relativePath: '.local/share/opencode/tool-output' }),
+    // Language toolchain caches, so builds can inspect downloaded modules.
+    homeDirectory({ relativePath: '.cache/zig' }),
+    homeDirectory({ relativePath: '.cargo' }),
+    homeDirectory({ relativePath: '.cache/go-build' }),
+    homeDirectory({ relativePath: 'go/pkg' }),
+  ]
+}
+
+/**
+ * Build the server-level `permission.external_directory` value.
  *
- * This replaces the old per-server OPENCODE_CONFIG_CONTENT external_directory
- * permissions — now each session carries its own directory-scoped rules.
+ * Default: `{ '*': 'allow' }` — no prompt for any directory.
+ * With --restrict-directories: an allow-list of known-safe paths only. There is
+ * deliberately no catch-all '*': 'ask' entry so opencode's own 'ask' default
+ * still applies to everything else.
+ *
+ * Always an object, never the plain string 'allow'. opencode deep-merges config
+ * files (remeda mergeDeep) and this file is loaded before the project's
+ * opencode.json, so object keys from the project merge on top of these and win
+ * via findLast(). A plain string would instead be replaced wholesale by the
+ * project object, dropping allow-all for every unmatched path.
+ */
+function buildServerExternalDirectoryPermissions(): Record<
+  string,
+  'ask' | 'allow' | 'deny'
+> {
+  if (!getRestrictExternalDirectories()) {
+    return { [ALL_EXTERNAL_DIRECTORIES_PATTERN]: 'allow' }
+  }
+
+  const permissions: Record<string, 'ask' | 'allow' | 'deny'> = {}
+  for (const directory of knownSafeExternalDirectories()) {
+    permissions[directory] = 'allow'
+    permissions[`${directory}/*`] = 'allow'
+  }
+  return permissions
+}
+
+/**
+ * Build the per-session permission ruleset passed to session.create/update.
+ *
+ * Keep this list minimal. Session rules are the LAST ruleset opencode
+ * evaluates — `Permission.merge(agent.permission, session.permission)` in
+ * session/tools.ts, then `findLast()` in permission/index.ts — so every rule
+ * here silently overrides the user's own opencode.json. Only rules that must
+ * beat user config belong here.
+ *
+ * In particular, directory *allow* rules must NOT go here. They live in the
+ * server config so a project opencode.json can still deny or ask for specific
+ * folders. Putting an `external_directory: '*' allow` rule here would make
+ * every user `deny` rule a no-op.
+ *
+ * The session's own working directory never needs a rule either: opencode skips
+ * the external_directory gate entirely for paths inside the active instance
+ * (`containsPath` in tool/external-directory.ts).
+ *
+ * That leaves one rule: worktree isolation. Once a thread moves to a managed
+ * worktree, deny the original checkout so the agent stops editing the main repo.
  */
 export function buildSessionPermissions({
   directory,
@@ -1022,82 +1236,22 @@ export function buildSessionPermissions({
   originalRepoDirectory?: string
 }): PermissionRuleset {
   // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
-  const tmpdir = os.tmpdir().replaceAll('\\', '/')
   const normalizedDirectory = directory.replaceAll('\\', '/')
   const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
 
-  const rules: PermissionRuleset = [
-    // Allow tmpdir access
-    { permission: 'external_directory', pattern: '/tmp', action: 'allow' },
-    { permission: 'external_directory', pattern: '/tmp/*', action: 'allow' },
-    { permission: 'external_directory', pattern: '/private/tmp', action: 'allow' },
-    { permission: 'external_directory', pattern: '/private/tmp/*', action: 'allow' },
-    { permission: 'external_directory', pattern: tmpdir, action: 'allow' },
-    { permission: 'external_directory', pattern: `${tmpdir}/*`, action: 'allow' },
-    // Allow the project directory itself
-    { permission: 'external_directory', pattern: normalizedDirectory, action: 'allow' },
-    { permission: 'external_directory', pattern: `${normalizedDirectory}/*`, action: 'allow' },
-  ]
-
-  const homeDirectoryRules = ({ relativePath }: { relativePath: string }) => {
-    const normalizedRelativePath = relativePath.replaceAll('\\', '/')
-    const basePattern = path.resolve(os.homedir(), normalizedRelativePath)
-    return [
-      { permission: 'external_directory', pattern: basePattern, action: 'allow' },
-      { permission: 'external_directory', pattern: `${basePattern}/*`, action: 'allow' },
-    ] satisfies PermissionRuleset
+  if (!originalRepo || originalRepo === normalizedDirectory) {
+    return []
   }
 
-  // Allow ~/.config/opencode so the agent doesn't get permission prompts when
-  // it tries to read the global AGENTS.md or opencode config (the path is
-  // visible in the system prompt, so models sometimes try to read it).
-  rules.push(...homeDirectoryRules({ relativePath: '.config/opencode' }))
-
-  // Allow ~/.config/openc0de too because the Anthropic plugin rewrites the
-  // name in the system prompt and some models may try to inspect that path.
-  rules.push(...homeDirectoryRules({ relativePath: '.config/openc0de' }))
-
-  // Allow ~/.opensrc so agents can inspect cached opensrc checkouts without
-  // permission prompts.
-  rules.push(...homeDirectoryRules({ relativePath: '.opensrc' }))
-
-  // Allow ~/.kimaki so the agent can access kimaki data dir (logs, db, etc.)
-  // without permission prompts.
-  rules.push(...homeDirectoryRules({ relativePath: '.kimaki' }))
-
-  // Allow opencode tool output artifacts under XDG data so agents can inspect
-  // prior tool outputs without interactive permission prompts.
-  rules.push(...homeDirectoryRules({ relativePath: '.local/share/opencode/tool-output' }))
-
-  // Allow common language caches under the user's home directory so toolchains
-  // can inspect downloaded modules and artifacts without external_directory prompts.
-  rules.push(
-    ...homeDirectoryRules({ relativePath: '.cache/zig' }),
-    ...homeDirectoryRules({ relativePath: '.cargo' }),
-    ...homeDirectoryRules({ relativePath: '.cache/go-build' }),
-    ...homeDirectoryRules({ relativePath: 'go/pkg' }),
-  )
-
-  // For worktree sessions: explicitly deny the original checkout so agents do
-  // not keep editing the main repo after the thread has moved to a managed
-  // worktree. Deny rules are appended last so they override earlier allow/
-  // ask defaults via opencode's findLast() evaluation.
-  if (originalRepo && originalRepo !== normalizedDirectory) {
-    rules.push(
-      ...buildExternalDirectoryPermissionRules({
-        resolvedPattern: originalRepo,
-        action: 'deny',
-      }),
-    )
-  }
-
-
-  return rules
+  return buildExternalDirectoryPermissionRules({
+    resolvedPattern: originalRepo,
+    action: 'deny',
+  })
 }
 
 const ALL_EXTERNAL_DIRECTORIES_PATTERN = '*'
 
-export function buildExternalDirectoryPermissionRules({
+function buildExternalDirectoryPermissionRules({
   resolvedPattern,
   action,
 }: {
@@ -1315,13 +1469,23 @@ export async function stopOpencodeServer(): Promise<boolean> {
   }
 
   const server = singleServer
+
+  // For discovered servers (from another process), just clear local state
+  // without killing the process we don't own.
+  if (server.discovered || !server.process) {
+    singleServer = null
+    clientCache.clear()
+    serverRetryCount = 0
+    return true
+  }
+
   opencodeLogger.log(
     `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
   )
   if (!server.process.killed) {
     const killResult = errore.try(
       () => {
-        server.process.kill('SIGTERM')
+        server.process!.kill('SIGTERM')
       },
       (error) => {
         return new Error('Failed to send SIGTERM to opencode server', {
@@ -1365,5 +1529,7 @@ export async function restartOpencodeServer(): Promise<OpenCodeErrors | true> {
 
   const result = await ensureSingleServer()
   if (result instanceof Error) return result
+  restartGlobalEventListener()
+  await waitForGlobalEventListener()
   return true
 }

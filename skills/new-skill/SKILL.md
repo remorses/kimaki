@@ -62,6 +62,93 @@ Claude Code, Cursor, Windsurf, and others. Skills teach agents the
 workflows, patterns, and tools specific to this project.
 ```
 
+## Making a skill installable from a URL
+
+Use this when the project does **not have a public GitHub repo** (private repos, closed-source SaaS products) or when you want the install command to use your own domain:
+
+```bash
+npx skills add https://example.com
+```
+
+The `skills` CLI treats any non-GitHub/GitLab HTTP(S) URL as a **well-known discovery endpoint** (RFC 8615). It fetches `/.well-known/agent-skills/index.json` and expects the v0.2.0 discovery schema:
+
+```json
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "my-skill",
+      "type": "skill-md",
+      "description": "One-line description shown in the CLI skill picker.",
+      "url": "./my-skill/SKILL.md",
+      "digest": "sha256:<hex sha256 of the exact artifact bytes>"
+    }
+  ]
+}
+```
+
+Rules:
+
+- **The digest must match the served bytes exactly.** The CLI downloads the artifact from `url` and verifies its sha256 before installing. Never hardcode the digest; compute it from the same string you serve.
+- **`url` is resolved relative to index.json**, so `./my-skill/SKILL.md` works and survives domain changes. Absolute URLs also work.
+- **`name` must be kebab-case** (`^[a-z0-9-]+$`, no leading/trailing/double dashes) and match the SKILL.md frontmatter name.
+- `type: "skill-md"` serves a single markdown file. Use `type: "archive"` (zip or tar.gz with a root SKILL.md) only when the skill ships companion files.
+- Keep the canonical SKILL.md in the repo (`skills/<name>/SKILL.md`) and serve those exact bytes, so the published skill can never drift from git.
+
+Example with **spiceflow** on Cloudflare Workers: import the SKILL.md with vite `?raw` and compute the digest once per isolate with WebCrypto.
+
+```ts
+import { Spiceflow } from 'spiceflow'
+import skillMd from '../../skills/my-skill/SKILL.md?raw'
+
+let digestPromise: Promise<string> | undefined
+function getSkillDigest(): Promise<string> {
+  digestPromise ??= (async () => {
+    const bytes = new TextEncoder().encode(skillMd)
+    const hash = await crypto.subtle.digest('SHA-256', bytes)
+    const hex = Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, '0')).join('')
+    return `sha256:${hex}`
+  })()
+  return digestPromise
+}
+
+export const skillDiscoveryApp = new Spiceflow()
+  .route({
+    method: 'GET',
+    path: '/.well-known/agent-skills/index.json',
+    handler: async () =>
+      Response.json({
+        $schema: 'https://schemas.agentskills.io/discovery/0.2.0/schema.json',
+        skills: [
+          {
+            name: 'my-skill',
+            type: 'skill-md',
+            description: 'One-line description shown in the CLI skill picker.',
+            url: './my-skill/SKILL.md',
+            digest: await getSkillDigest(),
+          },
+        ],
+      }),
+  })
+  .route({
+    method: 'GET',
+    path: '/.well-known/agent-skills/my-skill/SKILL.md',
+    handler: () =>
+      new Response(skillMd, {
+        headers: { 'content-type': 'text/markdown; charset=utf-8' },
+      }),
+  })
+```
+
+Validate end-to-end against a local dev server before deploying:
+
+```bash
+npx skills add http://localhost:3000 --list
+npx skills add http://localhost:3000 -y --copy
+```
+
+If the digest is wrong the CLI silently skips the skill, so an empty `--list` result usually means a digest mismatch.
+
 ## Frontmatter
 
 Every SKILL.md starts with YAML frontmatter containing three required fields:

@@ -1,6 +1,7 @@
 // Session inspection and archival terminal commands.
 import { goke } from 'goke'
 import { z } from 'zod'
+import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
@@ -12,15 +13,18 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktree } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktreeOrWorkspace } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
+import { formatTimeAgo } from '../commands/worktrees.js'
+import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
+import { OpenCodeSdkError } from '../errors.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -49,9 +53,9 @@ async function resolveSessionDirectoryFromDatabase({
 }): Promise<Error | string> {
   const threadId = await getThreadIdBySessionId(sessionId)
   if (threadId) {
-    const worktree = await getThreadWorktree(threadId)
-    if (worktree?.status === 'ready' && worktree.worktree_directory) {
-      return worktree.worktree_directory
+    const workspace = await getThreadWorktreeOrWorkspace(threadId)
+    if (workspace?.status === 'ready' && workspace.workspace_directory) {
+      return workspace.workspace_directory
     }
 
     const { token: botToken } = await resolveBotCredentials({})
@@ -90,8 +94,10 @@ cli
     '--project <path>',
     'Project directory to list sessions for (defaults to cwd)',
   )
+  .option('--active', 'Only list active sessions; exits 1 when none remain')
+  .option('--exclude <sessionId>', 'Exclude one session ID from the results')
   .option('--json', 'Output as JSON')
-  .action(async (options: { project?: string; json?: boolean }) => {
+  .action(async (options) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
@@ -106,10 +112,28 @@ cli
 
       const sessionsResponse = await getClient().session.list()
       const sessions = sessionsResponse.data || []
+      const statuses = await (async () => {
+        if (!options.active) return null
+        const response = await getClient().session.status({
+          directory: projectDirectory,
+        })
+        if (response.error) {
+          cliLogger.error('Failed to list active sessions')
+          process.exit(EXIT_NO_RESTART)
+        }
+        return response.data || {}
+      })()
+      const selectedSessions = sessions.filter((session) => {
+        if (session.id === options.exclude) return false
+        if (!options.active) return true
+        const status = statuses?.[session.id]
+        return Boolean(status && status.type !== 'idle')
+      })
 
-      if (sessions.length === 0) {
-        cliLogger.log('No sessions found')
-        process.exit(0)
+      if (selectedSessions.length === 0) {
+        if (options.json) console.log('[]')
+        else cliLogger.log(options.active ? 'No active sessions found' : 'No sessions found')
+        process.exit(options.active ? 1 : 0)
       }
 
       // Look up which sessions were started via kimaki (have a thread mapping)
@@ -123,7 +147,7 @@ cli
           .map((row) => [row.session_id, row.thread_id]),
       )
       const sessionStartSources = await getSessionStartSourcesBySessionIds(
-        sessions.map((session) => session.id),
+        selectedSessions.map((session) => session.id),
       )
 
       const scheduleModeLabel = ({
@@ -138,7 +162,7 @@ cli
       }
 
       if (options.json) {
-        const output = sessions.map((session) => {
+        const output = selectedSessions.map((session) => {
           const startSource = sessionStartSources.get(session.id)
           const startedBy = startSource
             ? `scheduled-${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}`
@@ -152,13 +176,14 @@ cli
             threadId: sessionToThread.get(session.id) || null,
             startedBy,
             scheduledTaskId: startSource?.scheduled_task_id || null,
+            status: options.active ? statuses?.[session.id]?.type || 'busy' : undefined,
           }
         })
         console.log(JSON.stringify(output, null, 2))
         process.exit(0)
       }
 
-      for (const session of sessions) {
+      for (const session of selectedSessions) {
         const threadId = sessionToThread.get(session.id)
         const startSource = sessionStartSources.get(session.id)
         const source = threadId ? '(kimaki)' : '(opencode)'
@@ -167,8 +192,11 @@ cli
           : ''
         const updatedAt = new Date(session.time.updated).toISOString()
         const threadInfo = threadId ? ` | thread: ${threadId}` : ''
+        const statusInfo = options.active
+          ? ` | status: ${statuses?.[session.id]?.type || 'busy'}`
+          : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}${statusInfo}`,
         )
       }
 
@@ -184,11 +212,95 @@ cli
 
 cli
   .command(
+    'session editors <file>',
+    dedent`
+      List sessions that last edited a file, newest first.
+
+      Use this before a commit in another session so the \`Session:\` line
+      uses the session that actually edited the file.
+    `,
+  )
+  .option('--json', 'Output as JSON')
+  .option(
+    '--limit <n>',
+    z.number().default(20).describe('Max sessions to show'),
+  )
+  .example('kimaki session editors src/cli.ts')
+  .example('kimaki session editors src/cli.ts --json')
+  .action(async (file, options, { console, process }) => {
+    try {
+      const cwd = process.cwd
+      const loaded = loadFileEditEvents({ dataDir: getDataDir() })
+      if (loaded instanceof Error) {
+        console.error(loaded.message)
+        process.exit(EXIT_NO_RESTART)
+        return
+      }
+
+      const editors = editorsForFile({
+        events: loaded,
+        filePath: file,
+        cwd,
+      }).slice(0, options.limit)
+      if (editors.length === 0) {
+        console.error(`No recorded editors for ${path.resolve(cwd, file)}`)
+        process.exit(1)
+        return
+      }
+
+      const titles = new Map<string, string>()
+      try {
+        await initDatabase()
+        const db = await getDb()
+        const sessionRows = await db.query.thread_sessions.findMany({
+          columns: { session_id: true, last_synced_name: true },
+          where: { session_id: { in: editors.map((editor) => editor.sessionId) } },
+          orderBy: { updated_at: 'desc' },
+        })
+        for (const row of sessionRows) {
+          if (!titles.has(row.session_id) && row.last_synced_name) {
+            titles.set(row.session_id, row.last_synced_name)
+          }
+        }
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : String(error))
+      }
+
+      const rows = editors.map((editor) => {
+        const title = titles.get(editor.sessionId) || '-'
+        const editedAt = new Date(editor.at)
+        return {
+          sessionId: editor.sessionId,
+          title,
+          editedAt: editedAt.toISOString(),
+          ago: formatTimeAgo(editedAt),
+        }
+      })
+
+      if (options.json) {
+        console.log(JSON.stringify(rows, null, 2))
+        process.exit(0)
+        return
+      }
+
+      for (const row of rows) {
+        console.log(`${row.sessionId} | ${row.title} | ${row.ago}`)
+      }
+      process.exit(0)
+    } catch (error) {
+      console.error(error instanceof Error ? error.stack : String(error))
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
     'session read <sessionId>',
     'Read a session conversation as markdown (pipe to file to grep)',
   )
   .option('--project <path>', 'Project directory (defaults to cwd)')
-  .action(async (sessionId: string, options: { project?: string }) => {
+  .option('--verbose', 'Show full tool inputs and outputs instead of compact summaries')
+  .action(async (sessionId: string, options: { project?: string; verbose?: boolean }) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
@@ -202,8 +314,9 @@ cli
       }
 
       // Try current project first (fast path)
+      const compactTools = !options.verbose
       const markdown = new ShareMarkdown(getClient())
-      const result = await markdown.generate({ sessionID: sessionId })
+      const result = await markdown.generate({ sessionID: sessionId, compactTools })
       if (!(result instanceof Error)) {
         process.stdout.write(result)
         process.exit(0)
@@ -236,6 +349,7 @@ cli
         const otherMarkdown = new ShareMarkdown(otherClient())
         const otherResult = await otherMarkdown.generate({
           sessionID: sessionId,
+          compactTools,
         })
         if (!(otherResult instanceof Error)) {
           process.stdout.write(otherResult)
@@ -597,7 +711,7 @@ cli
 cli
   .command(
     'session archive [threadId]',
-    'Archive a Discord thread and stop its mapped OpenCode session',
+    'Archive a Discord thread without stopping its mapped OpenCode session',
   )
   .option('--session <sessionId>', 'Resolve thread from an OpenCode session ID')
   .action(async (threadIdArg: string | undefined, options: { session?: string }) => {
@@ -740,6 +854,89 @@ cli
         `Aborted session: ${sessionId}${threadId ? `\nThread ID: ${threadId}` : ''}`,
         '✅ Aborted',
       )
+      process.exit(0)
+    } catch (error) {
+      cliLogger.error(
+        'Error:',
+        error instanceof Error ? error.stack : String(error),
+      )
+      process.exit(EXIT_NO_RESTART)
+    }
+  })
+
+cli
+  .command(
+    'session title <title>',
+    'Update the OpenCode session title. Discord thread name follows automatically.',
+  )
+  .option('--session <sessionId>', 'OpenCode session ID')
+  .option('--thread <threadId>', 'Discord thread ID')
+  .example("kimaki session title 'Fix queue draining' --session ses_xxx")
+  .action(async (title, options) => {
+    try {
+      await initDatabase()
+
+      const trimmedTitle = title.trim()
+      if (!trimmedTitle) {
+        cliLogger.error('Title must not be empty')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (options.session && options.thread) {
+        cliLogger.error('Use either --session or --thread, not both')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (!options.session && !options.thread) {
+        cliLogger.error('Provide --session <sessionId> or --thread <threadId>')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const sessionId = await (async () => {
+        if (options.session) return options.session
+        const threadId = options.thread
+        if (!threadId) return null
+        return getThreadSession(threadId)
+      })()
+      if (!sessionId) {
+        cliLogger.error(
+          options.thread
+            ? `No OpenCode session found for thread: ${options.thread}`
+            : 'Provide --session <sessionId> or --thread <threadId>',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const directory = await resolveSessionDirectoryFromDatabase({
+        sessionId,
+      })
+      if (directory instanceof Error) {
+        cliLogger.error(directory.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const serverResult = await initializeOpencodeForDirectory(directory)
+      if (serverResult instanceof Error) {
+        cliLogger.error(`Failed to initialize OpenCode: ${serverResult.message}`)
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      const updateResult = await serverResult()
+        .session.update({
+          sessionID: sessionId,
+          title: trimmedTitle,
+        })
+        .catch((e) =>
+          new OpenCodeSdkError({ operation: 'session.update', cause: e }),
+        )
+      if (updateResult instanceof Error) {
+        cliLogger.error(updateResult.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (updateResult.error) {
+        cliLogger.error('OpenCode rejected the session title update')
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      note(`Updated OpenCode title: ${trimmedTitle}`, 'Title updated')
       process.exit(0)
     } catch (error) {
       cliLogger.error(

@@ -1,7 +1,8 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 /**
  * CLI commands for multi-provider OAuth account management.
  * Mounted via goke .use() in cli.ts under the `multioauth` namespace.
- * Manages Anthropic and OpenAI OAuth account rotation pools.
+ * Manages Anthropic, OpenAI, and xAI OAuth account rotation pools.
  */
 
 import { goke } from 'goke'
@@ -21,6 +22,14 @@ import {
   removeOpenAIAccount,
   saveOpenAIAccountStore,
 } from '../openai-auth-state.js'
+import {
+  accountLabel as xaiAccountLabel,
+  xaiAccountsFilePath,
+  getCurrentXAIAccount,
+  loadXAIAccountStore,
+  removeXAIAccount,
+  saveXAIAccountStore,
+} from '../xai-auth-state.js'
 
 const EXIT_NO_RESTART = 64
 
@@ -46,6 +55,7 @@ multioauth
   .action(async () => {
     const anthropicStore = await loadAnthropicAccountStore()
     const openaiStore = await loadOpenAIAccountStore()
+    const xaiStore = await loadXAIAccountStore()
 
     console.log('Anthropic OAuth accounts:')
     if (anthropicStore.accounts.length === 0) {
@@ -65,6 +75,17 @@ multioauth
       openaiStore.accounts.forEach((account, index) => {
         const active = index === openaiStore.activeIndex ? '*' : ' '
         console.log(`  ${active} ${index + 1}. ${openaiAccountLabel(account)}`)
+      })
+    }
+
+    console.log('')
+    console.log('xAI OAuth accounts:')
+    if (xaiStore.accounts.length === 0) {
+      console.log('  (none)')
+    } else {
+      xaiStore.accounts.forEach((account, index) => {
+        const active = index === xaiStore.activeIndex ? '*' : ' '
+        console.log(`  ${active} ${index + 1}. ${xaiAccountLabel(account)}`)
       })
     }
 
@@ -251,9 +272,11 @@ multioauth
             console.log('ERROR - Token expired, refresh failed')
             continue
           }
-          const json = (await response.json()) as { access_token: string; expires_in?: number }
+          const json = (await response.json()) as { access_token: string; refresh_token?: string; expires_in?: number }
           accessToken = json.access_token
           account.access = accessToken
+          // OpenAI can rotate refresh tokens; store the new one if returned
+          if (json.refresh_token) account.refresh = json.refresh_token
           account.expires = Date.now() + (json.expires_in ?? 3600) * 1000
         } catch {
           console.log('ERROR - Token expired, refresh failed')
@@ -307,6 +330,177 @@ multioauth
 
     // Save store in case we refreshed any tokens
     await saveOpenAIAccountStore(store)
+
+    process.exit(0)
+  })
+
+// --- xAI subcommands ---
+
+multioauth
+  .command('multioauth xai list', 'List stored xAI OAuth accounts used for automatic rotation')
+  .action(async () => {
+    const store = await loadXAIAccountStore()
+    console.log(`Store: ${xaiAccountsFilePath()}`)
+    if (store.accounts.length === 0) {
+      console.log('No xAI OAuth accounts configured.')
+      process.exit(0)
+    }
+
+    store.accounts.forEach((account, index) => {
+      const active = index === store.activeIndex ? '*' : ' '
+      console.log(`${active} ${index + 1}. ${xaiAccountLabel(account)}`)
+    })
+
+    process.exit(0)
+  })
+
+multioauth
+  .command('multioauth xai current', 'Show the current xAI OAuth account being used')
+  .action(async () => {
+    const current = await getCurrentXAIAccount()
+    console.log(`Store: ${xaiAccountsFilePath()}`)
+    console.log(`Auth: ${authFilePath()}`)
+
+    if (!current) {
+      console.log('No active xAI OAuth account configured.')
+      process.exit(0)
+    }
+
+    const lines: string[] = []
+    lines.push(`Current: ${xaiAccountLabel(current.account || current.auth, current.index)}`)
+
+    if (current.account?.email) {
+      lines.push(`Email: ${current.account.email}`)
+    } else {
+      lines.push('Email: unavailable')
+    }
+
+    if (current.account?.accountId) {
+      lines.push(`Account ID: ${current.account.accountId}`)
+    }
+
+    if (!current.account) {
+      lines.push('Rotation pool entry: not found')
+    }
+
+    console.log(lines.join('\n'))
+    process.exit(0)
+  })
+
+multioauth
+  .command('multioauth xai remove <indexOrEmail>', 'Remove an xAI OAuth account from the rotation pool')
+  .action(async (indexOrEmail) => {
+    const store = await loadXAIAccountStore()
+    const resolvedIndex = resolveAccountIndex(indexOrEmail, store.accounts)
+
+    if (resolvedIndex < 0) {
+      console.error('Usage: kimaki multioauth xai remove <index-or-email>')
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const removed = store.accounts[resolvedIndex]
+    await removeXAIAccount(resolvedIndex)
+    console.log(
+      `Removed xAI account ${removed ? xaiAccountLabel(removed, resolvedIndex) : indexOrEmail}`,
+    )
+    process.exit(0)
+  })
+
+multioauth
+  .command('multioauth xai check', 'Test all xAI OAuth accounts for usage limits')
+  .action(async () => {
+    const store = await loadXAIAccountStore()
+    if (store.accounts.length === 0) {
+      console.log('No xAI OAuth accounts configured.')
+      process.exit(0)
+    }
+
+    console.log('Checking usage limits for all xAI accounts...\n')
+
+    for (let i = 0; i < store.accounts.length; i++) {
+      const account = store.accounts[i]
+      if (!account) continue
+
+      const marker = i === store.activeIndex ? '*' : ' '
+      const label = account.email ?? account.accountId ?? 'unknown'
+      process.stdout.write(`${marker} ${i + 1}. ${label}: `)
+
+      // Refresh token if expired
+      let accessToken = account.access
+      if (account.expires < Date.now()) {
+        try {
+          const response = await fetch('https://auth.x.ai/oauth2/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'refresh_token',
+              refresh_token: account.refresh,
+              client_id: 'b1a00492-073a-47ea-816f-4c329264a828',
+            }).toString(),
+          })
+          if (!response.ok) {
+            console.log('ERROR - Token expired, refresh failed')
+            continue
+          }
+          const json = (await response.json()) as { access_token: string; refresh_token?: string; expires_in?: number }
+          accessToken = json.access_token
+          account.access = accessToken
+          // xAI can rotate refresh tokens; store the new one if returned
+          if (json.refresh_token) account.refresh = json.refresh_token
+          account.expires = Date.now() + (json.expires_in ?? 3600) * 1000
+        } catch {
+          console.log('ERROR - Token expired, refresh failed')
+          continue
+        }
+      }
+
+      try {
+        const response = await fetch('https://api.x.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            model: 'grok-3-mini',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        })
+
+        if (response.ok) {
+          console.log('OK')
+          continue
+        }
+
+        const text = await response.text()
+        const isLimited =
+          text.includes('usage limit') ||
+          text.includes('rate limit') ||
+          text.includes('usage_limit') ||
+          text.includes('balance exhausted') ||
+          response.status === 429 ||
+          response.status === 402
+
+        if (isLimited) {
+          let resetInfo: string | undefined
+          try {
+            const json = JSON.parse(text) as { error?: { message?: string } }
+            const match = json.error?.message?.match(/try again (after|in) ([^.]+)/i)
+            if (match) resetInfo = match[2]
+          } catch {}
+          console.log(`LIMITED${resetInfo ? ` (resets ${resetInfo})` : ''}`)
+        } else if (response.status === 401) {
+          console.log('ERROR - Auth failed (token invalid)')
+        } else {
+          console.log(`ERROR - ${response.status}: ${text.slice(0, 100)}`)
+        }
+      } catch (err) {
+        console.log(`ERROR - ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
+    await saveXAIAccountStore(store)
 
     process.exit(0)
   })

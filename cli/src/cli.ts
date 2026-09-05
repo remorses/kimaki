@@ -8,7 +8,6 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createLogger, formatErrorWithStack, initLogFile, LogPrefix } from './logger.js'
-import { initSentry } from './sentry.js'
 import {
   setDataDir,
   setProjectsDir,
@@ -17,6 +16,7 @@ import {
 } from './config.js'
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
+import { publicOpencodeBindRequiresPassword } from './opencode.js'
 import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
@@ -75,12 +75,20 @@ cli
     'Disable automatic diff upload to critique.work in system prompts',
   )
   .option(
+    '--skip-footer-mentions',
+    'Do not mention the thread creator in final session footers',
+  )
+  .option(
     '--auto-restart',
     'Automatically restart the bot on crash or OOM kill',
   )
   .option(
     '--allow-all-users',
     'Allow all Discord users to start sessions without needing Kimaki role or admin permissions (no-kimaki role still blocks)',
+  )
+  .option(
+    '--restrict-directories',
+    'Only allow the agent to access the session working directory and a few known-safe paths. Any other folder asks for permission. By default every directory is allowed and you protect folders with deny/ask rules in opencode.json',
   )
   .option(
     '--permission-timeout-minutes <minutes>',
@@ -90,8 +98,19 @@ cli
     '--disable-sync',
     'Disable background sync of external OpenCode sessions into Discord',
   )
-  .option('--no-sentry', 'Disable Sentry error reporting')
+  .option(
+    '--no-analytics',
+    'Disable anonymous product analytics (Strada). Same as KIMAKI_STRADA_ENABLED=0',
+  )
   .option('--no-auto-upgrade', 'Disable background auto-upgrade on startup')
+  .option(
+    '--opencode-hostname <host>',
+    'Hostname the OpenCode server listens on (default: 127.0.0.1). Use 0.0.0.0 to expose it on a VPS',
+  )
+  .option(
+    '--opencode-port <port>',
+    'Port the OpenCode server listens on (default: a random free port)',
+  )
   .option(
     '--gateway',
     'Force gateway mode (use the gateway Kimaki bot instead of a self-hosted bot)',
@@ -139,17 +158,21 @@ cli
       verbosity?: string
       mentionMode?: boolean
       noCritique?: boolean
+      skipFooterMentions?: boolean
       allowAllUsers?: boolean
+      restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
       disableSync?: boolean
       autoRestart?: boolean
-      noSentry?: boolean
+      noAnalytics?: boolean
       noAutoUpgrade?: boolean
       gateway?: boolean
       gatewayCallbackUrl?: string
       allowMention?: Array<'users' | 'roles' | 'everyone'>
       enableSkill?: string[]
       disableSkill?: string[]
+      opencodeHostname?: string
+      opencodePort?: string
     }) => {
       // Guard: only one kimaki bot process can run per lock port. Agents may run
       // a second dev bot only when they explicitly choose a different lock port.
@@ -262,19 +285,46 @@ cli
           return parsed * 60_000
         })()
 
+        const opencodeHostname = options.opencodeHostname?.trim() || undefined
+        const opencodePort = (() => {
+          if (!options.opencodePort) return undefined
+          const parsed = Number(options.opencodePort)
+          if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+            cliLogger.error(
+              `Invalid --opencode-port: ${options.opencodePort}. Must be an integer between 1 and 65535.`,
+            )
+            process.exit(EXIT_NO_RESTART)
+          }
+          return parsed
+        })()
+
+        if (
+          publicOpencodeBindRequiresPassword({ hostname: opencodeHostname }) &&
+          !process.env.OPENCODE_SERVER_PASSWORD
+        ) {
+          cliLogger.error(
+            `OPENCODE_SERVER_PASSWORD is required when --opencode-hostname is ${opencodeHostname}. Binding the OpenCode server on a public address without a password lets anyone control the agent.`,
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+
         store.setState({
           ...(defaultVerbosity && {
             defaultVerbosity,
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
+          ...(options.skipFooterMentions && { footerMentionsEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
+          ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
           ...(options.disableSync && { syncEnabled: false }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
+          ...(opencodeHostname && { opencodeHostname }),
+          ...(opencodePort !== undefined && { opencodePort }),
         })
 
         if (enabledSkills.length > 0) {
@@ -291,6 +341,11 @@ cli
         if (options.allowAllUsers) {
           cliLogger.log(
             'Allow all users: any Discord member can start sessions (no-kimaki role still blocks)',
+          )
+        }
+        if (options.restrictDirectories) {
+          cliLogger.log(
+            'Restricted directories: the agent asks before reading outside the working directory',
           )
         }
         if (permissionTimeoutMs !== undefined) {
@@ -310,6 +365,11 @@ cli
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
           )
         }
+        if (options.skipFooterMentions) {
+          cliLogger.log(
+            'Footer mentions disabled: final session footers will not mention thread creators',
+          )
+        }
         if (options.noAutoUpgrade) {
           cliLogger.log(
             'Auto-upgrade disabled: kimaki will not check for updates on startup',
@@ -320,11 +380,17 @@ cli
             'Background sync disabled: external OpenCode sessions will not appear in Discord',
           )
         }
-        if (options.noSentry) {
-          process.env.KIMAKI_SENTRY_DISABLED = '1'
-          cliLogger.log('Sentry error reporting disabled (--no-sentry)')
-        } else {
-          initSentry()
+        if (options.noAnalytics) {
+          process.env.KIMAKI_STRADA_ENABLED = '0'
+          cliLogger.log(
+            'Anonymous product analytics disabled (--no-analytics)',
+          )
+        }
+        if (opencodeHostname) {
+          cliLogger.log(`OpenCode server hostname: ${opencodeHostname}`)
+        }
+        if (opencodePort !== undefined) {
+          cliLogger.log(`OpenCode server port: ${opencodePort}`)
         }
 
         if (options.installUrl) {

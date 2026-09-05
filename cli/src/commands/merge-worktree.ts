@@ -1,18 +1,21 @@
-// /merge-worktree command - Merge worktree commits into default branch.
-// Pipeline: rebase worktree commits onto target -> local fast-forward push.
-// Preserves all commits (no squash). On rebase conflicts, asks the AI model
-// in the thread to resolve them.
+// /merge-worktree command - Rebase or squash worktree commits into a target branch.
+// On rebase conflicts, asks the AI model in the thread to resolve them.
 
 import { type TextChannel, type ThreadChannel } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
 import {
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
   getThreadSession,
   getChannelDirectory,
 } from '../database.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
-import { mergeWorktree, listBranchesByLastCommit, validateBranchRef } from '../worktrees.js'
+import {
+  mergeWorktree,
+  listBranchesByLastCommit,
+  validateBranchRef,
+  formatMergeWorktreeError,
+} from '../worktrees.js'
 import {
   sendThreadMessage,
   resolveWorkingDirectory,
@@ -29,6 +32,10 @@ import {
 } from '../errors.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
+
+function quoteShellArg(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
 
 /** Worktree thread title prefix - indicates unmerged worktree */
 export const WORKTREE_PREFIX = '⬦ '
@@ -107,26 +114,35 @@ export async function handleMergeWorktreeCommand({
   }
 
   const thread = channel
-  const worktreeInfo = await getThreadWorktree(thread.id)
-  if (!worktreeInfo) {
+
+  // Check both thread_workspaces (new) and thread_worktrees (legacy)
+  const info = await getThreadWorktreeOrWorkspace(thread.id)
+  if (!info) {
     await command.editReply('This thread is not associated with a worktree')
     return
   }
 
-  if (worktreeInfo.status !== 'ready' || !worktreeInfo.worktree_directory) {
+  if (info.status !== 'ready' || !info.workspace_directory) {
     await command.editReply(
-      `Worktree is not ready (status: ${worktreeInfo.status})${worktreeInfo.error_message ? `: ${worktreeInfo.error_message}` : ''}`,
+      `Worktree is not ready (status: ${info.status})${info.error_message ? `: ${info.error_message}` : ''}`,
     )
     return
   }
 
-
+  const strategyOption = command.options.getString('strategy') || 'rebase'
+  if (strategyOption !== 'rebase' && strategyOption !== 'squash') {
+    await command.editReply(`Invalid merge strategy: \`${strategyOption}\``)
+    return
+  }
+  const strategyName = strategyOption === 'squash'
+    ? 'Squash into one commit'
+    : 'Keep commits (rebase)'
 
   const rawTargetBranch = command.options.getString('target-branch') || undefined
   let targetBranch = rawTargetBranch
   if (targetBranch) {
     const validated = await validateBranchRef({
-      directory: worktreeInfo.project_directory,
+      directory: info.project_directory,
       ref: targetBranch,
     })
     if (validated instanceof Error) {
@@ -137,10 +153,11 @@ export async function handleMergeWorktreeCommand({
   }
 
   const result = await mergeWorktree({
-    worktreeDir: worktreeInfo.worktree_directory,
-    mainRepoDir: worktreeInfo.project_directory,
-    worktreeName: worktreeInfo.worktree_name,
+    worktreeDir: info.workspace_directory,
+    mainRepoDir: info.project_directory,
+    worktreeName: info.workspace_name,
     targetBranch,
+    strategy: strategyOption,
     onProgress: (msg) => {
       logger.log(`[merge] ${msg}`)
     },
@@ -163,13 +180,23 @@ export async function handleMergeWorktreeCommand({
 
     if (result instanceof NothingToMergeError) {
       void removeWorktreePrefixFromTitle(thread)
-      await command.editReply(`Merge failed: ${result.message}`)
+      await command.editReply(formatMergeWorktreeError(result))
       return
     }
 
     if (result instanceof RebaseConflictError) {
+      const mergedThreadName = thread.name.startsWith(WORKTREE_PREFIX)
+        ? thread.name.slice(WORKTREE_PREFIX.length)
+        : thread.name
+      const mergeCommand = [
+        'kimaki merge-worktree',
+        `--strategy ${strategyOption}`,
+        `--target-branch ${quoteShellArg(String(result.target))}`,
+        `--thread ${quoteShellArg(thread.id)}`,
+        `--thread-name ${quoteShellArg(mergedThreadName)}`,
+      ].join(' ')
       await command.editReply(
-        'Rebase conflict detected. Asking the model to resolve...',
+        `Rebase conflict detected. Asking the model to resolve it and retry the merge with **${strategyName}**.`,
       )
       await sendPromptToModel({
         prompt: [
@@ -184,24 +211,28 @@ export async function handleMergeWorktreeCommand({
           '6. Stage resolved files with `git add`',
           '7. Continue the rebase with `git rebase --continue`',
           '8. If git reports more conflicts, repeat steps 1-7 until the rebase finishes (no more rebase in progress, `git status` is clean)',
-          '9. Once the rebase is fully complete, tell me so I can run `/merge-worktree` again',
+          `9. Once the rebase is fully complete, run \`${mergeCommand}\` yourself`,
+          '10. If that command fails because the target changed or is not ready, stop and report the failure. The user can run it again later.',
         ].join('\n'),
         thread,
-        projectDirectory: worktreeInfo.project_directory,
+        projectDirectory: info.project_directory,
         command,
         appId,
       })
       return
     }
 
-    await command.editReply(`Merge failed: ${result.message}`)
+    const formatted = formatMergeWorktreeError(result)
+    logger.error(formatted)
+    await command.editReply(formatted)
     return
   }
 
   void removeWorktreePrefixFromTitle(thread)
-  await command.editReply(
-    `Merged \`${result.branchName}\` into \`${result.defaultBranch}\` @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})\nWorktree now at detached HEAD.`,
-  )
+  const mergeSummary = strategyOption === 'squash'
+    ? `Squashed \`${result.branchName}\` into \`${result.defaultBranch}\` @ ${result.shortSha} (${result.commitCount} source commit${result.commitCount === 1 ? '' : 's'} → 1)`
+    : `Merged \`${result.branchName}\` into \`${result.defaultBranch}\` @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`
+  await command.editReply(`${mergeSummary}\nWorktree now at detached HEAD.`)
 }
 
 /**

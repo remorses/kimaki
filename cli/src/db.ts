@@ -111,6 +111,23 @@ async function initializeDb(): Promise<KimakiDb> {
   return db
 }
 
+// CREATE TABLE IF NOT EXISTS cannot drop columns. The first two session_sleeps
+// shapes kept thread_id NOT NULL and posted_at. Inserts now omit thread_id, so
+// existing DBs fail with SQLITE_CONSTRAINT_NOTNULL until those columns go away.
+async function dropLegacySessionSleepsColumns(client: Client) {
+  const info = await client.execute('PRAGMA table_info(session_sleeps)')
+  const columns = new Set(info.rows.map((row) => String(row.name)))
+  if (columns.has('thread_id')) {
+    await client.execute('ALTER TABLE session_sleeps DROP COLUMN thread_id')
+  }
+  if (columns.has('posted_at')) {
+    await client.execute('ALTER TABLE session_sleeps DROP COLUMN posted_at')
+  }
+  await client.execute(
+    "UPDATE session_sleeps SET status = 'planned' WHERE status = 'posted'",
+  )
+}
+
 async function migrateSchema({
   db,
   client,
@@ -158,6 +175,13 @@ async function migrateSchema({
     'ALTER TABLE bot_tokens ADD COLUMN last_used_at DATETIME',
     "ALTER TABLE thread_sessions ADD COLUMN source TEXT DEFAULT 'kimaki'",
     'ALTER TABLE thread_sessions ADD COLUMN last_synced_name TEXT',
+    'ALTER TABLE thread_sessions ADD COLUMN parent_session_id TEXT',
+    'ALTER TABLE thread_sessions ADD COLUMN updated_at DATETIME',
+    'ALTER TABLE channel_directories ADD COLUMN guild_id TEXT',
+    // First session_sleeps shape had thread_id only. Later ticks query these.
+    'ALTER TABLE session_sleeps ADD COLUMN delivery_id TEXT',
+    'ALTER TABLE session_sleeps ADD COLUMN attempts INTEGER DEFAULT 0',
+    'ALTER TABLE session_sleeps ADD COLUMN last_attempt_at DATETIME',
   ]
   for (const stmt of alterStatements) {
     await client.execute(stmt).catch(() => undefined)
@@ -178,10 +202,30 @@ async function migrateSchema({
     "UPDATE bot_tokens SET bot_mode = 'self_hosted' WHERE bot_mode = 'self-hosted'",
     "UPDATE bot_tokens SET proxy_url = REPLACE(proxy_url, 'discord-gateway.kimaki.xyz', 'discord-gateway.kimaki.dev') WHERE bot_mode = 'gateway' AND proxy_url LIKE '%discord-gateway.kimaki.xyz%'",
     "UPDATE thread_worktrees SET status = 'pending' WHERE status IS NULL",
+    "UPDATE session_sleeps SET delivery_id = lower(hex(randomblob(16))) WHERE delivery_id IS NULL",
+    'UPDATE session_sleeps SET attempts = 0 WHERE attempts IS NULL',
+    // Existing part_messages tables never get a rewritten FK. Drop orphans.
+    'DELETE FROM part_messages WHERE thread_id NOT IN (SELECT thread_id FROM thread_sessions)',
   ]
   for (const stmt of migrationStatements) {
     await client.execute(stmt).catch(() => undefined)
   }
+
+  await dropLegacySessionSleepsColumns(client)
+
+  // Migrate legacy thread_worktrees rows into thread_workspaces.
+  // Rows that already exist in thread_workspaces (by thread_id) are skipped.
+  await client.execute(`
+    INSERT OR IGNORE INTO thread_workspaces (
+      thread_id, workspace_type, status, error_message,
+      project_directory, workspace_directory, workspace_name, created_at
+    )
+    SELECT
+      thread_id, 'kimaki-worktree', status, error_message,
+      project_directory, worktree_directory, worktree_name, created_at
+    FROM thread_worktrees
+    WHERE thread_id NOT IN (SELECT thread_id FROM thread_workspaces)
+  `).catch(() => undefined)
 
   const botRows = await db.query.bot_tokens.findMany({
     columns: {

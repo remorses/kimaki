@@ -1,10 +1,12 @@
-// /unset-model-override command - Remove model overrides and use default instead.
+// Clear model overrides (session first, else channel).
+// Invoked from the /model UI via a "Clear override" button.
 
 import {
-  ChatInputCommandInteraction,
   ChannelType,
-  type ThreadChannel,
   type TextChannel,
+  type ThreadChannel,
+  type InteractionEditReplyOptions,
+  type Message,
 } from 'discord.js'
 import {
   getChannelModel,
@@ -18,86 +20,55 @@ import * as schema from '../schema.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
-import { getCurrentModelInfo } from './model.js'
+import { formatModelSource, getCurrentModelInfo } from './model.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const unsetModelLogger = createLogger(LogPrefix.MODEL)
 
-function formatModelSource(type: string, agentName?: string): string {
-  switch (type) {
-    case 'session':
-      return 'session override'
-    case 'agent':
-      return `agent "${agentName}"`
-    case 'channel':
-      return 'channel override'
-    case 'global':
-      return 'global default'
-    case 'opencode-config':
-    case 'opencode-recent':
-    case 'opencode-provider-default':
-      return 'opencode default'
-    default:
-      return 'none'
-  }
-}
-
 /**
- * Handle the /unset-model-override slash command.
+ * Clear the nearest model override for the current channel/thread.
  * In thread: clears session override if exists, otherwise channel override.
  * In channel: clears channel override.
  */
-export async function handleUnsetModelCommand({
-  interaction,
+export async function clearModelOverride({
+  channel,
   appId,
+  editReply,
 }: {
-  interaction: ChatInputCommandInteraction
+  channel: TextChannel | ThreadChannel
   appId: string
+  editReply: (options: InteractionEditReplyOptions) => Promise<Message>
 }): Promise<void> {
-  unsetModelLogger.log('[UNSET-MODEL] handleUnsetModelCommand called')
+  unsetModelLogger.log('[UNSET-MODEL] clearModelOverride called')
 
-  await interaction.deferReply()
-
-  const channel = interaction.channel
-
-  if (!channel) {
-    await interaction.editReply({
-      content: 'This command can only be used in a channel',
-    })
-    return
-  }
-
-  const isThread = [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(channel.type)
+  const isThread = channel.isThread()
 
   let projectDirectory: string | undefined
   let targetChannelId: string
   let sessionId: string | undefined
 
   if (isThread) {
-    const thread = channel as ThreadChannel
-    const textChannel = await resolveTextChannel(thread)
+    const textChannel = await resolveTextChannel(channel)
     const metadata = await getKimakiMetadata(textChannel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = textChannel?.id || channel.id
-    sessionId = await getThreadSession(thread.id)
+    sessionId = await getThreadSession(channel.id)
   } else if (channel.type === ChannelType.GuildText) {
     const metadata = await getKimakiMetadata(channel)
     projectDirectory = metadata.projectDirectory
     targetChannelId = channel.id
   } else {
-    await interaction.editReply({
+    await editReply({
       content: 'This command can only be used in text channels or threads',
+      components: [],
     })
     return
   }
 
   if (!projectDirectory) {
-    await interaction.editReply({
+    await editReply({
       content: 'This channel is not configured with a project directory',
+      components: [],
     })
     return
   }
@@ -129,8 +100,9 @@ export async function handleUnsetModelCommand({
       `[UNSET-MODEL] Cleared channel model for ${targetChannelId}`,
     )
   } else {
-    await interaction.editReply({
+    await editReply({
       content: 'No model override to clear.',
+      components: [],
     })
     return
   }
@@ -148,10 +120,15 @@ export async function handleUnsetModelCommand({
       directory: projectDirectory,
     })
 
+    const agentName =
+      newModelInfo.type === 'agent' ? newModelInfo.agentName : undefined
     newModelText =
       newModelInfo.type === 'none'
         ? 'none'
-        : `\`${newModelInfo.model}\` (${formatModelSource(newModelInfo.type, 'agentName' in newModelInfo ? newModelInfo.agentName : undefined)})`
+        : `\`${newModelInfo.model}\` (${formatModelSource({
+            type: newModelInfo.type,
+            agentName,
+          })})`
   }
 
   // Check if there's a running request and abort+retry with new model (only for session changes in threads)
@@ -168,7 +145,8 @@ export async function handleUnsetModelCommand({
     ? '\n_Restarting current request with new model..._'
     : ''
 
-  await interaction.editReply({
+  await editReply({
     content: `${clearedTypeText} model override removed.\n**Was:** \`${clearedModel}\`\n**Now using:** ${newModelText}${retriedText}`,
+    components: [],
   })
 }

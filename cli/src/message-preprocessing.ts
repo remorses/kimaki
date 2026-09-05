@@ -19,12 +19,9 @@ import {
 } from './message-formatting.js'
 import { processVoiceAttachment } from './voice-handler.js'
 import { isVoiceAttachment } from './voice-attachment.js'
-import {
-  buildExternalDirectoryPermissionRules,
-  initializeOpencodeForDirectory,
-} from './opencode.js'
+import { initializeOpencodeForDirectory } from './opencode.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
-import { getThreadSession, listTrackedTextChannels } from './database.js'
+import { getThreadSession } from './database.js'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -134,32 +131,6 @@ async function getRepliedMessageContext({
     authorUsername: referencedMessage.author.username,
     text: repliedText,
   }
-}
-
-export async function getChannelReferencePermissionRules({
-  message,
-}: {
-  message: Message
-}) {
-  const channelIds = [...message.mentions.channels.keys()]
-  if (channelIds.length === 0) {
-    return []
-  }
-
-  const mentionedChannelIds = new Set(channelIds)
-  const referencedChannels = (await listTrackedTextChannels()).filter((channel) => {
-    return mentionedChannelIds.has(channel.channel_id)
-  })
-  const resolvedDirectories = new Set(
-    referencedChannels.map((channel) => channel.directory.replaceAll('\\', '/')),
-  )
-
-  return [...resolvedDirectories].flatMap((directory) => {
-    return buildExternalDirectoryPermissionRules({
-      resolvedPattern: directory,
-      action: 'allow',
-    })
-  })
 }
 
 /**
@@ -275,7 +246,6 @@ export async function preprocessExistingThreadMessage({
     lastSessionContext,
     agents,
   })
-  const permissionRules = await getChannelReferencePermissionRules({ message })
   if (voiceResult) {
     messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }
@@ -311,7 +281,6 @@ export async function preprocessExistingThreadMessage({
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     repliedMessage,
-    permissionRules,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }
@@ -351,7 +320,6 @@ export async function preprocessNewSessionMessage({
 
   let prompt = resolveMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
-  const permissionRules = await getChannelReferencePermissionRules({ message })
   const voiceResult = await processVoiceAttachment({
     message,
     thread,
@@ -390,10 +358,18 @@ export async function preprocessNewSessionMessage({
   }
 
   const qs = extractQueueSuffix(prompt)
+
+  const fileAttachments = await getFileAttachments(message)
+  const textAttachmentsContent = await getTextAttachments(message)
+  const finalPrompt = textAttachmentsContent
+    ? `${qs.prompt}\n\n${textAttachmentsContent}`
+    : qs.prompt
+
   if (
     shouldSkipEmptyPrompt({
       message,
-      prompt: qs.prompt,
+      prompt: finalPrompt,
+      images: fileAttachments,
       hasVoiceAttachment,
     })
   ) {
@@ -401,9 +377,9 @@ export async function preprocessNewSessionMessage({
   }
 
   return {
-    prompt: qs.prompt,
+    prompt: finalPrompt,
+    images: fileAttachments.length > 0 ? fileAttachments : undefined,
     repliedMessage,
-    permissionRules,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }
@@ -440,7 +416,6 @@ export async function preprocessNewThreadMessage({
 
   let messageContent = resolveMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
-  const permissionRules = await getChannelReferencePermissionRules({ message })
   const voiceResult = await processVoiceAttachment({
     message,
     thread,
@@ -483,7 +458,6 @@ export async function preprocessNewThreadMessage({
     prompt,
     images: fileAttachments.length > 0 ? fileAttachments : undefined,
     repliedMessage,
-    permissionRules,
     mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
     agent: voiceResult?.agent,
   }

@@ -1,32 +1,41 @@
-import { exec } from 'node:child_process'
+import { exec, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const DEFAULT_EXEC_TIMEOUT_MS = 10_000
 
 const _execAsync = promisify(exec)
+const _execFileAsync = promisify(execFile)
 
 export function execAsync(
-  command: string,
+  command: string | { command: string; args: string[] },
   options?: Parameters<typeof _execAsync>[1],
 ): Promise<{ stdout: string; stderr: string }> {
-  const timeoutMs =
-    (options as { timeout?: number })?.timeout || DEFAULT_EXEC_TIMEOUT_MS
-  const execPromise = _execAsync(command, options) as Promise<{
-    stdout: string
-    stderr: string
-  }> & { child?: import('node:child_process').ChildProcess }
+  const timeoutMs = options?.timeout || DEFAULT_EXEC_TIMEOUT_MS
+  const childPromise =
+    typeof command === 'string'
+      ? _execAsync(command, options)
+      : _execFileAsync(command.command, command.args, options)
+  const execPromise = childPromise.then(({ stdout, stderr }) => {
+    return {
+      stdout: typeof stdout === 'string' ? stdout : stdout.toString(),
+      stderr: typeof stderr === 'string' ? stderr : stderr.toString(),
+    }
+  })
+  const commandLabel = typeof command === 'string'
+    ? command
+    : [command.command, ...command.args].join(' ')
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      const pid = execPromise.child?.pid
+      const pid = childPromise.child?.pid
       if (pid) {
         try {
           process.kill(-pid, 'SIGTERM')
         } catch {
-          execPromise.child?.kill('SIGTERM')
+          childPromise.child?.kill('SIGTERM')
         }
       }
-      reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`))
+      reject(new Error(`Command timed out after ${timeoutMs}ms: ${commandLabel}`))
     }, timeoutMs)
   })
   return Promise.race([execPromise, timeoutPromise]).finally(() => {

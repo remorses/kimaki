@@ -1,6 +1,7 @@
 // Regression tests for Windows OpenCode command resolution and spawn args.
 
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -42,6 +43,86 @@ describe('selectResolvedCommand', () => {
         isWindows: false,
       }),
     ).toBe('/usr/local/bin/opencode')
+  })
+})
+
+describe('buildOpencodeServeArgs', () => {
+  test('always passes --hostname so opencode.json cannot bind 0.0.0.0', async () => {
+    const { buildOpencodeServeArgs } = await import('./opencode.js')
+    expect(buildOpencodeServeArgs({ port: 4096 })).toEqual([
+      'serve',
+      '--port',
+      '4096',
+      '--hostname',
+      '127.0.0.1',
+      '--print-logs',
+      '--log-level',
+      'WARN',
+    ])
+  })
+
+  test('passes --hostname when set', async () => {
+    const { buildOpencodeServeArgs } = await import('./opencode.js')
+    expect(
+      buildOpencodeServeArgs({ port: 4096, hostname: '0.0.0.0' }),
+    ).toEqual([
+      'serve',
+      '--port',
+      '4096',
+      '--hostname',
+      '0.0.0.0',
+      '--print-logs',
+      '--log-level',
+      'WARN',
+    ])
+  })
+})
+
+describe('published runtime artifacts', () => {
+  test('lists @subrouter/opencode as a runtime dependency', () => {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, '../package.json'), 'utf8'),
+    ) as { dependencies?: Record<string, string> }
+    expect(pkg.dependencies?.['@subrouter/opencode']).toMatch(/^(workspace:\^|\^)/)
+  })
+})
+
+describe('resolveSubrouterPluginSpec', () => {
+  test('uses npm package identity in production for OpenCode deduplication', async () => {
+    const { resolveSubrouterPluginSpec } = await import('./opencode.js')
+    const require = createRequire(import.meta.url)
+    const packageJsonPath = require.resolve('@subrouter/opencode/package.json')
+    const version = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version
+    expect(resolveSubrouterPluginSpec({ isDev: false })).toBe(
+      `@subrouter/opencode@${version}`,
+    )
+  })
+
+  test('loads workspace source directly in development', async () => {
+    const { resolveSubrouterPluginSpec } = await import('./opencode.js')
+    expect(resolveSubrouterPluginSpec({ isDev: true })).toMatch(
+      /^file:.*\/subrouter\/opencode\/dist\/index\.js$/,
+    )
+  })
+})
+
+describe('publicOpencodeBindRequiresPassword', () => {
+  test('allows loopback without a password', async () => {
+    const { publicOpencodeBindRequiresPassword } = await import('./opencode.js')
+    expect(publicOpencodeBindRequiresPassword({ hostname: null })).toBe(false)
+    expect(publicOpencodeBindRequiresPassword({ hostname: '127.0.0.1' })).toBe(
+      false,
+    )
+    expect(publicOpencodeBindRequiresPassword({ hostname: 'localhost' })).toBe(
+      false,
+    )
+  })
+
+  test('requires a password for 0.0.0.0', async () => {
+    const { publicOpencodeBindRequiresPassword } = await import('./opencode.js')
+    expect(publicOpencodeBindRequiresPassword({ hostname: '0.0.0.0' })).toBe(
+      true,
+    )
   })
 })
 

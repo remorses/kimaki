@@ -1,0 +1,65 @@
+{
+  "name": "@kimaki/automode",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenCode plugin that gates tool execution with a two-stage LLM classifier, like Claude Code auto mode.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "rimraf dist \"*.tsbuildinfo\" && pnpm build",
+    "test": "vitest --run",
+    "typecheck": "tsc"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "auto-mode",
+    "permissions",
+    "guardrails"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/kimaki",
+    "directory": "opencode-auto-mode"
+  },
+  "homepage": "https://github.com/remorses/kimaki",
+  "bugs": "https://github.com/remorses/kimaki/issues",
+  "license": "MIT",
+  "dependencies": {
+    "unbash": "^4.0.11"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.16.2",
+    "@opencode-ai/sdk": "^1.18.23",
+    "@types/node": "^24.3.0",
+    "opencode-deterministic-provider": "workspace:^",
+    "rimraf": "^6.0.1"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@opencode-ai/sdk": "*"
+  }
+}

@@ -505,7 +505,7 @@ e2eTest('voice message handling', () => {
         📝 **Transcribed message:** Fix the login bug in auth.ts
         *using deterministic-provider/deterministic-v2*
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.sessionId).toBeDefined()
 
@@ -527,6 +527,95 @@ e2eTest('voice message handling', () => {
       expect(assistantTexts.length).toBeGreaterThan(0)
     },
     8_000,
+  )
+
+  test(
+    'first voice message resumes after the user saves an API key',
+    async () => {
+      setDeterministicTranscription({
+        transcription: 'Resume the original voice note',
+        queueMessage: false,
+        requireApiKey: true,
+      })
+
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendVoiceMessage()
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (candidate) => candidate.name === 'Voice Message',
+      })
+      const th = discord.thread(thread.id)
+      const messages = await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Voice transcription requires an API key',
+        timeout: 4_000,
+      })
+      const keyMessage = messages.find((message) => {
+        return message.content.includes('Voice transcription requires an API key')
+      })
+      if (!keyMessage) throw new Error('Expected API key prompt message')
+
+      const buttonData = JSON.stringify(keyMessage.components)
+      const buttonCustomId = buttonData.match(
+        /"custom_id":"(transcription_apikey:[^"]+)"/,
+      )?.[1]
+      if (!buttonCustomId) throw new Error('Expected API key button custom id')
+
+      const buttonInteraction = await th.user(TEST_USER_ID).clickButton({
+        messageId: keyMessage.id,
+        customId: buttonCustomId,
+      })
+      await th.waitForInteractionAck({
+        interactionId: buttonInteraction.id,
+        timeout: 4_000,
+      })
+      const modalResponse = await th.getInteractionResponse(buttonInteraction.id)
+      const modalCustomId = modalResponse?.data?.match(
+        /"custom_id":"(transcription_apikey_modal:[^"]+)"/,
+      )?.[1]
+      if (!modalCustomId) throw new Error('Expected API key modal custom id')
+
+      const modalInteraction = await th.user(TEST_USER_ID).submitModal({
+        customId: modalCustomId,
+        fields: [{ customId: 'apikey', value: 'AIza-test-key' }],
+      })
+      await th.waitForInteractionAck({
+        interactionId: modalInteraction.id,
+        timeout: 4_000,
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Resume the original voice note',
+        timeout: 4_000,
+      })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+      })
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (voice-tester)
+        [attachment: voice-message.ogg]
+        --- from: assistant (TestBot)
+        🎤 Transcribing voice message...
+        Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.
+        Gemini API key saved. Retrying the original voice message.
+        📝 **Transcribed message:** Resume the original voice note
+        *using deterministic-provider/deterministic-v2*
+        ⬥ session-reply
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+      `)
+
+      const finalState = getThreadState(thread.id)
+      expect(finalState?.sessionId).toBeDefined()
+    },
+    10_000,
   )
 
   test(
@@ -598,7 +687,7 @@ e2eTest('voice message handling', () => {
         📝 **Transcribed message:** Investigate the missing content type path
         *using deterministic-provider/deterministic-v2*
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
       `)
 
       const messages = await waitForSessionMessages({
@@ -707,14 +796,14 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Add error handling to the parser
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState?.sessionId).toBeDefined()
       if (!finalState?.sessionId) {
@@ -970,13 +1059,13 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Queue this task for later
-        Queued at position 1. Edit your message to update it in queue
+        Queued at position 1. Edit or delete your message to update the queue
         ⬥ slow-response-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **voice-tester:** Voice message transcription from Discord user:
         Queue this task for later
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.queueItems.length).toBe(0)
 
@@ -1094,14 +1183,14 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Delayed transcription result
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
@@ -1232,14 +1321,14 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Queued voice after idle
         ⬥ session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)

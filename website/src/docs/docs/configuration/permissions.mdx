@@ -1,6 +1,6 @@
 ---
 title: Tool Permissions
-description: Approve or deny risky tool calls from Discord, grant extra directories, and lock down sessions.
+description: Approve or deny risky tool calls from Discord, protect specific directories, and lock down sessions.
 icon: lucide:shield-check
 ---
 
@@ -31,16 +31,40 @@ OpenCode fixes a permission's scope when it asks. A reply can allow or deny, but
 </Note>
 </Aside>
 
-## Granting extra directories with `/add-dir`
+## Directory access
 
-By default a session can only touch its project directory. To let it access another folder, run **`/add-dir <directory>`**:
+**Every directory is allowed by default.** The agent can read and edit files outside the project without asking. OpenCode's own default is to ask for each external folder, which turned ordinary reads into a stream of approval prompts.
 
+To protect specific folders, add `deny` or `ask` rules to your `opencode.json`. Your project config is merged **after** Kimaki's defaults and the last matching rule wins, so your rules take priority:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "~/.ssh": "deny",
+      "~/.ssh/*": "deny",
+      "~/Documents/*": "ask"
+    }
+  }
+}
 ```
-/add-dir ../shared-lib      grant access to a sibling directory
-/add-dir *                  grant access to all folders
+
+Kimaki writes `"external_directory": { "*": "allow" }`, so the keys above merge on top of that wildcard. Paths you don't list stay allowed.
+
+To flip the default back to a strict allow-list, start the bot with **`--restrict-directories`**:
+
+```bash
+kimaki --restrict-directories
 ```
 
-The path is resolved against the current working directory (or worktree). If the session is busy, Kimaki briefly aborts and resumes it so the new permission takes effect.
+The agent is then limited to the session working directory plus a few known-safe paths (`/tmp`, `~/.config/opencode`, `~/.opensrc`, `~/.kimaki`, and common toolchain caches). Anything else raises an approval prompt in the thread.
+
+<Aside>
+<Note>
+Worktree threads deny the original checkout, with or without the flag. This keeps the agent from editing the main repo after the thread moved to a worktree. It is a session-level rule, so it also beats your `opencode.json`. The only way to override it is an explicit `--permission 'external_directory:allow'` on that session.
+</Note>
+</Aside>
 
 ## Default permissions in opencode.json
 

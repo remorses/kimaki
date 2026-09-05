@@ -1,4 +1,8 @@
 // Terminal send command for creating Discord threads and scheduling prompts.
+// Designed to work in CI/headless environments with just KIMAKI_BOT_TOKEN.
+// The local SQLite database (channel_directories) is NOT required for the basic
+// flow: post message → create thread → remote bot picks it up. The local project
+// directory mapping is only needed for --send-at, --wait, and --cwd.
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
@@ -12,7 +16,12 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getChannelWorktreesEnabled } from '../database.js'
+import {
+  flushAnalytics,
+  initAnalytics,
+  setAnalyticsBotMode,
+} from '../analytics.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -20,9 +29,9 @@ import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
-import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
+import { archiveThread, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
-import { execAsync, resolveSessionWorkingDirectory } from '../worktrees.js'
+import { execAsync, resolveSessionWorkingDirectory, isGitRepositoryRoot } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
 import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
@@ -38,6 +47,7 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import { validateCliModelOption } from '../session-handler/model-utils.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -92,13 +102,32 @@ cli
     ),
   )
   .option(
+    '-f, --file <path>',
+    z.array(z.string()).describe(
+      'Local file to attach (repeatable). Images, text files, PDFs, etc. ' +
+      'Examples: --file screenshot.png --file report.pdf',
+    ),
+  )
+  .option(
     '--send-at <schedule>',
     'Schedule send for future (UTC ISO date/time ending in Z, or cron expression)',
+  )
+  .option(
+    '--pre-run <command>',
+    'Run a shell command in the project before starting a scheduled task',
+  )
+  .option(
+    '--allow-concurrency',
+    'Allow concurrent sessions from the same scheduled task',
   )
   .option('--thread <threadId>', 'Post prompt to an existing thread')
   .option(
     '--session <sessionId>',
     'Post prompt to thread mapped to an existing session',
+  )
+  .option(
+    '--parent-session <sessionId>',
+    'Parent OpenCode session ID for newly created child sessions',
   )
   .option(
     '--wait',
@@ -123,6 +152,11 @@ cli
 
         const existingThreadMode = Boolean(threadId || sessionId)
 
+        if ((options.preRun || options.allowConcurrency) && !sendAt) {
+          cliLogger.error('--pre-run and --allow-concurrency require --send-at')
+          process.exit(EXIT_NO_RESTART)
+        }
+
         if (threadId && sessionId) {
           cliLogger.error('Use either --thread or --session, not both')
           process.exit(EXIT_NO_RESTART)
@@ -145,9 +179,25 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
+        const earlyModelCheck = await validateCliModelOption({
+          model: options.model,
+        })
+        if (earlyModelCheck instanceof Error) {
+          cliLogger.error(earlyModelCheck.message)
+          process.exit(EXIT_NO_RESTART)
+        }
+
+        const filePaths = options.file?.length
+          ? options.file.map((f: string) => path.resolve(f))
+          : undefined
+
         if (sendAt) {
           if (options.wait) {
             cliLogger.error('Cannot use --wait with --send-at')
+            process.exit(EXIT_NO_RESTART)
+          }
+          if (filePaths?.length) {
+            cliLogger.error('Cannot use --file with --send-at')
             process.exit(EXIT_NO_RESTART)
           }
           if (prompt.length > 1900) {
@@ -155,6 +205,31 @@ cli
               '--send-at currently supports prompts up to 1900 characters',
             )
             process.exit(EXIT_NO_RESTART)
+          }
+        }
+
+        // Validate all --file paths exist and are regular files
+        if (filePaths?.length) {
+          // Discord allows max 10 attachments per message. Long prompts also
+          // consume one slot (prompt.md), so reserve space for that.
+          const maxUserFiles = prompt.length > 2000 ? 9 : 10
+          if (filePaths.length > maxUserFiles) {
+            cliLogger.error(
+              `Too many files: ${filePaths.length} provided, Discord allows at most ${maxUserFiles} attachments per message` +
+              (maxUserFiles === 9 ? ' (1 slot reserved for long prompt)' : ''),
+            )
+            process.exit(EXIT_NO_RESTART)
+          }
+          for (const file of filePaths) {
+            if (!fs.existsSync(file)) {
+              cliLogger.error(`File not found: ${file}`)
+              process.exit(EXIT_NO_RESTART)
+            }
+            const stat = fs.statSync(file)
+            if (!stat.isFile()) {
+              cliLogger.error(`Not a regular file: ${file}`)
+              process.exit(EXIT_NO_RESTART)
+            }
           }
         }
 
@@ -214,9 +289,6 @@ cli
           if (name) {
             incompatibleFlags.push('--name')
           }
-          if (options.user) {
-            incompatibleFlags.push('--user')
-          }
 
           if (incompatibleFlags.length > 0) {
             cliLogger.error(
@@ -232,6 +304,11 @@ cli
         const { token: botToken, appId } = await resolveBotCredentials({
           appIdOverride: optionAppId,
         })
+        const botRowForAnalytics = await getBotTokenWithMode()
+        setAnalyticsBotMode(
+          botRowForAnalytics?.mode === 'gateway' ? 'gateway' : 'self_hosted',
+        )
+        initAnalytics()
 
         // If --project provided (or defaulting to cwd), resolve to channel ID
         if (resolvedProjectPath) {
@@ -345,12 +422,14 @@ cli
                 guild,
                 projectDirectory: absolutePath,
                 botName: client.user?.username,
+                analyticsSource: 'send_auto_create',
               })
 
               channelId = textChannelId
               cliLogger.log(`Created channel: ${channelId}`)
 
               void client.destroy()
+              await flushAnalytics()
             }
           } catch (e) {
             cliLogger.log('Failed to resolve project')
@@ -395,10 +474,42 @@ cli
             throw new Error(`Thread has no parent channel: ${targetThreadId}`)
           }
 
+          // Adding the user as a thread member is what makes the thread appear
+          // in their Discord left sidebar. Without it a scheduled reminder posts
+          // into a thread the user may have already left or never joined, so
+          // they never see it.
+          const threadTargetUser = await resolveDiscordUserOption({
+            user: options.user,
+            guildId: threadData.guild_id,
+            rest,
+          })
+          if (threadTargetUser instanceof Error) {
+            cliLogger.error(threadTargetUser.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+
+          // channelConfig is optional: in CI/headless environments the local DB
+          // has no channel_directories rows because the bot hasn't synced yet.
+          // The running bot on the other end resolves the directory from its own DB.
+          // We only require it for features that genuinely need a local directory
+          // (scheduled tasks and --wait).
           const channelConfig = await getChannelDirectory(threadData.parent_id)
-          if (!channelConfig) {
+          const threadModelCheck = await validateCliModelOption({
+            model: options.model,
+            directory: channelConfig?.directory,
+          })
+          if (threadModelCheck instanceof Error) {
+            cliLogger.error(threadModelCheck.message)
+            process.exit(EXIT_NO_RESTART)
+          }
+
+          // Guard early: fail before sending the message if a feature that
+          // needs local project directory mapping is requested.
+          if (!channelConfig && (parsedSchedule || options.wait)) {
+            const flag = parsedSchedule ? '--send-at' : '--wait'
             throw new Error(
-              'Thread parent channel is not configured with a project directory',
+              'Thread parent channel is not configured with a project directory. ' +
+              `${flag} requires a local project mapping. Run the bot first to sync channel data.`,
             )
           }
 
@@ -409,10 +520,13 @@ cli
               prompt,
               agent: options.agent || null,
               model: options.model || null,
-              username: null,
-              userId: null,
+              username: threadTargetUser?.username || null,
+              userId: threadTargetUser?.id || null,
               permissions: options.permission?.length ? options.permission : null,
               injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
+              parentSessionId: options.parentSession || null,
+              preRunCommand: options.preRun || null,
+              allowConcurrency: Boolean(options.allowConcurrency),
             }
             const taskId = await createScheduledTask({
               scheduleKind: parsedSchedule.scheduleKind,
@@ -425,7 +539,8 @@ cli
               channelId: threadData.parent_id,
               threadId: targetThreadId,
               sessionId: sessionId || undefined,
-              projectDirectory: channelConfig.directory,
+              // channelConfig is guaranteed: early guard threw if missing with --send-at
+              projectDirectory: channelConfig!.directory,
             })
 
             const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
@@ -443,6 +558,7 @@ cli
             ...(options.model && { model: options.model }),
             ...(options.permission?.length ? { permissions: options.permission } : {}),
             ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
+            ...(options.parentSession && { parentSessionId: options.parentSession }),
           }
           const promptEmbed = [
             {
@@ -456,12 +572,28 @@ cli
           // detection can find the command on its own line.
           const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
 
+          if (threadTargetUser) {
+            cliLogger.log(
+              `Adding user ${threadTargetUser.username || threadTargetUser.id} to thread...`,
+            )
+            const addMemberResult = await ensureThreadMember({
+              rest,
+              threadId: targetThreadId,
+              userId: threadTargetUser.id,
+            })
+            if (addMemberResult instanceof Error) {
+              cliLogger.error(addMemberResult.message)
+              process.exit(EXIT_NO_RESTART)
+            }
+          }
+
           await sendDiscordMessageWithOptionalAttachment({
             channelId: targetThreadId,
             prompt: prefixedPrompt,
             botToken,
             embeds: promptEmbed,
             rest,
+            files: filePaths,
           })
 
           const threadUrl = `https://discord.com/channels/${threadData.guild_id}/${threadData.id}`
@@ -475,10 +607,12 @@ cli
           process.stdout.write(`${threadUrl}\n`)
 
           if (options.wait) {
+            // channelConfig is guaranteed here: early guard above already
+            // threw if channelConfig is missing when --wait is used.
             const { waitAndOutputSession } = await import('../wait-session.js')
             await waitAndOutputSession({
               threadId: targetThreadId,
-              projectDirectory: channelConfig.directory,
+              projectDirectory: channelConfig!.directory,
               waitStartedAtMs,
             })
           }
@@ -500,22 +634,37 @@ cli
           guild_id: string
         }
 
+        // channelConfig is optional: in CI/headless environments the local DB
+        // has no channel_directories rows because the bot hasn't synced yet.
+        // The running bot on the other end resolves the directory from its own DB.
+        // We only require it for features that genuinely need a local directory
+        // (--send-at, --wait, --cwd).
         const channelConfig = await getChannelDirectory(channelData.id)
-
-        if (!channelConfig && !notifyOnly) {
-          cliLogger.log('Channel not configured')
-          throw new Error(
-            `Channel #${channelData.name} is not configured with a project directory. Run the bot first to sync channel data.`,
-          )
+        const projectDirectory = channelConfig?.directory
+        const channelModelCheck = await validateCliModelOption({
+          model: options.model,
+          directory: projectDirectory,
+        })
+        if (channelModelCheck instanceof Error) {
+          cliLogger.error(channelModelCheck.message)
+          process.exit(EXIT_NO_RESTART)
         }
 
-        const projectDirectory = channelConfig?.directory
+        // Features that require a local project directory mapping
+        const needsProjectDirectory = Boolean(parsedSchedule || options.wait || options.cwd)
+        if (!channelConfig && needsProjectDirectory) {
+          throw new Error(
+            `Channel #${channelData.name} is not configured with a project directory. ` +
+            `${parsedSchedule ? '--send-at' : options.wait ? '--wait' : '--cwd'} requires a local project mapping. ` +
+            'Run the bot first to sync channel data.',
+          )
+        }
 
         // Validate --cwd is inside the project or an existing git worktree.
         let resolvedCwd: string | undefined
         if (options.cwd) {
-          // projectDirectory is guaranteed here: --cwd is incompatible with --notify-only,
-          // and non-notify sends already require channelConfig above.
+          // projectDirectory is guaranteed here: needsProjectDirectory check above
+          // already threw if channelConfig is missing when --cwd is used.
           const cwdResult = await resolveSessionWorkingDirectory({
             projectDirectory: projectDirectory!,
             candidatePath: options.cwd,
@@ -548,14 +697,23 @@ cli
             : cleanPrompt)
         // Explicit string => use as-is via formatWorktreeName (no vowel strip).
         // Boolean true => derived from thread/prompt, compress via formatAutoWorktreeName.
+        // When no --worktree flag but channel has worktrees enabled via toggle,
+        // the bot-side ThreadCreate handler auto-creates the worktree. We add
+        // the prefix here for cosmetic consistency (thread name shows 🌳).
+        const channelWorktreesEnabled =
+          !options.worktree && !options.cwd && !notifyOnly && projectDirectory
+            ? (await getChannelWorktreesEnabled(channelId)) &&
+              (await isGitRepositoryRoot(projectDirectory))
+            : false
         const worktreeName = options.worktree
           ? typeof options.worktree === 'string'
             ? formatWorktreeName(options.worktree)
             : formatAutoWorktreeName(baseThreadName)
           : undefined
-        const threadName = worktreeName
-          ? `${WORKTREE_PREFIX}${baseThreadName}`
-          : baseThreadName
+        const threadName =
+          worktreeName || channelWorktreesEnabled
+            ? `${WORKTREE_PREFIX}${baseThreadName}`
+            : baseThreadName
 
         if (parsedSchedule) {
           const payload: ScheduledTaskPayload = {
@@ -572,6 +730,9 @@ cli
             userId: resolvedUser?.id || null,
             permissions: options.permission?.length ? options.permission : null,
             injectionGuardPatterns: options.injectionGuard?.length ? options.injectionGuard : null,
+            parentSessionId: options.parentSession || null,
+            preRunCommand: options.preRun || null,
+            allowConcurrency: Boolean(options.allowConcurrency),
           }
           const taskId = await createScheduledTask({
             scheduleKind: parsedSchedule.scheduleKind,
@@ -603,13 +764,14 @@ cli
               ...(worktreeName && { worktree: worktreeName }),
               ...(resolvedCwd && { cwd: resolvedCwd }),
               ...(resolvedUser && {
-                username: resolvedUser.username,
                 userId: resolvedUser.id,
+                ...(resolvedUser.username && { username: resolvedUser.username }),
               }),
               ...(options.agent && { agent: options.agent }),
               ...(options.model && { model: options.model }),
               ...(options.permission?.length && { permissions: options.permission }),
               ...(options.injectionGuard?.length && { injectionGuardPatterns: options.injectionGuard }),
+              ...(options.parentSession && { parentSessionId: options.parentSession }),
             }
         const autoStartEmbed = embedMarker
           ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } }]
@@ -622,6 +784,7 @@ cli
           embeds: autoStartEmbed,
           rest,
           splitInsteadOfAttach: notifyOnly,
+          files: filePaths,
         })
 
         // For notify-only on non-project channels, just post the message without
@@ -652,7 +815,9 @@ cli
 
         // Add user to thread if specified
         if (resolvedUser) {
-          cliLogger.log(`Adding user ${resolvedUser.username} to thread...`)
+          cliLogger.log(
+            `Adding user ${resolvedUser.username || resolvedUser.id} to thread...`,
+          )
           await rest.put(Routes.threadMembers(threadData.id, resolvedUser.id))
         }
 
@@ -690,8 +855,8 @@ cli
         process.stdout.write(`${threadUrl}\n`)
 
         if (options.wait) {
-          // projectDirectory is guaranteed here: --wait is incompatible with --notify-only,
-          // and non-notify sends already require channelConfig above.
+          // projectDirectory is guaranteed here: needsProjectDirectory check above
+          // already threw if channelConfig is missing when --wait is used.
           const { waitAndOutputSession } = await import('../wait-session.js')
           await waitAndOutputSession({
             threadId: threadData.id,

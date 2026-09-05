@@ -3,7 +3,10 @@
 import { CronExpressionParser } from 'cron-parser'
 import * as errore from 'errore'
 
-export type ScheduledTaskPayload =
+export type ScheduledTaskPayload = {
+  preRunCommand: string | null
+  allowConcurrency: boolean
+} & (
   | {
       kind: 'thread'
       threadId: string
@@ -14,6 +17,7 @@ export type ScheduledTaskPayload =
       userId: string | null
       permissions: string[] | null
       injectionGuardPatterns: string[] | null
+      parentSessionId: string | null
     }
   | {
       kind: 'channel'
@@ -29,7 +33,8 @@ export type ScheduledTaskPayload =
       userId: string | null
       permissions: string[] | null
       injectionGuardPatterns: string[] | null
-    }
+      parentSessionId: string | null
+    })
 
 export type ParsedSendAt =
   | {
@@ -94,6 +99,101 @@ function parseUtcSendAtDate({
   }
 
   return runAt
+}
+
+const SLEEP_DURATION_REGEX = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i
+
+const SLEEP_DURATION_MS = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+} as const
+
+function parseUtcFutureDate({
+  value,
+  now,
+  field,
+}: {
+  value: string
+  now: Date
+  field: string
+}): Date | Error {
+  if (!UTC_SEND_AT_DATE_REGEX.test(value)) {
+    return new Error(
+      `${field} must be UTC ISO format ending with Z (example: 2026-08-20T09:00:00Z). Received: ${value}`,
+    )
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return new Error(`Invalid UTC date for ${field}: ${value}`)
+  }
+
+  if (parsed.getTime() <= now.getTime()) {
+    return new Error(`${field} must be in the future (UTC): ${value}`)
+  }
+
+  return parsed
+}
+
+export function parseSleepWakeAt({
+  duration,
+  until,
+  now,
+}: {
+  duration?: string
+  until?: string
+  now: Date
+}): Date | Error {
+  const trimmedDuration = duration?.trim() || ''
+  const trimmedUntil = until?.trim() || ''
+  if (trimmedDuration && trimmedUntil) {
+    return new Error('Pass either duration or until, not both')
+  }
+  if (!trimmedDuration && !trimmedUntil) {
+    return new Error('Pass duration or until')
+  }
+
+  if (trimmedUntil) {
+    return parseUtcFutureDate({
+      value: trimmedUntil,
+      now,
+      field: 'until',
+    })
+  }
+
+  const match = SLEEP_DURATION_REGEX.exec(trimmedDuration)
+  if (!match) {
+    return new Error(
+      `Invalid duration: "${trimmedDuration}". Use a number plus ms, s, m, h, or d (example: 2h).`,
+    )
+  }
+
+  const amount = Number(match[1])
+  const unit = match[2]!.toLowerCase() as keyof typeof SLEEP_DURATION_MS
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return new Error('duration must be greater than 0')
+  }
+
+  return new Date(now.getTime() + amount * SLEEP_DURATION_MS[unit])
+}
+
+export function formatSessionSleepWakeAt(wakeAt: Date): string {
+  return `${wakeAt.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+}
+
+export function formatSessionSleepWakePrompt({
+  wakeAt,
+  reason,
+}: {
+  wakeAt: Date
+  reason: string | null
+}): string {
+  const until = formatSessionSleepWakeAt(wakeAt)
+  const reasonLine = reason?.trim() ? `\nReason: ${reason.trim()}` : ''
+  return `⬦ Woke after sleeping until ${until}${reasonLine}\nContinue the work you were waiting for.`
 }
 
 export function parseSendAtValue({
@@ -203,6 +303,42 @@ export function serializeScheduledTaskPayload(
   return JSON.stringify(payload)
 }
 
+export function applyScheduledTaskUserEdit({
+  payload,
+  userOption,
+  resolvedUser,
+}: {
+  payload: ScheduledTaskPayload
+  userOption: string
+  resolvedUser?: { id: string; username?: string } | null
+}): ScheduledTaskPayload {
+  if (!userOption.trim()) {
+    return {
+      ...payload,
+      userId: null,
+      username: null,
+    }
+  }
+  if (!resolvedUser) return payload
+  return {
+    ...payload,
+    userId: resolvedUser.id,
+    username: resolvedUser.username || null,
+  }
+}
+
+export function appendTaskCommandOutput({
+  prompt,
+  stdout,
+}: {
+  prompt: string
+  stdout: string
+}): string {
+  const output = stdout.trim()
+  if (!output) return prompt
+  return `${prompt}\n\n## Pre-run command output\n\n${output}`
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -240,6 +376,8 @@ export function parseScheduledTaskPayload(
   }
 
   const kind = asString(parsed.kind)
+  const preRunCommand = asString(parsed.preRunCommand)
+  const allowConcurrency = parsed.allowConcurrency === true
   if (kind === 'thread') {
     const threadId = asString(parsed.threadId)
     const prompt = asString(parsed.prompt)
@@ -249,6 +387,7 @@ export function parseScheduledTaskPayload(
     const userId = asString(parsed.userId)
     const permissions = asStringArray(parsed.permissions)
     const injectionGuardPatterns = asStringArray(parsed.injectionGuardPatterns)
+    const parentSessionId = asString(parsed.parentSessionId)
     if (!threadId || !prompt) {
       return new Error('Thread task payload requires threadId and prompt')
     }
@@ -262,6 +401,9 @@ export function parseScheduledTaskPayload(
       userId,
       permissions,
       injectionGuardPatterns,
+      parentSessionId,
+      preRunCommand,
+      allowConcurrency,
     }
   }
 
@@ -279,6 +421,7 @@ export function parseScheduledTaskPayload(
     const userId = asString(parsed.userId)
     const permissions = asStringArray(parsed.permissions)
     const injectionGuardPatterns = asStringArray(parsed.injectionGuardPatterns)
+    const parentSessionId = asString(parsed.parentSessionId)
     if (!channelId || !prompt) {
       return new Error('Channel task payload requires channelId and prompt')
     }
@@ -296,6 +439,9 @@ export function parseScheduledTaskPayload(
       userId,
       permissions,
       injectionGuardPatterns,
+      parentSessionId,
+      preRunCommand,
+      allowConcurrency,
     }
   }
 

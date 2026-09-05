@@ -34,6 +34,7 @@ import {
   getOpencodeServerAuthHeaders,
 } from '../opencode.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
+import { clearModelListCache } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
@@ -122,7 +123,9 @@ function createContextHash(context: LoginContext): string {
 // ── Provider popularity order ───────────────────────────────────
 // Discord select menus cap at 25 options, so we show popular ones first.
 // IDs sourced from opencode's provider.list() API (scripts/list-providers.ts).
+// `subrouter` leads: it pools every subscription and cycles across them.
 const PROVIDER_POPULARITY_ORDER: string[] = [
+  'subrouter',
   'anthropic',
   'openai',
   'google',
@@ -937,6 +940,7 @@ export async function handleOAuthCodeModalSubmit(
     }
 
     await getClient().instance.dispose({ directory: ctx.dir })
+    clearModelListCache()
     pendingLoginContexts.delete(hash)
 
     await interaction.editReply({
@@ -993,6 +997,7 @@ export async function handleApiKeyModalSubmit(
 
     // Dispose to refresh provider state so new credentials are recognized
     await getClient().instance.dispose({ directory: ctx.dir })
+    clearModelListCache()
 
     await interaction.editReply({
       content: `✅ **Successfully authenticated with ${ctx.providerName}!**\n\nYou can now use models from this provider.`,
@@ -1127,7 +1132,7 @@ async function startOAuthFlow(
       // completing login in a browser (possibly on a different machine).
       const button = new ButtonBuilder()
         .setCustomId(`login_oauth_code_btn:${hash}`)
-        .setLabel('Paste authorization code')
+        .setLabel('Paste authorization code or callback url')
         .setStyle(ButtonStyle.Primary)
 
       await interaction.editReply({
@@ -1159,6 +1164,7 @@ async function startOAuthFlow(
     }
 
     await getClient().instance.dispose({ directory: ctx.dir })
+    clearModelListCache()
     pendingLoginContexts.delete(hash)
 
     await interaction.editReply({

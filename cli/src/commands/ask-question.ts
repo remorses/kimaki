@@ -12,6 +12,7 @@ import {
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
+import { DiscordOperationError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
@@ -44,8 +45,9 @@ type PendingQuestionContext = {
 }
 
 // Store pending question contexts by hash.
-// TTL prevents unbounded growth if user never answers a question.
-const QUESTION_CONTEXT_TTL_MS = 10 * 60 * 1000
+// No TTL on purpose: a question can only be answered by the user, so expiring it
+// could only abort the run. Cleanup happens on answer, on a new user message, on
+// abort (abortActiveRunInternal), and on thread dispose.
 export const pendingQuestionContexts = new Map<string, PendingQuestionContext>()
 
 export function areAllQuestionsAnswered({
@@ -157,32 +159,6 @@ export async function showAskUserQuestionDropdowns({
   }
 
   pendingQuestionContexts.set(contextHash, context)
-  // On TTL expiry: hide the dropdown UI and abort the session so OpenCode
-  // unblocks. We intentionally do NOT call question.reply() — sending 'Other'
-  // made the model think the user chose an option when they didn't.
-  setTimeout(async () => {
-    const ctx = pendingQuestionContexts.get(contextHash)
-    if (!ctx) {
-      return
-    }
-    // Delete context first so the dropdown becomes inert immediately.
-    // Without this, a user clicking during the abort() await would still
-    // be accepted by handleAskQuestionSelectMenu, then abort() would
-    // kill that valid run.
-    deletePendingQuestionContextsForRequest({
-      threadId: ctx.thread.id,
-      requestId: ctx.requestId,
-    })
-    // Abort the session so OpenCode isn't stuck waiting for a reply
-    const client = getOpencodeClient(ctx.directory)
-    if (client) {
-      await client.session.abort({
-        sessionID: ctx.sessionId,
-      }).catch((error) => {
-        logger.error('Failed to abort session after question expiry:', error)
-      })
-    }
-  }, QUESTION_CONTEXT_TTL_MS).unref()
 
   // Send one message per question with its dropdown directly underneath
   for (let i = 0; i < input.questions.length; i++) {
@@ -219,11 +195,24 @@ export async function showAskUserQuestionDropdowns({
     const actionRow =
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
 
-    await thread.send({
+    const sendResult = await thread.send({
       content: `**${(q.header || '').slice(0, 200)}**\n${q.question.slice(0, 1700)}`,
       components: [actionRow],
       flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
-    })
+    }).catch((e) => new DiscordOperationError({ operation: 'sendQuestionDropdown', cause: e }))
+    // Without a visible dropdown the user can never answer, and there is no TTL
+    // to rescue the run, so drop the context and abort so OpenCode unblocks.
+    if (sendResult instanceof Error) {
+      logger.error('Failed to send question dropdown:', sendResult)
+      deletePendingQuestionContextsForRequest({ threadId: thread.id, requestId })
+      const client = getOpencodeClient(directory)
+      if (client) {
+        await client.session.abort({ sessionID: sessionId }).catch((error) => {
+          logger.error('Failed to abort session after question send failure:', error)
+        })
+      }
+      return
+    }
   }
 
   logger.log(
@@ -414,7 +403,7 @@ export function parseAskUserQuestionTool(part: {
  *   the tool answer so the model sees the user's response. The caller should
  *   NOT also enqueue the message as a new prompt.
  *   Returns 'replied' on success, 'reply-failed' if the reply call fails
- *   (context kept pending so TTL can retry).
+ *   (context kept pending so the user can retry).
  */
 export async function cancelPendingQuestion(
   threadId: string,
@@ -466,7 +455,7 @@ export async function cancelPendingQuestion(
     logger.log(`Answered question ${context.requestId} with user message`)
   } catch (error) {
     logger.error('Failed to answer question:', error)
-    // Keep context pending so TTL can still fire.
+    // Keep context pending so the user can retry.
     // Caller should not consume the user message since reply failed.
     return 'reply-failed'
   }

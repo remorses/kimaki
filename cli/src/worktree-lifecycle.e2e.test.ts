@@ -11,7 +11,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import url from 'node:url'
 import { describe, beforeAll, afterAll, test, expect } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
+import { ChannelType, Client, GatewayIntentBits, Partials, Routes } from 'discord.js'
+import YAML from 'yaml'
+import type { ThreadStartMarker } from './system-message.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencodeConfig,
@@ -29,7 +31,9 @@ import {
   setChannelVerbosity,
   setChannelWorktreesEnabled,
   getThreadSession,
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
+  getSessionModel,
+  setSessionModel,
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
@@ -47,13 +51,24 @@ import { execAsync } from './worktrees.js'
 const TEST_USER_ID = '200000000000000901'
 const TEXT_CHANNEL_ID = '200000000000000902'
 const NON_GIT_CHANNEL_ID = '200000000000000903'
+const AUTO_WORKTREE_CHANNEL_ID = '200000000000000904'
 // Unique worktree name per run to avoid collisions with leftover worktrees
 const WORKTREE_SUFFIX = Date.now().toString(36).slice(-6)
 const WORKTREE_NAME = `wt-e2e-${WORKTREE_SUFFIX}`
+const CHANNEL_WORKTREE_NAME = `wt-chan-${WORKTREE_SUFFIX}`
+const AUTO_WORKTREE_SUFFIX = `wt-auto-${WORKTREE_SUFFIX}`
+const SOURCE_MODEL = 'source-model-v2'
 
 function normalizeWorktreeLifecycleText(text: string): string {
   return text
+    .replaceAll(CHANNEL_WORKTREE_NAME, 'CHANNEL_WORKTREE_NAME')
+    .replaceAll(AUTO_WORKTREE_SUFFIX, 'AUTO_WORKTREE_NAME')
     .replaceAll(WORKTREE_NAME, 'WORKTREE_NAME')
+    .replace(
+      /opencode\/kimaki-rply-wth-exctly-snd-at-wt-[a-z0-9]+/g,
+      'AUTO_WORKTREE_BRANCH',
+    )
+    .replaceAll(WORKTREE_SUFFIX, 'SUFFIX')
     .replace(/ses_[a-zA-Z0-9]+/g, 'ses_TEST')
     .replace(/<#\d+>/g, '<#THREAD_ID>')
     .replace(/`[^`\n]*\/worktrees\/[^`\n]*`/g, '`/tmp/worktrees/WORKTREE_NAME`')
@@ -173,6 +188,11 @@ describe('worktree lifecycle', () => {
           name: 'non-git-worktree-e2e',
           type: ChannelType.GuildText,
         },
+        {
+          id: AUTO_WORKTREE_CHANNEL_ID,
+          name: 'auto-worktree-e2e',
+          type: ChannelType.GuildText,
+        },
       ],
       users: [
         {
@@ -207,6 +227,9 @@ describe('worktree lifecycle', () => {
         matchers: createDeterministicMatchers(),
       },
     })
+    const providerConfig = opencodeConfig.provider['deterministic-provider']
+    if (!providerConfig) throw new Error('Missing deterministic provider config')
+    providerConfig.models[SOURCE_MODEL] = { name: SOURCE_MODEL }
     fs.writeFileSync(
       path.join(directories.projectDirectory, 'opencode.json'),
       JSON.stringify(opencodeConfig, null, 2),
@@ -239,9 +262,16 @@ describe('worktree lifecycle', () => {
       directory: directories.nonGitDirectory,
       channelType: 'text',
     })
+    await setChannelDirectory({
+      channelId: AUTO_WORKTREE_CHANNEL_ID,
+      directory: directories.projectDirectory,
+      channelType: 'text',
+    })
     await setChannelVerbosity(TEXT_CHANNEL_ID, 'tools_and_text')
     await setChannelVerbosity(NON_GIT_CHANNEL_ID, 'tools_and_text')
+    await setChannelVerbosity(AUTO_WORKTREE_CHANNEL_ID, 'tools_and_text')
     await setChannelWorktreesEnabled(NON_GIT_CHANNEL_ID, true)
+    await setChannelWorktreesEnabled(AUTO_WORKTREE_CHANNEL_ID, true)
 
     botClient = createDiscordJsClient({ restUrl: discord.restUrl })
     await startDiscordBot({
@@ -280,32 +310,57 @@ describe('worktree lifecycle', () => {
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
-    // Clean up the git worktree created during the test
+    // Clean up the git worktrees created during the tests
     if (directories) {
-      const worktreeBranch = `opencode/kimaki-${WORKTREE_NAME}`
+      const branchesToClean = [
+        `opencode/kimaki-${WORKTREE_NAME}`,
+        `opencode/kimaki-${CHANNEL_WORKTREE_NAME}`,
+      ]
       await execAsync(
         `git worktree list --porcelain`,
         { cwd: directories.projectDirectory },
-      ).then(({ stdout }) => {
-        // Find and remove any worktree for our test branch
+      ).then(async ({ stdout }) => {
         const lines = stdout.split('\n')
         let currentPath = ''
         for (const line of lines) {
           if (line.startsWith('worktree ')) {
             currentPath = line.slice('worktree '.length)
           }
-          if (line.startsWith('branch ') && line.includes(worktreeBranch) && currentPath) {
-            return execAsync(
-              `git worktree remove --force ${JSON.stringify(currentPath)}`,
-              { cwd: directories.projectDirectory },
-            )
+          if (line.startsWith('branch ') && currentPath) {
+            for (const branch of branchesToClean) {
+              if (line.includes(branch)) {
+                await execAsync(
+                  `git worktree remove --force ${JSON.stringify(currentPath)}`,
+                  { cwd: directories.projectDirectory },
+                ).catch(() => { return })
+              }
+            }
           }
         }
       }).catch(() => { return })
+      // Also clean up auto-worktree branches (pattern: opencode/kimaki-<suffix>)
       await execAsync(
-        `git branch -D ${JSON.stringify(`opencode/kimaki-${WORKTREE_NAME}`)}`,
+        'git worktree prune',
         { cwd: directories.projectDirectory },
       ).catch(() => { return })
+      for (const branch of branchesToClean) {
+        await execAsync(
+          `git branch -D ${JSON.stringify(branch)}`,
+          { cwd: directories.projectDirectory },
+        ).catch(() => { return })
+      }
+      // Clean auto-worktree branches (auto-derived names contain the suffix)
+      await execAsync(
+        `git branch --list 'opencode/kimaki-*${WORKTREE_SUFFIX}*'`,
+        { cwd: directories.projectDirectory },
+      ).then(async ({ stdout }) => {
+        for (const branch of stdout.trim().split('\n').filter(Boolean)) {
+          await execAsync(
+            `git branch -D ${JSON.stringify(branch.trim())}`,
+            { cwd: directories.projectDirectory },
+          ).catch(() => { return })
+        }
+      }).catch(() => { return })
       fs.rmSync(directories.dataDir, {
         recursive: true,
         force: true,
@@ -348,6 +403,11 @@ describe('worktree lifecycle', () => {
       expect(runtimeBefore!.sdkDirectory).toBe(directories.projectDirectory)
       const sessionBefore = await getThreadSession(thread.id)
       expect(sessionBefore).toBeTruthy()
+      if (!sessionBefore) throw new Error('Source session was not persisted')
+      await setSessionModel({
+        sessionId: sessionBefore,
+        modelId: `deterministic-provider/${SOURCE_MODEL}`,
+      })
 
       // 2. Run /new-worktree inside the source thread.
       // This should create a new worktree thread instead of switching this one.
@@ -387,6 +447,12 @@ describe('worktree lifecycle', () => {
         timeout: 10_000,
       })
 
+      // Messages sent as soon as the checkout is ready must wait for the
+      // source session fork and keep its model.
+      await worktreeTh.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: after-worktree-thread',
+      })
+
       await waitForBotMessageContaining({
         discord,
         threadId: worktreeThread.id,
@@ -399,11 +465,29 @@ describe('worktree lifecycle', () => {
       expect(sourceSessionAfterFork).toBe(sessionBefore)
       const worktreeSession = await getThreadSession(worktreeThread.id)
       expect(worktreeSession).toBeTruthy()
+      if (!worktreeSession) throw new Error('Worktree session was not persisted')
       expect(worktreeSession).not.toBe(sessionBefore)
-      await expect(getThreadWorktree(thread.id)).resolves.toBeUndefined()
-      const worktreeInfo = await getThreadWorktree(worktreeThread.id)
+      await expect(getSessionModel(worktreeSession)).resolves.toMatchInlineSnapshot(`
+        {
+          "modelId": "deterministic-provider/source-model-v2",
+          "variant": null,
+        }
+      `)
+      await expect(getThreadWorktreeOrWorkspace(thread.id)).resolves.toBeUndefined()
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(worktreeThread.id)
       expect(worktreeInfo?.status).toBe('ready')
-      expect(worktreeInfo?.worktree_directory).toContain(WORKTREE_NAME)
+      expect(worktreeInfo?.workspace_directory).toContain(WORKTREE_NAME)
+      const worktreeDirectory = worktreeInfo?.workspace_directory
+      if (!worktreeDirectory) throw new Error('Worktree directory was not persisted')
+      const getWorktreeClient = await initializeOpencodeForDirectory(
+        worktreeDirectory,
+      )
+      if (getWorktreeClient instanceof Error) throw getWorktreeClient
+      const worktreeSessionResponse = await getWorktreeClient().session.get({
+        sessionID: worktreeSession,
+        directory: worktreeDirectory,
+      })
+      expect(worktreeSessionResponse.data?.directory).toBe(worktreeDirectory)
 
       const runtimeAfter = getRuntime(thread.id)
       expect(runtimeAfter).toBe(runtimeBefore)
@@ -417,9 +501,6 @@ describe('worktree lifecycle', () => {
 
       // 4. Send messages to both threads. The source continues in the base
       // checkout, and the new thread runs in the worktree checkout.
-      await worktreeTh.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: after-worktree-thread',
-      })
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: after-source-thread',
       })
@@ -446,7 +527,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: worktreeThread.id,
         userId: TEST_USER_ID,
-        text: 'deterministic-v2',
+        text: SOURCE_MODEL,
         afterUserMessageIncludes: 'after-worktree-thread',
         timeout: 4_000,
       })
@@ -454,7 +535,7 @@ describe('worktree lifecycle', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: 'deterministic-v2',
+        text: SOURCE_MODEL,
         afterUserMessageIncludes: 'after-source-thread',
         timeout: 4_000,
       })
@@ -467,12 +548,12 @@ describe('worktree lifecycle', () => {
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
         Creating worktree in <#THREAD_ID>
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         --- from: user (worktree-tester)
         Reply with exactly: after-source-thread
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(sourceText).toContain('Reply with exactly: before-worktree')
       expect(sourceText).toContain('Reply with exactly: after-source-thread')
@@ -490,7 +571,7 @@ describe('worktree lifecycle', () => {
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
         ⬥ ok
-        *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Worktree:')
       expect(worktreeText).toContain('Branch:')
@@ -499,6 +580,168 @@ describe('worktree lifecycle', () => {
       expect(worktreeText).toContain('⬥ ok')
     },
     30_000,
+  )
+
+  test(
+    '/new-worktree from a text channel creates a worktree thread that responds to messages',
+    async () => {
+      // 1. Run /new-worktree from the text channel (not inside a thread)
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'new-worktree',
+          options: [{ name: 'name', type: 3, value: CHANNEL_WORKTREE_NAME }],
+        })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      // 2. Wait for the worktree thread to appear in the channel
+      const worktreeThread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return Boolean(
+            t.name
+            && t.name.startsWith('⬦ worktree: opencode/kimaki-')
+            && t.name.includes(CHANNEL_WORKTREE_NAME),
+          )
+        },
+      })
+
+      const wt = discord.thread(worktreeThread.id)
+
+      // 3. Wait for worktree to become ready (status message shows Branch:)
+      await waitForBotMessageContaining({
+        discord,
+        threadId: worktreeThread.id,
+        userId: TEST_USER_ID,
+        text: 'Branch:',
+        timeout: 10_000,
+      })
+
+      // 4. Verify the DB has the worktree info
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(worktreeThread.id)
+      expect(worktreeInfo?.status).toBe('ready')
+      expect(worktreeInfo?.workspace_directory).toContain(CHANNEL_WORKTREE_NAME)
+
+      // 5. Send a message in the worktree thread and verify it responds
+      await wt.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: channel-worktree-msg',
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: worktreeThread.id,
+        userId: TEST_USER_ID,
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'channel-worktree-msg',
+        timeout: 10_000,
+      })
+
+      // Wait for footer to confirm session completion
+      await waitForBotMessageContaining({
+        discord,
+        threadId: worktreeThread.id,
+        userId: TEST_USER_ID,
+        text: 'deterministic-v2',
+        afterUserMessageIncludes: 'channel-worktree-msg',
+        timeout: 4_000,
+      })
+
+      // 6. Verify the runtime is using the worktree directory
+      const runtime = getRuntime(worktreeThread.id)
+      expect(runtime).toBeDefined()
+      expect(runtime!.sdkDirectory).toContain(CHANNEL_WORKTREE_NAME)
+      expect(runtime!.sdkDirectory).toContain(`${path.sep}worktrees${path.sep}`)
+
+      // 7. Snapshot the thread content
+      const worktreeText = await wt.text()
+      expect(normalizeWorktreeLifecycleText(worktreeText)).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        🌳 **Worktree: opencode/kimaki-CHANNEL_WORKTREE_NAME**
+        📁 \`/tmp/worktrees/WORKTREE_NAME\`
+        🌿 Branch: \`opencode/kimaki-CHANNEL_WORKTREE_NAME\`
+        --- from: user (worktree-tester)
+        Reply with exactly: channel-worktree-msg
+        --- from: assistant (TestBot)
+        *using deterministic-provider/deterministic-v2*
+        ⬥ ok"
+      `)
+      expect(worktreeText).toContain('Branch:')
+      expect(worktreeText).toContain('⬥ ok')
+      expect(worktreeText).toContain('Reply with exactly: channel-worktree-msg')
+    },
+    30_000,
+  )
+
+  test(
+    'auto-worktree from user message creates worktree thread and responds',
+    async () => {
+      // Channel AUTO_WORKTREE_CHANNEL_ID has worktrees enabled via toggle.
+      // Sending a message should auto-create a worktree thread.
+      // Include WORKTREE_SUFFIX in the message so the auto-derived branch name
+      // is unique per run and doesn't collide with leftover branches.
+      const autoMsg = `Reply with exactly: ${AUTO_WORKTREE_SUFFIX}`
+      await discord.channel(AUTO_WORKTREE_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: autoMsg,
+      })
+
+      // The thread should have the ⬦ prefix indicating a worktree thread
+      const thread = await discord.channel(AUTO_WORKTREE_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return Boolean(t.name?.startsWith('⬦ '))
+        },
+      })
+      const th = discord.thread(thread.id)
+
+      // Wait for the bot reply to the user message. The auto-worktree
+      // creation runs in the background and the first message awaits it.
+      // This is the 3rd worktree in the suite, so git can be slow.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '⬥ ok',
+        afterUserMessageIncludes: AUTO_WORKTREE_SUFFIX,
+        timeout: 25_000,
+      })
+
+      // Verify runtime is in the worktree directory
+      const runtime = getRuntime(thread.id)
+      expect(runtime).toBeDefined()
+      expect(runtime!.sdkDirectory).toContain(`${path.sep}worktrees${path.sep}`)
+      expect(runtime!.sdkDirectory).not.toBe(directories.projectDirectory)
+
+      // Verify DB has worktree info
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(thread.id)
+      expect(worktreeInfo?.status).toBe('ready')
+      expect(worktreeInfo?.workspace_directory).toBeTruthy()
+
+      // Send a follow-up message to verify session works inside worktree
+      await th.user(TEST_USER_ID).sendMessage({
+        content: 'Reply with exactly: auto-followup',
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: '⬥ ok',
+        afterUserMessageIncludes: 'auto-followup',
+        timeout: 4_000,
+      })
+
+      const text = await th.text()
+      expect(text).toContain('⬥ ok')
+      expect(text).toContain(AUTO_WORKTREE_SUFFIX)
+      expect(text).toContain('Reply with exactly: auto-followup')
+      // Should have at least 2 ok replies
+      expect((text.match(/⬥ ok/g) || []).length).toBeGreaterThanOrEqual(2)
+    },
+    35_000,
   )
 
   test(
@@ -539,16 +782,17 @@ describe('worktree lifecycle', () => {
         timeout: 4_000,
       })
 
-      let text = await th.text()
-      for (let attempt = 0; attempt < 40; attempt++) {
-        if ((text.match(/⬥ ok/g) || []).length >= 2) {
-          break
-        }
-        await new Promise((resolve) => {
-          setTimeout(resolve, 100)
-        })
-        text = await th.text()
-      }
+      // Wait for footer after second reply to stabilize the snapshot
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'deterministic-v2',
+        afterUserMessageIncludes: 'non-git-second',
+        timeout: 4_000,
+      })
+
+      const text = await th.text()
       expect(text).toMatchInlineSnapshot(`
         "--- from: user (worktree-tester)
         Reply with exactly: non-git-first
@@ -558,7 +802,7 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         ⬥ ok"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
@@ -568,5 +812,89 @@ describe('worktree lifecycle', () => {
       expect(okCount).toBe(2)
     },
     20_000,
+  )
+
+  test(
+    'kimaki send --channel auto-creates worktree when channel toggle is enabled',
+    async () => {
+      // Simulate `kimaki send --channel AUTO_WORKTREE_CHANNEL_ID --prompt '...'`
+      // WITHOUT --worktree flag. The bot-side ThreadCreate handler should detect
+      // the channel toggle and auto-create a worktree.
+      const prompt = `Reply with exactly: send-auto-wt-${WORKTREE_SUFFIX}`
+      const embedMarker: ThreadStartMarker = {
+        start: true,
+        username: 'worktree-tester',
+        userId: TEST_USER_ID,
+      }
+
+      // Post starter message (what `kimaki send` does)
+      const starterMessage = await discord
+        .channel(AUTO_WORKTREE_CHANNEL_ID)
+        .bot()
+        .sendMessage({
+          content: `» **kimaki-cli:**\n${prompt}`,
+          embeds: [
+            { color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } },
+          ],
+        })
+
+      // Create thread on that message (what `kimaki send` does via REST)
+      const threadData = (await botClient.rest.post(
+        Routes.threads(AUTO_WORKTREE_CHANNEL_ID, starterMessage.id),
+        {
+          body: {
+            name: prompt.slice(0, 80),
+            auto_archive_duration: 1440,
+          },
+        },
+      )) as { id: string; name: string }
+
+      // Wait for worktree creation status message (Branch:)
+      await waitForBotMessageContaining({
+        discord,
+        threadId: threadData.id,
+        userId: TEST_USER_ID,
+        text: 'Branch:',
+        timeout: 25_000,
+      })
+
+      // Wait for the bot reply to the prompt. The starter message is from
+      // the bot (kimaki-cli), not a user, so just wait for the text to appear.
+      await waitForBotMessageContaining({
+        discord,
+        threadId: threadData.id,
+        userId: discord.botUserId,
+        text: '⬥ ok',
+        timeout: 10_000,
+      })
+
+      // Snapshot the thread content
+      const th = discord.thread(threadData.id)
+      expect(
+        normalizeWorktreeLifecycleText(await th.text()),
+      ).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        » **kimaki-cli:**
+        Reply with exactly: send-auto-wt-SUFFIX
+        [embed]
+        🌳 **Worktree: AUTO_WORKTREE_BRANCH**
+        📁 \`/tmp/worktrees/WORKTREE_NAME\`
+        🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
+        *using deterministic-provider/deterministic-v2*
+        ⬥ ok"
+      `)
+
+      // Verify DB has worktree info
+      const worktreeInfo = await getThreadWorktreeOrWorkspace(threadData.id)
+      expect(worktreeInfo?.status).toBe('ready')
+      expect(worktreeInfo?.workspace_directory).toBeTruthy()
+
+      // Verify runtime is in the worktree directory
+      const runtime = getRuntime(threadData.id)
+      expect(runtime).toBeDefined()
+      expect(runtime!.sdkDirectory).toContain(`${path.sep}worktrees${path.sep}`)
+      expect(runtime!.sdkDirectory).not.toBe(directories.projectDirectory)
+    },
+    35_000,
   )
 })

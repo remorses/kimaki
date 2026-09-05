@@ -117,6 +117,11 @@ export class OpenCodeSdkError extends errore.createTaggedError({
   message: 'OpenCode SDK call failed: $operation',
 }) {}
 
+export class InvalidModelError extends errore.createTaggedError({
+  name: 'InvalidModelError',
+  message: 'Invalid model "$model": $reason',
+}) {}
+
 export class FilesystemOperationError extends errore.createTaggedError({
   name: 'FilesystemOperationError',
   message: 'Filesystem operation failed: $operation',

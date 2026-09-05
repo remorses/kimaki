@@ -35,6 +35,19 @@
       "id": "f12aed8d9639442caef78c019a71ab27"
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
+  "ratelimits": [
+    {
+      "name": "TRANSCRIBE_RATE_LIMITER",
+      "namespace_id": "42501",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    }
+  ],
   "routes": [
     {
       "pattern": "kimaki.dev/*",
@@ -74,6 +87,19 @@
         {
           "binding": "GATEWAY_CLIENT_KV",
           "id": "104c7f676bad499a86cc0cf6acf34476"
+        }
+      ],
+      "ai": {
+        "binding": "AI"
+      },
+      "ratelimits": [
+        {
+          "name": "TRANSCRIBE_RATE_LIMITER",
+          "namespace_id": "42502",
+          "simple": {
+            "limit": 20,
+            "period": 60
+          }
         }
       ],
       "routes": [

@@ -12,13 +12,15 @@
 // state field, ask if it can be derived from existing state instead.
 
 import type { DiscordFileAttachment } from '../message-formatting.js'
-import type { PermissionRuleset } from '@opencode-ai/sdk/v2'
 import type { RepliedMessageContext } from '../system-message.js'
 import { store } from '../store.js'
 
 // ── Shared types ─────────────────────────────────────────────────
 
 export type QueuedMessage = {
+  // Stable id for this queue entry. Used by Discord remove-queue buttons so
+  // position shifts after earlier drains do not remove the wrong item.
+  queueId?: string
   // The text content to send to the OpenCode session (user message or
   // transcribed voice message). Always present.
   prompt: string
@@ -44,13 +46,14 @@ export type QueuedMessage = {
   // Raw permission rule strings ("tool:action" or "tool:pattern:action").
   // Parsed and merged into session permissions on creation.
   permissions?: string[]
-  // Already-resolved permission rules discovered at message ingress, for
-  // example #channel project directory references.
-  permissionRules?: PermissionRuleset
   // Injection guard scan patterns (e.g. "bash:*", "webfetch:*").
   // Written to a temp config file after session creation so the plugin
   // can check per-session whether to scan tool outputs.
   injectionGuardPatterns?: string[]
+  // Parent OpenCode session ID from `kimaki send --parent-session`.
+  // Applied once on first session create so the child system message can
+  // expose how to message the parent when the user asks.
+  parentSessionId?: string
   // Discord message ID and thread ID of the source message. Embedded in
   // <discord-user> synthetic context so the external sync loop can detect
   // messages that originated from Discord and skip re-mirroring them.
@@ -62,6 +65,8 @@ export type QueuedMessage = {
   // list can show which sessions were started by scheduled tasks.
   sessionStartScheduleKind?: 'at' | 'cron'
   sessionStartScheduledTaskId?: number
+  // Product analytics turn source (discord/cli/scheduled/retry).
+  analyticsSource?: 'discord' | 'cli' | 'scheduled' | 'retry'
 }
 
 // ── Per-thread state (value inside the Map) ──────────────────────
@@ -81,6 +86,11 @@ export type ThreadRunState = {
   // working without changing the cached system prompt on every follow-up.
   sessionUsername: string | undefined
   sessionUserId: string | undefined
+
+  // Parent OpenCode session that spawned this thread via
+  // `kimaki send --parent-session`. Set once on first ingress and reused for
+  // the session-stable system prompt.
+  parentSessionId: string | undefined
 
   // FIFO queue of pending inputs waiting for kimaki-local dispatch.
   // Normal user messages default to opencode queue mode; this queue is
@@ -107,6 +117,7 @@ export function initialThreadState(): ThreadRunState {
     sessionId: undefined,
     sessionUsername: undefined,
     sessionUserId: undefined,
+    parentSessionId: undefined,
     queueItems: [],
     sentPartIds: new Set(),
   }
@@ -180,6 +191,15 @@ export function setSessionUserId(threadId: string, userId: string): void {
   })
 }
 
+export function setParentSessionId(threadId: string, parentSessionId: string): void {
+  updateThread(threadId, (t) => {
+    if (t.parentSessionId) {
+      return t
+    }
+    return { ...t, parentSessionId }
+  })
+}
+
 export function enqueueItem(threadId: string, item: QueuedMessage): void {
   updateThread(threadId, (t) => ({
     ...t,
@@ -205,8 +225,11 @@ export function dequeueItem(threadId: string): QueuedMessage | undefined {
   return next
 }
 
-export function clearQueueItems(threadId: string): void {
+export function clearQueueItems(threadId: string): QueuedMessage[] {
+  const items =
+    store.getState().threads.get(threadId)?.queueItems.slice() ?? []
   updateThread(threadId, (t) => ({ ...t, queueItems: [] }))
+  return items
 }
 
 export function removeQueueItemAtPosition(
@@ -237,6 +260,37 @@ export function removeQueueItemAtPosition(
       queueItems: t.queueItems.filter((_, itemIndex) => {
         return itemIndex !== index
       }),
+    })
+    return { threads: newThreads }
+  })
+  return removedItem
+}
+
+export function removeQueueItemById(
+  threadId: string,
+  queueId: string,
+): QueuedMessage | undefined {
+  if (!queueId) {
+    return undefined
+  }
+
+  let removedItem: QueuedMessage | undefined
+  store.setState((s) => {
+    const t = s.threads.get(threadId)
+    if (!t) {
+      return s
+    }
+
+    const index = t.queueItems.findIndex((item) => item.queueId === queueId)
+    if (index === -1) {
+      return s
+    }
+
+    removedItem = t.queueItems[index]
+    const newThreads = new Map(s.threads)
+    newThreads.set(threadId, {
+      ...t,
+      queueItems: t.queueItems.filter((_, itemIndex) => itemIndex !== index),
     })
     return { threads: newThreads }
   })

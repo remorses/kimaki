@@ -1,7 +1,7 @@
 // /create-new-project command - Create a new project folder, initialize git, and start a session.
 // Also exports createNewProject() for reuse during onboarding (welcome channel creation).
 
-import { ChannelType, type Guild, type TextChannel } from 'discord.js'
+import { ChannelType, type Guild } from 'discord.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execAsync } from '../worktrees.js'
@@ -9,7 +9,10 @@ import type { CommandContext } from './types.js'
 import { getProjectsDir } from '../config.js'
 import { createProjectChannels } from '../channel-management.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
-import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import {
+  isTextChannelOrThread,
+  SILENT_MESSAGE_FLAGS,
+} from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.CREATE_PROJECT)
@@ -75,6 +78,7 @@ export async function createNewProject({
       guild,
       projectDirectory,
       botName,
+      analyticsSource: 'discord_command',
     })
 
   return {
@@ -101,8 +105,12 @@ export async function handleCreateNewProjectCommand({
     return
   }
 
-  if (!channel || channel.type !== ChannelType.GuildText) {
-    await command.editReply('This command can only be used in a text channel')
+  // The current channel is only used as an entrypoint guard: the new project
+  // gets its own text channel, so running from a thread is fine too.
+  if (!channel || !isTextChannelOrThread(channel.type)) {
+    await command.editReply(
+      'This command can only be used in a text channel or a thread',
+    )
     return
   }
 
@@ -140,9 +148,14 @@ export async function handleCreateNewProjectCommand({
       projectDirectory,
       sanitizedName,
     } = result
-    const textChannel = (await guild.channels.fetch(
-      textChannelId,
-    )) as TextChannel
+    const fetchedChannel = await guild.channels.fetch(textChannelId)
+    if (fetchedChannel?.type !== ChannelType.GuildText) {
+      await command.editReply(
+        `Created project **${sanitizedName}** but could not open its text channel <#${textChannelId}>`,
+      )
+      return
+    }
+    const textChannel = fetchedChannel
 
     const voiceInfo = voiceChannelId ? `\n🔊 Voice: <#${voiceChannelId}>` : ''
     await command.editReply(

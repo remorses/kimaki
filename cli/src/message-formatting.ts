@@ -10,10 +10,13 @@ export type DiscordFileAttachment = FilePartInput & {
   sourceUrl?: string
 }
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { createLogger, LogPrefix } from './logger.js'
-import { FetchError } from './errors.js'
+import { FetchError, FilesystemOperationError } from './errors.js'
 import { processImage } from './image-utils.js'
 import { parsePatchFileCounts } from './patch-text-parser.js'
+import { getDataDir } from './config.js'
 
 // Generic message type compatible with both v1 and v2 SDK
 type GenericSessionMessage = {
@@ -261,6 +264,52 @@ export function isTextMimeType(contentType: string | null): boolean {
   return TEXT_MIME_TYPES.some((prefix) => contentType.startsWith(prefix))
 }
 
+// Small Discord "send as file" prompts stay inlined. Bigger dumps only get a URL.
+export const TEXT_ATTACHMENT_INLINE_LIMIT_BYTES = 64 * 1024
+const KIMAKI_SEND_PROMPT_ATTACHMENT_NAME = 'prompt.md'
+
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) {
+    const kb = bytes / 1024
+    return `${kb < 10 ? kb.toFixed(1) : kb.toFixed(0)} KB`
+  }
+  const mb = bytes / (1024 * 1024)
+  return `${mb < 10 ? mb.toFixed(1) : mb.toFixed(0)} MB`
+}
+
+function shouldInlineTextAttachment(attachment: {
+  name: string
+  size: number
+}): boolean {
+  if (attachment.name === KIMAKI_SEND_PROMPT_ATTACHMENT_NAME) return true
+  return attachment.size <= TEXT_ATTACHMENT_INLINE_LIMIT_BYTES
+}
+
+function textAttachmentAttrs(
+  attachment: { name: string; contentType: string | null; size: number; url: string },
+  extra: string[] = [],
+): string {
+  return [
+    `filename="${attachment.name}"`,
+    `mime="${attachment.contentType}"`,
+    `size="${attachment.size}"`,
+    `url="${attachment.url}"`,
+    ...extra,
+  ].join(' ')
+}
+
+function safeAttachmentBasename(name: string): string {
+  const sanitized = path.basename(name).replace(/\0/g, '')
+  if (!sanitized || sanitized === '.' || sanitized === '..') return 'attachment'
+  return sanitized
+}
+
+function localAttachmentPath(attachment: { id?: string; name: string; url: string }): string {
+  const id = attachment.id || attachment.url.slice(-12).replace(/[^a-zA-Z0-9]/g, '')
+  return path.join(getDataDir(), 'attachments', `${id}-${safeAttachmentBasename(attachment.name)}`)
+}
+
 export async function getTextAttachments(message: Message): Promise<string> {
   const textAttachments = Array.from(message.attachments.values()).filter(
     (attachment) => isTextMimeType(attachment.contentType),
@@ -270,18 +319,40 @@ export async function getTextAttachments(message: Message): Promise<string> {
     return ''
   }
 
+  const attachmentsDir = path.join(getDataDir(), 'attachments')
+  fs.mkdirSync(attachmentsDir, { recursive: true })
+
   const textContents = await Promise.all(
     textAttachments.map(async (attachment) => {
       const response = await fetch(attachment.url)
         .catch((e) => new FetchError({ url: attachment.url, cause: e }))
       if (response instanceof Error) {
-        return `<attachment filename="${attachment.name}" error="${response.message}" />`
+        return `<attachment ${textAttachmentAttrs(attachment)} error="${response.message}" />`
       }
       if (!response.ok) {
-        return `<attachment filename="${attachment.name}" error="Failed to fetch: ${response.status}" />`
+        return `<attachment ${textAttachmentAttrs(attachment)} error="Failed to fetch: ${response.status}" />`
       }
-      const text = await response.text()
-      return `<attachment filename="${attachment.name}" mime="${attachment.contentType}">\n${text}\n</attachment>`
+
+      const buffer = Buffer.from(await response.arrayBuffer())
+      const savedPath = localAttachmentPath(attachment)
+      const written = await fs.promises
+        .writeFile(savedPath, buffer)
+        .catch((e) => new FilesystemOperationError({ operation: 'write attachment', cause: e }))
+      if (written instanceof Error) {
+        logger.error(`Failed to save attachment ${attachment.name}:`, written.message)
+      }
+      const pathAttr = written instanceof Error ? [] : [`path="${savedPath}"`]
+
+      if (!shouldInlineTextAttachment(attachment)) {
+        const sizeLabel = formatAttachmentSize(attachment.size)
+        return [
+          `<attachment ${textAttachmentAttrs(attachment, [...pathAttr, 'large="true"'])}>`,
+          `This file is large (${sizeLabel}, ${attachment.contentType || 'unknown type'}). Contents were not inlined to save context. Read the local path.`,
+          `</attachment>`,
+        ].join('\n')
+      }
+
+      return `<attachment ${textAttachmentAttrs(attachment, pathAttr)}>\n${buffer.toString('utf8')}\n</attachment>`
     }),
   )
 
@@ -349,6 +420,55 @@ export async function getFileAttachments(
 }
 
 const MAX_BASH_COMMAND_INLINE_LENGTH = 100
+
+/**
+ * Format the inline title for a bash tool part. Handles three cases:
+ * 1. Short single-line command → show full command
+ * 2. Long/multiline command with description → show description
+ * 3. Long/multiline command without description → truncate first line of command
+ *
+ * The description field was removed from the opencode v2 bash tool schema but
+ * kimaki's system prompt instructs models to always send it as an extra field.
+ * Case 3 is the fallback when a model omits it.
+ */
+export function formatBashToolTitle({
+  command,
+  description,
+  stateTitle,
+}: {
+  command: string
+  description?: string
+  stateTitle?: string
+}): string {
+  if (!command && !description && !stateTitle) return ''
+
+  const isSingleLine = !command.includes('\n')
+  // Find first non-empty line to handle commands with leading blank lines
+  const firstMeaningfulLine =
+    command
+      .split('\n')
+      .find((line) => line.trim().length > 0)
+      ?.trimStart() ?? ''
+
+  if (command && isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH) {
+    return ` _${escapeInlineMarkdown(command)}_`
+  }
+  if (description) {
+    return ` _${escapeInlineMarkdown(description)}_`
+  }
+  if (firstMeaningfulLine.length > 0) {
+    const needsTruncation = firstMeaningfulLine.length > MAX_BASH_COMMAND_INLINE_LENGTH
+    const base = needsTruncation
+      ? firstMeaningfulLine.slice(0, MAX_BASH_COMMAND_INLINE_LENGTH)
+      : firstMeaningfulLine
+    // Always add ellipsis when showing a partial command (multiline or length-truncated)
+    return ` _${escapeInlineMarkdown(base)}…_`
+  }
+  if (stateTitle) {
+    return ` _${escapeInlineMarkdown(stateTitle)}_`
+  }
+  return ''
+}
 
 export function getToolSummaryText(part: Part): string {
   if (part.type !== 'tool') return ''
@@ -446,6 +566,22 @@ export function getToolSummaryText(part: Part): string {
     return prompt ? `*${escapeInlineMarkdown(prompt.slice(0, 60))}*` : ''
   }
 
+  // LESSON: tool parts are sent to Discord at `running` status (see
+  // shouldSendPart in thread-session-runtime), so `state.title` from the tool
+  // result is never rendered here. Everything shown must come from state.input.
+  // `until` is already absolute; `duration` is relative, so say "for 2h" —
+  // never "until 2h".
+  if (part.tool.endsWith('kimaki_sleep')) {
+    const until = (part.state.input?.until as string) || ''
+    const duration = (part.state.input?.duration as string) || ''
+    const reason = (part.state.input?.reason as string) || ''
+    const when = until ? `until ${until}` : duration ? `for ${duration}` : ''
+    const reasonText = reason ? `_${escapeInlineMarkdown(reason)}_` : ''
+    return [when && escapeInlineMarkdown(when), reasonText]
+      .filter(Boolean)
+      .join(' ')
+  }
+
   if (!part.state.input) return ''
 
   const inputFields = Object.entries(part.state.input)
@@ -485,6 +621,24 @@ export function formatTodoList(part: Part): string {
   const content =
     activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
   return `${num} **${escapeInlineMarkdown(content)}**`
+}
+
+export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
+  // Running only. The child session can be created later when many tasks queue.
+  if (part.tool !== 'task' || part.state.status !== 'running') return ''
+
+  const description = part.state.input?.description
+  const stateTitle = part.state.title
+  const title = typeof description === 'string' && description
+    ? description
+    : typeof stateTitle === 'string'
+      ? stateTitle
+      : ''
+  if (!title) return ''
+
+  const subagentType = part.state.input?.subagent_type
+  const agent = typeof subagentType === 'string' ? subagentType : 'task'
+  return `┣ ${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`
 }
 
 export function formatPart(part: Part, prefix?: string): string {
@@ -568,13 +722,10 @@ export function formatPart(part: Part, prefix?: string): string {
       }
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
-      const isSingleLine = !command.includes('\n')
-      const toolTitle =
-        isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH
-          ? ` _${escapeInlineMarkdown(command)}_`
-          : description
-            ? ` _${escapeInlineMarkdown(description)}_`
-            : ''
+      const toolTitle = formatBashToolTitle({
+        command,
+        description,
+      })
       return `┣ ${pfx}bash${toolTitle}`
     }
 
@@ -587,14 +738,12 @@ export function formatPart(part: Part, prefix?: string): string {
     } else if (part.tool === 'bash') {
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
-      const isSingleLine = !command.includes('\n')
-      if (isSingleLine && command.length <= MAX_BASH_COMMAND_INLINE_LENGTH) {
-        toolTitle = `_${escapeInlineMarkdown(command)}_`
-      } else if (description) {
-        toolTitle = `_${escapeInlineMarkdown(description)}_`
-      } else if (stateTitle) {
-        toolTitle = `_${escapeInlineMarkdown(stateTitle)}_`
-      }
+      const formatted = formatBashToolTitle({
+        command,
+        description,
+        stateTitle,
+      })
+      toolTitle = formatted.startsWith(' ') ? formatted.slice(1) : formatted
     } else if (stateTitle) {
       toolTitle = `_${escapeInlineMarkdown(stateTitle)}_`
     }

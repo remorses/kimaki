@@ -21,7 +21,7 @@ import type { OpencodeClient } from '@opencode-ai/sdk/v2'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
-import { getChannelDirectory, getThreadWorktree } from './database.js'
+import { getChannelDirectory, getThreadWorktreeOrWorkspace } from './database.js'
 import { DiscordOperationError } from './errors.js'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
@@ -254,12 +254,6 @@ export async function archiveThread({
     if (updateResult instanceof Error) {
       discordLogger.warn(`[archive-thread] ${updateResult.message}`)
     }
-
-    const abortResult = await client.session.abort({ sessionID: sessionId })
-      .catch((e) => new Error('Failed to abort session', { cause: e }))
-    if (abortResult instanceof Error) {
-      discordLogger.warn(`[archive-thread] ${abortResult.message}`)
-    }
   }
 
   if (archiveDelay > 0) {
@@ -273,6 +267,64 @@ export async function archiveThread({
   await rest.patch(Routes.channel(threadId), {
     body: { archived: true },
   })
+}
+
+export const DISCORD_THREAD_RENAME_TIMEOUT_MS = 3000
+
+// Discord rename can hang on the 3rd call (~2 per 10 min). Race so it never blocks.
+export async function raceDiscordRename<T>({
+  rename,
+  timeoutMs = DISCORD_THREAD_RENAME_TIMEOUT_MS,
+}: {
+  rename: Promise<T>
+  timeoutMs?: number
+}): Promise<T | 'timeout'> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  return Promise.race([
+    rename,
+    new Promise<'timeout'>((resolve) => {
+      timeoutSignal.addEventListener('abort', () => {
+        resolve('timeout')
+      })
+    }),
+  ])
+}
+
+/**
+ * Add a user as a thread member so the thread shows up in their Discord left
+ * sidebar. Discord only lists threads you are a member of, so a scheduled
+ * reminder posted into a thread the user never joined (or already left) can
+ * fire completely unnoticed.
+ *
+ * Do NOT add unarchive logic here. The Discord docs imply archived threads
+ * reject member changes with `50083: Thread is archived`, but that was verified
+ * against the real API and it is wrong for unlocked threads:
+ *   - PUT thread-members on an archived unlocked thread succeeds
+ *   - POST message to an archived unlocked thread succeeds and auto-unarchives
+ * So callers that add the member and then post get an active thread for free.
+ * Locked threads fail either way without MANAGE_THREADS, and unarchiving them
+ * needs that same permission, so a pre-emptive PATCH buys nothing but latency.
+ *
+ * PUT returns 204 both when the user is newly added and when they were already
+ * a member, so calling this repeatedly is safe.
+ */
+export async function ensureThreadMember({
+  rest,
+  threadId,
+  userId,
+}: {
+  rest: RESTType
+  threadId: string
+  userId: string
+}): Promise<void | Error> {
+  const addMemberResult = await rest
+    .put(Routes.threadMembers(threadId, userId))
+    .catch((error) => {
+      return new Error(`Failed to add user ${userId} to thread ${threadId}`, {
+        cause: error,
+      })
+    })
+  if (addMemberResult instanceof Error) return addMemberResult
 }
 
 /** Remove Discord mentions from text so they don't appear in thread titles */
@@ -638,6 +690,20 @@ export async function sendThreadMessage(
   return firstMessage!
 }
 
+export function isThreadChannelType(type: number): boolean {
+  return [
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(type)
+}
+
+/** True for guild text channels and for threads inside them. Commands that
+ * only need a guild context should accept both so they also work from threads. */
+export function isTextChannelOrThread(type: number): boolean {
+  return type === ChannelType.GuildText || isThreadChannelType(type)
+}
+
 export async function resolveTextChannel(
   channel: TextChannel | ThreadChannel | null | undefined,
 ): Promise<TextChannel | null> {
@@ -708,10 +774,10 @@ export async function resolveProjectDirectoryFromAutocomplete(
     return channelConfig.directory
   }
 
-  // If we're in a thread, try worktree info first (has project_directory)
-  const worktreeInfo = await getThreadWorktree(channelId)
-  if (worktreeInfo?.project_directory) {
-    return worktreeInfo.project_directory
+  // If we're in a thread, try worktree/workspace info first (has project_directory)
+  const workspace = await getThreadWorktreeOrWorkspace(channelId)
+  if (workspace?.project_directory) {
+    return workspace.project_directory
   }
 
   // Thread fallback: resolve parent channel ID and look up its directory.
@@ -775,9 +841,10 @@ export async function resolveWorkingDirectory({
 
   let workingDirectory = metadata.projectDirectory
   if (isThread) {
-    const worktreeInfo = await getThreadWorktree(channel.id)
-    if (worktreeInfo?.status === 'ready' && worktreeInfo.worktree_directory) {
-      workingDirectory = worktreeInfo.worktree_directory
+    // Check thread_workspaces first (new path), then thread_worktrees (legacy)
+    const info = await getThreadWorktreeOrWorkspace(channel.id)
+    if (info?.status === 'ready' && info.workspace_directory) {
+      workingDirectory = info.workspace_directory
     }
   }
 
@@ -787,21 +854,45 @@ export async function resolveWorkingDirectory({
   }
 }
 
+// Discord upload size limits per server boost tier (bytes).
+// Bots default to 25 MB; boosted servers raise the ceiling.
+export const DISCORD_DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024
+
 /**
  * Upload files to a Discord thread/channel in a single message.
  * Sending all files in one message causes Discord to display images in a grid layout.
+ *
+ * Files are validated against the Discord upload size limit before reading them
+ * into memory. Pass `maxFileSize` if you know the guild's boost tier limit;
+ * otherwise the conservative 25 MB bot default is used.
  */
 export async function uploadFilesToDiscord({
   threadId,
   botToken,
   files,
+  maxFileSize = DISCORD_DEFAULT_MAX_FILE_SIZE,
 }: {
   threadId: string
   botToken: string
   files: string[]
+  /** Per-file size limit in bytes. Defaults to 25 MB (bot default). */
+  maxFileSize?: number
 }): Promise<void> {
   if (files.length === 0) {
     return
+  }
+
+  // Fail fast: check file sizes before reading anything into memory
+  const sizeLimit = maxFileSize ?? DISCORD_DEFAULT_MAX_FILE_SIZE
+  for (const file of files) {
+    const stat = fs.statSync(file)
+    if (stat.size > sizeLimit) {
+      const fileMB = (stat.size / 1024 / 1024).toFixed(1)
+      const limitMB = (sizeLimit / 1024 / 1024).toFixed(0)
+      throw new Error(
+        `File "${path.basename(file)}" is ${fileMB} MB, which exceeds Discord's ${limitMB} MB upload limit`,
+      )
+    }
   }
 
   // Build attachments array for all files

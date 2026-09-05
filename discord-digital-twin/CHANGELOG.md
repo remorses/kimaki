@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+1. **`deleteMessage()` on user actors** — simulates real Discord `MESSAGE_DELETE` gateway events in e2e tests, enabling tests for queue-on-delete and similar message lifecycle flows.
+
 ## 0.1.0
 
 - Added scoped actor API accessors for clearer test ergonomics (`channel(...)`, `thread(...)`, `user(...)`).

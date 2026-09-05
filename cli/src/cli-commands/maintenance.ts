@@ -87,8 +87,8 @@ cli
 
 cli
   .command(
-    'worktree merge',
-    'Merge worktree branch into default branch using worktrunk-style pipeline',
+    'merge-worktree',
+    'Merge the current worktree into a target branch',
   )
   .option('-d, --directory <path>', 'Worktree directory (defaults to cwd)')
   .option(
@@ -99,14 +99,30 @@ cli
     '-n, --name <name>',
     'Worktree/branch name (auto-detected from branch)',
   )
+  .option(
+    '--strategy [strategy]',
+    z.enum(['rebase', 'squash'])
+      .default('rebase')
+      .describe('Keep commits or squash them into one'),
+  )
+  .option(
+    '--target-branch [branch]',
+    z.string()
+      .optional()
+      .describe('Branch to merge into (defaults to origin/HEAD or main)'),
+  )
+  .option(
+    '--thread [threadId]',
+    z.string().optional().describe('Discord thread to mark as merged'),
+  )
+  .option(
+    '--thread-name [name]',
+    z.string().optional().describe('Discord thread name after merging'),
+  )
   .action(
-    async (options: {
-      directory?: string
-      mainRepo?: string
-      name?: string
-    }) => {
+    async (options) => {
       try {
-        const { mergeWorktree } = await import('../worktrees.js')
+        const { formatMergeWorktreeError, mergeWorktree } = await import('../worktrees.js')
         const worktreeDir = path.resolve(options.directory || '.')
 
         // Auto-detect main repo: find the main worktree's toplevel.
@@ -119,7 +135,10 @@ cli
           try {
             // `git worktree list --porcelain` first line is always the main worktree
             const { stdout } = await execAsync(
-              `git -C "${worktreeDir}" worktree list --porcelain`,
+              {
+                command: 'git',
+                args: ['-C', worktreeDir, 'worktree', 'list', '--porcelain'],
+              },
             )
             const firstLine = stdout.split('\n')[0] || ''
             // Format: "worktree /path/to/main"
@@ -127,7 +146,10 @@ cli
           } catch {
             // Fallback: derive from git common dir
             const { stdout: commonDir } = await execAsync(
-              `git -C "${worktreeDir}" rev-parse --git-common-dir`,
+              {
+                command: 'git',
+                args: ['-C', worktreeDir, 'rev-parse', '--git-common-dir'],
+              },
             )
             const resolved = path.isAbsolute(commonDir.trim())
               ? commonDir.trim()
@@ -141,7 +163,10 @@ cli
         if (!worktreeName) {
           try {
             const { stdout } = await execAsync(
-              `git -C "${worktreeDir}" symbolic-ref --short HEAD`,
+              {
+                command: 'git',
+                args: ['-C', worktreeDir, 'symbolic-ref', '--short', 'HEAD'],
+              },
             )
             worktreeName = stdout.trim()
           } catch {
@@ -159,13 +184,15 @@ cli
           worktreeDir,
           mainRepoDir,
           worktreeName,
+          strategy: options.strategy,
+          targetBranch: options.targetBranch,
           onProgress: (msg) => {
             cliLogger.log(msg)
           },
         })
 
         if (result instanceof Error) {
-          cliLogger.error(`Merge failed: ${result.message}`)
+          cliLogger.error(formatMergeWorktreeError(result, { maxLength: 8000 }))
           if (result instanceof RebaseConflictError) {
             cliLogger.log(
               'Resolve the rebase conflicts, then run this command again.',
@@ -174,9 +201,28 @@ cli
           process.exit(1)
         }
 
+        const action = options.strategy === 'squash' ? 'Squashed' : 'Merged'
         cliLogger.log(
-          `Merged ${result.branchName} into ${result.defaultBranch} @ ${result.shortSha} (${result.commitCount} commit${result.commitCount === 1 ? '' : 's'})`,
+          `${action} ${result.branchName} into ${result.defaultBranch} @ ${result.shortSha} (${result.commitCount} source commit${result.commitCount === 1 ? '' : 's'})`,
         )
+        if (options.thread && options.threadName) {
+          const credentials = await resolveBotCredentials().catch((e) => {
+            return new Error('Failed to resolve Discord credentials', { cause: e })
+          })
+          if (credentials instanceof Error) {
+            cliLogger.warn(`Could not update the thread title: ${credentials.message}`)
+          } else {
+            const rest = createDiscordRest(credentials.token)
+            const renameResult = await rest
+              .patch(Routes.channel(options.thread), {
+                body: { name: options.threadName },
+              })
+              .catch((e) => new Error('Discord rejected the thread rename', { cause: e }))
+            if (renameResult instanceof Error) {
+              cliLogger.warn(`Could not update the thread title: ${renameResult.message}`)
+            }
+          }
+        }
         process.exit(0)
       } catch (error) {
         cliLogger.error(

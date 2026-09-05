@@ -1,4 +1,5 @@
-// Tests Anthropic OAuth account persistence, deduplication, and rotation.
+// Tests Anthropic OAuth account persistence, deduplication, rotation, and
+// permanent refresh-failure removal.
 
 import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,9 +8,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   accountLabel,
   authFilePath,
+  isPermanentOAuthRefreshFailure,
   loadAccountStore,
   rememberAnthropicOAuth,
   removeAccount,
+  removeAccountByAuth,
   rotateAnthropicAccount,
   saveAccountStore,
   shouldRotateAuth,
@@ -178,10 +181,79 @@ describe('removeAccount', () => {
   })
 })
 
+describe('removeAccountByAuth', () => {
+  test('removes matched account, promotes next, and syncs auth.set', async () => {
+    await saveAccountStore({
+      version: 1,
+      activeIndex: 0,
+      accounts: [
+        { ...firstAccount, email: 'dead@example.com', addedAt: 1, lastUsed: 1 },
+        { ...secondAccount, email: 'live@example.com', addedAt: 2, lastUsed: 2 },
+      ],
+    })
+
+    const authSetCalls: unknown[] = []
+    const client = {
+      auth: {
+        set: async (input: unknown) => {
+          authSetCalls.push(input)
+        },
+      },
+    }
+
+    const removed = await removeAccountByAuth(firstAccount, client as never)
+    const store = await loadAccountStore()
+
+    expect(removed).toMatchObject({
+      removedLabel: '#1 (dead@example.com)',
+      activeLabel: '#1 (live@example.com)',
+      active: { refresh: 'refresh-second' },
+    })
+    expect(store.accounts).toHaveLength(1)
+    expect(store.accounts[0]?.refresh).toBe('refresh-second')
+    expect(authSetCalls).toHaveLength(1)
+  })
+
+  test('returns undefined when auth is not in the pool', async () => {
+    await saveAccountStore({
+      version: 1,
+      activeIndex: 0,
+      accounts: [{ ...firstAccount, addedAt: 1, lastUsed: 1 }],
+    })
+
+    const removed = await removeAccountByAuth(
+      {
+        type: 'oauth',
+        refresh: 'unknown-refresh',
+        access: 'unknown-access',
+        expires: 1,
+      },
+      { auth: { set: async () => {} } } as never,
+    )
+
+    expect(removed).toBeUndefined()
+    expect((await loadAccountStore()).accounts).toHaveLength(1)
+  })
+})
+
 describe('shouldRotateAuth', () => {
   test('only rotates on rate limit or auth failures', () => {
     expect(shouldRotateAuth(429, '')).toBe(true)
     expect(shouldRotateAuth(401, 'permission_error')).toBe(true)
     expect(shouldRotateAuth(400, 'bad request')).toBe(false)
+  })
+})
+
+describe('isPermanentOAuthRefreshFailure', () => {
+  test('detects invalid_grant and expired refresh tokens', () => {
+    expect(
+      isPermanentOAuthRefreshFailure(
+        new Error(
+          'HTTP 400 from https://platform.claude.com/v1/oauth/token: {"error": "invalid_grant", "error_description": "Refresh token expired"}',
+        ),
+      ),
+    ).toBe(true)
+    expect(isPermanentOAuthRefreshFailure(new Error('ECONNRESET'))).toBe(false)
+    expect(isPermanentOAuthRefreshFailure(new Error('rate_limit_error'))).toBe(false)
   })
 })

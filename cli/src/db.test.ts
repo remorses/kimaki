@@ -10,11 +10,15 @@ import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import {
   appendSessionEventsSinceLastTimestamp,
-  createPendingWorktree,
+  createPendingWorkspace,
+  getDueSessionSleeps,
   getSessionEventSnapshot,
   getSessionModel,
+  getSessionSleep,
   setSessionModel,
+  upsertSessionSleep,
 } from './database.js'
+import { createClient } from '@libsql/client'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { chooseLockPort } from './test-utils.js'
 import { copyCurrentSessionModel } from './commands/model.js'
@@ -25,6 +29,291 @@ afterAll(async () => {
 })
 
 describe('getDb', () => {
+  test('schema.sql creates every drizzle table', () => {
+    const schemaTs = fs.readFileSync(
+      path.join(import.meta.dirname, 'schema.ts'),
+      'utf8',
+    )
+    const schemaSql = fs.readFileSync(
+      path.join(import.meta.dirname, 'schema.sql'),
+      'utf8',
+    )
+    const tablesFromTs = [
+      ...schemaTs.matchAll(/sqliteTable\('([^']+)'/g),
+    ].map((match) => match[1])
+    const tablesFromSql = [
+      ...schemaSql.matchAll(/CREATE TABLE IF NOT EXISTS `([^`]+)`/g),
+    ].map((match) => match[1])
+    expect(new Set(tablesFromSql)).toEqual(new Set(tablesFromTs))
+    expect(tablesFromSql).toContain('session_sleeps')
+    expect(schemaSql).toContain(
+      'CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE',
+    )
+  })
+
+  test('removes part_messages rows whose thread_sessions parent is gone', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-orphan-parts-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE thread_sessions (
+          thread_id text PRIMARY KEY,
+          session_id text NOT NULL
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE part_messages (
+          part_id text PRIMARY KEY,
+          message_id text NOT NULL,
+          thread_id text NOT NULL,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP,
+          CONSTRAINT fk_part_messages_thread_id_thread_sessions_thread_id_fk
+            FOREIGN KEY (thread_id) REFERENCES thread_sessions(thread_id) ON UPDATE CASCADE
+        )
+      `)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id)
+        VALUES ('thr-keep', 'ses-keep'), ('thr-gone', 'ses-gone')
+      `)
+      await client.execute(`
+        INSERT INTO part_messages (part_id, message_id, thread_id)
+        VALUES
+          ('part-keep', 'msg-keep', 'thr-keep'),
+          ('part-orphan', 'msg-orphan', 'thr-gone')
+      `)
+      // sqlite3 CLI leaves foreign_keys OFF, which is how real installs
+      // accumulate these orphans. libsql defaults to ON.
+      await client.execute('PRAGMA foreign_keys = OFF')
+      await client.execute(`DELETE FROM thread_sessions WHERE thread_id = 'thr-gone'`)
+      await client.execute('PRAGMA foreign_keys = ON')
+      const before = await client.execute(`
+        SELECT COUNT(*) AS n FROM part_messages
+        WHERE thread_id NOT IN (SELECT thread_id FROM thread_sessions)
+      `)
+      expect(Number(before.rows[0]?.n)).toBe(1)
+      client.close()
+
+      process.env['KIMAKI_DB_URL'] = `file:${dbPath}`
+      const db = await getDb()
+      const remaining = await db.query.part_messages.findMany({
+        columns: { part_id: true },
+        orderBy: { part_id: 'asc' },
+      })
+      expect(remaining).toMatchInlineSnapshot(`
+        [
+          {
+            "part_id": "part-keep",
+          },
+        ]
+      `)
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('deleting a thread_sessions row also deletes its part_messages', async () => {
+    const db = await getDb()
+    const threadId = `test-part-cascade-${crypto.randomUUID()}`
+    await db.insert(schema.thread_sessions).values({
+      thread_id: threadId,
+      session_id: 'ses-part-cascade',
+    })
+    await db.insert(schema.part_messages).values({
+      part_id: `${threadId}-part`,
+      message_id: 'msg-part-cascade',
+      thread_id: threadId,
+    })
+    await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
+    const leftover = await db.query.part_messages.findFirst({
+      where: { thread_id: threadId },
+    })
+    expect(leftover).toBeUndefined()
+  })
+
+  test('adds session_sleeps delivery columns on databases created before that schema', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-legacy-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE thread_sessions (
+          thread_id text PRIMARY KEY,
+          session_id text NOT NULL
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE session_sleeps (
+          session_id text PRIMARY KEY,
+          thread_id text NOT NULL,
+          wake_at datetime NOT NULL,
+          reason text,
+          status text DEFAULT 'planned' NOT NULL,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id)
+        VALUES ('thr-legacy', 'ses-legacy')
+      `)
+      await client.execute(`
+        INSERT INTO session_sleeps (session_id, thread_id, wake_at, status)
+        VALUES ('ses-legacy', 'thr-legacy', '2020-01-01T00:00:00.000Z', 'planned')
+      `)
+      client.close()
+
+      process.env['KIMAKI_DB_URL'] = `file:${dbPath}`
+      await getDb()
+
+      const due = await getDueSessionSleeps({
+        now: new Date('2026-08-21T00:00:00Z'),
+        retryAfterMs: 30_000,
+        limit: 10,
+      })
+      const legacy = due.find((row) => row.session_id === 'ses-legacy')
+      expect(legacy?.delivery_id).toBeTruthy()
+      expect(legacy?.attempts).toBe(0)
+
+      // The first table required thread_id. After the column was dropped from
+      // the schema, inserts that omit it must still work on existing databases.
+      await upsertSessionSleep({
+        sessionId: 'ses-legacy-new',
+        wakeAt: new Date('2026-08-26T00:00:00Z'),
+        reason: 'check the reply',
+      })
+      const created = await getSessionSleep({ sessionId: 'ses-legacy-new' })
+      expect(created?.status).toBe('planned')
+      expect(created?.reason).toBe('check the reply')
+      expect(created?.delivery_id).toBeTruthy()
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
+  test('rebuilds session_sleeps that still have posted_at from the intermediate schema', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-posted-sleeps-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE thread_sessions (
+          thread_id text PRIMARY KEY,
+          session_id text NOT NULL
+        )
+      `)
+      await client.execute(`
+        CREATE TABLE session_sleeps (
+          session_id text PRIMARY KEY,
+          thread_id text NOT NULL,
+          wake_at datetime NOT NULL,
+          reason text,
+          status text DEFAULT 'planned' NOT NULL,
+          delivery_id text NOT NULL,
+          attempts integer DEFAULT 0 NOT NULL,
+          last_attempt_at datetime,
+          posted_at datetime,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      await client.execute(`
+        INSERT INTO thread_sessions (thread_id, session_id)
+        VALUES ('thr-posted', 'ses-posted')
+      `)
+      await client.execute(`
+        INSERT INTO session_sleeps (
+          session_id, thread_id, wake_at, status, delivery_id, posted_at
+        )
+        VALUES (
+          'ses-posted',
+          'thr-posted',
+          '2020-01-01T00:00:00.000Z',
+          'posted',
+          'del-posted',
+          '2020-01-01T00:00:01.000Z'
+        )
+      `)
+      client.close()
+
+      process.env['KIMAKI_DB_URL'] = `file:${dbPath}`
+      await getDb()
+
+      const due = await getDueSessionSleeps({
+        now: new Date('2026-08-21T00:00:00Z'),
+        retryAfterMs: 30_000,
+        limit: 10,
+      })
+      const posted = due.find((row) => row.session_id === 'ses-posted')
+      expect(posted?.status).toBe('planned')
+      expect(posted?.delivery_id).toBe('del-posted')
+
+      await upsertSessionSleep({
+        sessionId: 'ses-posted',
+        wakeAt: new Date('2026-08-26T00:00:00Z'),
+        reason: 'retry after schema change',
+      })
+      const updated = await getSessionSleep({ sessionId: 'ses-posted' })
+      expect(updated?.status).toBe('planned')
+      expect(updated?.reason).toBe('retry after schema change')
+      expect(updated?.delivery_id).not.toBe('del-posted')
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
   test('creates sqlite file and migrates schema automatically', async () => {
     const db = await getDb()
 
@@ -94,13 +383,14 @@ describe('getDb', () => {
     }
   })
 
-  test('createPendingWorktree creates parent and child rows', async () => {
+  test('createPendingWorkspace creates parent and child rows', async () => {
     const db = await getDb()
-    const threadId = `test-worktree-${Date.now()}`
+    const threadId = `test-workspace-${Date.now()}`
 
-    await createPendingWorktree({
+    await createPendingWorkspace({
       threadId,
-      worktreeName: 'regression-worktree',
+      workspaceType: 'kimaki-worktree',
+      workspaceName: 'regression-workspace',
       projectDirectory: '/tmp/regression-project',
     })
 
@@ -110,15 +400,15 @@ describe('getDb', () => {
     expect(session).toBeTruthy()
     expect(session?.session_id).toBe('')
 
-    const worktree = await db.query.thread_worktrees.findFirst({
+    const workspace = await db.query.thread_workspaces.findFirst({
       where: { thread_id: threadId },
     })
-    expect(worktree).toBeTruthy()
-    expect(worktree?.worktree_name).toBe('regression-worktree')
-    expect(worktree?.project_directory).toBe('/tmp/regression-project')
-    expect(worktree?.status).toBe('pending')
+    expect(workspace).toBeTruthy()
+    expect(workspace?.workspace_name).toBe('regression-workspace')
+    expect(workspace?.project_directory).toBe('/tmp/regression-project')
+    expect(workspace?.status).toBe('pending')
 
-    await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
+    await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
   })
 

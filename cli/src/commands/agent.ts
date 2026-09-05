@@ -11,6 +11,7 @@ import {
   ChannelType,
   ThreadAutoArchiveDuration,
   type ThreadChannel,
+  type TextChannel,
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
@@ -21,6 +22,7 @@ import {
   getThreadSession,
   getSessionAgent,
   getChannelAgent,
+  getChannelWorktreesEnabled,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -31,29 +33,35 @@ import {
 } from '../discord-utils.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getCurrentModelInfo } from './model.js'
+import {
+  formatModelSource,
+  getCurrentModelInfo,
+  type CurrentModelInfo,
+} from './model.js'
+import { isGitRepositoryRoot } from '../worktrees.js'
+import {
+  formatAutoWorktreeName,
+  createWorktreeInBackground,
+  worktreeCreatingMessage,
+} from './new-worktree.js'
+import { WORKTREE_PREFIX } from './merge-worktree.js'
+import { store } from '../store.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
 const AGENT_CONTEXT_TTL_MS = 10 * 60 * 1000
-const pendingAgentContexts = new Map<
-  string,
-  {
-    dir: string
-    channelId: string
-    sessionId?: string
-    isThread: boolean
-  }
->()
+const pendingAgentContexts = new Map<string, AgentCommandContext>()
 
 /**
  * Context for agent commands, containing channel/session info.
  */
 export type AgentCommandContext = {
   dir: string
+  workingDirectory: string
   channelId: string
   sessionId?: string
   isThread: boolean
+  appId: string
 }
 
 export type CurrentAgentInfo =
@@ -179,6 +187,7 @@ async function resolveQuickAgentNameFromInteraction({
  */
 export async function resolveAgentCommandContext({
   interaction,
+  appId,
 }: {
   interaction: ChatInputCommandInteraction
   appId: string
@@ -198,41 +207,40 @@ export async function resolveAgentCommandContext({
     ChannelType.AnnouncementThread,
   ].includes(channel.type)
 
-  let projectDirectory: string | undefined
-  let targetChannelId: string
-  let sessionId: string | undefined
-
-  if (isThread) {
-    const thread = channel as ThreadChannel
-    const textChannel = await resolveTextChannel(thread)
-    const metadata = await getKimakiMetadata(textChannel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = textChannel?.id || channel.id
-
-    sessionId = await getThreadSession(thread.id)
-  } else if (channel.type === ChannelType.GuildText) {
-    const metadata = await getKimakiMetadata(channel)
-    projectDirectory = metadata.projectDirectory
-    targetChannelId = channel.id
-  } else {
+  if (
+    !isThread &&
+    channel.type !== ChannelType.GuildText
+  ) {
     await interaction.editReply({
       content: 'This command can only be used in text channels or threads',
     })
     return null
   }
 
-  if (!projectDirectory) {
+  const resolved = await resolveWorkingDirectory({
+    channel: channel as TextChannel | ThreadChannel,
+  })
+  if (!resolved) {
     await interaction.editReply({
       content: 'This channel is not configured with a project directory',
     })
     return null
   }
 
+  const textChannel = isThread
+    ? await resolveTextChannel(channel as ThreadChannel)
+    : undefined
+  const sessionId = isThread
+    ? await getThreadSession(channel.id)
+    : undefined
+
   return {
-    dir: projectDirectory,
-    channelId: targetChannelId,
+    dir: resolved.projectDirectory,
+    workingDirectory: resolved.workingDirectory,
+    channelId: textChannel?.id || channel.id,
     sessionId,
     isThread,
+    appId,
   }
 }
 
@@ -261,6 +269,60 @@ export async function setAgentForContext({
   }
 }
 
+function formatAgentModelLine(modelInfo: CurrentModelInfo): string {
+  if (modelInfo.type === 'none') return ''
+  const source = formatModelSource({
+    type: modelInfo.type,
+    agentName: modelInfo.type === 'agent' ? modelInfo.agentName : undefined,
+  })
+  const line = `\nModel: *${modelInfo.model}* (${source})`
+  if (modelInfo.type !== 'session' && modelInfo.type !== 'channel') {
+    return line
+  }
+  return `${line}\nThis model comes from a ${modelInfo.type} override. Use /model and press Clear override if you want this agent's model.`
+}
+
+function formatAgentPreferenceReply({
+  agentName,
+  previousAgentName,
+  modelInfo,
+  scope,
+}: {
+  agentName: string
+  previousAgentName?: string
+  modelInfo: CurrentModelInfo
+  scope: 'session' | 'channel'
+}): string {
+  const sameAgent = previousAgentName === agentName
+  const verb = sameAgent ? 'Using' : 'Switched to'
+  const previousText =
+    !sameAgent && previousAgentName ? ` (was **${previousAgentName}**)` : ''
+  const modelText = formatAgentModelLine(modelInfo)
+  if (scope === 'session') {
+    return `${verb} **${agentName}** agent for this session${previousText}${modelText}\nThe agent will change on the next message.`
+  }
+  return `${verb} **${agentName}** agent for this channel${previousText}${modelText}\nAll new sessions will use this agent.`
+}
+
+async function resolveAgentModelInfo({
+  context,
+  agentName,
+}: {
+  context: AgentCommandContext
+  agentName: string
+}): Promise<CurrentModelInfo> {
+  const getClient = await initializeOpencodeForDirectory(context.dir)
+  if (getClient instanceof Error) return { type: 'none' }
+  return getCurrentModelInfo({
+    sessionId: context.sessionId,
+    channelId: context.channelId,
+    appId: context.appId,
+    agentPreference: agentName,
+    getClient,
+    directory: context.workingDirectory,
+  })
+}
+
 export async function handleAgentCommand({
   interaction,
   appId,
@@ -283,7 +345,7 @@ export async function handleAgentCommand({
     }
 
     const agentsResponse = await getClient().app.agents({
-      directory: context.dir,
+      directory: context.workingDirectory,
     })
 
     if (!agentsResponse.data || agentsResponse.data.length === 0) {
@@ -383,19 +445,30 @@ export async function handleAgentSelectMenu(
   }
 
   try {
-    await setAgentForContext({ context, agentName: selectedAgent })
+    const previousAgent = await getCurrentAgentInfo({
+      sessionId: context.sessionId,
+      channelId: context.channelId,
+    })
+    const previousAgentName =
+      previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
-    if (context.isThread && context.sessionId) {
-      await interaction.editReply({
-        content: `Agent preference set for this session: **${selectedAgent}**\nThe agent will change on the next message.`,
-        components: [],
-      })
-    } else {
-      await interaction.editReply({
-        content: `Agent preference set for this channel: **${selectedAgent}**\nAll new sessions in this channel will use this agent.`,
-        components: [],
-      })
-    }
+    await setAgentForContext({ context, agentName: selectedAgent })
+    const modelInfo = await resolveAgentModelInfo({
+      context,
+      agentName: selectedAgent,
+    })
+    const scope =
+      context.isThread && context.sessionId ? 'session' : 'channel'
+
+    await interaction.editReply({
+      content: formatAgentPreferenceReply({
+        agentName: selectedAgent,
+        previousAgentName,
+        modelInfo,
+        scope,
+      }),
+      components: [],
+    })
 
     pendingAgentContexts.delete(contextHash)
   } catch (error) {
@@ -456,51 +529,23 @@ export async function handleQuickAgentCommand({
     const previousAgentName =
       previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
-    if (previousAgentName === resolvedAgentName) {
-      await command.editReply({
-        content: `Already using **${resolvedAgentName}** agent`,
-      })
-      return
-    }
-
-    // Set the agent preference in DB for this context.
     await setAgentForContext({ context, agentName: resolvedAgentName })
 
-    const previousText = previousAgentName
-      ? ` (was **${previousAgentName}**)`
-      : ''
+    const modelInfo = await resolveAgentModelInfo({
+      context,
+      agentName: resolvedAgentName,
+    })
+    const scope =
+      context.isThread && context.sessionId ? 'session' : 'channel'
 
-    // Resolve the model that will now be used for the new agent so we can
-    // show it in the reply. setAgentForContext already cleared any session
-    // model preference, so getCurrentModelInfo falls through to the agent's
-    // configured model (or channel/global/default).
-    const modelInfo = await (async () => {
-      const getClient = await initializeOpencodeForDirectory(context.dir)
-      if (getClient instanceof Error) {
-        return { type: 'none' as const }
-      }
-      return getCurrentModelInfo({
-        sessionId: context.sessionId,
-        channelId: context.channelId,
-        appId,
-        agentPreference: resolvedAgentName,
-        getClient,
-        directory: context.dir,
-      })
-    })()
-
-    const modelText =
-      modelInfo.type === 'none' ? '' : `\nModel: *${modelInfo.model}*`
-
-    if (context.isThread && context.sessionId) {
-      await command.editReply({
-        content: `Switched to **${resolvedAgentName}** agent for this session${previousText}${modelText}\nThe agent will change on the next message.`,
-      })
-    } else {
-      await command.editReply({
-        content: `Switched to **${resolvedAgentName}** agent for this channel${previousText}${modelText}\nAll new sessions will use this agent.`,
-      })
-    }
+    await command.editReply({
+      content: formatAgentPreferenceReply({
+        agentName: resolvedAgentName,
+        previousAgentName,
+        modelInfo,
+        scope,
+      }),
+    })
   } catch (error) {
     agentLogger.error('Error in quick agent command:', error)
     await command.editReply({
@@ -597,26 +642,78 @@ async function handleQuickAgentWithPrompt({
 
     await command.deferReply()
 
+    // Check if worktrees should be enabled (CLI flag OR channel setting),
+    // mirroring the logic in discord-bot.ts message handler.
+    const wantsWorktrees =
+      store.getState().useWorktrees ||
+      (await getChannelWorktreesEnabled(channel.id))
+    const shouldUseWorktrees =
+      wantsWorktrees && (await isGitRepositoryRoot(projectDirectory))
+
+    if (wantsWorktrees && !shouldUseWorktrees) {
+      agentLogger.warn(
+        `[WORKTREE] Skipping automatic worktree for non-git project directory: ${projectDirectory}`,
+      )
+    }
+
+    const baseThreadName = prompt.slice(0, 80)
+    const threadName = shouldUseWorktrees
+      ? `${WORKTREE_PREFIX}${baseThreadName}`
+      : baseThreadName
+
     const starterMessage = await channel.send({
       content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
     const thread = await starterMessage.startThread({
-      name: prompt.slice(0, 80),
+      name: threadName.slice(0, 80),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `${resolvedAgentName} agent prompt`,
     })
 
     await thread.members.add(command.user.id)
 
-    await command.editReply(`Sent with **${resolvedAgentName}** agent in ${thread.toString()}`)
+    // Create worktree in background if enabled, same as discord-bot.ts
+    let worktreePromise: Promise<string | Error> | undefined
+    if (shouldUseWorktrees) {
+      const worktreeName = formatAutoWorktreeName(baseThreadName.slice(0, 50))
+      agentLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
+
+      const worktreeStatusMessage = await thread
+        .send({
+          content: worktreeCreatingMessage(worktreeName),
+          flags: SILENT_MESSAGE_FLAGS,
+        })
+        .catch(() => undefined)
+
+      worktreePromise = createWorktreeInBackground({
+        thread,
+        starterMessage: worktreeStatusMessage,
+        worktreeName,
+        projectDirectory,
+        rest: command.client.rest,
+      })
+    }
+
+    const worktreeResult = worktreePromise ? await worktreePromise : projectDirectory
+    if (worktreeResult instanceof Error) {
+      await command.editReply(`Worktree creation failed: ${worktreeResult.message}`)
+      return
+    }
+    const sessionDirectory = worktreeResult
+
+    await command
+      .editReply(`Sent with **${resolvedAgentName}** agent in ${thread.toString()}`)
+      .catch(() => {
+        agentLogger.warn('[AGENT] Failed to edit quick-agent reply, continuing session')
+      })
 
     const runtime = getOrCreateRuntime({
       threadId: thread.id,
       thread,
       projectDirectory,
-      sdkDirectory: projectDirectory,
+      sdkDirectory: sessionDirectory,
       channelId: channel.id,
       appId,
     })

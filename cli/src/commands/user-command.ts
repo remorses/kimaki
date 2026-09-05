@@ -5,14 +5,26 @@ import type { CommandHandler } from './types.js'
 import {
   ChannelType,
   MessageFlags,
+  ThreadAutoArchiveDuration,
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
-import { SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
+import { SILENT_MESSAGE_FLAGS, resolveWorkingDirectory } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { getChannelDirectory, getThreadSession } from '../database.js'
+import {
+  getChannelDirectory,
+  getChannelWorktreesEnabled,
+  getThreadSession,
+} from '../database.js'
 import { store } from '../store.js'
+import { isGitRepositoryRoot } from '../worktrees.js'
+import {
+  formatAutoWorktreeName,
+  createWorktreeInBackground,
+  worktreeCreatingMessage,
+} from './new-worktree.js'
+import { WORKTREE_PREFIX } from './merge-worktree.js'
 import fs from 'node:fs'
 
 const userCommandLogger = createLogger(LogPrefix.USER_CMD)
@@ -126,11 +138,12 @@ export const handleUserCommand: CommandHandler = async ({
       // Running in existing thread - just send the command
       await command.editReply(`Running ${commandInvocation}...`)
 
+      const resolved = await resolveWorkingDirectory({ channel: thread })
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
         thread,
         projectDirectory,
-        sdkDirectory: projectDirectory,
+        sdkDirectory: resolved?.workingDirectory || projectDirectory,
         channelId: textChannel?.id,
         appId,
       })
@@ -144,19 +157,68 @@ export const handleUserCommand: CommandHandler = async ({
       })
     } else if (textChannel) {
       // Running in text channel - create a new thread
+
+      // Check if worktrees should be enabled (CLI flag OR channel setting),
+      // mirroring the logic in discord-bot.ts message handler.
+      const wantsWorktrees =
+        store.getState().useWorktrees ||
+        (await getChannelWorktreesEnabled(textChannel.id))
+      const shouldUseWorktrees =
+        wantsWorktrees && (await isGitRepositoryRoot(projectDirectory))
+
+      if (wantsWorktrees && !shouldUseWorktrees) {
+        userCommandLogger.warn(
+          `[WORKTREE] Skipping automatic worktree for non-git project directory: ${projectDirectory}`,
+        )
+      }
+
+      const baseThreadName = commandInvocation.slice(0, DISCORD_THREAD_NAME_LIMIT)
+      const threadName = shouldUseWorktrees
+        ? `${WORKTREE_PREFIX}${baseThreadName}`
+        : baseThreadName
+
       const starterMessage = await textChannel.send({
         content: threadOpeningMessage,
         flags: SILENT_MESSAGE_FLAGS,
       })
 
       const newThread = await starterMessage.startThread({
-        name: commandInvocation.slice(0, DISCORD_THREAD_NAME_LIMIT),
-        autoArchiveDuration: 1440,
+        name: threadName.slice(0, DISCORD_THREAD_NAME_LIMIT),
+        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
         reason: `OpenCode command: ${commandName}`,
       })
 
       // Add user to thread so it appears in their sidebar
       await newThread.members.add(command.user.id)
+
+      // Create worktree in background if enabled, same as discord-bot.ts
+      let worktreePromise: Promise<string | Error> | undefined
+      if (shouldUseWorktrees) {
+        const worktreeName = formatAutoWorktreeName(baseThreadName.slice(0, 50))
+        userCommandLogger.log(`[WORKTREE] Creating worktree: ${worktreeName}`)
+
+        const worktreeStatusMessage = await newThread
+          .send({
+            content: worktreeCreatingMessage(worktreeName),
+            flags: SILENT_MESSAGE_FLAGS,
+          })
+          .catch(() => undefined)
+
+        worktreePromise = createWorktreeInBackground({
+          thread: newThread,
+          starterMessage: worktreeStatusMessage,
+          worktreeName,
+          projectDirectory,
+          rest: command.client.rest,
+        })
+      }
+
+      const worktreeResult = worktreePromise ? await worktreePromise : projectDirectory
+      if (worktreeResult instanceof Error) {
+        await command.editReply(`Worktree creation failed: ${worktreeResult.message}`)
+        return
+      }
+      const sessionDirectory = worktreeResult
 
       await command.editReply(
         `Started /${commandName} in ${newThread.toString()}`,
@@ -166,7 +228,7 @@ export const handleUserCommand: CommandHandler = async ({
         threadId: newThread.id,
         thread: newThread,
         projectDirectory,
-        sdkDirectory: projectDirectory,
+        sdkDirectory: sessionDirectory,
         channelId: textChannel.id,
         appId,
       })

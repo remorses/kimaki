@@ -1,5 +1,596 @@
 # Changelog
 
+## 0.27.0
+
+1. **Pool all AI subscriptions with Subrouter:** `/login` now shows **Subrouter** first. Add multiple accounts from multiple providers, then use `subrouter/default` or a custom preset. Subrouter first rotates accounts inside one provider, then moves to the next provider.
+
+   ```text
+     model: subrouter/default
+          │
+          ▼
+     anthropic/claude-opus-4-6 ──429──▶ second Claude account
+                                                │
+                                                ▼
+                                      openai/gpt-5.5
+                                                │
+                                         exhausted
+                                                ▼
+                                         xai/grok-4.6
+   ```
+
+   Cooldowns are shared by all sessions on the machine. Subrouter uses `retry-after` or `retry-after-ms` when the provider sends one, including zero. Without a usable retry delay, the fallback is five minutes. A `402` balance-exhausted response uses a six-hour cooldown.
+
+   ```bash
+   npx -y @subrouter/cli status
+   npx -y @subrouter/cli cooldown clear
+
+   npx -y @subrouter/cli preset create fast \
+     --models 'anthropic/claude-opus-4-6,xai/grok-4.6'
+   ```
+
+   Kimaki also shows the current routed model in `/model` and final footers. Published builds register the exact `@subrouter/opencode` package identity, so OpenCode deduplicates Kimaki and user plugin declarations. Rate-limited task subagents stay active so Subrouter can finish account rotation or cross-provider failover. Existing `kimaki multioauth` commands remain available as legacy single-provider rotation.
+
+2. **Put sessions to sleep and resume them later:** the new `kimaki_sleep` tool lets a session pause for hours or days, go idle without using tokens, and wake in the same session with its full conversation history.
+
+   Ask for it in plain language:
+
+   > deploy is running, check back in 2 hours and confirm it went green
+
+   The tool accepts either a relative `duration` or an absolute UTC `until` value:
+
+   ```text
+   duration: 30s | 10m | 2h | 1d
+   until:    2030-01-01T09:00:00Z
+   reason:   waiting for the deploy
+   ```
+
+   Sleeps survive bot restarts because they are stored in SQLite. Delivery uses a stable Discord-compatible nonce and retries safely. A new chat message, `/queue`, `/abort`, a slash command that starts a new turn, or `kimaki send` cancels the pending sleep. `/btw` does not cancel it because `/btw` starts a separate side conversation.
+
+3. **Merge worktrees with rebase or squash:** `/merge-worktree` now offers **Keep commits (rebase)** and **Squash into one commit** strategies. Squash mode rebases first, then creates one target commit, so the existing agent-assisted conflict flow still works.
+
+   ```text
+   /merge-worktree strategy:Squash into one commit target-branch:main
+   ```
+
+   The same merge pipeline is available from the root CLI:
+
+   ```bash
+   kimaki merge-worktree --strategy squash --target-branch main
+   ```
+
+   If a rebase has conflicts, Kimaki asks the agent to resolve them, continue the rebase, and retry the command. A successful retry clears the worktree marker from the Discord thread title. Completion messages include the source commit count.
+
+4. **Coordinate concurrent sessions from the CLI:** active-session filtering, file editor attribution, and explicit title updates make parallel agent work easier to manage.
+
+   ```bash
+   kimaki session list --active
+
+   while kimaki session list --active \
+     --exclude "$CURRENT_SESSION_ID"; do
+     sleep 5
+   done
+
+   kimaki session editors src/cli.ts
+   kimaki session editors src/cli.ts --json
+
+   kimaki session title 'Fix queue draining' --session ses_xxx
+   ```
+
+   `--active` includes each selected session status and exits with status `1` when no matching active sessions remain. Editor tracking records successful `edit`, `write`, and `apply_patch` calls. Session title updates change the OpenCode title, and the mapped Discord thread follows it.
+
+5. **Expose the OpenCode server for remote attachment:** add `--opencode-hostname` and `--opencode-port` for remote OpenCode clients.
+
+   ```bash
+   OPENCODE_SERVER_PASSWORD=replace-me \
+     kimaki --opencode-hostname 0.0.0.0 --opencode-port 4096
+
+   opencode attach http://YOUR_VPS_IP:4096 --password replace-me
+   ```
+
+   These flags only control the OpenCode child server. Kimaki's lock and Hrana servers remain on `127.0.0.1`. Kimaki refuses a non-loopback OpenCode bind if `OPENCODE_SERVER_PASSWORD` is missing. `OPENCODE_SERVER_USERNAME` defaults to `opencode`. Without these flags, Kimaki explicitly binds OpenCode to `127.0.0.1` on a random free port.
+
+6. **Validate CLI model IDs before work starts:** Kimaki now validates `--model` against OpenCode's live provider and model list before sending prompts, creating or editing tasks, and starting sessions.
+
+   ```bash
+   kimaki send \
+     --model anthropic/claude-opus-4-6 \
+     --prompt 'review this'
+
+   kimaki task edit 12 --model openai/gpt-5.4
+   ```
+
+   Invalid values fail immediately with provider or similar-model hints. The required format is `provider/model`. An empty `--model` value on `task edit` still clears the task override.
+
+7. **Notify thread creators when final work completes:** the final session footer now mentions the thread creator, which creates a Discord completion notification. Intermediate footers stay silent while queued messages remain.
+
+   Use the new root flag to keep final footers visible without mention notifications:
+
+   ```bash
+   kimaki --skip-footer-mentions
+   ```
+
+   Footer mentions remain enabled by default.
+
+8. **Add a ground-truth bug-report workflow:** the public guide covers event-stream export, logs, session Markdown, exact prompts, exact model IDs, and secret gists.
+
+   ```bash
+   kimaki session export-events-jsonl \
+     --session ses_xxx \
+     --out ./tmp/ses_xxx.jsonl
+
+   kimaki session read ses_xxx > ./tmp/ses_xxx.md
+   kimaki --version
+   ```
+
+   `kimaki session read` now includes the exact `providerID/modelID` in each assistant heading.
+
+9. **Repair incomplete `kimaki@0.26.0` npm installations:** standard npm installs now declare `@subrouter/opencode` as a runtime dependency. The generated `schema.sql` also matches every table in the current Drizzle schema and includes `session_sleeps`. Regression tests cover both package contracts. Fixes [#199](https://github.com/remorses/kimaki/issues/199).
+
+10. **Keep AskUserQuestion prompts available and correctly ordered:** AskUserQuestion dropdowns no longer expire after ten minutes. A question remains active until the user answers it, sends a newer message, or runs `/abort`.
+
+    Assistant text emitted before a question now appears before the dropdown and before a queued `» user:` handoff. If Kimaki restarts and retains an old unanswered `question.asked` event, a newer user turn makes that old question inactive. `/abort` clears the pending dropdown. If Discord cannot send the dropdown, Kimaki clears its context and aborts the blocked OpenCode session. Permission prompts still keep their configurable timeout. Fixes [#192](https://github.com/remorses/kimaki/issues/192).
+
+11. **Keep worktree creation bound to the correct checkout:** worktree setup now binds each request to the exact registered project checkout and resolved commit SHA. Kimaki verifies the Git common directory, linked-worktree identity, requested `HEAD`, and submodule ownership before the session starts. A mismatch is cleaned up and reported instead of starting work in an independent clone of the same remote.
+
+    Kimaki also copies the source model, applies permissions, and binds the forked OpenCode session before the worktree becomes usable. An immediate message can no longer race setup and start a replacement session with the channel default model.
+
+12. **Recover from Discord outages and stuck self-restarts:** Discord connect timeouts and temporary Undici socket errors now use a temporary-failure exit code. The restart wrapper retries with progressive backoff and does not count a long network outage as a crash loop.
+
+    Self-restarts also have a 15-second exit deadline. If cleanup finishes but Node hangs while joining native worker threads, Kimaki force-kills the correct child generation and continues the restart. Thanks [@Cyberlane](https://github.com/Cyberlane) for [#190](https://github.com/remorses/kimaki/pull/190).
+
+13. **Show delegated tasks when they start:** Kimaki now posts each delegated task line as soon as OpenCode marks it running. It no longer waits for a child session ID, so large task batches show tasks that are waiting for an OpenCode subagent slot.
+
+    OpenAI task names can come from `state.title` instead of `input.description`; Kimaki supports both:
+
+    ```text
+    ┣ general **Classify pending changes**
+    ```
+
+    Completed task events do not post a late duplicate after the agent's follow-up text.
+
+14. **Route resumed sessions to the current Discord thread:** `/resume` can map one OpenCode session to several historical Discord threads. Reverse lookup now selects the most recently bound thread. `kimaki_file_upload`, `kimaki_action_buttons`, sleep wakes, and other session-to-thread operations no longer post into an old thread and wait for interaction there.
+
+15. **Keep sessions running when threads are archived:** archiving a Discord thread no longer aborts its mapped OpenCode session. Active work and queued prompts continue in order.
+
+    To stop the run explicitly:
+
+    ```bash
+    kimaki session abort <session-id>
+    ```
+
+16. **Keep video uploads out of voice transcription:** `.mov`, `.mp4`, and other video attachments are no longer treated as voice notes only because Discord includes a duration. Voice notes and uploaded audio (`.ogg`, `.m4a`, `.mp3`, `.wav`, `.oga`, `.opus`) still transcribe.
+
+17. **Render compact callouts correctly:** single-line callout blocks now render as Discord Components V2 containers instead of showing raw tags.
+
+    ```html
+    <callout accent="#f59e0b">Confidence: high.</callout>
+    ```
+
+    Callout syntax inside fenced code remains literal. Nested, adjacent, or malformed one-line callouts remain plain text instead of producing an incorrect container.
+
+18. **Show useful worktree merge failures:** `/merge-worktree` and `kimaki merge-worktree` now show the failed Git command, exit code, stderr, stdout when useful, and remaining cause details. When the final local target update fails after a successful rebase, Kimaki explains that the worktree rebase is preserved, the local target branch was not updated, and no push to origin occurred.
+
+19. **Count delegated task tokens accurately:** Strada `tokens_used` events now include billed usage from task child sessions, not only the parent session. Child idle events report their own usage, while the parent reports any remaining child delta without double-counting.
+
+## 0.26.0
+
+1. **xAI (Grok) multi-account OAuth rotation** — kimaki now rotates xAI accounts the same way it already rotates Anthropic and OpenAI accounts.
+
+   When an xAI account hits its usage limit (402 "balance exhausted" or 403 "spending-limit"), kimaki switches to the next account in the rotation pool and resumes the session.
+
+   ```bash
+   # List all xAI accounts in the rotation pool
+   kimaki multioauth xai list
+
+   # Show the current active account
+   kimaki multioauth xai current
+
+   # Remove an account by index or email
+   kimaki multioauth xai remove 2
+
+   # Test all accounts for usage limits
+   kimaki multioauth xai check
+   ```
+
+   New accounts are detected automatically when you log in via `/login` in Discord. The rotation pool is stored at `~/.local/share/opencode/xai-oauth-accounts.json`.
+
+   This release also enables the OpenAI rotation plugin, which existed but was never wired into the plugin loader.
+
+2. **Conditional and non-overlapping scheduled tasks** — use `--pre-run` to run a shell command in the project directory before each scheduled occurrence. Exit code 0 starts the session and adds stdout to its prompt. Any other exit code skips the occurrence. Stdout and stderr stay in the Kimaki log.
+
+   ```bash
+   kimaki send --channel <channel-id> \
+     --send-at '*/5 * * * *' \
+     --pre-run 'tsx scripts/should-run.ts' \
+     --prompt 'Handle the support request from the pre-run output.'
+   ```
+
+   Recurring tasks now avoid overlapping sessions by default. If one occurrence still has an active session, Kimaki skips the next tick. Add `--allow-concurrency` to opt into parallel runs from the same task.
+
+   ```bash
+   kimaki task edit <id> --pre-run 'tsx scripts/should-run.ts'
+   kimaki task edit <id> --allow-concurrency true
+   ```
+
+3. **`kimaki tunnel` now prints both the localhost URL and the public tunnel URL** after it connects.
+
+   Never use the tunnel URL for local testing. Use localhost instead; it is much faster. The CLI still prints the tunnel URL so people who are not on the same machine can open the app.
+
+   ```
+   Connected with Traforo!
+
+   Local:  http://localhost:5173
+   Tunnel: https://abc123-tunnel.kimaki.dev
+
+   NEVER use the tunnel URL for local testing. Use the local URL instead; it is much faster.
+   Always show both URLs to the user. The local URL works when they are on the same machine.
+   ```
+
+4. **Refresh the agent model when you run `/agent` or `/xxx-agent`**, even if that agent is already selected.
+
+   This matters when the agent file changed, or when a leftover thread `/model` override is still pinned. The command now clears the session model copy and shows which model will be used next, plus **why**:
+
+   ```
+   Using **plan** agent for this session
+   Model: *anthropic/claude-sonnet-4* (agent "plan")
+   The agent will change on the next message.
+   ```
+
+   If a **session** or **channel** `/model` override is the reason that model is selected, the reply tells you to run `/model` and press **Clear override** so the agent's own model can apply.
+
+   `/model` on this thread still beats the agent model. The agent's model still beats a channel or global `/model`.
+
+5. **Stop inlining large Discord text attachments into the model prompt.**
+
+   Every text attachment is saved under `~/.kimaki/attachments/`. The prompt always includes the local path and Discord URL. Files over 64 KB omit the file contents and tell the agent to read the local path. Small text files and `prompt.md` from `kimaki send` still inline as before.
+
+6. **`question`, `kimaki_action_buttons`, and `kimaki_file_upload` now run last**, after all text.
+
+   Calling these tools first hid the assistant message behind Discord dropdowns and buttons.
+
+7. **Show delegated task parts in Discord** when OpenAI provides the task description only as the completed tool title.
+
+   Task calls now appear as `┣ general **Classify pending changes**` instead of being omitted from the thread.
+
+8. **Keep raw Discord user IDs separate from usernames** when `kimaki send --user` and `kimaki task edit --user` create session metadata. Kimaki now includes `userId` without inventing a numeric `username` when only an ID or mention is available.
+
+9. **Fix parallel `kimaki send` failures** when multiple long prompts are dispatched at once.
+
+   Long prompts used to be written to a shared temp path and unlinked after upload. Concurrent sends from the same working directory could race on create/cleanup and fail with `ENOENT` before the Discord thread was created.
+
+   Long prompt attachments now build `prompt.md` in memory and upload it directly. No temp file is created, so parallel sends cannot delete each other's attachments.
+
+   ```bash
+   # safe to run many long prompts at once
+   kimaki send --channel <id> --prompt "$(cat long-task-1.md)" &
+   kimaki send --channel <id> --prompt "$(cat long-task-2.md)" &
+   wait
+   ```
+
+## 0.25.0
+
+1. **Allow every directory by default, remove `/add-dir`** — OpenCode's `external_directory` permission defaulted to `ask`, so reading anything outside the project put an approval prompt in the thread. That prompt fired constantly for ordinary work (reading a sibling repo, a config file, a cached dependency), and if nobody clicked it within the permission timeout the tool call was rejected. Kimaki worked around it with a growing allow-list, an `/add-dir` command, and auto-granting directories from `#channel` mentions.
+
+   All of that is gone. **External directory access is now `allow` for every path.**
+
+   Kimaki writes `"external_directory": { "*": "allow" }` into its generated config. To protect specific folders, put `deny` or `ask` rules in your own `opencode.json`. Project config merges on top of that wildcard and the last matching rule wins, so your rules take priority while unlisted paths stay allowed:
+
+   ```json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "permission": {
+       "external_directory": {
+         "~/.ssh": "deny",
+         "~/.ssh/*": "deny",
+         "~/Documents/*": "ask"
+       }
+     }
+   }
+   ```
+
+   **New `--restrict-directories` flag** restores the old behaviour if you want it globally:
+
+   ```bash
+   kimaki --restrict-directories
+   ```
+
+   The agent is then limited to the session working directory plus a few known-safe paths (`/tmp`, `~/.config/opencode`, `~/.opensrc`, `~/.kimaki`, and common toolchain caches). Everything else asks for approval in the thread.
+
+   **Removed:**
+
+   - `/add-dir` slash command. It only existed to widen a session past the `ask` default, which no longer applies.
+   - Auto-granting a referenced project's directory when you mention `#channel` in a message. Mentions still resolve normally; they just no longer carry permission side effects.
+
+   Worktree threads still deny the original checkout with or without the flag. That rule is directory isolation, not prompt avoidance: it keeps the agent from editing the main repo after the thread moved to a worktree. It is applied at session level so it also beats your `opencode.json`; only an explicit `--permission 'external_directory:allow'` on that session can override it.
+
+2. **Free Whisper transcription fallback for gateway-mode installs** — voice message transcription now works out of the box, even with no OpenAI or Gemini API key configured.
+
+   When a gateway-mode bot has no transcription key set, the CLI falls back to a free Whisper transcription endpoint on `kimaki.dev`, backed by Cloudflare Workers AI (`@cf/openai/whisper-large-v3-turbo`). This is authenticated with the same `clientId:clientSecret` credentials already used for gateway-proxy calls, so no extra setup is needed.
+
+   ```
+   gateway-mode bot, no API key
+           │
+           ▼
+   kimaki.dev /api/transcribe  ──►  Cloudflare Workers AI (Whisper)  ──►  transcription text
+   ```
+
+   If this free fallback is rate-limited or unavailable, the CLI still falls back to the existing "add API key" button so you can bring your own OpenAI/Gemini key for full context-aware transcription (which supports detecting `/queue` and agent hints spoken in the voice message — the free fallback does not).
+
+   Self-hosted bot installs are unaffected; this only applies to gateway mode, since it requires a registered `client_id`.
+
+3. **Restored `/model-variant` and `/clear-queue` slash commands** — they were removed in favor of buttons attached to `/model` and `/queue` replies, but a direct command is still handy when you already know what you want to change without waiting for a reply message:
+
+   ```bash
+   /model-variant          # pick a thinking level for the current model
+   /clear-queue             # clear all queued messages in this thread
+   /clear-queue position:2  # clear only the message at queue position 2
+   ```
+
+   The button-based flows on `/model` ("Change thinking level") and `/queue` ("Remove from queue") still work as before.
+
+4. **Fixed `sendMessage` failing with a Discord 400 error when rendering long markdown tables.** Tables with many rows and long cell values (for example `/worktrees` or `/tasks` output with long paths) could stay under Discord's 40-component budget while still exceeding the 4000-character total text limit for Components V2 messages. That combination silently failed to send. Table rows are now chunked by both the component count budget and the text size budget, splitting large tables across multiple messages when needed. A single row whose own content exceeds 4000 characters is also clamped instead of being sent as-is.
+
+## 0.24.0
+
+1. **Anonymous usage analytics via Strada** — Kimaki now measures install activity, projects, sessions, and turns without collecting personal data. A random install id is stored in `~/.kimaki/install-id` (or your `--data-dir`), and only these product events are emitted:
+
+   - `bot_started` when the Discord bot is ready
+   - `project_registered` when a project channel is mapped (`user` vs `default`)
+   - `session_created` when a new OpenCode session is created
+   - `turn_started` when OpenCode accepts a prompt or command (with `source` so retries can be excluded from DAU)
+   - `turn_completed` on natural visible completions
+
+   No Discord IDs, paths, prompts, or secrets are sent. Metrics are **active installs**, not people. Disable with `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`.
+
+2. **`KIMAKI_NO_DEFAULT_CHANNEL` env var for managed deployments** — disable automatic creation of the default Kimaki channel, welcome message, and tutorial thread when your deployment provisions project channels itself:
+
+   ```bash
+   KIMAKI_NO_DEFAULT_CHANNEL=1 kimaki
+   ```
+
+   Fixes [#175](https://github.com/remorses/kimaki/issues/175).
+
+3. **Fewer Discord slash commands, same functionality** — secondary actions moved onto parent message buttons to free up command slots:
+
+   | Removed | Replacement |
+   |---|---|
+   | `/screenshare-stop` | **Stop screen share** button on `/screenshare` reply |
+   | `/model-variant` | **Change thinking level** button on `/model` |
+   | `/unset-model-override` | **Clear session/channel override** button on `/model` |
+   | `/toggle-worktrees` | **Turn on/off** auto-worktrees control in `/worktrees` |
+   | `/clear-queue` | **Remove from queue** button on each `/queue` confirmation |
+
+   `/vscode` also gained a **Stop VS Code** button. When Discord's 100-command limit is hit, registration priority is now: built-ins → agents (`*-agent`) → user commands → MCP prompts → skills (trimmed first).
+
+4. **Scheduled tasks show who gets notified** — `kimaki task list` now prints `userId`, `agent`, and `model` columns, so you can spot tasks that notify nobody:
+
+   ```
+   id | status | message | channelId | userId | projectName | folderName | agent | model | ...
+   5  | planned | Reply to unread emails | 1422... | - | my-project | GitHub | - | -
+   19 | planned | Run daily news desk | 1532... | 5359... | chiavarinews | GitHub | - | opencode-go/deepseek-v4-flash
+   ```
+
+   A `-` in `userId` means no thread member gets added when the task fires, so it may go unseen.
+
+   `kimaki task edit` can now set user, model, and agent on an existing task instead of delete + recreate:
+
+   ```bash
+   kimaki task edit 5 --user '535922349652836367'
+   kimaki task edit 19 --model 'opencode-go/deepseek-v4-flash' --send-at '0 4 * * *'
+   # empty string clears the override
+   kimaki task edit 19 --agent ''
+   ```
+
+   `kimaki send --user` also now works with `--thread` and `--session`, re-adding the user as a thread member so scheduled thread reminders resurface a thread you left, even if it auto-archived.
+
+5. **`/create-new-project` works from inside a thread** — previously it only worked from a text channel and replied with `This command can only be used in a text channel` when run from a thread. Now `/create-new-project name: my-new-app` works from either place, without interrupting the thread you're currently working in.
+
+6. **Voice notes resume automatically after saving an API key** — if Kimaki needs an OpenAI or Gemini API key to transcribe your first voice note, saving the key now transcribes and sends that same note instead of asking you to record it again.
+
+7. **`/abort` is easier to find** — its searchable description now includes stop, terminate, and cancel. Fixes [#176](https://github.com/remorses/kimaki/issues/176).
+
+8. **Fixed missing system prompt on the first turn of OpenCode commands** — slash commands and leading `/command` messages now correctly get the Discord context Kimaki injects on normal turns (session/thread IDs, upload helpers, etc), since OpenCode's `session.command` API has no `system` field on its own.
+
+9. **Fixed source builds failing due to a missing file** — `cli/src/analytics.ts` was referenced but never committed, breaking `pnpm --filter kimaki build` and `pnpm tsc` on a clean checkout. Published npm builds were unaffected since they ship a prebuilt `dist/`. Fixes [#182](https://github.com/remorses/kimaki/issues/182), fixes [#183](https://github.com/remorses/kimaki/issues/183).
+
+## 0.23.1
+
+1. **Removed retired skills from the npm package** — the bundled `batch`, `security-review`, and `simplify` skills no longer remain in fresh installs after being removed from Kimaki's skill set.
+
+## 0.23.0
+
+1. **Web search is available by default** — every Kimaki OpenCode session now enables the built-in Exa-powered web search tool without extra configuration or an API key. You can still set `EXA_API_KEY` for authenticated access and higher limits.
+
+2. **Scheduled task prompts stay short and maintainable** — agents now put detailed recurring task instructions in a project file such as `tasks/weekly-test-suite.md`, then schedule a concise prompt that points to it:
+
+   ```bash
+   kimaki send --channel <channelId> \
+     --prompt 'Read tasks/weekly-test-suite.md and follow instructions' \
+     --send-at '0 9 * * 1'
+   ```
+
+   Agents also edit an existing cron task instead of creating duplicates when a task needs to run more often. For example, `0 9,18 * * *` runs one task at 09:00 and 18:00 UTC.
+
+3. **`/clear-queue` shows what it removed** — clearing a thread queue now returns a numbered list of the discarded prompts and commands instead of only reporting the count.
+
+4. **Deleted default channels stay deleted** — Kimaki no longer recreates the default project channel on startup after you intentionally remove it. The deletion is tracked independently for each Discord server.
+
+5. **Forked worktree sessions consistently use the worktree checkout** — `apply_patch`, reads, edits, writes, and terminal commands no longer split operations between the new worktree and the source checkout.
+
+6. **CLI subcommands reuse the running OpenCode server** — commands such as `kimaki session list`, `kimaki session archive`, and `kimaki send --wait` discover and health-check the bot's existing server instead of starting a redundant `opencode serve` process. Restarts now wait for the global event stream to reconnect before dispatching prompts, preventing replies and completion footers from being missed. Fixes [#170](https://github.com/remorses/kimaki/issues/170).
+
+7. **Anthropic OAuth rotation recovers from expired refresh tokens** — accounts rejected with `invalid_grant` are removed from the rotation pool, then Kimaki switches to the next account and retries. If no accounts remain, authentication is cleared so you can log in again. Rate-limited accounts are still retained and rotated normally.
+
+8. **One-time scheduled tasks are deleted after running** — completed one-shot tasks no longer accumulate in the local database or task listings. Cron tasks continue to reschedule normally.
+
+9. **No empty completion footers** — when a model intentionally produces no visible text or tool output, Kimaki no longer posts a standalone session footer in Discord.
+
+10. **Clearer worktree merge guidance** — agents in worktree sessions now use `kimaki merge-worktree` and retry after resolving rebase conflicts instead of leaving the merge workflow ambiguous.
+
+11. **Clearer OAuth fallback action** — the login button now says **Paste authorization code or callback url**, matching the modal's existing support for either input.
+
+## 0.22.0
+
+1. **`--file` option for `kimaki send`** — attach local files (images, text files, PDFs) to Discord messages when creating threads or sending to existing ones.
+
+   ```bash
+   # Attach a screenshot to a new thread
+   kimaki send --channel <channelId> --prompt 'Review this screenshot' --file ./screenshot.png
+
+   # Attach multiple files to an existing thread
+   kimaki send --thread <threadId> --prompt 'Here are the logs' --file ./error.log --file ./trace.txt
+   ```
+
+   Files are uploaded as Discord attachments on the starter message. Images and PDFs are passed to the AI model as visual context; text files are inlined into the prompt. File size is validated against Discord's 25 MB limit before upload. Not compatible with `--send-at` (scheduled tasks store prompts as text).
+
+2. **`/new-session` now works inside threads** — previously `/new-session` only worked in text channels. When used in a thread, the new session inherits the same working directory (worktree or workspace), and the new thread is created in the parent text channel.
+
+3. **`--all` flag for `kimaki project list`** — when multiple kimaki instances share the same Discord server (different machines), `--all` scans the Kimaki category to discover text channels created by other instances.
+
+   ```bash
+   # Show local projects only (default)
+   kimaki project list
+
+   # Include remote projects from other machines
+   kimaki project list --all
+
+   # Machine-readable with is_local field
+   kimaki project list --all --json
+   ```
+
+   Remote projects show as `[remote]` with `(Not registered on this machine)` instead of a directory path. Use `--guild <id>` to specify which guild to scan when no local projects exist yet.
+
+4. **Auto-resolve remote ref for worktree base branches** — when creating a worktree with `--base-branch main`, kimaki now fetches the latest from `upstream` (then `origin`) and uses the remote ref if it's strictly ahead of the local branch. Avoids creating worktrees from stale local branches. Explicit remote refs like `origin/main` are passed through unchanged. Closes [#138](https://github.com/remorses/kimaki/issues/138)
+
+5. **Fix `/btw` and `. btw` suffix using wrong directory in worktree threads** — sessions forked via `/btw` or the `. btw` suffix, and user-defined OpenCode commands, now correctly use the worktree path instead of the base project directory.
+
+6. **Fix `kimaki send --channel` ignoring worktree toggle** — `kimaki send --channel` now auto-creates worktrees when `/toggle-worktrees` is enabled for the channel or when the global `--worktrees` flag is set. Previously, worktrees were only created when `--worktree` was explicitly passed.
+
+7. **Fix queue items removed by embed-only message updates** — Discord fires `MESSAGE_UPDATE` for link preview unfurling even when the user didn't edit the message. These events (`editedTimestamp = null`) no longer cause queued messages to be spuriously removed.
+
+8. **Channel column in `/tasks` output** — scheduled task listings now show the associated Discord channel as a clickable mention between the Status and Prompt columns.
+
+9. **Session ID shown alongside thread ID in system message** — agents now see both `--thread <threadId>` (preferred for cross-machine) and `--session <sessionId>` (fallback) in the system message, so they can reference the current session using either method.
+
+## 0.21.0
+
+1. **Guild name and ID in `kimaki project list`** — project listings now show which Discord server each channel belongs to, making it easy to distinguish channels with the same name across different servers.
+
+   Human-readable output shows the server name next to each channel:
+
+   ```
+   #kimaki (Personal Server)
+      Folder: kimaki
+      Directory: /Users/morse/.kimaki/projects/kimaki
+      Channel ID: 1505879613723906048
+      Guild ID: 1422625037164351591
+   ```
+
+   JSON output (`--json`) includes two new fields (`guild_id`, `guild_name`). A warning is printed when the same directory is registered in multiple channels across guilds.
+
+2. **New `kimaki project remove <channel_id>` command** — removes a single channel mapping from the local database without deleting the Discord channel. Useful for cleaning up duplicate or stale entries from multi-server setups.
+
+3. **Parent session ID forwarding** — sessions started via `kimaki send` now pass `--parent-session <id>` so child sessions know who started them and can message back when asked.
+
+   ```bash
+   kimaki send --channel <channelId> \
+     --prompt 'Help with this task' \
+     --agent build \
+     --parent-session ses_current
+   ```
+
+   Child sessions receive the parent ID in their system message with instructions on how to reply back.
+
+4. **Run now button for scheduled tasks** — `/tasks` now shows a **Run now** button next to planned tasks so you can fire them immediately instead of waiting for the scheduled time.
+
+   | Action | Button |
+   | --- | --- |
+   | Run early | **Run now** (planned tasks) |
+   | Remove | **Delete** (planned or running) |
+
+5. **Queue message deletion** — deleting a Discord message that is still waiting in the local queue now removes it before it drains into OpenCode. Previously, only editing a queued message to empty would remove it.
+
+6. **Fix `kimaki send` crash in read-only directories** — long prompts (attached as files) now use `os.tmpdir()` instead of `process.cwd()/tmp`, so `kimaki send` works from read-only directories like `/var/www/`. Fixes [#159](https://github.com/remorses/kimaki/issues/159)
+
+7. **Retry on Discord TLS certificate errors** — transient TLS failures like `unable to verify the first certificate` now exit with code 1 instead of 64 (`EXIT_NO_RESTART`), so the auto-restart wrapper recovers with backoff instead of stopping permanently.
+
+8. **Fix setup commands in multi-machine mode** — `create-new-project` and `add-project` now work from any channel when multiple machines are connected to the same Discord server. Previously these commands were incorrectly blocked by the ownership check.
+
+9. **Remove critique review instructions from system prompt** — the system prompt no longer includes the `bunx critique review --web` section (39 lines of instructions and 6 example commands), reducing prompt size.
+
+## 0.20.1
+
+1. **Fix user-defined commands not creating worktrees** — `-cmd`, `-skill`, and `-mcp-prompt` slash commands now correctly create worktrees in channels with worktrees enabled. Previously, running a command like `/review-cmd` would create a plain thread without a worktree, even though regular messages and `/agent` commands already respected the per-channel worktree setting.
+
+2. **Fix bot not restarting after gateway reconnect limit without wrapper** — when running with `tsx src/cli.ts` (local dev, no `bin.ts` wrapper), the previous fallback used a detached `spawn()` + `process.exit(0)` which was unreliable. Now `selfRestart` always exits with code 1; the `bin.ts` wrapper catches it and restarts with exponential backoff and crash-loop detection. Running without the wrapper logs a warning suggesting `bin.ts`.
+
+3. **Fail fast on oversized Discord file uploads** — `uploadFilesToDiscord` now checks each file's size before reading it into memory. If a file exceeds the bot limit (25 MB default, higher for boosted servers), it throws immediately with a clear error instead of sending to Discord and waiting for rejection.
+
+4. **Add `description` field to bash tool prompt** — the system prompt now instructs models to always send a short `description` with each bash call. The field is shown in Discord as context for what the command does. The instructions are structured as a TypeScript interface so models follow the schema more reliably.
+
+5. **Fix truncated bash commands missing ellipsis** — multiline commands displayed only the first line but without any visual indicator that the command was longer. Now always appends "..." when showing a partial command.
+
+## 0.20.0
+
+1. **Mention-prefixed messages now visible to the agent** — when a user sends a message in a thread that starts with `@mention` to another user (not the bot), it's added to the session context without triggering an AI response. The agent sees user-to-user conversation on the next turn, giving it better context about what's being discussed. Channel-level messages with leading mentions to other users are still ignored (no thread creation).
+
+2. **Custom tools, MCP tools, and plugin tools shown in default verbosity** — the default `text_and_essential_tools` verbosity used a whitelist of known tool names, hiding any tool not in the list. Now the logic is flipped: only known read-only built-in tools (`read`, `glob`, `grep`, `describe-media`, `todoread`) are hidden. Everything else is shown by default.
+
+3. **Fix `project add` and `project create` selecting wrong guild in gateway mode** — the guild selection heuristic fetched the most recent channel from the database, but that channel could belong to a different bot instance (e.g. old self-hosted bot). In gateway mode the proxy rejected the REST call and the fallback non-deterministically picked the wrong guild. Now multiple existing channels are tried before falling back to the guild cache, which in gateway mode is already filtered to authorized guilds.
+
+4. **Fix quick agent commands not creating worktrees** — `/plan-agent <prompt>`, `/build-agent <prompt>` and other quick agent slash commands now correctly create worktrees when used from a project channel with worktree mode enabled. Previously these created plain threads without a worktree.
+
+5. **Fix bash tool rendering with missing description** — newer opencode versions removed the `description` field from the bash tool schema, causing multiline or long commands to render as just `┣ bash` with no context. Now the first line of the command is shown truncated with `…` when no description is available.
+
+## 0.19.0
+
+1. **Compact session markdown export** — `kimaki session read` now renders tool calls as compact one-liners by default, showing the tool name, key parameters, and output line count instead of full YAML inputs and raw output blocks. This makes exported sessions much more readable and smaller, especially for sessions with many file reads and grep results.
+
+   ```
+   > 🛠️ **bash** command=echo hello, description=Print greeting (2 lines)
+   > 🛠️ **read** filePath=src/config.ts (124 lines)
+   ```
+
+   Use `--verbose` to get the full tool output when you need it:
+
+   ```bash
+   kimaki session read <session-id> --verbose
+   ```
+
+2. **Fix `kimaki send` failing in CI/headless environments** — `kimaki send --channel <id> --prompt "..."` no longer requires a local SQLite database with channel-to-directory mappings. Previously, this mapping (populated when the bot runs locally) was required unconditionally, making it impossible to use `kimaki send` from CI runners or GitHub Actions. Now the local project directory mapping is only required for `--send-at`, `--wait`, and `--cwd`. The basic flow (post message, create thread, let the remote bot pick it up) works with just `KIMAKI_BOT_TOKEN`.
+
+3. **Fix `--wait` and `--send-at` erroring after message was already sent** — the channel config requirement check now runs before posting the Discord message, so these flags fail early with a clear error instead of posting the message and then crashing.
+
+## 0.18.0
+
+1. **New `kimaki bot token` command** — prints the bot token for CI and automation use. In self-hosted mode it prints the Discord bot token; in gateway mode it prints the `clientId:clientSecret` credential.
+
+   ```bash
+   # Print your token (works in both self-hosted and gateway modes)
+   kimaki bot token
+
+   # Store it as a GitHub Actions secret
+   kimaki bot token | gh secret set KIMAKI_BOT_TOKEN
+   ```
+
+   Set the output as `KIMAKI_BOT_TOKEN` in your CI environment to let `kimaki send` and other CLI subcommands authenticate without interactive setup.
+
+2. **Harden gateway reconnect restart for sustained network outages** — previously, when the gateway proxy was unreachable (DNS down, network outage), kimaki would hit the 50-reconnect limit, trigger self-restart, crash during cleanup from uncaught discord.js shard errors, and permanently exit. Now uncaught exceptions during shutdown are suppressed, client listeners are removed before destroy, transient network errors on initial connection allow the wrapper to retry, and progressive restart backoff (2s → 4s → 8s → 16s, capped at 30s) prevents hammering DNS. The existing crash loop detector (5 crashes in 60s) still acts as the ultimate circuit breaker.
+
+3. **Fix slash commands handled by the wrong machine in multi-machine setups** — when kimaki is installed on multiple machines sharing the same Discord guild via gateway proxy, interactions (slash commands, buttons, select menus, modals) were processed by every machine regardless of channel ownership. Now the interaction handler checks if the channel has a project directory configured in the local SQLite database before processing; if not, the interaction is silently ignored so the correct machine handles it.
+
+4. **Fix workspace worktree setup and cleanup** — worktree creation now correctly parses `.gitmodules` inside the plugin-safe workspace adaptor so submodules initialize. Deleting a worktree from `/worktrees` now removes the matching OpenCode workspace record through the workspace SDK before deleting the local thread mapping, keeping OpenCode workspace state, git worktrees, and Kimaki thread metadata in sync.
+
+5. **Fix multi-question Discord dropdowns submitting incomplete answers** — duplicate select interactions on one dropdown could submit empty answers for later questions. Kimaki now derives question completion from the actual answered question indexes instead of incrementing a counter.
+
+6. **Add `--no-auto-upgrade` CLI flag** — disables the background auto-upgrade check on startup. Useful for pinned deployments or air-gapped environments.
+
+   ```bash
+   kimaki --no-auto-upgrade
+   ```
+
+7. **Fix gateway install URL on Windows** — the Discord OAuth install URL now opens correctly on Windows during onboarding. Thanks @TheLonelyDevil9 for #152!
+
 ## 0.17.1
 
 1. **Fix gateway onboarding flow silently failing** — the CLI would get stuck on "Still waiting..." after the user authorized the bot. Discord doesn't always include `guild_id` in the OAuth callback URL (e.g. when previously authorized). Now the `guild_id` is cached in KV before the callback, `prompt` is set to `consent` so the authorization screen always shows, and specific onboarding errors are surfaced to the CLI instead of a generic timeout.

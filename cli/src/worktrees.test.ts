@@ -5,16 +5,29 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
-  buildSubmoduleReferencePlan,
-  createWorktreeWithSubmodules,
   execAsync,
   getManagedWorktreeDirectory,
+  formatMergeWorktreeError,
   mergeWorktree,
-  parseGitmodulesFileContent,
   parseGitWorktreeListPorcelain,
   resolveSessionWorkingDirectory,
+  validateBranchRef,
 } from './worktrees.js'
-import { TargetDirtyWorktreeError } from './errors.js'
+import {
+  createWorktreeCore,
+  parseGitmodulesFileContent as parseCoreGitmodulesFileContent,
+  removeWorktreeCore,
+  removeWorktreeFromOwnRepository,
+  resolveGitCommit,
+  resolveGitCommonDirectory,
+  validateWorktreeIdentity,
+} from './git-worktree-core.js'
+import {
+  GitCommandError,
+  PushError,
+  RebaseConflictError,
+  TargetDirtyWorktreeError,
+} from './errors.js'
 import {
   formatAutoWorktreeName,
   formatWorktreeName,
@@ -50,15 +63,29 @@ function createTestRoot(): string {
   return fs.mkdtempSync(path.join(tmpRoot, 'worktrees-test-'))
 }
 
+async function createTestWorktree({
+  directory,
+  name,
+}: {
+  directory: string
+  name: string
+}) {
+  const baseCommit = await resolveGitCommit({ directory, ref: 'HEAD' })
+  if (baseCommit instanceof Error) return baseCommit
+  return createWorktreeCore({
+    projectDirectory: directory,
+    targetDirectory: getManagedWorktreeDirectory({ directory, name }),
+    branchName: name,
+    baseCommit,
+  })
+}
+
 describe('worktrees', () => {
-  test('parseGitmodulesFileContent parses paths and urls', () => {
-    const parsed = parseGitmodulesFileContent(`
+  test('plugin-safe gitmodules parser handles standard indented entries', () => {
+    const parsed = parseCoreGitmodulesFileContent(`
 [submodule "errore"]
-  path = errore
-  url = https://github.com/remorses/errore.git
-[submodule "gateway-proxy"]
-  path = gateway-proxy
-  url = https://github.com/remorses/gateway-proxy.git
+	path = errore
+	url = https://github.com/remorses/errore.git
 `)
 
     expect(parsed).toMatchInlineSnapshot(`
@@ -68,45 +95,11 @@ describe('worktrees', () => {
           "path": "errore",
           "url": "https://github.com/remorses/errore.git",
         },
-        {
-          "name": "gateway-proxy",
-          "path": "gateway-proxy",
-          "url": "https://github.com/remorses/gateway-proxy.git",
-        },
       ]
     `)
   })
 
-  test('buildSubmoduleReferencePlan uses local references when available', () => {
-    const sourceDirectory = '/repo'
-    const plan = buildSubmoduleReferencePlan({
-      sourceDirectory,
-      submodulePaths: ['errore', 'gateway-proxy', 'traforo'],
-      existingSourceSubmoduleDirectories: new Set([
-        '/repo/errore',
-        '/repo/gateway-proxy',
-      ]),
-    })
-
-    expect(plan).toMatchInlineSnapshot(`
-      [
-        {
-          "path": "errore",
-          "referenceDirectory": "/repo/errore",
-        },
-        {
-          "path": "gateway-proxy",
-          "referenceDirectory": "/repo/gateway-proxy",
-        },
-        {
-          "path": "traforo",
-          "referenceDirectory": null,
-        },
-      ]
-    `)
-  })
-
-  test('createWorktreeWithSubmodules resolves local-only submodule commits from local source checkout', async () => {
+  test('worktree creation resolves local-only submodule commits from local source checkout', async () => {
     const sandbox = createTestRoot()
     const submoduleRemote = path.join(sandbox, 'errore-remote.git')
     const submoduleLocal = path.join(sandbox, 'errore-local')
@@ -191,7 +184,7 @@ describe('worktrees', () => {
         args: ['commit', '-m', 'pin local-only submodule commit'],
       })
 
-      const worktreeResult = await createWorktreeWithSubmodules({
+      const worktreeResult = await createTestWorktree({
         directory: parentRepo,
         name: worktreeName,
       })
@@ -205,13 +198,28 @@ describe('worktrees', () => {
         cwd: path.join(worktreeResult.directory, 'errore'),
         args: ['rev-parse', 'HEAD'],
       })
-
+      const parentCommonDirectory = await resolveGitCommonDirectory({
+        directory: parentRepo,
+      })
+      if (parentCommonDirectory instanceof Error) {
+        throw parentCommonDirectory
+      }
+      const submoduleCommonDirectory = await resolveGitCommonDirectory({
+        directory: path.join(worktreeResult.directory, 'errore'),
+      })
+      if (submoduleCommonDirectory instanceof Error) {
+        throw submoduleCommonDirectory
+      }
       expect({
         localOnlyShaLength: localOnlySha.length,
         worktreeSubmoduleShaLength: worktreeSubmoduleSha.length,
         sameCommit: localOnlySha === worktreeSubmoduleSha,
+        belongsToParentClone: !path
+          .relative(parentCommonDirectory, submoduleCommonDirectory)
+          .startsWith(`..${path.sep}`),
       }).toMatchInlineSnapshot(`
         {
+          "belongsToParentClone": true,
           "localOnlyShaLength": 40,
           "sameCommit": true,
           "worktreeSubmoduleShaLength": 40,
@@ -230,7 +238,7 @@ describe('worktrees', () => {
     }
   })
 
-  test('createWorktreeWithSubmodules uses current HEAD even when origin does not have the commit', async () => {
+  test('worktree creation uses current HEAD even when origin does not have the commit', async () => {
     const sandbox = createTestRoot()
     const parentRemote = path.join(sandbox, 'parent-remote.git')
     const parentLocal = path.join(sandbox, 'parent-local')
@@ -268,7 +276,7 @@ describe('worktrees', () => {
         args: ['rev-parse', 'origin/main'],
       })
 
-      const worktreeResult = await createWorktreeWithSubmodules({
+      const worktreeResult = await createTestWorktree({
         directory: parentLocal,
         name: worktreeName,
       })
@@ -311,6 +319,184 @@ describe('worktrees', () => {
     }
   })
 
+  test('worktree creation survives an unavailable submodule remote', async () => {
+    const sandbox = createTestRoot()
+    const submoduleRemote = path.join(sandbox, 'missing-remote.git')
+    const submoduleSource = path.join(sandbox, 'submodule-source')
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeName = `opencode/kimaki-missing-submodule-${Date.now()}`
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', submoduleRemote] })
+      await git({ cwd: sandbox, args: ['clone', submoduleRemote, submoduleSource] })
+      await git({ cwd: submoduleSource, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: submoduleSource, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(submoduleSource, 'README.md'), 'submodule\n')
+      await git({ cwd: submoduleSource, args: ['add', 'README.md'] })
+      await git({ cwd: submoduleSource, args: ['commit', '-m', 'submodule'] })
+      await git({ cwd: submoduleSource, args: ['push', 'origin', 'HEAD:main'] })
+
+      await git({ cwd: sandbox, args: ['init', '-b', 'main', parentRepo] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(parentRepo, 'README.md'), 'parent\n')
+      await git({ cwd: parentRepo, args: ['add', 'README.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'parent'] })
+      await git({
+        cwd: parentRepo,
+        args: [
+          '-c',
+          'protocol.file.allow=always',
+          'submodule',
+          'add',
+          submoduleRemote,
+          'missing',
+        ],
+      })
+      await git({ cwd: parentRepo, args: ['commit', '-am', 'add submodule'] })
+      await git({ cwd: parentRepo, args: ['submodule', 'deinit', '-f', '--all'] })
+      fs.rmSync(path.join(parentRepo, '.git', 'modules', 'missing'), {
+        recursive: true,
+        force: true,
+      })
+      fs.rmSync(submoduleRemote, { recursive: true, force: true })
+
+      const result = await createTestWorktree({
+        directory: parentRepo,
+        name: worktreeName,
+      })
+      if (result instanceof Error) throw result
+
+      expect({
+        directoryExists: fs.existsSync(result.directory),
+        submoduleUnavailable: !fs.existsSync(path.join(result.directory, 'missing', '.git')),
+      }).toMatchInlineSnapshot(`
+        {
+          "directoryExists": true,
+          "submoduleUnavailable": true,
+        }
+      `)
+    } finally {
+      const managedDirectory = getManagedWorktreeDirectory({
+        directory: parentRepo,
+        name: worktreeName,
+      })
+      if (fs.existsSync(parentRepo)) {
+        await git({
+          cwd: parentRepo,
+          args: ['worktree', 'remove', '--force', managedDirectory],
+        }).catch(() => '')
+      }
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('worktree removal succeeds when its branch was already deleted', async () => {
+    const sandbox = createTestRoot()
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeDirectory = path.join(sandbox, 'worktree')
+    const branchName = 'opencode/kimaki-removed-branch'
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '-b', 'main', parentRepo] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(parentRepo, 'README.md'), 'parent\n')
+      await git({ cwd: parentRepo, args: ['add', 'README.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'parent'] })
+      await git({
+        cwd: parentRepo,
+        args: ['worktree', 'add', '-b', branchName, worktreeDirectory],
+      })
+      await git({ cwd: worktreeDirectory, args: ['switch', '--detach'] })
+      await git({ cwd: parentRepo, args: ['branch', '-D', branchName] })
+
+      const result = await removeWorktreeCore({
+        projectDirectory: parentRepo,
+        worktreeDirectory,
+        branchName,
+      })
+      if (result instanceof Error) throw result
+
+      expect(fs.existsSync(worktreeDirectory)).toBe(false)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('worktree identity mismatch is detected and cleaned from its actual clone', async () => {
+    const sandbox = createTestRoot()
+    const remote = path.join(sandbox, 'remote.git')
+    const requestedClone = path.join(sandbox, 'requested')
+    const otherClone = path.join(sandbox, 'other')
+    const worktreeDirectory = path.join(sandbox, 'wrong-worktree')
+    const branchName = 'opencode/kimaki-wrong-clone'
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '--bare', '-b', 'main', remote] })
+      await git({ cwd: sandbox, args: ['clone', remote, otherClone] })
+      await git({ cwd: otherClone, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: otherClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(otherClone, 'README.md'), 'old\n')
+      await git({ cwd: otherClone, args: ['add', 'README.md'] })
+      await git({ cwd: otherClone, args: ['commit', '-m', 'old'] })
+      await git({ cwd: otherClone, args: ['push', 'origin', 'HEAD:main'] })
+
+      await git({ cwd: sandbox, args: ['clone', remote, requestedClone] })
+      await git({ cwd: requestedClone, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: requestedClone, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(requestedClone, 'requested.txt'), 'new\n')
+      await git({ cwd: requestedClone, args: ['add', 'requested.txt'] })
+      await git({ cwd: requestedClone, args: ['commit', '-m', 'requested'] })
+
+      const baseCommit = await git({
+        cwd: requestedClone,
+        args: ['rev-parse', 'HEAD'],
+      })
+      await git({
+        cwd: otherClone,
+        args: ['worktree', 'add', '-b', branchName, worktreeDirectory, 'HEAD'],
+      })
+
+      const validation = await validateWorktreeIdentity({
+        projectDirectory: requestedClone,
+        worktreeDirectory,
+        baseCommit,
+      })
+      expect(validation).toBeInstanceOf(Error)
+
+      const cleanup = await removeWorktreeFromOwnRepository({
+        worktreeDirectory,
+        branchName,
+      })
+      if (cleanup instanceof Error) throw cleanup
+      const otherWorktrees = await git({
+        cwd: otherClone,
+        args: ['worktree', 'list', '--porcelain'],
+      })
+      const branchExists = await execAsync(
+        `git show-ref --verify --quiet ${JSON.stringify(`refs/heads/${branchName}`)}`,
+        { cwd: otherClone },
+      )
+        .then(() => true)
+        .catch(() => false)
+
+      expect({
+        directoryRemoved: !fs.existsSync(worktreeDirectory),
+        registrationRemoved: !otherWorktrees.includes(worktreeDirectory),
+        branchRemoved: !branchExists,
+      }).toMatchInlineSnapshot(`
+        {
+          "branchRemoved": true,
+          "directoryRemoved": true,
+          "registrationRemoved": true,
+        }
+      `)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
   test('mergeWorktree rejects dirty checked-out target before local push', async () => {
     const sandbox = createTestRoot()
     const parentRepo = path.join(sandbox, 'parent')
@@ -344,6 +530,280 @@ describe('worktrees', () => {
       expect(await git({ cwd: parentRepo, args: ['rev-parse', 'main'] })).not.toBe(
         await git({ cwd: worktreeDir, args: ['rev-parse', 'HEAD'] }),
       )
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('formatMergeWorktreeError includes git command, exit code, and stderr', () => {
+    const execErr = Object.assign(new Error('Command failed: git push'), {
+      stderr:
+        'fatal: refusing to update checked out branch: refs/heads/main\nhint: set receive.denyCurrentBranch to updateInstead\n',
+      stdout: '',
+      code: 1,
+    })
+    const gitErr = new GitCommandError({
+      command:
+        'git -C /wt push --receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack /repo/.git HEAD:main',
+      cause: execErr,
+    })
+    const err = new PushError({ target: 'main', cause: gitErr })
+    expect(formatMergeWorktreeError(err)).toMatchInlineSnapshot(`
+      "Merge failed: Push to main failed
+      Worktree rebase succeeded. Local branch was not updated. This is not a push to origin.
+
+      \`\`\`
+      git -C /wt push --receive-pack=git -c receive.denyCurrentBranch=updateInstead receive-pack /repo/.git HEAD:main
+      exit 1
+
+      fatal: refusing to update checked out branch: refs/heads/main
+      hint: set receive.denyCurrentBranch to updateInstead
+      \`\`\`"
+    `)
+  })
+
+  test('formatMergeWorktreeError keeps timeout cause when git has no stderr', () => {
+    const timeoutErr = new Error(
+      'Command timed out after 30000ms: git -C /wt push /repo/.git HEAD:main',
+    )
+    const gitErr = new GitCommandError({
+      command: 'git -C /wt push /repo/.git HEAD:main',
+      cause: timeoutErr,
+    })
+    const err = new PushError({ target: 'main', cause: gitErr })
+    expect(formatMergeWorktreeError(err)).toMatchInlineSnapshot(`
+      "Merge failed: Push to main failed
+      Worktree rebase succeeded. Local branch was not updated. This is not a push to origin.
+
+      \`\`\`
+      git -C /wt push /repo/.git HEAD:main
+
+      Command timed out after 30000ms: git -C /wt push /repo/.git HEAD:main
+      \`\`\`"
+    `)
+  })
+
+  test('formatMergeWorktreeError truncates to maxLength', () => {
+    const execErr = Object.assign(new Error('Command failed: git push'), {
+      stderr: 'fatal: ' + 'x'.repeat(200),
+      code: 1,
+    })
+    const gitErr = new GitCommandError({
+      command: 'git -C /wt push /repo/.git HEAD:main',
+      cause: execErr,
+    })
+    const formatted = formatMergeWorktreeError(
+      new PushError({ target: 'main', cause: gitErr }),
+      { maxLength: 80 },
+    )
+    expect(formatted.length).toBeLessThanOrEqual(80)
+    expect(formatted.endsWith('… [truncated]')).toBe(true)
+  })
+
+  test('mergeWorktree push failure includes git stderr in formatted error', async () => {
+    const sandbox = createTestRoot()
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeDir = path.join(sandbox, 'feature-worktree')
+
+    try {
+      fs.mkdirSync(parentRepo, { recursive: true })
+      await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      await git({
+        cwd: parentRepo,
+        args: ['config', 'core.hooksPath', path.join(parentRepo, '.git', 'hooks')],
+      })
+
+      fs.writeFileSync(path.join(parentRepo, 'README.md'), 'v1\n', 'utf-8')
+      await git({ cwd: parentRepo, args: ['add', 'README.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'init'] })
+
+      await git({ cwd: parentRepo, args: ['worktree', 'add', '-b', 'feature', worktreeDir] })
+      fs.writeFileSync(path.join(worktreeDir, 'feature.md'), 'feature\n', 'utf-8')
+      await git({ cwd: worktreeDir, args: ['add', 'feature.md'] })
+      await git({ cwd: worktreeDir, args: ['commit', '-m', 'feature'] })
+
+      const hookPath = path.join(parentRepo, '.git', 'hooks', 'pre-receive')
+      fs.writeFileSync(
+        hookPath,
+        '#!/bin/sh\ncat >/dev/null\necho "hook rejected the push" >&2\nexit 1\n',
+        'utf-8',
+      )
+      fs.chmodSync(hookPath, 0o755)
+
+      const result = await mergeWorktree({
+        worktreeDir,
+        mainRepoDir: parentRepo,
+        worktreeName: 'feature',
+        targetBranch: 'main',
+      })
+
+      expect(result).toBeInstanceOf(PushError)
+      if (!(result instanceof PushError)) return
+      const formatted = formatMergeWorktreeError(result)
+      expect(formatted.startsWith('Merge failed: Push to main failed')).toBe(true)
+      expect(formatted).toContain('hook rejected the push')
+      expect(formatted).toContain('exit 1')
+      expect(formatted).toContain('git -C ')
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('mergeWorktree squash creates one target commit with the complete tree', async () => {
+    const sandbox = createTestRoot()
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeDir = path.join(sandbox, 'feature-worktree')
+
+    try {
+      fs.mkdirSync(parentRepo, { recursive: true })
+      await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+
+      fs.writeFileSync(path.join(parentRepo, 'README.md'), 'base\n', 'utf-8')
+      await git({ cwd: parentRepo, args: ['add', 'README.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'init'] })
+
+      await git({ cwd: parentRepo, args: ['worktree', 'add', '-b', 'feature', worktreeDir] })
+      fs.writeFileSync(path.join(worktreeDir, 'first.md'), 'first\n', 'utf-8')
+      await git({ cwd: worktreeDir, args: ['add', 'first.md'] })
+      await git({ cwd: worktreeDir, args: ['commit', '-m', 'add first file'] })
+      fs.writeFileSync(path.join(worktreeDir, 'second.md'), 'second\n', 'utf-8')
+      await git({ cwd: worktreeDir, args: ['add', 'second.md'] })
+      await git({ cwd: worktreeDir, args: ['commit', '-m', 'add second file'] })
+
+      fs.writeFileSync(path.join(parentRepo, 'target.md'), 'target\n', 'utf-8')
+      await git({ cwd: parentRepo, args: ['add', 'target.md'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'advance target'] })
+      const targetBeforeMerge = await git({
+        cwd: parentRepo,
+        args: ['rev-parse', 'main'],
+      })
+
+      const result = await mergeWorktree({
+        worktreeDir,
+        mainRepoDir: parentRepo,
+        worktreeName: 'feature',
+        targetBranch: 'main',
+        strategy: 'squash',
+      })
+      if (result instanceof Error) throw result
+
+      const parent = await git({ cwd: parentRepo, args: ['rev-parse', 'main^'] })
+      expect({
+        sourceCommitCount: result.commitCount,
+        targetCommitCount: Number(
+          await git({
+            cwd: parentRepo,
+            args: ['rev-list', '--count', `${targetBeforeMerge}..main`],
+          }),
+        ),
+        parentMatchesTarget: parent === targetBeforeMerge,
+        subject: await git({ cwd: parentRepo, args: ['log', '-1', '--format=%s', 'main'] }),
+        files: (await git({ cwd: parentRepo, args: ['ls-tree', '-r', '--name-only', 'main'] })).split('\n'),
+        worktreeHead: await git({ cwd: worktreeDir, args: ['rev-parse', '--abbrev-ref', 'HEAD'] }),
+        featureBranchExists: await execAsync(
+          'git show-ref --verify --quiet refs/heads/feature',
+          { cwd: parentRepo },
+        ).then(
+          () => true,
+          () => false,
+        ),
+      }).toMatchInlineSnapshot(`
+        {
+          "featureBranchExists": false,
+          "files": [
+            "README.md",
+            "first.md",
+            "second.md",
+            "target.md",
+          ],
+          "parentMatchesTarget": true,
+          "sourceCommitCount": 2,
+          "subject": "Merge worktree feature",
+          "targetCommitCount": 1,
+          "worktreeHead": "HEAD",
+        }
+      `)
+    } finally {
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('mergeWorktree keeps reporting a paused rebase conflict on retry', async () => {
+    const sandbox = createTestRoot()
+    const parentRepo = path.join(sandbox, 'parent')
+    const worktreeDir = path.join(sandbox, 'feature-worktree')
+
+    try {
+      fs.mkdirSync(parentRepo, { recursive: true })
+      await git({ cwd: parentRepo, args: ['init', '-b', 'main'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.email', 'kimaki-tests@example.com'] })
+      await git({ cwd: parentRepo, args: ['config', 'user.name', 'Kimaki Tests'] })
+      fs.writeFileSync(path.join(parentRepo, 'conflict.txt'), 'base\n', 'utf-8')
+      await git({ cwd: parentRepo, args: ['add', 'conflict.txt'] })
+      await git({ cwd: parentRepo, args: ['commit', '-m', 'init'] })
+
+      await git({ cwd: parentRepo, args: ['worktree', 'add', '-b', 'feature', worktreeDir] })
+      fs.writeFileSync(path.join(worktreeDir, 'conflict.txt'), 'feature\n', 'utf-8')
+      await git({ cwd: worktreeDir, args: ['commit', '-am', 'feature change'] })
+      fs.writeFileSync(path.join(parentRepo, 'conflict.txt'), 'target\n', 'utf-8')
+      await git({ cwd: parentRepo, args: ['commit', '-am', 'target change'] })
+
+      const first = await mergeWorktree({
+        worktreeDir,
+        mainRepoDir: parentRepo,
+        worktreeName: 'feature',
+        targetBranch: 'main',
+        strategy: 'squash',
+      })
+      const retry = await mergeWorktree({
+        worktreeDir,
+        mainRepoDir: parentRepo,
+        worktreeName: 'feature',
+        targetBranch: 'main',
+        strategy: 'squash',
+      })
+
+      expect({
+        first: first instanceof Error ? first.name : 'success',
+        retry: retry instanceof Error ? retry.name : 'success',
+      }).toMatchInlineSnapshot(`
+        {
+          "first": "RebaseConflictError",
+          "retry": "RebaseConflictError",
+        }
+      `)
+      expect(first).toBeInstanceOf(RebaseConflictError)
+      expect(retry).toBeInstanceOf(RebaseConflictError)
+    } finally {
+      await execAsync('git rebase --abort', { cwd: worktreeDir }).catch(() => undefined)
+      fs.rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  test('validateBranchRef does not execute shell syntax from a branch value', async () => {
+    const sandbox = createTestRoot()
+    const marker = path.join(sandbox, 'injected')
+
+    try {
+      await git({ cwd: sandbox, args: ['init', '-b', 'main'] })
+      const result = await validateBranchRef({
+        directory: sandbox,
+        ref: `feature/$(touch ${marker})`,
+      })
+
+      expect({
+        rejected: result instanceof Error,
+        commandExecuted: fs.existsSync(marker),
+      }).toMatchInlineSnapshot(`
+        {
+          "commandExecuted": false,
+          "rejected": true,
+        }
+      `)
     } finally {
       fs.rmSync(sandbox, { recursive: true, force: true })
     }

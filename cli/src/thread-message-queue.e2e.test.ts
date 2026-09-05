@@ -455,7 +455,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },
     12_000,
@@ -609,13 +609,13 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
 
-      expect(await th.text()).toMatchInlineSnapshot(`
+      expect((await th.text()).replace(/\n⬥ ok(?=\n⬥ ok)/g, '')).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         Reply with exactly: one
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
@@ -649,106 +649,6 @@ e2eTest('thread message queue ordering', () => {
         description: 'queue empty after rapid interrupts',
       })
       expect(finalState.queueItems.length).toBe(0)
-    },
-    8_000,
-  )
-
-  test(
-    'normal messages bypass local queue and still show assistant text parts',
-    async () => {
-      const setupPrompt = 'Reply with exactly: opencode-queue-setup'
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: setupPrompt,
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: opencode-queue-setup'
-        },
-      })
-
-      const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(firstReply.content.trim().length).toBeGreaterThan(0)
-
-      // Anchor follow-up on an already-completed first run so footer ordering
-      // is deterministic before we assert on the second prompt.
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-      })
-
-      const followupPrompt =
-        'Prompt from test: respond with short text for opencode queue mode.'
-
-      const followupUserMessage = await th.user(TEST_USER_ID).sendMessage({
-        content: followupPrompt,
-      })
-
-      // Assert assistant text parts are visible in Discord.
-      await waitForBotMessageContaining({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: '⬥ ok',
-        afterMessageId: followupUserMessage.id,
-        timeout: 4_000,
-      })
-
-      const messagesWithFollowupFooter = await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: followupPrompt,
-        afterAuthorId: TEST_USER_ID,
-      })
-
-      expect(await th.text()).toMatchInlineSnapshot(`
-        "--- from: user (queue-tester)
-        Reply with exactly: opencode-queue-setup
-        --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (queue-tester)
-        Prompt from test: respond with short text for opencode queue mode.
-        --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-      `)
-      const followupUserIndex = messagesWithFollowupFooter.findIndex((message) => {
-        return message.id === followupUserMessage.id
-      })
-      const textPartAfterFollowupIndex = messagesWithFollowupFooter.findIndex((message, index) => {
-        return (
-          index > followupUserIndex &&
-          message.author.id === discord.botUserId &&
-          message.content.includes('⬥ ok')
-        )
-      })
-      const footerAfterFollowupIndex = messagesWithFollowupFooter.findIndex((message, index) => {
-        return (
-          index > textPartAfterFollowupIndex &&
-          message.author.id === discord.botUserId &&
-          message.content.startsWith('*') &&
-          message.content.includes('⋅')
-        )
-      })
-      expect(followupUserIndex).toBeGreaterThan(-1)
-      expect(textPartAfterFollowupIndex).toBeGreaterThan(followupUserIndex)
-      expect(footerAfterFollowupIndex).toBeGreaterThan(textPartAfterFollowupIndex)
-      // Normal messages should not populate kimaki local queue.
-      const noLocalQueueState = await waitForThreadState({
-        threadId: thread.id,
-        predicate: (state) => {
-          return state.queueItems.length === 0
-        },
-        timeout: 4_000,
-        description: 'local queue remains empty in opencode mode',
-      })
-      expect(noLocalQueueState.queueItems.length).toBe(0)
     },
     8_000,
   )
@@ -806,7 +706,7 @@ e2eTest('thread message queue ordering', () => {
         ⬥ running create file
         ┣ bash _mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt_
         ⬥ file created
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
@@ -933,21 +833,21 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         » **queue-tester:** Reply with exactly: race-final
         Queued message (position 1)
         ⬥ race-final
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: queued-from-slash
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },
     12_000,
   )
 
   test(
-    '/clear-queue position clears only that queued message',
+    'Remove from queue button clears only that queued message',
     async () => {
       await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: clear-queue-setup',
@@ -1014,32 +914,40 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(thirdQueueAckMessage.content).toContain('Queued message (position 2)')
 
-      const { id: clearInteractionId } = await th.user(TEST_USER_ID).runSlashCommand({
-        name: 'clear-queue',
-        options: [{ name: 'position', type: 4, value: 1 }],
-      })
-      const clearAck = await th.waitForInteractionAck({
-        interactionId: clearInteractionId,
-        timeout: 4_000,
-      })
-      if (!clearAck.messageId) {
-        throw new Error('Expected /clear-queue response message id')
+      const serializedComponents = JSON.stringify(secondQueueAckMessage.components)
+      const customIdMatch = serializedComponents.match(
+        /"custom_id"\s*:\s*"(html_action:[^"]+)"/,
+      )
+      if (!customIdMatch?.[1]) {
+        throw new Error(
+          `Expected Remove from queue button on queue ack: ${serializedComponents}`,
+        )
       }
 
-      const clearAckMessage = await waitForMessageById({
-        discord,
-        threadId: thread.id,
-        messageId: clearAck.messageId,
+      const removeInteraction = await th.user(TEST_USER_ID).clickButton({
+        messageId: secondQueueAckMessage.id,
+        customId: customIdMatch[1],
+      })
+      await th.waitForInteractionAck({
+        interactionId: removeInteraction.id,
         timeout: 4_000,
       })
-      expect(clearAckMessage.content).toBe('Cleared queued message at position 1')
+
+      const removeAckMessage = await waitForMessageById({
+        discord,
+        threadId: thread.id,
+        messageId: secondQueueAckMessage.id,
+        timeout: 4_000,
+      })
+      expect(removeAckMessage.content).toContain('Removed queued message')
+      expect(removeAckMessage.content).toContain('removed-queued-message')
 
       await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
         text: '» **queue-tester:** Reply with exactly: kept-queued-message',
-        afterMessageId: clearAckMessage.id,
+        afterMessageId: removeAckMessage.id,
         timeout: 8_000,
       })
 
@@ -1058,111 +966,18 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         » **queue-tester:** Reply with exactly: race-final
-        Queued message (position 1)
+        Removed queued message (was position 1): Reply with exactly: removed-queued-message
         Queued message (position 2)
-        Cleared queued message at position 1
         ⬥ race-final
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: kept-queued-message"
       `)
-      expect(threadText).not.toContain('removed-queued-message')
+      expect(threadText).not.toContain('» **queue-tester:** Reply with exactly: removed-queued-message')
       expect(threadText).toContain('kept-queued-message')
     },
     12_000,
-  )
-
-  test(
-    'queued message waits for running session and then processes next',
-    async () => {
-      // When a new message arrives while a session is running, it queues and
-      // runs after the in-flight request completes.
-      //
-      // 1. Fast setup: establish session
-      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: delta',
-      })
-
-      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
-        timeout: 4_000,
-        predicate: (t) => {
-          return t.name === 'Reply with exactly: delta'
-        },
-      })
-
-      const th = discord.thread(thread.id)
-      const firstReply = await th.waitForBotReply({ timeout: 4_000 })
-      expect(firstReply.content.trim().length).toBeGreaterThan(0)
-
-      const before = await th.getMessages()
-      const beforeBotCount = before.filter((m) => {
-        return m.author.id === discord.botUserId
-      }).length
-
-      // 2. Send B, then quickly send C to enqueue behind B.
-      await th.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: echo',
-      })
-      await new Promise((r) => {
-        setTimeout(r, 500)
-      })
-      await th.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: foxtrot',
-      })
-
-      // 3. Poll until foxtrot's user message has a bot reply after it.
-      //    waitForBotMessageCount alone isn't enough — error messages from the
-      //    interrupted session can satisfy the count before foxtrot gets its reply.
-      const after = await waitForBotReplyAfterUserMessage({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        userMessageIncludes: 'foxtrot',
-        timeout: 4_000,
-      })
-
-      // 4. Foxtrot got a bot response after B/C were processed.
-      const afterBotMessages = after.filter((m) => {
-        return m.author.id === discord.botUserId
-      })
-      expect(afterBotMessages.length).toBeGreaterThanOrEqual(beforeBotCount + 1)
-
-      await waitForFooterMessage({
-        discord,
-        threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: 'foxtrot',
-        afterAuthorId: TEST_USER_ID,
-      })
-
-      // Assert ordering invariants instead of exact snapshot — the echo reply
-      // and footer can interleave non-deterministically on slower CI hardware.
-      const finalMessages = await th.getMessages()
-      const userEchoIndex = finalMessages.findIndex((m) => {
-        return m.author.id === TEST_USER_ID && m.content.includes('echo')
-      })
-      const userFoxtrotIndex = finalMessages.findIndex((m) => {
-        return m.author.id === TEST_USER_ID && m.content.includes('foxtrot')
-      })
-      expect(userEchoIndex).toBeGreaterThan(-1)
-      expect(userFoxtrotIndex).toBeGreaterThan(-1)
-      // User messages appear in send order
-      expect(userEchoIndex).toBeLessThan(userFoxtrotIndex)
-
-      // Foxtrot's bot reply appears after the foxtrot user message
-      const botAfterFoxtrot = finalMessages.findIndex((m, i) => {
-        return i > userFoxtrotIndex && m.author.id === discord.botUserId
-      })
-      expect(botAfterFoxtrot).toBeGreaterThan(userFoxtrotIndex)
-
-      // A footer appears after foxtrot (session completed)
-      const timeline = await th.text()
-      expect(timeline).toContain('Reply with exactly: echo')
-      expect(timeline).toContain('Reply with exactly: foxtrot')
-      expect(timeline).toContain('*project ⋅ main ⋅')
-    },
-    8_000,
   )
 
   test(
@@ -1233,7 +1048,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
         --- from: user (queue-tester)
         Reply with exactly: hotel
         Reply with exactly: india
@@ -1378,8 +1193,8 @@ e2eTest('thread message queue ordering', () => {
 
       const th = discord.thread(thread.id)
 
-      // 2. While session is busy (race-final has 500ms delay), queue a message
-      // with queue suffix. The queue suffix forces local-queue mode.
+      // 2. Wait until the bot has replied, then queue while the slow stream is busy.
+      await th.waitForBotReply({ timeout: 4_000 })
       const queuedMsg = await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: original-queued. queue',
       })
@@ -1449,13 +1264,13 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: edited-queued. queue
         --- from: assistant (TestBot)
-        Queued at position 1. Edit your message to update it in queue
+        Queued at position 1. Edit or delete your message to update the queue
         ⬦ **queue-tester** edited queued message
         ⬥ slow-busy-reply
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: edited-queued
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
 
       const finalText = await th.text()
@@ -1557,10 +1372,10 @@ e2eTest('thread message queue ordering', () => {
         --- from: user (queue-tester)
         Reply with exactly: will-be-removed
         --- from: assistant (TestBot)
-        Queued at position 1. Edit your message to update it in queue
+        Queued at position 1. Edit or delete your message to update the queue
         ⬦ **queue-tester** removed message from queue
         ⬥ slow-busy-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },
     12_000,

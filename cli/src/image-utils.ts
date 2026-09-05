@@ -16,10 +16,10 @@ const HEIC_MIME_TYPES = [
 
 type SharpModule = typeof import('sharp')
 type HeicConvertFn = (options: {
-  buffer: ArrayBufferLike
+  buffer: Uint8Array
   format: 'JPEG' | 'PNG'
   quality?: number
-}) => Promise<ArrayBuffer>
+}) => Promise<Uint8Array>
 
 let sharpModule: SharpModule | null | undefined = undefined
 let heicConvertModule: HeicConvertFn | null | undefined = undefined
@@ -77,9 +77,10 @@ export async function processImage(
     if (heicConvert) {
       try {
         const outputArrayBuffer = await heicConvert({
-          buffer: workingBuffer.buffer.slice(
+          buffer: new Uint8Array(
+            workingBuffer.buffer,
             workingBuffer.byteOffset,
-            workingBuffer.byteOffset + workingBuffer.byteLength,
+            workingBuffer.byteLength,
           ),
           format: 'JPEG',
           quality: 0.85,

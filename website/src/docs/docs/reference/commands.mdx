@@ -28,21 +28,18 @@ A complete reference of Kimaki's **Discord slash commands** and **CLI subcommand
 
 | Command | Description |
 |---|---|
-| `/model` | Change the model for this channel or session ([docs](../getting-started/model-switching)) |
+| `/model` | Change model, thinking level, or clear overrides ([docs](../getting-started/model-switching)) |
 | `/agent` | Change the agent for this channel or session |
 | `/<name>-agent` | Instantly switch to a named agent file |
 | `/login` | Authenticate a provider via OAuth or API key ([docs](../getting-started/subscriptions)) |
-| `/model-variant` | Change the thinking-level variant for the current model |
-| `/unset-model-override` | Remove model overrides and use the default |
 | `/verbosity` | Set how much tool output is shown ([docs](../configuration/verbosity)) |
 
 ## Queue slash commands
 
 | Command | Description |
 |---|---|
-| `/queue <message>` | Queue a message for after the current run ([docs](../features/queue)) |
-| `/queue-command <command>` | Queue a registered command |
-| `/clear-queue [position]` | Clear all queued messages, or one by position |
+| `/queue <message>` | Queue a message for after the current run; reply has a **Remove** button ([docs](../features/queue)) |
+| `/queue-command <command>` | Queue a registered command; reply has a **Remove** button |
 
 ## Project & worktree slash commands
 
@@ -53,15 +50,12 @@ A complete reference of Kimaki's **Discord slash commands** and **CLI subcommand
 | `/remove-project <project>` | Remove channels for a project |
 | `/new-worktree <name>` | Move the session into an isolated git worktree ([docs](../features/worktrees)) |
 | `/merge-worktree` | Merge the worktree branch into the default branch |
-| `/worktrees` | List all worktrees for the channel's project |
-| `/toggle-worktrees` | Toggle automatic worktree creation for new sessions |
+| `/worktrees` | List worktrees and toggle automatic worktree creation ([docs](../features/worktrees)) |
 
 ## Access & permissions slash commands
 
 | Command | Description |
 |---|---|
-| `/add-dir <directory>` | Grant the session access to an extra directory ([docs](../configuration/permissions)) |
-| `/toggle-mention-mode` | Only respond to @mentions in this channel ([docs](../configuration/access-control)) |
 | `/mcp` | List and toggle MCP servers for the project ([docs](../configuration/mcp)) |
 | `/transcription-key` | Set the API key used for voice transcription ([docs](../features/voice)) |
 
@@ -69,9 +63,8 @@ A complete reference of Kimaki's **Discord slash commands** and **CLI subcommand
 
 | Command | Description |
 |---|---|
-| `/vscode` | Open the project in browser VS Code ([docs](../remote-access/vscode)) |
-| `/screenshare` | Share your screen via VNC tunnel ([docs](../remote-access/screen-sharing)) |
-| `/screenshare-stop` | Stop screen sharing |
+| `/vscode` | Open browser VS Code; reply has a **Stop** button ([docs](../remote-access/vscode)) |
+| `/screenshare` | Share screen via VNC; reply has a **Stop** button ([docs](../remote-access/screen-sharing)) |
 | `/diff` | Generate a shareable diff URL ([docs](../features/diff-viewer)) |
 | `/run-shell-command <command>` | Run a shell command in the project dir ([docs](../features/shell-commands)) |
 
@@ -94,6 +87,8 @@ Your OpenCode commands, skills, and MCP prompts are also registered automaticall
 | `... . btw` | Fork context to answer a side question ([docs](../features/btw)) |
 | voice note | Transcribed and sent as a prompt ([docs](../features/voice)) |
 | image / PDF attachment | Sent to the agent as inline content ([docs](../features/images)) |
+| small text attachment | Inlined into the prompt, plus a local path and Discord URL |
+| large text attachment | Saved locally. The prompt gets the path, Discord URL, size, and type, not the file contents |
 
 ## CLI subcommands
 
@@ -105,6 +100,7 @@ npx -y kimaki@latest
 kimaki project add [directory]
 kimaki project list
 kimaki project create <name>
+kimaki project remove <channel-id>
 
 # Start or continue sessions programmatically
 kimaki send --channel <channel-id> --prompt 'your prompt'
@@ -120,6 +116,10 @@ kimaki task delete <id>
 kimaki session list
 kimaki session search 'query'
 kimaki session read <session-id>
+kimaki session export-events-jsonl --session <session-id> --out ./tmp/session.jsonl
+# Paths are absolute; a worktree file is not the same path as main
+kimaki session editors <file>
+kimaki session title 'Short title' --session <session-id>
 
 # OAuth account pools
 kimaki multioauth list
@@ -139,4 +139,4 @@ kimaki sqlitedb
 kimaki upgrade
 ```
 
-See [CI & Automation](../guides/ci-automation) for the full `kimaki send` flag reference and scheduling options.
+See [CI & Automation](../guides/ci-automation) for the full `kimaki send` flag reference and scheduling options. See [Debug sessions and report bugs](../guides/report-bugs.mdx) to export jsonl and file an issue.

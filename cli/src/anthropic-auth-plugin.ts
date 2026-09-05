@@ -1,3 +1,4 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 /**
  * Anthropic OAuth authentication plugin for OpenCode.
  *
@@ -28,8 +29,10 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { appendToastSessionMarker } from "./plugin-logger.js";
 import { createPluginClient } from "./plugin-opencode-client.js";
 import {
+  isPermanentOAuthRefreshFailure,
   loadAccountStore,
   rememberAnthropicOAuth,
+  removeAccountByAuth,
   rotateAnthropicAccount,
   saveAccountStore,
   setAnthropicAuth,
@@ -39,6 +42,7 @@ import {
   withAuthStateLock,
 } from "./anthropic-auth-state.js";
 import {
+  applyClaudeCodeRequestIdentity,
   extractAnthropicAccountIdentity,
   type AnthropicAccountIdentity,
 } from "./anthropic-account-identity.js";
@@ -88,7 +92,6 @@ const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
 const SCOPES =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
-const CLAUDE_CODE_VERSION = "2.1.75";
 const CLAUDE_CODE_IDENTITY =
   "You are Claude Code, Anthropic's official CLI for Claude.";
 
@@ -342,14 +345,12 @@ async function fetchAnthropicAccountIdentity(accessToken: string) {
   for (const url of urls) {
     const responseText = await requestText(url, {
       method: "GET",
-      headers: {
-        Accept: "application/json",
-        authorization: `Bearer ${accessToken}`,
-        "user-agent":
-          process.env.OPENCODE_ANTHROPIC_USER_AGENT ||
-          `claude-cli/${CLAUDE_CODE_VERSION}`,
-        "x-app": "cli",
-      },
+      headers: Object.fromEntries(
+        applyClaudeCodeRequestIdentity({
+          headers: new Headers({ Accept: "application/json" }),
+          accessToken,
+        }).entries(),
+      ),
     }).catch(() => {
       return undefined;
     });
@@ -911,50 +912,91 @@ function isOAuthStored(auth: { type: string }): auth is OAuthStored {
   return auth.type === "oauth";
 }
 
+/**
+ * Refresh Anthropic OAuth. On permanent refresh failure (invalid_grant),
+ * remove that account from the pool and retry with the next one.
+ * removeAccountByAuth runs outside withAuthStateLock to avoid nested locks.
+ */
 async function getFreshOAuth(
   getAuth: () => Promise<OAuthStored | { type: string }>,
   client: OpencodeClient,
-) {
+  options?: { sessionId?: string },
+): Promise<OAuthStored | undefined> {
   const auth = await getAuth();
   if (!isOAuthStored(auth)) return undefined;
   if (auth.access && auth.expires > Date.now()) return auth;
 
   const pending = pendingRefresh.get(auth.refresh);
-  if (pending) {
-    return pending;
-  }
+  if (pending) return pending;
 
-  const refreshPromise = withAuthStateLock(async () => {
-    const latest = await getAuth();
-    if (!isOAuthStored(latest)) {
-      throw new Error("Anthropic OAuth credentials disappeared during refresh");
-    }
-    if (latest.access && latest.expires > Date.now()) return latest;
+  const refreshPromise = (async () => {
+    const attempted = new Set<string>();
+    while (true) {
+      let failedAuth: OAuthStored | undefined;
+      try {
+        return await withAuthStateLock(async () => {
+          const latest = await getAuth();
+          if (!isOAuthStored(latest)) {
+            throw new Error(
+              "Anthropic OAuth credentials disappeared during refresh",
+            );
+          }
+          if (latest.access && latest.expires > Date.now()) return latest;
+          if (attempted.has(latest.refresh)) {
+            throw new Error(
+              "Anthropic OAuth refresh failed for all remaining accounts",
+            );
+          }
+          attempted.add(latest.refresh);
 
-    const refreshed = await refreshAnthropicToken(latest.refresh);
-    await setAnthropicAuth(refreshed, client);
-    const store = await loadAccountStore();
-    if (store.accounts.length > 0) {
-      const identity: AnthropicAccountIdentity | undefined = (() => {
-        const currentIndex = store.accounts.findIndex((account) => {
-          return (
-            account.refresh === latest.refresh ||
-            account.access === latest.access
-          );
+          try {
+            const refreshed = await refreshAnthropicToken(latest.refresh);
+            await setAnthropicAuth(refreshed, client);
+            const store = await loadAccountStore();
+            if (store.accounts.length > 0) {
+              const current = store.accounts.find(
+                (account) =>
+                  account.refresh === latest.refresh ||
+                  account.access === latest.access,
+              );
+              const identity: AnthropicAccountIdentity | undefined = current
+                ? {
+                    ...(current.email ? { email: current.email } : {}),
+                    ...(current.accountId
+                      ? { accountId: current.accountId }
+                      : {}),
+                  }
+                : undefined;
+              upsertAccount(store, { ...refreshed, ...identity });
+              await saveAccountStore(store);
+            }
+            return refreshed;
+          } catch (error) {
+            if (!isPermanentOAuthRefreshFailure(error)) throw error;
+            failedAuth = latest;
+            throw error;
+          }
         });
-        const current =
-          currentIndex >= 0 ? store.accounts[currentIndex] : undefined;
-        if (!current) return undefined;
-        return {
-          ...(current.email ? { email: current.email } : {}),
-          ...(current.accountId ? { accountId: current.accountId } : {}),
-        };
-      })();
-      upsertAccount(store, { ...refreshed, ...identity });
-      await saveAccountStore(store);
+      } catch (error) {
+        if (!failedAuth || !isPermanentOAuthRefreshFailure(error)) throw error;
+        const removed = await removeAccountByAuth(failedAuth, client);
+        if (!removed) throw error;
+        client.tui
+          .showToast({
+            message: appendToastSessionMarker({
+              message: removed.active
+                ? `Removed expired Anthropic account ${removed.removedLabel}, switched to ${removed.activeLabel ?? "next"}`
+                : `Removed expired Anthropic account ${removed.removedLabel} (no accounts left — re-login required)`,
+              sessionId: options?.sessionId,
+            }),
+            variant: removed.active ? "info" : "error",
+          })
+          .catch(() => {});
+        if (!removed.active) throw error;
+      }
     }
-    return refreshed;
-  });
+  })();
+
   pendingRefresh.set(auth.refresh, refreshPromise);
   return refreshPromise.finally(() => {
     pendingRefresh.delete(auth.refresh);
@@ -1044,13 +1086,10 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
                 "anthropic-dangerous-direct-browser-access",
                 "true",
               );
-              requestHeaders.set("authorization", `Bearer ${auth.access}`);
-              requestHeaders.set(
-                "user-agent",
-                process.env.OPENCODE_ANTHROPIC_USER_AGENT ||
-                  `claude-cli/${CLAUDE_CODE_VERSION}`,
-              );
-              requestHeaders.set("x-app", "cli");
+              applyClaudeCodeRequestIdentity({
+                headers: requestHeaders,
+                accessToken: auth.access,
+              });
               requestHeaders.delete("x-api-key");
 
               return fetch(input, {
@@ -1060,7 +1099,9 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
               });
             };
 
-            const freshAuth = await getFreshOAuth(getAuth, client);
+            const freshAuth = await getFreshOAuth(getAuth, client, {
+              sessionId,
+            });
             if (!freshAuth) return fetch(input, init);
 
             let response = await runRequest(freshAuth);
@@ -1082,7 +1123,9 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
                       variant: "info",
                     })
                     .catch(() => {});
-                  const retryAuth = await getFreshOAuth(getAuth, client);
+                  const retryAuth = await getFreshOAuth(getAuth, client, {
+                    sessionId,
+                  });
                   if (retryAuth) {
                     response = await runRequest(retryAuth);
                   }

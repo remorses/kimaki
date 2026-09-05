@@ -2,5 +2,8 @@
   "name": "kimaki-demo",
   "version": "0.0.0",
   "private": true,
-  "description": "Fly.io deployment for the Kimaki demo Discord server"
+  "description": "Fly.io deployment for the Kimaki demo Discord server",
+  "scripts": {
+    "fly": "fly --app kimaki-demo"
+  }
 }

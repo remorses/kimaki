@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS `channel_directories` (
 	`channel_id` text PRIMARY KEY,
 	`directory` text NOT NULL,
 	`channel_type` text NOT NULL,
+	`guild_id` text,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -104,7 +105,20 @@ CREATE TABLE IF NOT EXISTS `part_messages` (
 	`message_id` text NOT NULL,
 	`thread_id` text NOT NULL,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-	CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
+	CONSTRAINT `fk_part_messages_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS `scheduled_task_runs` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`scheduled_task_id` integer NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`thread_id` text,
+	`session_id` text,
+	`project_directory` text,
+	`started_at` datetime NOT NULL,
+	`completed_at` datetime,
+	`error` text,
+	CONSTRAINT `fk_scheduled_task_runs_scheduled_task_id_scheduled_tasks_id_fk` FOREIGN KEY (`scheduled_task_id`) REFERENCES `scheduled_tasks`(`id`) ON UPDATE CASCADE ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS `scheduled_tasks` (
@@ -154,6 +168,17 @@ CREATE TABLE IF NOT EXISTS `session_models` (
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS `session_sleeps` (
+	`session_id` text PRIMARY KEY,
+	`wake_at` datetime NOT NULL,
+	`reason` text,
+	`status` text DEFAULT 'planned' NOT NULL,
+	`delivery_id` text NOT NULL,
+	`attempts` integer DEFAULT 0 NOT NULL,
+	`last_attempt_at` datetime,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `session_start_sources` (
 	`session_id` text PRIMARY KEY,
 	`schedule_kind` text NOT NULL,
@@ -168,7 +193,22 @@ CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`session_id` text NOT NULL,
 	`source` text DEFAULT 'kimaki' NOT NULL,
 	`last_synced_name` text,
-	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+	`parent_session_id` text,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+	`updated_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS `thread_workspaces` (
+	`thread_id` text PRIMARY KEY,
+	`workspace_id` text,
+	`workspace_type` text NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`error_message` text,
+	`project_directory` text NOT NULL,
+	`workspace_directory` text,
+	`workspace_name` text NOT NULL,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+	CONSTRAINT `fk_thread_workspaces_thread_id_thread_sessions_thread_id_fk` FOREIGN KEY (`thread_id`) REFERENCES `thread_sessions`(`thread_id`) ON UPDATE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS `thread_worktrees` (
@@ -184,9 +224,12 @@ CREATE TABLE IF NOT EXISTS `thread_worktrees` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `forum_sync_configs_app_id_forum_channel_id_key` ON `forum_sync_configs` (`app_id`,`forum_channel_id`);
 CREATE INDEX IF NOT EXISTS `ipc_requests_status_created_at_idx` ON `ipc_requests` (`status`,`created_at`);
+CREATE INDEX IF NOT EXISTS `scheduled_task_runs_task_status_idx` ON `scheduled_task_runs` (`scheduled_task_id`,`status`);
+CREATE INDEX IF NOT EXISTS `scheduled_task_runs_session_status_idx` ON `scheduled_task_runs` (`session_id`,`status`);
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_status_next_run_at_idx` ON `scheduled_tasks` (`status`,`next_run_at`);
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_channel_id_status_idx` ON `scheduled_tasks` (`channel_id`,`status`);
 CREATE INDEX IF NOT EXISTS `scheduled_tasks_thread_id_status_idx` ON `scheduled_tasks` (`thread_id`,`status`);
 CREATE INDEX IF NOT EXISTS `session_events_session_id_timestamp_event_index_id_idx` ON `session_events` (`session_id`,`timestamp`,`event_index`,`id`);
 CREATE INDEX IF NOT EXISTS `session_events_thread_id_timestamp_event_index_id_idx` ON `session_events` (`thread_id`,`timestamp`,`event_index`,`id`);
+CREATE INDEX IF NOT EXISTS `session_sleeps_status_wake_at_idx` ON `session_sleeps` (`status`,`wake_at`);
 CREATE INDEX IF NOT EXISTS `session_start_sources_scheduled_task_id_idx` ON `session_start_sources` (`scheduled_task_id`);

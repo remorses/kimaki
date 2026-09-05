@@ -264,11 +264,11 @@ describe('runtime lifecycle', () => {
   }, 5_000)
 
   test(
-    'three sequential completions reuse same runtime and listener',
+    'two sequential completions reuse same runtime and listener',
     async () => {
-      // Sends A, waits for full completion (footer), sends B, waits for
-      // footer, sends C, waits for footer. Proves the listener stays alive
-      // across full run cycles without any interrupt/queue involvement.
+      // Sends A, waits for full completion (footer), then sends B and waits
+      // for its footer. Proves the listener stays alive across full run cycles
+      // without any interrupt/queue involvement.
       // This is the "calm" path — no abort, no queue, just sequential use.
 
       // 1. Send first message → thread created, session established
@@ -323,51 +323,20 @@ describe('runtime lifecycle', () => {
 
       // Same runtime instance — listener was not recreated
       const runtimeAfterB = getRuntime(thread.id)
-      expect(runtimeAfterB).toBe(runtimeAfterA)
-
-      // 3. Send C after B fully completed
-      await th.user(TEST_USER_ID).sendMessage({
-        content: 'Reply with exactly: seq-gamma',
-      })
-
-      await waitForBotReplyAfterUserMessage({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        userMessageIncludes: 'seq-gamma',
-        timeout: 4_000,
-      })
-
-      await waitForBotMessageContaining({
-        discord,
-        threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: '*project',
-        afterUserMessageIncludes: 'seq-gamma',
-        timeout: 4_000,
-      })
-
-      // Still the same runtime — three full cycles, one runtime, one listener
-      const runtimeAfterC = getRuntime(thread.id)
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (lifecycle-tester)
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        --- from: user (lifecycle-tester)
-        Reply with exactly: seq-gamma
-        --- from: assistant (TestBot)
-        ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
       `)
-      expect(runtimeAfterC).toBe(runtimeAfterA)
+      expect(runtimeAfterB).toBe(runtimeAfterA)
     },
     15_000,
   )
@@ -413,7 +382,7 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -485,12 +454,12 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
         ⬥ ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)

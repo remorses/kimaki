@@ -1,4 +1,5 @@
-// /model-variant command — quickly change the thinking level variant for the current model.
+// Model thinking-level (variant) picker UI.
+// Shown from the /model command via a "Change thinking level" button.
 // Shows both the variant picker and scope picker in a single reply (two action rows)
 // so the user can select both without waiting for sequential menus.
 //
@@ -12,8 +13,8 @@ import {
   StringSelectMenuBuilder,
   ActionRowBuilder,
   ChannelType,
+  type Message,
   type ThreadChannel,
-  type TextChannel,
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
@@ -33,6 +34,7 @@ import {
 } from './model.js'
 
 import { getThinkingValuesForModel } from '../thinking-utils.js'
+import { resolveDisplayedModelId } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.MODEL)
@@ -87,6 +89,7 @@ function formatSourceLabel(info: CurrentModelInfo): string {
   }
 }
 
+/** /model-variant slash command entrypoint — defers reply then delegates to the shared picker. */
 export async function handleModelVariantCommand({
   interaction,
   appId,
@@ -104,6 +107,25 @@ export async function handleModelVariantCommand({
     return
   }
 
+  await showModelVariantPicker({
+    channel,
+    appId,
+    editReply: (options) => interaction.editReply(options),
+  })
+}
+
+export async function showModelVariantPicker({
+  channel,
+  appId,
+  editReply,
+}: {
+  channel: NonNullable<StringSelectMenuInteraction['channel']>
+  appId: string
+  editReply: (options: {
+    content?: string
+    components?: ActionRowBuilder<StringSelectMenuBuilder>[]
+  }) => Promise<Message | unknown>
+}): Promise<void> {
   const isThread = [
     ChannelType.PublicThread,
     ChannelType.PrivateThread,
@@ -129,22 +151,24 @@ export async function handleModelVariantCommand({
     projectDirectory = metadata.projectDirectory
     targetChannelId = channel.id
   } else {
-    await interaction.editReply({
+    await editReply({
       content: 'This command can only be used in text channels or threads',
+      components: [],
     })
     return
   }
 
   if (!projectDirectory) {
-    await interaction.editReply({
+    await editReply({
       content: 'This channel is not configured with a project directory',
+      components: [],
     })
     return
   }
 
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) {
-    await interaction.editReply({ content: getClient.message })
+    await editReply({ content: getClient.message, components: [] })
     return
   }
 
@@ -176,20 +200,27 @@ export async function handleModelVariantCommand({
     ])
 
   if (currentModelInfo.type === 'none') {
-    await interaction.editReply({
+    await editReply({
       content: 'No model configured. Use `/model` to set one first.',
+      components: [],
     })
     return
   }
 
   if (!providersResponse.data) {
-    await interaction.editReply({ content: 'Failed to fetch providers' })
+    await editReply({ content: 'Failed to fetch providers', components: [] })
     return
   }
 
   const { providerID, modelID, model: fullModelId } = currentModelInfo
   const sourceLabel = formatSourceLabel(currentModelInfo)
   const variantLabel = cascadeVariant ? ` (${cascadeVariant})` : ''
+  const displayedModelId =
+    resolveDisplayedModelId({
+      providers: providersResponse.data.all,
+      providerID,
+      modelID,
+    }) ?? fullModelId
 
   const provider = providersResponse.data.all.find((p) => {
     return p.id === providerID
@@ -202,11 +233,12 @@ export async function handleModelVariantCommand({
     modelId: modelID,
   })
 
-  const statusText = `**Current model:** \`${fullModelId}\`${variantLabel} — ${sourceLabel}`
+  const statusText = `**Current model:** \`${displayedModelId}\`${variantLabel} — ${sourceLabel}`
 
   if (variants.length === 0) {
-    await interaction.editReply({
+    await editReply({
       content: `${statusText}\nThis model doesn't support thinking level variants.`,
+      components: [],
     })
     return
   }
@@ -282,7 +314,7 @@ export async function handleModelVariantCommand({
   const scopeRow =
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(scopeMenu)
 
-  await interaction.editReply({
+  await editReply({
     content: `${statusText}\nSelect a thinking level and where to apply it:`,
     components: [variantRow, scopeRow],
   })
@@ -300,7 +332,7 @@ export async function handleVariantQuickSelectMenu(
 
   if (!context) {
     await interaction.reply({
-      content: 'Selection expired. Please run /model-variant again.',
+      content: 'Selection expired. Please run /model again.',
       flags: MessageFlags.Ephemeral,
     })
     return
@@ -317,7 +349,7 @@ export async function handleVariantQuickSelectMenu(
   if (chosenVariant !== null && !context.availableVariants.includes(chosenVariant)) {
     pendingVariantContexts.delete(contextHash)
     await interaction.editReply({
-      content: 'Invalid variant selection. Please run /model-variant again.',
+      content: 'Invalid variant selection. Please run /model again.',
       components: [],
     })
     return
@@ -349,7 +381,7 @@ export async function handleVariantScopeSelectMenu(
 
   if (!context) {
     await interaction.reply({
-      content: 'Selection expired. Please run /model-variant again.',
+      content: 'Selection expired. Please run /model again.',
       flags: MessageFlags.Ephemeral,
     })
     return
@@ -365,7 +397,7 @@ export async function handleVariantScopeSelectMenu(
   if (!isVariantScope(selected)) {
     pendingVariantContexts.delete(contextHash)
     await interaction.editReply({
-      content: 'Invalid scope selection. Please run /model-variant again.',
+      content: 'Invalid scope selection. Please run /model again.',
       components: [],
     })
     return
@@ -409,7 +441,7 @@ async function applyVariant({
         pendingVariantContexts.delete(contextHash)
         await interaction.editReply({
           content:
-            'No active session in this thread. Please run /model-variant in a thread with a session.',
+            'No active session in this thread. Please run /model in a thread with a session.',
           components: [],
         })
         return

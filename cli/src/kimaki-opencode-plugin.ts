@@ -4,20 +4,27 @@
 // initializer functions. OpenCode calls every export as a plugin.
 //
 // Plugins are split into focused modules:
-// - ipc-tools-plugin: file upload + action buttons (IPC-based Discord tools)
+// - ipc-tools-plugin: file upload, action buttons, and session sleep
 // - context-awareness-plugin: branch, pwd, memory reminder, onboarding tutorial
 // - memory-overview-plugin: frozen MEMORY.md heading overview per session
 // - opencode-interrupt-plugin: interrupt queued messages at step boundaries
-// - subagent-rate-limit-plugin: aborts only task subagents after rate limits
 // - kitty-graphics-plugin: extract Kitty Graphics Protocol images from bash output
+// - file-edit-log: record edit/write/apply_patch files per session
 
 export { ipcToolsPlugin } from './ipc-tools-plugin.js'
 export { contextAwarenessPlugin } from './context-awareness-plugin.js'
 export { memoryOverviewPlugin } from './memory-overview-plugin.js'
 export { interruptOpencodeSessionOnUserMessage } from './opencode-interrupt-plugin.js'
+// LEGACY per-provider account rotation. Superseded by @subrouter/opencode
+// (registered separately in opencode.ts), which also fails over across
+// providers. These stay because they own `anthropic/*` auth, which opencode
+// itself does not provide. See anthropic-auth-plugin.ts for the full note.
 export { anthropicAuthPlugin } from './anthropic-auth-plugin.js'
+export { openaiRotationPlugin } from './openai-auth-plugin.js'
+export { xaiRotationPlugin } from './xai-auth-plugin.js'
 export { imageOptimizerPlugin } from './image-optimizer-plugin.js'
-export { subagentRateLimitPlugin } from './subagent-rate-limit-plugin.js'
 export { cacheDriftPlugin } from './cache-drift-plugin.js'
 export { kittyGraphicsPlugin } from 'kitty-graphics-agent'
 export { injectionGuardInternal as injectionGuard } from 'opencode-injection-guard'
+export { kimakiWorkspaceAdaptorPlugin } from './kimaki-workspace-adaptor.js'
+export { fileEditTrackerPlugin } from './file-edit-log.js'

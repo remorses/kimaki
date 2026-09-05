@@ -71,11 +71,69 @@ Make reminder prompts **detailed**: the future reader has no context, so include
 
 All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The exception is `--wait`, which is incompatible since the task runs in the future.
 
+Pass **`--user`** when someone should see the thread in Discord. Omit it for quiet autonomous work so the thread stays out of the sidebar. Clear a stored user later with `kimaki task edit <id> --user ''`.
+
+## Run only when needed
+
+Use **`--pre-run`** to run a shell command in the project directory before a scheduled occurrence starts. This example uses [crisp-cli](https://github.com/remorses/crisp-cli) to start a support session only when Crisp has unread customer messages.
+
+Create `scripts/should-run-support.ts`:
+
+```ts
+#!/usr/bin/env bun
+
+import { $ } from 'bun'
+
+type Conversation = {
+  session_id: string
+  unread?: { operator?: number }
+  preview_message?: {
+    from?: string
+  }
+}
+
+const output = await $`crisp-cli list_website_conversations`.text()
+const response = Bun.YAML.parse(output) as { items?: Conversation[] }
+const requests = (response.items ?? []).filter((conversation) => {
+  return (
+    (conversation.unread?.operator ?? 0) > 0 &&
+    conversation.preview_message?.from === 'user'
+  )
+})
+
+const sessionIds = requests.map((conversation) => conversation.session_id)
+if (sessionIds.length === 0) process.exit(1)
+
+console.log(Bun.YAML.stringify({ sessionIds }))
+```
+
+The **unread operator count** means the support team has not read the message. The `from: user` check excludes operator replies. Install and configure the CLI once before scheduling:
+
+```bash
+pnpm add -g crisp-cli
+crisp-cli config --token '<crisp-mcp-token>'
+```
+
+Then schedule the check every five minutes:
+
+```bash
+kimaki send --channel <channel-id> \
+  --send-at '*/5 * * * *' \
+  --pre-run 'bun scripts/should-run-support.ts' \
+  --prompt 'Read the Crisp session IDs in the pre-run output. Use crisp-cli to inspect each conversation and draft a support reply.'
+```
+
+An exit code of **0 starts the session**. Kimaki appends the command's stdout to the task prompt. Any other exit code skips that occurrence. Stdout and stderr are also written to the Kimaki log.
+
+Scheduled tasks **do not overlap by default**. If one occurrence still has an active OpenCode session, Kimaki skips the next occurrence and checks again at the following scheduled time. Add `--allow-concurrency` only when parallel runs are safe.
+
 ## Managing tasks
 
 ```bash
 kimaki task list
-kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"]
+kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] \
+  [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"]
+kimaki task edit <id> --user ''
 kimaki task delete <id>
 ```
 

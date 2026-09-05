@@ -24,6 +24,11 @@ import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
 import { getLockPort } from './config.js'
 import { store } from './store.js'
+// Circular import: opencode.ts → hrana-server.ts → opencode.ts.
+// Safe because both sides only use lazy runtime function calls, never
+// top-level initialization values. The cycle could be broken by moving
+// the port into store.ts, but the current approach is simpler.
+import { getOpencodeServerPort } from './opencode.js'
 
 const hranaLogger = createLogger(LogPrefix.DB)
 
@@ -173,6 +178,20 @@ export async function startHranaServer({
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ status: 'ok', pid: process.pid }))
+      return
+    }
+    // OpenCode server port discovery — no auth required (localhost only).
+    // CLI subcommands query this to reuse the bot's running OpenCode server
+    // instead of spawning a redundant second server process.
+    if (pathname === '/kimaki/opencode-port') {
+      const port = getOpencodeServerPort()
+      if (port === null) {
+        res.writeHead(404, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'no_opencode_server' }))
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ port }))
       return
     }
     // Hrana routes: /v2, /v2/pipeline — require auth

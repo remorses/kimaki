@@ -4,10 +4,11 @@
  *
  * Reimplements the core discovery logic from the `skills` npm CLI
  * (vercel-labs/skills) without depending on it. The flow is:
- *   1. Shallow-clone each source repo to ./tmp/
- *   2. Recursively walk for SKILL.md files, parse frontmatter
- *   3. Copy discovered skill directories into cli/skills/<name>/
- *   4. Clean up temp dirs
+ *   1. Replace cli/skills/ with the repository's local skills
+ *   2. Shallow-clone each remote source repo to ./tmp/
+ *   3. Recursively walk for SKILL.md files, parse frontmatter
+ *   4. Copy discovered skill directories into cli/skills/<name>/
+ *   5. Clean up temp dirs
  *
  * Usage:  pnpm sync-skills          (from cli/ or root)
  *         tsx scripts/sync-skills.ts (from cli/)
@@ -25,7 +26,7 @@ const SKILL_SOURCES: string[] = [
   'https://github.com/remorses/zele',
   'https://github.com/remorses/critique',
   'https://github.com/remorses/errore',
-  'https://github.com/remorses/egaki',
+  'https://github.com/remorses/egaki/tree/main/cli/skills/egaki',
   'https://github.com/remorses/termcast',
   'https://github.com/remorses/goke',
   'https://github.com/remorses/spiceflow',
@@ -215,20 +216,30 @@ async function cloneRepo(
     `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   )
   const refArgs = parsed.ref ? `--branch ${parsed.ref}` : ''
-  const cmd = `git clone --depth 1 ${refArgs} ${parsed.url} ${targetDir}`
+  const sparseArg = parsed.subpath ? '--sparse' : ''
+  const cmd = `git clone --depth 1 --filter=blob:none ${sparseArg} ${refArgs} ${parsed.url} ${targetDir}`
 
   const maxAttempts = 3
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await execAsync(cmd, { timeout: 60_000 })
+      if (parsed.subpath) {
+        await execAsync(
+          {
+            command: 'git',
+            args: ['sparse-checkout', 'set', '--no-cone', parsed.subpath],
+          },
+          { cwd: targetDir, timeout: 60_000 },
+        )
+      }
       return targetDir
     } catch (error) {
-      if (attempt === maxAttempts) {
-        throw error
-      }
-
       if (fs.existsSync(targetDir)) {
         fs.rmSync(targetDir, { recursive: true, force: true })
+      }
+
+      if (attempt === maxAttempts) {
+        throw error
       }
 
       const retryDelayMs = attempt * 1_000
@@ -280,11 +291,13 @@ async function main() {
   const scriptDir = path.dirname(new URL(import.meta.url).pathname)
   const cliDir = path.resolve(scriptDir, '..')
   const repoRootDir = path.resolve(cliDir, '..')
+  const rootSkillsDir = path.join(repoRootDir, 'skills')
   const cliSkillsDir = path.join(cliDir, 'skills')
   const tmpDir = path.join(repoRootDir, 'tmp')
 
-  // Ensure output and tmp dirs exist
-  fs.mkdirSync(cliSkillsDir, { recursive: true })
+  // Replace the packaged copy so removed local skills cannot survive a sync.
+  fs.rmSync(cliSkillsDir, { recursive: true, force: true })
+  fs.cpSync(rootSkillsDir, cliSkillsDir, { recursive: true })
   fs.mkdirSync(tmpDir, { recursive: true })
 
   console.log(`Syncing skills to ${cliSkillsDir}\n`)
@@ -319,8 +332,6 @@ async function main() {
         )
         totalSynced++
       }
-    } catch (err) {
-      console.error(`    error: ${err instanceof Error ? err.message : err}`)
     } finally {
       // Clean up clone dir
       if (cloneDir && fs.existsSync(cloneDir)) {

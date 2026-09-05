@@ -13,7 +13,7 @@ const DEFAULT_DATA_DIR = path.join(os.homedir(), '.kimaki')
 
 /**
  * Get the data directory path.
- * Falls back to ~/.kimaki if not explicitly set.
+ * Order: store value, vitest temp dir, KIMAKI_DATA_DIR, then ~/.kimaki.
  * Under vitest (KIMAKI_VITEST env var), auto-creates an isolated temp dir so
  * tests never touch the real ~/.kimaki/ database. Tests that need a specific
  * dir can still call setDataDir() before any DB access to override this.
@@ -23,10 +23,19 @@ export function getDataDir(): string {
   if (current) {
     return current
   }
+  // Tests stay isolated even if the parent process exported KIMAKI_DATA_DIR.
   if (process.env.KIMAKI_VITEST) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-test-'))
     store.setState({ dataDir: tmpDir })
     return tmpDir
+  }
+  // Child processes (OpenCode server, kimaki shim commands) inherit this from
+  // opencode.ts. Without it they would silently use ~/.kimaki.
+  const fromEnv = process.env.KIMAKI_DATA_DIR
+  if (fromEnv) {
+    const resolved = path.resolve(fromEnv)
+    store.setState({ dataDir: resolved })
+    return resolved
   }
   store.setState({ dataDir: DEFAULT_DATA_DIR })
   return DEFAULT_DATA_DIR
@@ -80,6 +89,24 @@ export function setProjectsDir(dir: string): void {
  */
 export function getPermissionTimeoutMs(): number {
   return store.getState().permissionTimeoutMs
+}
+
+/**
+ * Whether external directory access is restricted to the session working
+ * directory plus a few known-safe paths.
+ * Defaults to false: every directory is allowed and users protect specific
+ * folders with their own `deny`/`ask` rules in opencode.json.
+ */
+export function getRestrictExternalDirectories(): boolean {
+  return store.getState().restrictExternalDirectories
+}
+
+export function getOpencodeHostname(): string | null {
+  return store.getState().opencodeHostname
+}
+
+export function getOpencodePort(): number | null {
+  return store.getState().opencodePort
 }
 
 export type { RegisteredUserCommand } from './store.js'

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/@holocron.so/vite/src/schema.json",
+  "$schema": "https://holocron.so/docs.json",
   "name": "Kimaki",
   "description": "Iron Man's Jarvis for coding agents, inside Discord",
   "favicon": "/logo.jpeg",
@@ -50,6 +50,7 @@
           "docs/features/worktrees",
           "docs/features/diff-viewer",
           "docs/features/scheduled-tasks",
+          "docs/features/sleep",
           "docs/features/voice",
           "docs/features/images",
           "docs/features/opencode-commands",
@@ -62,7 +63,8 @@
         "pages": [
           "docs/remote-access/vscode",
           "docs/remote-access/tunnels",
-          "docs/remote-access/screen-sharing"
+          "docs/remote-access/screen-sharing",
+          "docs/remote-access/opencode-server"
         ]
       },
       {
@@ -82,8 +84,10 @@
         "icon": "lucide:book-open",
         "pages": [
           "docs/guides/troubleshooting",
+          "docs/guides/report-bugs",
           "docs/guides/ci-automation",
           "docs/guides/advanced-setup",
+          "docs/guides/docker",
           "docs/guides/programmatic-gateway"
         ]
       },
@@ -99,6 +103,7 @@
         "icon": "lucide:database",
         "pages": [
           "docs/reference/commands",
+          "docs/reference/gateway-architecture",
           "docs/reference/internals"
         ]
       },

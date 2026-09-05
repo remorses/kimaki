@@ -9,6 +9,10 @@ import type { SlackBridgeDO } from './slack-bridge-do.js'
 export type Env = {
   HYPERDRIVE: { connectionString: string }
   GATEWAY_CLIENT_KV: KVNamespace
+  /** Workers AI binding used by /api/transcribe (free Whisper for gateway-mode CLI users). */
+  AI: Ai
+  /** Per-client_id burst limiter for /api/transcribe. */
+  TRANSCRIBE_RATE_LIMITER: RateLimit
   DISCORD_CLIENT_ID: string
   DISCORD_CLIENT_SECRET: string
   SLACK_CLIENT_ID: string
@@ -18,5 +22,11 @@ export type Env = {
   SLACK_SIGNING_SECRET: string
   SLACK_WORKSPACE_ID: string
   SLACK_GATEWAY: DurableObjectNamespace<SlackBridgeDO>
+  /** Strada project id for error tracking (optional in local dev). */
+  STRADA_PROJECT_ID?: string
+  /** Strada org-wide ingest token (server only, optional in local dev). */
+  STRADA_TOKEN?: string
+  /** deployment environment label for Strada (development/preview/production). */
+  ENVIRONMENT?: string
   FLY_API_TOKEN?: string
 }

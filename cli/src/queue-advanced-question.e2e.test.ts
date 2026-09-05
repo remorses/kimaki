@@ -5,14 +5,17 @@
 
 import { describe, test, expect, afterEach } from 'vitest'
 import { setupQueueAdvancedSuite, TEST_USER_ID } from './queue-advanced-e2e-setup.js'
-import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
+import {
+  waitForBotMessageContaining,
+  waitForBotReplyAfterUserMessage,
+  waitForFooterMessage,
+} from './test-utils.js'
 import { store, type DeterministicTranscriptionConfig } from './store.js'
 import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
 import type { Message, Part } from '@opencode-ai/sdk/v2'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
-const VOICE_CHANNEL_ID = '200000000000001017'
 
 function setDeterministicTranscription(config: DeterministicTranscriptionConfig | null) {
   store.setState({
@@ -158,37 +161,44 @@ describe('queue advanced: question tool answer', () => {
     // 1. Dismiss the pending question (cleanup context)
     // 2. Abort the blocked session so OpenCode unblocks
     // 3. Enqueue the message as a normal user prompt (not consumed as answer)
+    const answer = 'Reply with exactly: question-text-answer-done'
     await th.user(TEST_USER_ID).sendMessage({
-      content: 'my text answer',
+      content: answer,
     })
 
-    // Give time for question cleanup to propagate
-    await new Promise((r) => {
-      setTimeout(r, 1_000)
+    await waitForBotReplyAfterUserMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      userId: TEST_USER_ID,
+      userMessageIncludes: answer,
+      timeout: 8_000,
+    })
+    await waitForBotMessageContaining({
+      discord: ctx.discord,
+      threadId: thread.id,
+      userId: TEST_USER_ID,
+      text: 'ok',
+      afterUserMessageIncludes: answer,
+      timeout: 8_000,
+    })
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 8_000,
+      afterMessageIncludes: 'ok',
+      afterAuthorId: ctx.discord.botUserId,
     })
 
     const timeline = await th.text({ showInteractions: true })
 
     // The user's text answer must appear in Discord
-    expect(timeline).toContain('my text answer')
+    expect(timeline).toContain(answer)
+    expect(timeline).toContain('⬥ ok')
     // The original question must have appeared
     expect(timeline).toContain('Which option do you prefer?')
     // The user's marker message triggered the question
     expect(timeline).toContain('QUESTION_TEXT_ANSWER_MARKER')
   }, 20_000)
-})
-
-describe('queue advanced: voice message during pending question', () => {
-  const ctx = setupQueueAdvancedSuite({
-    channelId: VOICE_CHANNEL_ID,
-    channelName: 'qa-question-voice-e2e',
-    dirName: 'qa-question-voice-e2e',
-    username: 'queue-question-tester',
-  })
-
-  afterEach(() => {
-    setDeterministicTranscription(null)
-  })
 
   test('voice message during pending question dismisses question and transcribes normally', async () => {
     // This is the exact bug scenario: user sends a voice message while a
@@ -196,14 +206,15 @@ describe('queue advanced: voice message during pending question', () => {
     // (audio is in attachments, transcription happens later). The old code
     // passed "" as the question answer and consumed the message — the voice
     // content was completely lost.
-    await ctx.discord.channel(VOICE_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
-      content: 'QUESTION_TEXT_ANSWER_MARKER',
+    const marker = 'QUESTION_TEXT_ANSWER_MARKER voice'
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+      content: marker,
     })
 
-    const thread = await ctx.discord.channel(VOICE_CHANNEL_ID).waitForThread({
+    const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
       timeout: 8_000,
       predicate: (t) => {
-        return t.name === 'QUESTION_TEXT_ANSWER_MARKER'
+        return t.name === marker
       },
     })
 
@@ -228,11 +239,6 @@ describe('queue advanced: voice message during pending question', () => {
 
     await th.user(TEST_USER_ID).sendVoiceMessage({
       content: 'VOICE_TEXT_CONTENT_SHOULD_NOT_REACH_MODEL',
-    })
-
-    // Give time for question cleanup to propagate
-    await new Promise((r) => {
-      setTimeout(r, 1_000)
     })
 
     // Voice content should be transcribed and appear as the next user message,

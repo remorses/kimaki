@@ -15,6 +15,7 @@ import type {
   SessionEvent,
   ThreadSessionSource,
   VerbosityLevel,
+  WorkspaceStatus,
   WorktreeStatus,
 } from './schema.js'
 import { store } from './store.js'
@@ -39,7 +40,9 @@ export type ThreadWorktree = typeof schema.thread_worktrees.$inferSelect
 export type ScheduledTaskStatus = typeof schema.scheduled_tasks.$inferSelect.status
 export type ScheduledTaskScheduleKind = typeof schema.scheduled_tasks.$inferSelect.schedule_kind
 export type ScheduledTask = typeof schema.scheduled_tasks.$inferSelect
+export type ScheduledTaskRun = typeof schema.scheduled_task_runs.$inferSelect
 export type SessionStartSource = typeof schema.session_start_sources.$inferSelect
+export type SessionSleep = typeof schema.session_sleeps.$inferSelect
 export type ModelPreference = { modelId: string; variant: string | null }
 export type { BotMode }
 
@@ -180,6 +183,129 @@ export async function claimScheduledTaskRunning({ taskId, startedAt }: { taskId:
   return countRows(rows) > 0
 }
 
+export async function releaseScheduledTaskClaim(taskId: number) {
+  const db = await getDb()
+  await db.update(schema.scheduled_tasks)
+    .set({ status: 'planned', running_started_at: null })
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'running'),
+    ))
+}
+
+export async function createScheduledTaskRun({
+  taskId,
+  startedAt,
+}: {
+  taskId: number
+  startedAt: Date
+}) {
+  const db = await getDb()
+  const [run] = await db.insert(schema.scheduled_task_runs)
+    .values({ scheduled_task_id: taskId, started_at: startedAt })
+    .returning({ id: schema.scheduled_task_runs.id })
+  if (!run) throw new Error(`Failed to create run for scheduled task ${taskId}`)
+  return run.id
+}
+
+export async function getActiveScheduledTaskRuns(taskId: number) {
+  const db = await getDb()
+  return db.query.scheduled_task_runs.findMany({
+    where: {
+      scheduled_task_id: taskId,
+      status: { in: ['pending', 'running'] },
+    },
+    orderBy: { started_at: 'desc' },
+  })
+}
+
+export async function setScheduledTaskRunThread({
+  runId,
+  threadId,
+}: {
+  runId: number
+  threadId: string
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ thread_id: threadId })
+    .where(orm.eq(schema.scheduled_task_runs.id, runId))
+}
+
+export async function startScheduledTaskRunSession({
+  runId,
+  sessionId,
+  projectDirectory,
+}: {
+  runId: number
+  sessionId: string
+  projectDirectory: string
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ status: 'running', session_id: sessionId, project_directory: projectDirectory })
+    .where(orm.and(
+      orm.eq(schema.scheduled_task_runs.id, runId),
+      orm.eq(schema.scheduled_task_runs.status, 'pending'),
+    ))
+}
+
+export async function completeScheduledTaskRunsForSession(sessionId: string) {
+  const db = await getDb()
+  const rows = await db.update(schema.scheduled_task_runs)
+    .set({ status: 'completed', completed_at: new Date() })
+    .where(orm.and(
+      orm.eq(schema.scheduled_task_runs.session_id, sessionId),
+      orm.inArray(schema.scheduled_task_runs.status, ['pending', 'running']),
+    ))
+    .returning({ id: schema.scheduled_task_runs.id })
+  return rows.length
+}
+
+export async function failScheduledTaskRunsForSession({
+  sessionId,
+  error,
+}: {
+  sessionId: string
+  error: string
+}) {
+  const db = await getDb()
+  const rows = await db.update(schema.scheduled_task_runs)
+    .set({ status: 'failed', completed_at: new Date(), error })
+    .where(orm.and(
+      orm.eq(schema.scheduled_task_runs.session_id, sessionId),
+      orm.inArray(schema.scheduled_task_runs.status, ['pending', 'running']),
+    ))
+    .returning({ id: schema.scheduled_task_runs.id })
+  return rows.length
+}
+
+export async function failScheduledTaskRun({
+  runId,
+  error,
+}: {
+  runId: number
+  error: string
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ status: 'failed', completed_at: new Date(), error })
+    .where(orm.eq(schema.scheduled_task_runs.id, runId))
+}
+
+export async function finishScheduledTaskRun({
+  runId,
+  status,
+}: {
+  runId: number
+  status: 'completed' | 'skipped'
+}) {
+  const db = await getDb()
+  await db.update(schema.scheduled_task_runs)
+    .set({ status, completed_at: new Date() })
+    .where(orm.eq(schema.scheduled_task_runs.id, runId))
+}
+
 export async function recoverStaleRunningScheduledTasks({ staleBefore }: { staleBefore: Date }) {
   const db = await getDb()
   const rows = await db.update(schema.scheduled_tasks)
@@ -192,10 +318,9 @@ export async function recoverStaleRunningScheduledTasks({ staleBefore }: { stale
   return countRows(rows)
 }
 
-export async function markScheduledTaskOneShotCompleted({ taskId, completedAt }: { taskId: number; completedAt: Date }) {
+export async function deleteScheduledTask(taskId: number) {
   const db = await getDb()
-  await db.update(schema.scheduled_tasks)
-    .set({ status: 'completed', last_run_at: completedAt, running_started_at: null, last_error: null })
+  await db.delete(schema.scheduled_tasks)
     .where(orm.eq(schema.scheduled_tasks.id, taskId))
 }
 
@@ -243,6 +368,172 @@ export async function setSessionStartSource({ sessionId, scheduleKind, scheduled
     })
 }
 
+export async function upsertSessionSleep({
+  sessionId,
+  wakeAt,
+  reason,
+}: {
+  sessionId: string
+  wakeAt: Date
+  reason?: string | null
+}) {
+  const db = await getDb()
+  // A new occurrence gets a fresh delivery_id, which invalidates any in-flight
+  // wake for the previous occurrence: every delivery write is guarded on it.
+  const deliveryId = crypto.randomUUID()
+  await db.insert(schema.session_sleeps)
+    .values({
+      session_id: sessionId,
+      wake_at: wakeAt,
+      reason: reason ?? null,
+      status: 'planned',
+      delivery_id: deliveryId,
+    })
+    .onConflictDoUpdate({
+      target: schema.session_sleeps.session_id,
+      set: {
+        wake_at: wakeAt,
+        reason: reason ?? null,
+        status: 'planned',
+        delivery_id: deliveryId,
+        attempts: 0,
+        last_attempt_at: null,
+        created_at: new Date(),
+      },
+    })
+  return deliveryId
+}
+
+export async function getSessionSleep({ sessionId }: { sessionId: string }) {
+  const db = await getDb()
+  return await db.query.session_sleeps.findFirst({
+    where: { session_id: sessionId },
+  }) ?? null
+}
+
+/** Rows that are due and not attempted too recently. Status stays `planned`. */
+export async function getDueSessionSleeps({
+  now,
+  retryAfterMs,
+  limit,
+}: {
+  now: Date
+  retryAfterMs: number
+  limit: number
+}) {
+  const db = await getDb()
+  const retryBefore = new Date(now.getTime() - retryAfterMs)
+  return db.select()
+    .from(schema.session_sleeps)
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.status, 'planned'),
+      orm.lte(schema.session_sleeps.wake_at, now),
+      orm.or(
+        orm.isNull(schema.session_sleeps.last_attempt_at),
+        orm.lte(schema.session_sleeps.last_attempt_at, retryBefore),
+      ),
+    ))
+    .orderBy(orm.asc(schema.session_sleeps.wake_at))
+    .limit(limit)
+}
+
+/**
+ * Reserve one delivery attempt. The row never leaves `planned` here.
+ *
+ * Only `last_attempt_at` moves, which keeps concurrent ticks off the same row
+ * for retryAfterMs. Because posting does not change the status either, one
+ * retry path covers every loss: dying before the post, dying after it, or
+ * never receiving the gateway event for the message we posted.
+ */
+export async function claimSessionSleepAttempt({
+  sessionId,
+  deliveryId,
+  now,
+  retryAfterMs,
+}: {
+  sessionId: string
+  deliveryId: string
+  now: Date
+  retryAfterMs: number
+}) {
+  const db = await getDb()
+  const retryBefore = new Date(now.getTime() - retryAfterMs)
+  const rows = await db.update(schema.session_sleeps)
+    .set({ last_attempt_at: now, attempts: orm.sql`${schema.session_sleeps.attempts} + 1` })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.session_id, sessionId),
+      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
+      orm.eq(schema.session_sleeps.status, 'planned'),
+      orm.lte(schema.session_sleeps.wake_at, now),
+      orm.or(
+        orm.isNull(schema.session_sleeps.last_attempt_at),
+        orm.lte(schema.session_sleeps.last_attempt_at, retryBefore),
+      ),
+    ))
+    .returning()
+  return rows[0] ?? null
+}
+
+export async function markSessionSleepFailed({
+  sessionId,
+  deliveryId,
+}: {
+  sessionId: string
+  deliveryId: string
+}) {
+  const db = await getDb()
+  const rows = await db.update(schema.session_sleeps)
+    .set({ status: 'failed' })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.session_id, sessionId),
+      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
+      orm.eq(schema.session_sleeps.status, 'planned'),
+    ))
+    .returning({ session_id: schema.session_sleeps.session_id })
+  return countRows(rows) > 0
+}
+
+/**
+ * Ingress commit point. Marks the wake as delivered to the session.
+ *
+ * Returns false when the row is missing or no longer `planned`, which is how a
+ * wake that raced a user cancellation, or a duplicate of one already delivered,
+ * gets dropped instead of starting a turn.
+ */
+export async function consumeSessionSleepWake({ deliveryId }: { deliveryId: string }) {
+  const db = await getDb()
+  const rows = await db.update(schema.session_sleeps)
+    .set({ status: 'consumed' })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.delivery_id, deliveryId),
+      orm.eq(schema.session_sleeps.status, 'planned'),
+    ))
+    .returning({ session_id: schema.session_sleeps.session_id })
+  return countRows(rows) > 0
+}
+
+/**
+ * Cancel the pending sleep of the session currently bound to a thread.
+ *
+ * Runs on every ingress, so the binding is resolved with a correlated subquery
+ * rather than a second round trip. thread_id is the primary key of
+ * thread_sessions, so it yields at most one session.
+ */
+export async function cancelSessionSleepForThread({ threadId }: { threadId: string }) {
+  const db = await getDb()
+  const rows = await db.update(schema.session_sleeps)
+    .set({ status: 'cancelled' })
+    .where(orm.and(
+      orm.eq(schema.session_sleeps.status, 'planned'),
+      orm.eq(
+        schema.session_sleeps.session_id,
+        orm.sql`(SELECT ${schema.thread_sessions.session_id} FROM ${schema.thread_sessions} WHERE ${schema.thread_sessions.thread_id} = ${threadId})`,
+      ),
+    ))
+    .returning({ session_id: schema.session_sleeps.session_id })
+  return countRows(rows) > 0
+}
+
 export async function getSessionStartSourcesBySessionIds(sessionIds: string[]) {
   if (sessionIds.length === 0) return new Map<string, SessionStartSource>()
   const db = await getDb()
@@ -254,6 +545,13 @@ export async function getSessionStartSourcesBySessionIds(sessionIds: string[]) {
     }))
   }
   return new Map(rows.map((row) => [row.session_id, row]))
+}
+
+export async function getSessionStartSource({ sessionId }: { sessionId: string }) {
+  const db = await getDb()
+  return await db.query.session_start_sources.findFirst({
+    where: { session_id: sessionId },
+  }) ?? null
 }
 
 export async function getChannelModel(channelId: string) {
@@ -384,6 +682,95 @@ export async function deleteThreadWorktree(threadId: string) {
   await db.delete(schema.thread_worktrees).where(orm.eq(schema.thread_worktrees.thread_id, threadId))
 }
 
+// ─── thread_workspaces helpers ───────────────────────────────────────────────
+
+export type ThreadWorkspace = typeof schema.thread_workspaces.$inferSelect
+export type { WorkspaceStatus }
+
+export async function createPendingWorkspace({
+  threadId,
+  workspaceType,
+  workspaceName,
+  projectDirectory,
+}: {
+  threadId: string
+  workspaceType: string
+  workspaceName: string
+  projectDirectory: string
+}) {
+  const db = await getDb()
+  await db.batch([
+    db.insert(schema.thread_sessions)
+      .values({ thread_id: threadId, session_id: '' })
+      .onConflictDoNothing({ target: schema.thread_sessions.thread_id }),
+    db.insert(schema.thread_workspaces)
+      .values({
+        thread_id: threadId,
+        workspace_type: workspaceType,
+        workspace_name: workspaceName,
+        project_directory: projectDirectory,
+        status: 'pending',
+      })
+      .onConflictDoUpdate({
+        target: schema.thread_workspaces.thread_id,
+        set: {
+          workspace_type: workspaceType,
+          workspace_name: workspaceName,
+          project_directory: projectDirectory,
+          status: 'pending',
+          workspace_id: null,
+          workspace_directory: null,
+          error_message: null,
+        },
+      }),
+  ] as const)
+}
+
+export async function setWorkspaceReady({
+  threadId,
+  workspaceId,
+  workspaceDirectory,
+}: {
+  threadId: string
+  workspaceId?: string
+  workspaceDirectory: string
+}) {
+  const db = await getDb()
+  await db.update(schema.thread_workspaces)
+    .set({
+      workspace_directory: workspaceDirectory,
+      workspace_id: workspaceId ?? null,
+      status: 'ready',
+    })
+    .where(orm.eq(schema.thread_workspaces.thread_id, threadId))
+}
+
+export async function setWorkspaceError({
+  threadId,
+  errorMessage,
+}: {
+  threadId: string
+  errorMessage: string
+}) {
+  const db = await getDb()
+  await db.update(schema.thread_workspaces)
+    .set({ status: 'error', error_message: errorMessage })
+    .where(orm.eq(schema.thread_workspaces.thread_id, threadId))
+}
+
+export async function getThreadWorkspace(threadId: string) {
+  const db = await getDb()
+  return await db.query.thread_workspaces.findFirst({ where: { thread_id: threadId } }) ?? undefined
+}
+
+export async function deleteThreadWorkspace(threadId: string) {
+  const db = await getDb()
+  await db.delete(schema.thread_workspaces).where(orm.eq(schema.thread_workspaces.thread_id, threadId))
+}
+
+/** Alias for getThreadWorkspace — used throughout the codebase. */
+export const getThreadWorktreeOrWorkspace = getThreadWorkspace
+
 export async function getChannelVerbosity(channelId: string): Promise<VerbosityLevel> {
   const db = await getDb()
   const row = await db.query.channel_verbosity.findFirst({ where: { channel_id: channelId } })
@@ -439,9 +826,42 @@ export async function setThreadSession(threadId: string, sessionId: string) {
 
 export async function upsertThreadSession({ threadId, sessionId, source }: { threadId: string; sessionId: string; source: ThreadSessionSource }) {
   const db = await getDb()
+  // updated_at is written explicitly on BOTH paths, never left to the column's
+  // CURRENT_TIMESTAMP default. The default stores "YYYY-MM-DD HH:MM:SS" while
+  // Date values store ISO with a "T", and those two text formats do not sort
+  // against each other correctly. Writing ISO everywhere keeps the ordering in
+  // getThreadIdBySessionId honest and gives it millisecond resolution.
+  const boundAt = new Date()
   await db.insert(schema.thread_sessions)
-    .values({ thread_id: threadId, session_id: sessionId, source })
-    .onConflictDoUpdate({ target: schema.thread_sessions.thread_id, set: { session_id: sessionId, source } })
+    .values({ thread_id: threadId, session_id: sessionId, source, updated_at: boundAt })
+    .onConflictDoUpdate({
+      target: schema.thread_sessions.thread_id,
+      set: { session_id: sessionId, source, updated_at: boundAt },
+    })
+}
+
+export async function getThreadParentSessionId(threadId: string) {
+  const db = await getDb()
+  return (
+    await db.query.thread_sessions.findFirst({
+      where: { thread_id: threadId },
+      columns: { parent_session_id: true },
+    })
+  )?.parent_session_id ?? undefined
+}
+
+export async function setThreadParentSessionId({
+  threadId,
+  parentSessionId,
+}: {
+  threadId: string
+  parentSessionId: string
+}) {
+  const db = await getDb()
+  await db
+    .update(schema.thread_sessions)
+    .set({ parent_session_id: parentSessionId })
+    .where(orm.eq(schema.thread_sessions.thread_id, threadId))
 }
 
 export async function getThreadSessionSource(threadId: string) {
@@ -449,9 +869,25 @@ export async function getThreadSessionSource(threadId: string) {
   return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId }, columns: { source: true } }))?.source
 }
 
+/**
+ * Reverse lookup of the Discord thread that currently owns an OpenCode session.
+ *
+ * `thread_sessions.session_id` is NOT unique: /resume binds an existing session
+ * to a brand new thread without clearing the old row. An unordered findFirst
+ * therefore returns an arbitrary (often dead) thread, which made plugin tools
+ * post into the wrong conversation. Order by the most recent binding instead,
+ * falling back to created_at for rows written before updated_at existed.
+ */
 export async function getThreadIdBySessionId(sessionId: string) {
   const db = await getDb()
-  return (await db.query.thread_sessions.findFirst({ where: { session_id: sessionId } }))?.thread_id
+  const rows = await db.select({ thread_id: schema.thread_sessions.thread_id })
+    .from(schema.thread_sessions)
+    .where(orm.eq(schema.thread_sessions.session_id, sessionId))
+    .orderBy(
+      orm.desc(orm.sql`COALESCE(${schema.thread_sessions.updated_at}, ${schema.thread_sessions.created_at})`),
+    )
+    .limit(1)
+  return rows[0]?.thread_id
 }
 
 export async function getAllThreadSessionIds() {
@@ -648,20 +1084,20 @@ export async function getAnyAudioApiKey(): Promise<{ provider: 'openai' | 'gemin
 
 
 
-export async function setChannelDirectory({ channelId, directory, channelType, skipIfExists = false }: { channelId: string; directory: string; channelType: DatabaseChannelType; skipIfExists?: boolean }) {
+export async function setChannelDirectory({ channelId, directory, channelType, guildId, skipIfExists = false }: { channelId: string; directory: string; channelType: DatabaseChannelType; guildId?: string; skipIfExists?: boolean }) {
   const db = await getDb()
   if (skipIfExists) {
     await db.insert(schema.channel_directories)
-      .values({ channel_id: channelId, directory, channel_type: channelType })
+      .values({ channel_id: channelId, directory, channel_type: channelType, guild_id: guildId })
       .onConflictDoNothing({ target: schema.channel_directories.channel_id })
     return
   }
   await db.insert(schema.channel_directories)
-    .values({ channel_id: channelId, directory, channel_type: channelType })
-    .onConflictDoUpdate({ target: schema.channel_directories.channel_id, set: { directory, channel_type: channelType } })
+    .values({ channel_id: channelId, directory, channel_type: channelType, guild_id: guildId })
+    .onConflictDoUpdate({ target: schema.channel_directories.channel_id, set: { directory, channel_type: channelType, guild_id: guildId } })
 }
 
-export async function findChannelsByDirectory({ directory, channelType }: { directory?: string; channelType?: DatabaseChannelType }): Promise<Array<{ channel_id: string; directory: string; channel_type: string }>> {
+export async function findChannelsByDirectory({ directory, channelType }: { directory?: string; channelType?: DatabaseChannelType }): Promise<Array<{ channel_id: string; directory: string; channel_type: string; guild_id: string | null }>> {
   const db = await getDb()
   const where = directory && channelType
     ? { directory, channel_type: channelType }
@@ -670,7 +1106,7 @@ export async function findChannelsByDirectory({ directory, channelType }: { dire
       : channelType
         ? { channel_type: channelType }
         : undefined
-  return db.query.channel_directories.findMany({ where, columns: { channel_id: true, directory: true, channel_type: true } })
+  return db.query.channel_directories.findMany({ where, columns: { channel_id: true, directory: true, channel_type: true, guild_id: true } })
 }
 
 export async function getAllTextChannelDirectories() {

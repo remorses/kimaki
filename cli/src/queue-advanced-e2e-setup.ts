@@ -54,12 +54,12 @@ export function chooseLockPort({ channelId }: { channelId: string }): number {
   return 51_000 + (Math.abs(hash) % 2_000)
 }
 
-export const CHANNEL_REFERENCE_EXTERNAL_DIR = path.resolve(
+export const EXTERNAL_DIRECTORY_PROBE_DIR = path.resolve(
   process.cwd(),
   'tmp',
-  'kimaki-channel-reference-external',
+  'kimaki-external-directory-probe',
 )
-export const CHANNEL_REFERENCE_EXTERNAL_FILE = `${CHANNEL_REFERENCE_EXTERNAL_DIR}/allowed.txt`
+export const EXTERNAL_DIRECTORY_PROBE_FILE = `${EXTERNAL_DIRECTORY_PROBE_DIR}/probe.txt`
 
 export function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   return new Client({
@@ -105,6 +105,32 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  const questionSelectDrainMatcher: DeterministicMatcher = {
+    id: 'question-select-drain-first',
+    priority: 109,
+    when: {
+      latestUserTextIncludes: 'QUESTION_SELECT_DRAIN_FIRST_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'question-select-drain-first' },
+        {
+          type: 'text-delta',
+          id: 'question-select-drain-first',
+          delta: 'question-drain-first',
+        },
+        { type: 'text-end', id: 'question-select-drain-first' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 0, 0, 400, 0],
+    },
+  }
+
   const slowAbortMatcher: DeterministicMatcher = {
     id: 'slow-abort-marker',
     priority: 100,
@@ -124,6 +150,28 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         },
       ],
       partDelaysMs: [0, 0, 0, 3_000, 0],
+    },
+  }
+
+  const slowBusyMatcher: DeterministicMatcher = {
+    id: 'slow-busy-reply',
+    priority: 100,
+    when: {
+      latestUserTextIncludes: 'SLOW_BUSY_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'slow-busy' },
+        { type: 'text-delta', id: 'slow-busy', delta: 'slow-busy-reply' },
+        { type: 'text-end', id: 'slow-busy' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 0, 0, 2_000, 0],
     },
   }
 
@@ -272,34 +320,32 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
       ],
-      // Keep run busy long enough after permission reply so typing keepalive
-      // must pulse again. This makes typing resume assertions deterministic.
-      partDelaysMs: [0, 0, 0, 0, 8_000],
+      partDelaysMs: [0, 400, 0, 0, 0],
     },
   }
 
-  const channelReferencePermissionMatcher: DeterministicMatcher = {
-    id: 'channel-reference-permission-marker',
+  const externalDirectoryProbeMatcher: DeterministicMatcher = {
+    id: 'external-directory-probe-marker',
     priority: 106,
     when: {
       lastMessageRole: 'user',
-      latestUserTextIncludes: 'CHANNEL_REFERENCE_PERMISSION_MARKER',
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
     },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'channel-reference-permission-start' },
+        { type: 'text-start', id: 'external-directory-probe-start' },
         {
           type: 'text-delta',
-          id: 'channel-reference-permission-start',
-          delta: 'reading referenced channel directory',
+          id: 'external-directory-probe-start',
+          delta: 'reading external directory',
         },
-        { type: 'text-end', id: 'channel-reference-permission-start' },
+        { type: 'text-end', id: 'external-directory-probe-start' },
         {
           type: 'tool-call',
-          toolCallId: 'channel-reference-read-call',
+          toolCallId: 'external-directory-read-call',
           toolName: 'read',
-          input: JSON.stringify({ filePath: CHANNEL_REFERENCE_EXTERNAL_FILE }),
+          input: JSON.stringify({ filePath: EXTERNAL_DIRECTORY_PROBE_FILE }),
         },
         {
           type: 'finish',
@@ -310,23 +356,53 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
-  const channelReferencePermissionFollowupMatcher: DeterministicMatcher = {
-    id: 'channel-reference-permission-followup',
-    priority: 105,
+  // Fires only when the read above was rejected by a permission rule. Scoped to
+  // the probe marker so it cannot cascade into unrelated turns. This is what
+  // makes a project-level `deny` visible in Discord: without it an allowed read
+  // and a denied read produce identical thread output.
+  const externalDirectoryProbeDeniedMatcher: DeterministicMatcher = {
+    id: 'external-directory-probe-denied',
+    priority: 107,
     when: {
-      latestUserTextIncludes: 'CHANNEL_REFERENCE_PERMISSION_MARKER',
-      rawPromptIncludes: 'reading referenced channel directory',
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
+      rawPromptIncludes: 'prevents you from using this specific tool call',
     },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'text-start', id: 'channel-reference-permission-followup' },
+        { type: 'text-start', id: 'external-directory-probe-denied' },
         {
           type: 'text-delta',
-          id: 'channel-reference-permission-followup',
-          delta: 'channel-reference-read-done',
+          id: 'external-directory-probe-denied',
+          delta: 'external-directory-probe-denied',
         },
-        { type: 'text-end', id: 'channel-reference-permission-followup' },
+        { type: 'text-end', id: 'external-directory-probe-denied' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  const externalDirectoryProbeFollowupMatcher: DeterministicMatcher = {
+    id: 'external-directory-probe-followup',
+    priority: 105,
+    when: {
+      latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
+      rawPromptIncludes: 'reading external directory',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'external-directory-probe-followup' },
+        {
+          type: 'text-delta',
+          id: 'external-directory-probe-followup',
+          delta: 'external-directory-probe-done',
+        },
+        { type: 'text-end', id: 'external-directory-probe-followup' },
         {
           type: 'finish',
           finishReason: 'stop',
@@ -371,6 +447,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     when: {
       lastMessageRole: 'user',
       latestUserTextIncludes: 'QUESTION_TEXT_ANSWER_MARKER',
+      rawPromptRegex: '^(?!.*question-text-answer-call)',
     },
     then: {
       parts: [
@@ -407,6 +484,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     when: {
       lastMessageRole: 'user',
       latestUserTextIncludes: 'QUESTION_SELECT_QUEUE_MARKER',
+      rawPromptRegex: '^(?!.*question-select-queue-call)',
     },
     then: {
       parts: [
@@ -432,6 +510,50 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
         },
       ],
+    },
+  }
+
+  // Text then question, with text-end delayed after the tool call.
+  // Reproduces OpenCode emitting question.asked before the text part's time.end.
+  const questionAfterTextMatcher: DeterministicMatcher = {
+    id: 'question-after-text-marker',
+    priority: 108,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'QUESTION_AFTER_TEXT_MARKER',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'plan-before-question' },
+        {
+          type: 'text-delta',
+          id: 'plan-before-question',
+          delta: 'PLAN_TEXT_BEFORE_QUESTION',
+        },
+        {
+          type: 'tool-call',
+          toolCallId: 'question-after-text-call',
+          toolName: 'question',
+          input: JSON.stringify({
+            questions: [{
+              question: 'What next?',
+              header: 'Next step',
+              options: [
+                { label: 'Commit', description: 'Commit these files' },
+                { label: 'Stop', description: 'Leave uncommitted' },
+              ],
+            }],
+          }),
+        },
+        { type: 'text-end', id: 'plan-before-question' },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [200, 0, 0, 0, 400, 0],
     },
   }
 
@@ -754,16 +876,20 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   return [
+    questionSelectDrainMatcher,
     slowAbortMatcher,
+    slowBusyMatcher,
     typingRepulseMatcher,
     pluginTimeoutSleepMatcher,
     actionButtonClickFollowupMatcher,
     questionToolMatcher,
     questionSelectQueueMatcher,
+    questionAfterTextMatcher,
     permissionTypingMatcher,
     permissionTypingFollowupMatcher,
-    channelReferencePermissionMatcher,
-    channelReferencePermissionFollowupMatcher,
+    externalDirectoryProbeMatcher,
+    externalDirectoryProbeDeniedMatcher,
+    externalDirectoryProbeFollowupMatcher,
 
     multiToolMatcher,
     multiToolFollowupMatcher,
@@ -799,15 +925,27 @@ export const TEST_USER_ID = '200000000000000991'
 export function setupQueueAdvancedSuite({
   channelId,
   channelName,
-  extraChannels = [],
   dirName,
   username,
+  restrictExternalDirectories = false,
+  projectPermission,
+  extraMatchers = [],
 }: {
   channelId: string
   channelName: string
-  extraChannels?: Array<{ id: string; name: string }>
   dirName: string
   username: string
+  // Matchers only this suite needs. Keeps narrow markers out of the shared list
+  // so they cannot cascade into unrelated e2e files.
+  extraMatchers?: DeterministicMatcher[]
+  // Opt into the --restrict-directories behaviour so reads outside the project
+  // still raise an external_directory permission prompt. Off by default, which
+  // matches the shipped default of allowing every directory.
+  restrictExternalDirectories?: boolean
+  // Extra `permission` block written into the project's opencode.json, as a
+  // real user would. Used to prove user rules still beat kimaki's generated
+  // config instead of being overridden by session-level rules.
+  projectPermission?: Record<string, unknown>
 }): QueueAdvancedContext {
   const ctx: QueueAdvancedContext = {
     directories: undefined as unknown as ReturnType<typeof createRunDirectories>,
@@ -817,6 +955,7 @@ export function setupQueueAdvancedSuite({
   }
 
   let previousDefaultVerbosity: VerbosityLevel | null = null
+  let previousRestrictExternalDirectories: boolean | null = null
 
   beforeAll(async () => {
     ctx.testStartTime = Date.now()
@@ -831,7 +970,8 @@ export function setupQueueAdvancedSuite({
     process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR'] = sessionEventsDir
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text' })
+    previousRestrictExternalDirectories = store.getState().restrictExternalDirectories
+    store.setState({ defaultVerbosity: 'tools_and_text', restrictExternalDirectories })
 
     const digitalDiscordDbPath = path.join(
       ctx.directories.dataDir,
@@ -842,9 +982,6 @@ export function setupQueueAdvancedSuite({
       guild: { name: `${dirName} Guild`, ownerId: TEST_USER_ID },
       channels: [
         { id: channelId, name: channelName, type: ChannelType.GuildText },
-        ...extraChannels.map((channel) => {
-          return { id: channel.id, name: channel.name, type: ChannelType.GuildText }
-        }),
       ],
       users: [{ id: TEST_USER_ID, username }],
       dbUrl: `file:${digitalDiscordDbPath}`,
@@ -863,11 +1000,20 @@ export function setupQueueAdvancedSuite({
       providerNpm,
       model: 'deterministic-v2',
       smallModel: 'deterministic-v3',
-      settings: { strict: false, matchers: createDeterministicMatchers() },
+      settings: {
+        strict: false,
+        matchers: [...createDeterministicMatchers(), ...extraMatchers],
+      },
     })
     fs.writeFileSync(
       path.join(ctx.directories.projectDirectory, 'opencode.json'),
-      JSON.stringify(opencodeConfig, null, 2),
+      JSON.stringify(
+        projectPermission
+          ? { ...opencodeConfig, permission: projectPermission }
+          : opencodeConfig,
+        null,
+        2,
+      ),
     )
 
     const dbPath = path.join(ctx.directories.dataDir, 'discord-sessions.db')
@@ -927,6 +1073,11 @@ export function setupQueueAdvancedSuite({
     delete process.env['KIMAKI_OPENCODE_SESSION_EVENTS_DIR']
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
+    }
+    if (previousRestrictExternalDirectories !== null) {
+      store.setState({
+        restrictExternalDirectories: previousRestrictExternalDirectories,
+      })
     }
     if (ctx.directories) {
       fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true })

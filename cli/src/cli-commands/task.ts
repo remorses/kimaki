@@ -24,12 +24,13 @@ import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-u
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
-import { getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
+import { applyScheduledTaskUserEdit, getPromptPreview, parseSendAtValue, parseScheduledTaskPayload, serializeScheduledTaskPayload, type ScheduledTaskPayload } from '../task-schedule.js'
 import {
   EXIT_NO_RESTART,
   formatMemberLookupUnavailableMessage,
   formatRelativeTime,
   formatTaskScheduleLine,
+  getDiscordUserIdFromUserOption,
   isDiscordMemberLookupUnavailable,
   isGuildMemberSearchResult,
   isThreadChannelType,
@@ -38,6 +39,7 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import { validateCliModelOption } from '../session-handler/model-utils.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -59,10 +61,21 @@ cli
       }
 
       console.log(
-        'id | status | message | channelId | projectName | folderName | timeRemaining | firesAt | cron',
+        'id | status | message | channelId | userId | projectName | folderName | agent | model | preRun | allowConcurrency | timeRemaining | firesAt | cron',
       )
 
       tasks.forEach((task) => {
+        // Surfacing userId makes it obvious which tasks will never show up in
+        // the user's Discord sidebar (no thread member is ever added for them).
+        // agent/model live only in payload_json; list them so edits don't need SQLite.
+        const payload = parseScheduledTaskPayload(task.payload_json)
+        const userId = payload instanceof Error ? '?' : payload.userId || '-'
+        const agent = payload instanceof Error ? '?' : payload.agent || '-'
+        const model = payload instanceof Error ? '?' : payload.model || '-'
+        const preRun = payload instanceof Error ? '?' : payload.preRunCommand || '-'
+        const allowConcurrency = payload instanceof Error
+          ? '?'
+          : String(payload.allowConcurrency)
         const projectDirectory = task.project_directory || ''
         const projectName = projectDirectory
           ? path.basename(projectDirectory)
@@ -78,7 +91,7 @@ cli
           task.schedule_kind === 'cron' ? task.cron_expr || '-' : '-'
 
         console.log(
-          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${projectName} | ${folderName} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
+          `${task.id} | ${task.status} | ${task.prompt_preview} | ${task.channel_id || '-'} | ${userId} | ${projectName} | ${folderName} | ${agent} | ${model} | ${preRun} | ${allowConcurrency} | ${formatRelativeTime(task.next_run_at)} | ${firesAt} | ${cronValue}`,
         )
       })
 
@@ -120,17 +133,90 @@ cli
     }
   })
 
+// Resolving a Discord user needs a guild only for username lookups. Raw IDs and
+// mentions resolve offline, which keeps `task edit --user <id>` usable without
+// a bot token or Server Members Intent.
+async function resolveTaskUser({
+  user,
+  channelId,
+}: {
+  user: string
+  channelId: string | null
+}): Promise<{ id: string; username?: string } | Error> {
+  const directUserId = getDiscordUserIdFromUserOption(user)
+  if (directUserId) {
+    return { id: directUserId }
+  }
+
+  if (!channelId) {
+    return new Error(
+      `Cannot look up username "${user}": task has no channel to resolve a guild from. Pass a Discord user ID instead.`,
+    )
+  }
+
+  const { token } = await resolveBotCredentials()
+  const rest = createDiscordRest(token)
+  const channel = await rest
+    .get(Routes.channel(channelId))
+    .catch((error) => new Error('Failed to fetch task channel', { cause: error }))
+  if (channel instanceof Error) return channel
+
+  const guildId = (channel as { guild_id?: string }).guild_id
+  if (!guildId) {
+    return new Error(`Channel ${channelId} has no guild ID`)
+  }
+
+  const resolved = await resolveDiscordUserOption({ user, guildId, rest })
+  if (resolved instanceof Error) return resolved
+  if (!resolved) {
+    return new Error(`Could not resolve user: ${user}`)
+  }
+  return resolved
+}
+
 cli
-  .command('task edit <id>', 'Edit prompt or schedule of a planned task')
+  .command(
+    'task edit <id>',
+    'Edit prompt, schedule, model, agent, or notified user of a planned task',
+  )
   .option('--prompt <prompt>', 'New prompt text')
   .option('--send-at <sendAt>', 'New schedule (UTC ISO date or cron expression)')
-  .action(async (id: string, options: { prompt?: string; sendAt?: string }) => {
+  .option('--agent <agent>', 'Agent for the scheduled session (empty string clears)')
+  .option(
+    '--model <model>',
+    'Model for the scheduled session, format provider/model (empty string clears)',
+  )
+  .option('--pre-run <command>', 'New pre-run command (empty string clears)')
+  .option(
+    '--allow-concurrency <enabled>',
+    z.enum(['true', 'false']).describe('Allow concurrent sessions: true or false'),
+  )
+  .option(
+    '-u, --user <user>',
+    'Discord user ID, mention, or username added to the task thread (empty string clears)',
+  )
+  .action(async (id, options) => {
     try {
       const trimmedPrompt =
         options.prompt === undefined ? undefined : options.prompt.trim()
+      const hasAgent = options.agent !== undefined
+      const hasModel = options.model !== undefined
+      const hasPreRun = options.preRun !== undefined
+      const hasAllowConcurrency = options.allowConcurrency !== undefined
+      const hasUser = options.user !== undefined
 
-      if (!trimmedPrompt && !options.sendAt) {
-        cliLogger.error('Provide at least --prompt or --send-at')
+      if (
+        !trimmedPrompt &&
+        !options.sendAt &&
+        !hasUser &&
+        !hasAgent &&
+        !hasModel &&
+        !hasPreRun &&
+        !hasAllowConcurrency
+      ) {
+        cliLogger.error(
+          'Provide at least --prompt, --send-at, --user, --agent, --model, --pre-run or --allow-concurrency',
+        )
         process.exit(EXIT_NO_RESTART)
       }
       if (trimmedPrompt !== undefined && trimmedPrompt.length === 0) {
@@ -167,19 +253,56 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
+      const resolvedUser = hasUser && options.user.trim()
+        ? await resolveTaskUser({
+            user: options.user,
+            channelId: task.channel_id,
+          })
+        : undefined
+      if (resolvedUser instanceof Error) {
+        cliLogger.error(resolvedUser.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+
       const newPrompt = trimmedPrompt ?? existingPayload.prompt
+      const nextModel = hasModel ? options.model!.trim() || null : existingPayload.model
+      if (nextModel) {
+        const modelCheck = await validateCliModelOption({
+          model: nextModel,
+          directory: task.project_directory ?? undefined,
+        })
+        if (modelCheck instanceof Error) {
+          cliLogger.error(modelCheck.message)
+          process.exit(EXIT_NO_RESTART)
+        }
+      }
+      // Match send --model/--agent: empty string clears the override (null).
       const updatedPayload: ScheduledTaskPayload = {
         ...existingPayload,
         prompt: newPrompt,
+        ...(hasAgent ? { agent: options.agent!.trim() || null } : {}),
+        ...(hasModel ? { model: nextModel } : {}),
+        ...(hasPreRun ? { preRunCommand: options.preRun!.trim() || null } : {}),
+        ...(hasAllowConcurrency
+          ? { allowConcurrency: options.allowConcurrency === 'true' }
+          : {}),
       }
+      const payloadWithUser = hasUser
+        ? applyScheduledTaskUserEdit({
+            payload: updatedPayload,
+            userOption: options.user,
+            resolvedUser,
+          })
+        : updatedPayload
 
       const updateData: Parameters<typeof updateScheduledTask>[0] = {
         taskId,
-        payloadJson: serializeScheduledTaskPayload(updatedPayload),
+        payloadJson: serializeScheduledTaskPayload(payloadWithUser),
         promptPreview: getPromptPreview(newPrompt),
       }
 
       if (options.sendAt) {
+        // Same as send: cron is always UTC so schedule does not depend on host TZ.
         const parsed = parseSendAtValue({
           value: options.sendAt,
           now: new Date(),
@@ -202,7 +325,25 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      cliLogger.log(`Updated task ${taskId}`)
+      const parts: string[] = [`Updated task ${taskId}`]
+      if (hasUser) {
+        parts.push(
+          payloadWithUser.userId
+            ? `user ${payloadWithUser.username || payloadWithUser.userId} will be added to the thread`
+            : 'user cleared; nobody will be added to the thread',
+        )
+      }
+      if (hasAgent) {
+        parts.push(`agent=${payloadWithUser.agent || '-'}`)
+      }
+      if (hasModel) {
+        parts.push(`model=${payloadWithUser.model || '-'}`)
+      }
+      if (hasPreRun) parts.push(`preRun=${payloadWithUser.preRunCommand || '-'}`)
+      if (hasAllowConcurrency) {
+        parts.push(`allowConcurrency=${payloadWithUser.allowConcurrency}`)
+      }
+      cliLogger.log(parts.join(' | '))
       process.exit(0)
     } catch (error) {
       cliLogger.error(

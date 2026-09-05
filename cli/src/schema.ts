@@ -29,7 +29,14 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   session_id: sqliteCore.text('session_id').notNull(),
   source: sqliteCore.text('source', { enum: ['kimaki', 'external_poll'] }).notNull().default('kimaki'),
   last_synced_name: sqliteCore.text('last_synced_name'),
+  // Parent OpenCode session that spawned this thread via kimaki send --parent-session.
+  // Survives bot restarts so child multi-turn system prompts keep the parent ID.
+  parent_session_id: sqliteCore.text('parent_session_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+  // Bumped on every (re)binding of a session to this thread. /resume can map one
+  // session to several threads, so session_id -> thread_id needs a tiebreaker.
+  // Without it the reverse lookup is arbitrary and tools can target a dead thread.
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
 export const session_events = sqliteCore.sqliteTable('session_events', {
@@ -47,7 +54,7 @@ export const session_events = sqliteCore.sqliteTable('session_events', {
 export const part_messages = sqliteCore.sqliteTable('part_messages', {
   part_id: sqliteCore.text('part_id').primaryKey().notNull(),
   message_id: sqliteCore.text('message_id').notNull(),
-  thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onUpdate: 'cascade' }),
+  thread_id: sqliteCore.text('thread_id').notNull().references(() => thread_sessions.thread_id, { onDelete: 'cascade', onUpdate: 'cascade' }),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
@@ -66,6 +73,9 @@ export const channel_directories = sqliteCore.sqliteTable('channel_directories',
   channel_id: sqliteCore.text('channel_id').primaryKey().notNull(),
   directory: sqliteCore.text('directory').notNull(),
   channel_type: sqliteCore.text('channel_type', { enum: ['text', 'voice'] }).notNull(),
+  // Guild that owns this channel. Used to scope the default-channel tombstone
+  // check so multi-guild setups don't cross-block each other.
+  guild_id: sqliteCore.text('guild_id'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
@@ -84,6 +94,18 @@ export const thread_worktrees = sqliteCore.sqliteTable('thread_worktrees', {
   project_directory: sqliteCore.text('project_directory').notNull(),
   status: sqliteCore.text('status', { enum: ['pending', 'ready', 'error'] }).notNull().default('pending'),
   error_message: sqliteCore.text('error_message'),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
+export const thread_workspaces = sqliteCore.sqliteTable('thread_workspaces', {
+  thread_id: sqliteCore.text('thread_id').primaryKey().notNull().references(() => thread_sessions.thread_id, { onUpdate: 'cascade' }),
+  workspace_id: sqliteCore.text('workspace_id'),
+  workspace_type: sqliteCore.text('workspace_type').notNull(),
+  status: sqliteCore.text('status', { enum: ['pending', 'ready', 'error'] }).notNull().default('pending'),
+  error_message: sqliteCore.text('error_message'),
+  project_directory: sqliteCore.text('project_directory').notNull(),
+  workspace_directory: sqliteCore.text('workspace_directory'),
+  workspace_name: sqliteCore.text('workspace_name').notNull(),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
@@ -169,6 +191,21 @@ export const scheduled_tasks = sqliteCore.sqliteTable('scheduled_tasks', {
   sqliteCore.index('scheduled_tasks_thread_id_status_idx').on(table.thread_id, table.status),
 ])
 
+export const scheduled_task_runs = sqliteCore.sqliteTable('scheduled_task_runs', {
+  id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
+  scheduled_task_id: sqliteCore.integer('scheduled_task_id', { mode: 'number' }).notNull().references(() => scheduled_tasks.id, { onDelete: 'cascade', onUpdate: 'cascade' }),
+  status: sqliteCore.text('status', { enum: ['pending', 'running', 'completed', 'skipped', 'failed'] }).notNull().default('pending'),
+  thread_id: sqliteCore.text('thread_id'),
+  session_id: sqliteCore.text('session_id'),
+  project_directory: sqliteCore.text('project_directory'),
+  started_at: datetime('started_at').notNull(),
+  completed_at: datetime('completed_at'),
+  error: sqliteCore.text('error'),
+}, (table) => [
+  sqliteCore.index('scheduled_task_runs_task_status_idx').on(table.scheduled_task_id, table.status),
+  sqliteCore.index('scheduled_task_runs_session_status_idx').on(table.session_id, table.status),
+])
+
 export const session_start_sources = sqliteCore.sqliteTable('session_start_sources', {
   session_id: sqliteCore.text('session_id').primaryKey().notNull(),
   schedule_kind: sqliteCore.text('schedule_kind', { enum: ['at', 'cron'] }).notNull(),
@@ -189,6 +226,36 @@ export const forum_sync_configs = sqliteCore.sqliteTable('forum_sync_configs', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 }, (table) => [
   sqliteCore.uniqueIndex('forum_sync_configs_app_id_forum_channel_id_key').on(table.app_id, table.forum_channel_id),
+])
+
+// Durable "wake this session later" rows for the kimaki_sleep tool.
+//
+// Delivery is at-least-once, and ingress makes it at-most-once-per-turn:
+//
+//   planned ──► consumed          cancelled / failed are terminal
+//      ▲   │
+//      └───┘ retried until ingress consumes it
+//
+// A row stays `planned` until ingress turns the wake into a turn, so ANY loss
+// (crash before posting, crash after posting, missed gateway event) is covered
+// by the same retry. `delivery_id` is the Discord message nonce, so a retry
+// returns the existing message instead of waking the session twice.
+//
+// There is no thread_id: the owning thread is resolved from session_id at wake
+// time, so a session rebound by /resume wakes in its current thread.
+export const session_sleeps = sqliteCore.sqliteTable('session_sleeps', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  wake_at: datetime('wake_at').notNull(),
+  reason: sqliteCore.text('reason'),
+  status: sqliteCore.text('status', { enum: ['planned', 'consumed', 'cancelled', 'failed'] }).notNull().default('planned'),
+  // Regenerated per sleep occurrence. Doubles as the Discord nonce and as a
+  // generation guard so a stale in-flight wake cannot mutate a newer sleep.
+  delivery_id: sqliteCore.text('delivery_id').notNull().$defaultFn(() => crypto.randomUUID()),
+  attempts: sqliteCore.integer('attempts', { mode: 'number' }).notNull().default(0),
+  last_attempt_at: datetime('last_attempt_at'),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  sqliteCore.index('session_sleeps_status_wake_at_idx').on(table.status, table.wake_at),
 ])
 
 export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
@@ -212,6 +279,7 @@ export const relations = defineRelations({
   bot_tokens,
   bot_api_keys,
   thread_worktrees,
+  thread_workspaces,
   channel_directories,
   channel_models,
   session_models,
@@ -222,8 +290,10 @@ export const relations = defineRelations({
   channel_mention_mode,
   global_models,
   scheduled_tasks,
+  scheduled_task_runs,
   session_start_sources,
   forum_sync_configs,
+  session_sleeps,
   ipc_requests,
 }, (r) => ({
   thread_sessions: {
@@ -231,6 +301,7 @@ export const relations = defineRelations({
     part_messages: r.many.part_messages(),
     scheduled_tasks: r.many.scheduled_tasks(),
     thread_worktree: r.one.thread_worktrees({ from: r.thread_sessions.thread_id, to: r.thread_worktrees.thread_id }),
+    thread_workspace: r.one.thread_workspaces({ from: r.thread_sessions.thread_id, to: r.thread_workspaces.thread_id }),
     ipc_requests: r.many.ipc_requests(),
   },
   session_events: {
@@ -249,6 +320,9 @@ export const relations = defineRelations({
   },
   thread_worktrees: {
     thread: r.one.thread_sessions({ from: r.thread_worktrees.thread_id, to: r.thread_sessions.thread_id }),
+  },
+  thread_workspaces: {
+    thread: r.one.thread_sessions({ from: r.thread_workspaces.thread_id, to: r.thread_sessions.thread_id }),
   },
   channel_directories: {
     channel_model: r.one.channel_models({ from: r.channel_directories.channel_id, to: r.channel_models.channel_id }),
@@ -281,7 +355,11 @@ export const relations = defineRelations({
   scheduled_tasks: {
     channel: r.one.channel_directories({ from: r.scheduled_tasks.channel_id, to: r.channel_directories.channel_id }),
     thread: r.one.thread_sessions({ from: r.scheduled_tasks.thread_id, to: r.thread_sessions.thread_id }),
+    runs: r.many.scheduled_task_runs(),
     session_start_sources: r.many.session_start_sources(),
+  },
+  scheduled_task_runs: {
+    scheduled_task: r.one.scheduled_tasks({ from: r.scheduled_task_runs.scheduled_task_id, to: r.scheduled_tasks.id }),
   },
   session_start_sources: {
     scheduled_task: r.one.scheduled_tasks({ from: r.session_start_sources.scheduled_task_id, to: r.scheduled_tasks.id }),
@@ -297,7 +375,9 @@ export const relations = defineRelations({
 export type BotMode = typeof bot_tokens.$inferSelect.bot_mode
 export type ChannelType = typeof channel_directories.$inferSelect.channel_type
 export type IpcRequestType = typeof ipc_requests.$inferSelect.type
+export type SessionSleepStatus = typeof session_sleeps.$inferSelect.status
 export type SessionEvent = typeof session_events.$inferSelect
 export type ThreadSessionSource = typeof thread_sessions.$inferSelect.source
 export type VerbosityLevel = typeof channel_verbosity.$inferSelect.verbosity
 export type WorktreeStatus = typeof thread_worktrees.$inferSelect.status
+export type WorkspaceStatus = typeof thread_workspaces.$inferSelect.status

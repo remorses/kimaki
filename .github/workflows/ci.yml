@@ -19,7 +19,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.15.9
 
       - uses: actions/setup-node@v4
         with:
@@ -36,7 +36,7 @@ jobs:
         run: opencode --version
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       # Submodules have dist/ gitignored so they need to be built after checkout.
       # libsqlproxy is a workspace package that also needs building (exports from dist/).

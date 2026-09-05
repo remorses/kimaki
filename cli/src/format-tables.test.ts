@@ -230,6 +230,86 @@ describe('buildTableComponents', () => {
     `)
   })
 
+  test('splits table into multiple containers when text size exceeds 4000 chars even though component count fits', () => {
+    // 10 rows well under the 40-component budget (1 container + 10 TDs + 9 seps = 20),
+    // but each row has a long cell value so total text exceeds MAX_TEXT_SIZE (4000).
+    const header = '| Name | Description |'
+    const sep = '| --- | --- |'
+    const longValue = 'x'.repeat(500)
+    const rows = Array.from({ length: 10 }, (_, i) => {
+      return `| row-${i} | ${longValue} |`
+    }).join('\n')
+    const table = parseTable(`${header}\n${sep}\n${rows}`)
+    const result = buildTableComponents(table)
+
+    // Total text across all rows (~5000+ chars) must not fit in a single
+    // container; it should be split across multiple component segments.
+    expect(result.length).toBeGreaterThan(1)
+
+    for (const segment of result) {
+      if (segment.type !== 'components') continue
+      const container = segment.components[0]
+      if (!container || container.type !== ComponentType.Container) continue
+      const totalText = container.components.reduce((sum, child) => {
+        if ('content' in child && typeof child.content === 'string') {
+          return sum + child.content.length
+        }
+        return sum
+      }, 0)
+      expect(totalText).toBeLessThanOrEqual(4000)
+    }
+  })
+
+  test('clamps a single row whose own content exceeds the 4000-char text limit', () => {
+    const header = '| Name | Description |'
+    const sep = '| --- | --- |'
+    const hugeValue = 'y'.repeat(5000)
+    const table = parseTable(`${header}\n${sep}\n| row | ${hugeValue} |`)
+    const result = buildTableComponents(table)
+    expect(result).toHaveLength(1)
+    const segment = result[0]!
+    if (segment.type !== 'components') throw new Error('expected components segment')
+    const container = segment.components[0]!
+    if (container.type !== ComponentType.Container) throw new Error('expected container')
+    const textDisplay = container.components[0]!
+    if (textDisplay.type !== ComponentType.TextDisplay) throw new Error('expected text display')
+    expect(textDisplay.content.length).toBeLessThanOrEqual(4000)
+  })
+
+  test('clamps a huge single row with a button so text + label stays under 4000 chars', () => {
+    // Regression: content used to be clamped to 4000 chars BEFORE adding the
+    // button label length, so a huge cell + button label could total >4000.
+    const header = '| Name | Description | Action |'
+    const sep = '| --- | --- | --- |'
+    const hugeValue = 'z'.repeat(5000)
+    const table = parseTable(
+      `${header}\n${sep}\n| row | ${hugeValue} | <button id="delete-a" variant="secondary">Delete</button> |`,
+    )
+    const result = buildTableComponents(table, {
+      resolveButtonCustomId: ({ button }) => `action:${button.id}`,
+    })
+    expect(result).toHaveLength(1)
+    const segment = result[0]!
+    if (segment.type !== 'components') throw new Error('expected components segment')
+    const container = segment.components[0]!
+    if (container.type !== ComponentType.Container) throw new Error('expected container')
+
+    const totalText = container.components.reduce((sum, child) => {
+      if ('content' in child && typeof child.content === 'string') {
+        sum += child.content.length
+      }
+      if ('components' in child && Array.isArray(child.components)) {
+        for (const nested of child.components) {
+          if ('label' in nested && typeof nested.label === 'string') {
+            sum += nested.label.length
+          }
+        }
+      }
+      return sum
+    }, 0)
+    expect(totalText).toBeLessThanOrEqual(4000)
+  })
+
   test('renders wide rows with buttons without using sections', () => {
     const table = parseTable(`| Thread | Name | Status | Created | Folder | Action |
 | --- | --- | --- | --- | --- | --- |
@@ -358,6 +438,107 @@ Done.`)
         "text",
         "components",
         "text",
+      ]
+    `)
+  })
+
+  test('renders a single-line callout inside an accented container', () => {
+    const result = splitTablesFromMarkdown(
+      `<callout accent="#f59e0b">Full suite: **622 passed, 6 unrelated existing failures, 8 skipped**.</callout>`,
+    )
+    expect(result.map((segment) => segment.type)).toEqual(['components'])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "components": [
+            {
+              "accent_color": 16096779,
+              "components": [
+                {
+                  "content": "Full suite: **622 passed, 6 unrelated existing failures, 8 skipped**.",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+      ]
+    `)
+  })
+
+  test('splits text around a single-line callout into separate segments', () => {
+    const result = splitTablesFromMarkdown(`Done.
+
+<callout accent="#f59e0b">Confidence: high.</callout>
+
+Diff: https://critique.work/v/example`)
+    expect(result.map((segment) => segment.type)).toEqual([
+      'text',
+      'components',
+      'text',
+    ])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "Done.
+
+      ",
+          "type": "text",
+        },
+        {
+          "components": [
+            {
+              "accent_color": 16096779,
+              "components": [
+                {
+                  "content": "Confidence: high.",
+                  "type": 10,
+                },
+              ],
+              "type": 17,
+            },
+          ],
+          "type": "components",
+        },
+        {
+          "text": "
+      Diff: https://critique.work/v/example",
+          "type": "text",
+        },
+      ]
+    `)
+  })
+
+  test('preserves single-line callout syntax inside fenced code', () => {
+    const result = splitTablesFromMarkdown(`\`\`\`html
+<callout accent="#f59e0b">inside</callout>
+\`\`\``)
+    expect(result.map((segment) => segment.type)).toEqual(['text'])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "\`\`\`html
+      <callout accent="#f59e0b">inside</callout>
+      \`\`\`",
+          "type": "text",
+        },
+      ]
+    `)
+  })
+
+  test('keeps malformed single-line callouts as plain text', () => {
+    const result = splitTablesFromMarkdown(
+      `<callout accent="#f59e0b">content</callout></callout>`,
+    )
+    expect(result.map((segment) => segment.type)).toEqual(['text'])
+    expect(result).toMatchInlineSnapshot(`
+      [
+        {
+          "text": "<callout accent="#f59e0b">content</callout></callout>",
+          "type": "text",
+        },
       ]
     `)
   })
@@ -513,6 +694,52 @@ Still open`)
         },
       ]
     `)
+  })
+
+  test('clamps callout plain text content that alone exceeds 4000 chars', () => {
+    const hugeBody = 'a'.repeat(5000)
+    const result = splitTablesFromMarkdown(
+      `<callout accent="#2b7fff">\n${hugeBody}\n</callout>`,
+    )
+    expect(result).toHaveLength(1)
+    const segment = result[0]!
+    if (segment.type !== 'components') throw new Error('expected components segment')
+    const container = segment.components[0]!
+    if (container.type !== ComponentType.Container) throw new Error('expected container')
+    const textDisplay = container.components[0]!
+    if (textDisplay.type !== ComponentType.TextDisplay) throw new Error('expected text display')
+    expect(textDisplay.content.length).toBeLessThanOrEqual(4000)
+  })
+
+  test('splits a callout with many button rows across chunks, counting nested button cost', () => {
+    // Regression: chunkCalloutChildrenByComponentLimit used to count
+    // `currentChunk.length` (1 per row) instead of the real component cost,
+    // so it never accounted for the ActionRow + Button nested inside each row
+    // (cost 3 per button row: TextDisplay + ActionRow + Button).
+    const header = '| Name | Action |'
+    const sep = '| --- | --- |'
+    const rows = Array.from({ length: 15 }, (_, i) => {
+      return `| wt-${i} | <button id="del-${i}" variant="secondary">Delete</button> |`
+    }).join('\n')
+    const result = splitTablesFromMarkdown(
+      `<callout accent="#2b7fff">\n${header}\n${sep}\n${rows}\n</callout>`,
+      {
+        resolveButtonCustomId: ({ button }) => `action:${button.id}`,
+      },
+    )
+
+    // 15 button rows: each row costs TextDisplay(1) + ActionRow(1) + Button(1) = 3,
+    // plus a separator between rows. Real cost far exceeds MAX_COMPONENTS (40)
+    // for one Container, so this must split into multiple segments.
+    expect(result.length).toBeGreaterThan(1)
+
+    for (const segment of result) {
+      if (segment.type !== 'components') continue
+      const container = segment.components[0]
+      if (!container || container.type !== ComponentType.Container) continue
+      const cost = countComponentCost(container)
+      expect(cost).toBeLessThanOrEqual(40)
+    }
   })
 })
 

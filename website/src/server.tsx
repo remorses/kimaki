@@ -5,6 +5,7 @@
 // Each request gets a fresh PrismaClient and betterAuth instance
 // because CF Workers cannot reuse connections across requests.
 
+import './strada-init.js'
 import { z } from 'zod'
 import { Spiceflow } from 'spiceflow'
 import { Head } from 'spiceflow/react'
@@ -15,6 +16,8 @@ import {
   deleteSlackInstallStateInKv,
   getSlackInstallStateFromKv,
   getTeamClientIdsFromKv,
+  incrementTranscribeDailyCount,
+  resolveGatewayClientFromCacheOrDb,
   setSlackInstallStateInKv,
   setTeamClientIdsInKv,
   upsertGatewayClientAndRefreshKv,
@@ -22,6 +25,8 @@ import {
 import { createAuth, GUILD_ID_HEADER, onboardingErrorKvKey, parseAllowedCallbackUrl } from './auth.js'
 import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
+import { reportWebsiteError, websiteTracer } from './strada-init.js'
+import { StradaBrowser } from './strada-browser.tsx'
 import {
   DashboardLayout,
   MachineListPage,
@@ -33,6 +38,14 @@ import { createCloudActions } from './cloud-actions.js'
 import type { Env } from './env.js'
 
 export { SlackBridgeDO }
+
+// /api/transcribe limits (see also TRANSCRIBE_RATE_LIMITER binding for burst control).
+// Kept small: the route expands every byte into a JS number array for the
+// Workers AI whisper input (`[...new Uint8Array(buf)]`), so a 15MB file was
+// creating ~15M array elements and risking the Worker's 128MB isolate memory
+// limit. Voice messages are normally well under 2MB, so this is generous.
+const TRANSCRIBE_MAX_AUDIO_BYTES = 2 * 1024 * 1024
+const TRANSCRIBE_DAILY_REQUEST_LIMIT = 100
 
 const SLACK_OAUTH_CALLBACK_PATH = '/slack/oauth/callback'
 const SLACK_INSTALL_SCOPES = [
@@ -54,7 +67,9 @@ type AuthSession = {
   user: { id: string; name: string; email: string; emailVerified: boolean; image?: string | null }
 } | null
 
-export const app = new Spiceflow()
+export const app = new Spiceflow({
+  ...(websiteTracer ? { tracer: websiteTracer } : {}),
+})
   .state('env', {} as Env)
   .state('session', null as AuthSession)
 
@@ -97,6 +112,7 @@ export const app = new Spiceflow()
           className="min-h-screen bg-white text-neutral-900 antialiased"
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
         >
+          <StradaBrowser />
           {children}
         </body>
       </html>
@@ -105,6 +121,7 @@ export const app = new Spiceflow()
 
   .onError(({ error }) => {
     console.error(error)
+    reportWebsiteError(error, { route: 'onError' })
     const message = error instanceof Error ? error.message : String(error)
     return new Response(message, { status: 500 })
   })
@@ -335,6 +352,7 @@ export const app = new Spiceflow()
           <Head.Meta name="viewport" content="width=device-width, initial-scale=1" />
         </Head>
         <body className="min-h-screen bg-white font-sans text-stone-900 antialiased">
+          <StradaBrowser />
           <div className="flex min-h-screen items-center justify-center">
             {children}
           </div>
@@ -913,6 +931,119 @@ export const app = new Spiceflow()
         discord_user_id: discordUserId,
         slack_user_id: slackUserId,
       }
+    },
+  })
+
+  // Free Whisper transcription for gateway-mode CLI installs that have no
+  // OpenAI/Gemini transcription API key configured. Auth is the same
+  // clientId:clientSecret pair the CLI already uses for gateway-proxy REST
+  // calls, sent as `Authorization: Bearer <clientId>:<clientSecret>`.
+  // Runs @cf/openai/whisper-large-v3-turbo on Cloudflare's own Workers AI
+  // account ($0.00051/audio minute), so this only costs Kimaki, never the
+  // user. Chosen over the plain @cf/openai/whisper model after a manual
+  // side-by-side comparison: turbo caught words the base model missed and
+  // matched the reference OpenAI gpt-audio transcription of the same clip
+  // exactly, for effectively the same price.
+  // Rate-limited per client_id: TRANSCRIBE_RATE_LIMITER (burst, 20 req/min)
+  // plus a KV daily request counter (TRANSCRIBE_DAILY_REQUEST_LIMIT).
+  .route({
+    method: 'POST',
+    path: '/api/transcribe',
+    async handler({ request, state }) {
+      const jsonError = (message: string, status: number) => {
+        return new Response(JSON.stringify({ error: message }), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      const authHeader = request.headers.get('Authorization') ?? ''
+      const token = authHeader.replace(/^Bearer\s+/i, '')
+      const separatorIndex = token.indexOf(':')
+      if (separatorIndex <= 0 || separatorIndex >= token.length - 1) {
+        return jsonError('Missing or malformed Authorization header', 401)
+      }
+      const clientId = token.slice(0, separatorIndex)
+      const clientSecret = token.slice(separatorIndex + 1)
+
+      const gatewayClient = await resolveGatewayClientFromCacheOrDb({
+        clientId,
+        env: state.env,
+      })
+      if (gatewayClient instanceof Error) {
+        reportWebsiteError(gatewayClient, { route: '/api/transcribe' })
+        return jsonError('Failed to validate client', 500)
+      }
+      if (!gatewayClient || gatewayClient.secret !== clientSecret) {
+        return jsonError('Invalid client credentials', 401)
+      }
+
+      const burstOutcome = await state.env.TRANSCRIBE_RATE_LIMITER.limit({
+        key: clientId,
+      })
+      if (!burstOutcome.success) {
+        return jsonError('Rate limited, try again shortly', 429)
+      }
+
+      // Keyed by user_id (stable across a Discord user's gateway installs)
+      // rather than client_id, so re-onboarding to mint a fresh client_id
+      // doesn't reset the daily quota. Falls back to client_id for the rare
+      // row with no linked user_id.
+      const dailyCount = await incrementTranscribeDailyCount({
+        kv: state.env.GATEWAY_CLIENT_KV,
+        quotaKey: gatewayClient.user_id ?? clientId,
+      }).catch((cause) => {
+        // Fail open on KV errors — this is an abuse guard, not a billing gate.
+        console.warn('Failed to increment transcribe daily count', cause)
+        return 0
+      })
+      if (dailyCount > TRANSCRIBE_DAILY_REQUEST_LIMIT) {
+        return jsonError('Daily free transcription limit reached', 429)
+      }
+
+      // Content-Length is required (not just checked when present) so we
+      // never buffer an oversized body before knowing its size — Cloudflare
+      // accepts request bodies well past TRANSCRIBE_MAX_AUDIO_BYTES.
+      const contentLength = Number(request.headers.get('Content-Length'))
+      if (!Number.isFinite(contentLength) || contentLength <= 0) {
+        return jsonError('Missing or invalid Content-Length header', 411)
+      }
+      if (contentLength > TRANSCRIBE_MAX_AUDIO_BYTES) {
+        return jsonError('Audio file too large', 413)
+      }
+
+      const audioBuffer = await request.arrayBuffer().catch((cause) => {
+        return new Error('Failed to read audio body', { cause })
+      })
+      if (audioBuffer instanceof Error) {
+        reportWebsiteError(audioBuffer, { route: '/api/transcribe' })
+        return jsonError('Failed to read audio body', 400)
+      }
+      if (audioBuffer.byteLength === 0) {
+        return jsonError('Empty audio body', 400)
+      }
+      if (audioBuffer.byteLength > TRANSCRIBE_MAX_AUDIO_BYTES) {
+        return jsonError('Audio file too large', 413)
+      }
+
+      // whisper-large-v3-turbo's typed input is `audio: string | { body, contentType }`.
+      // The plain base64 string form needs a data: URI prefix — passing a bare
+      // base64 string returns "8001: Invalid input". Discord voice messages are
+      // always audio/ogg (Opus), but the CLI forwards the real attachment
+      // Content-Type here too (mp3/wav/m4a for regular audio file uploads).
+      const contentType = request.headers.get('Content-Type') || 'audio/ogg'
+      const base64Audio = Buffer.from(audioBuffer).toString('base64')
+      const result = await state.env.AI.run('@cf/openai/whisper-large-v3-turbo', {
+        audio: `data:${contentType};base64,${base64Audio}`,
+      }).catch((cause) => {
+        return new Error('Workers AI transcription failed', { cause })
+      })
+      if (result instanceof Error) {
+        reportWebsiteError(result, { route: '/api/transcribe' })
+        return jsonError('Transcription failed', 502)
+      }
+
+      return { text: result.text }
     },
   })
 

@@ -2,7 +2,7 @@
   "name": "kimaki",
   "module": "index.ts",
   "type": "module",
-  "version": "0.17.1",
+  "version": "0.27.0",
   "scripts": {
     "dev": "tsx src/bin.ts",
     "prepublishOnly": "pnpm sync-skills && pnpm build",
@@ -17,10 +17,17 @@
     "register-commands": "tsx scripts/register-commands.ts",
     "lint": "lintcn lint",
     "format": "oxfmt src",
-    "sync-skills": "mkdir -p skills && cp -R ../skills/. skills && tsx scripts/sync-skills.ts"
+    "sync-skills": "tsx scripts/sync-skills.ts"
   },
   "repository": "https://github.com/remorses/kimaki",
   "bin": "bin.js",
+  "exports": {
+    "./package.json": "./package.json",
+    "./anthropic-auth-plugin": {
+      "types": "./dist/anthropic-auth-plugin.d.ts",
+      "default": "./dist/anthropic-auth-plugin.js"
+    }
+  },
   "files": [
     "dist",
     "src",
@@ -28,6 +35,7 @@
     "bin.js"
   ],
   "devDependencies": {
+    "@subrouter/cli": "workspace:^",
     "@types/bun": "latest",
     "@types/heic-convert": "^2.1.0",
     "@types/json-schema": "^7.0.15",
@@ -57,6 +65,8 @@
     "@opencode-ai/sdk": "^1.16.2",
     "@parcel/watcher": "^2.5.6",
     "@purinton/resampler": "^1.0.4",
+    "@strada.sh/sdk": "^0.5.0",
+    "@subrouter/opencode": "workspace:^",
     "cron-parser": "^5.5.0",
     "diff": "^8.0.4",
     "discord.js": "^14.26.3",

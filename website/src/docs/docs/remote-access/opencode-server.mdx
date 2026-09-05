@@ -1,0 +1,137 @@
+---
+$schema: https://holocron.so/frontmatter.json
+title: Expose the OpenCode server on a VPS
+sidebarTitle: OpenCode server
+description: Bind Kimaki's OpenCode server to 0.0.0.0 on a VPS, lock it with a password, and attach the OpenCode TUI from your laptop.
+icon: lucide:server
+---
+
+Kimaki starts one shared **OpenCode server**. By default that server listens on **`127.0.0.1`**, so only processes on the same machine can reach it.
+
+On a **VPS** you often want the laptop TUI, `opencode web`, or `opencode attach` to talk to that same server. Bind it to **`0.0.0.0`**, pick a stable **port**, and set a **password**.
+
+```bash
+OPENCODE_SERVER_PASSWORD=replace-me \
+  kimaki --opencode-hostname 0.0.0.0 --opencode-port 4096
+```
+
+Then from your laptop:
+
+```bash
+opencode attach http://YOUR_VPS_IP:4096 --password replace-me
+```
+
+```diagram
+  VPS                                              Laptop
+ ┌────────────────────────────────────┐           ┌─────────────────────┐
+ │  kimaki                            │           │                     │
+ │  --opencode-hostname 0.0.0.0       │           │  opencode attach    │
+ │  --opencode-port 4096              │           │  http://VPS:4096    │
+ │  OpenCode serve                    │◄──────────│  --password secret  │
+ │  0.0.0.0:4096 + basic auth         │           │                     │
+ └────────────────────────────────────┘           └─────────────────────┘
+```
+
+These flags bind **only the OpenCode child**. Kimaki's own lock/hrana server stays on **`127.0.0.1`** unless you set `KIMAKI_INTERNET_REACHABLE_URL`.
+
+<Aside>
+<Warning>
+**Never bind `0.0.0.0` without a password.** The OpenCode HTTP API can start sessions, run shell commands, and edit files. Kimaki refuses to start if `--opencode-hostname` is not loopback and `OPENCODE_SERVER_PASSWORD` is missing.
+</Warning>
+</Aside>
+
+## Password
+
+OpenCode uses **HTTP basic auth**. Kimaki already forwards these env vars to the server it starts, and the Kimaki SDK client sends the matching `Authorization` header.
+
+| Variable                   | Role                                                                         | Default    |
+| -------------------------- | ---------------------------------------------------------------------------- | ---------- |
+| `OPENCODE_SERVER_PASSWORD` | Enables basic auth. **Required** when `--opencode-hostname` is not loopback. | unset      |
+| `OPENCODE_SERVER_USERNAME` | Basic-auth username                                                          | `opencode` |
+
+```bash
+OPENCODE_SERVER_PASSWORD=replace-me \
+OPENCODE_SERVER_USERNAME=opencode \
+  kimaki --opencode-hostname 0.0.0.0 --opencode-port 4096
+```
+
+Attach with the same values:
+
+```bash
+opencode attach http://YOUR_VPS_IP:4096 \
+  --username opencode \
+  --password replace-me
+```
+
+`--password` and `--username` on `opencode attach` also read `OPENCODE_SERVER_PASSWORD` and `OPENCODE_SERVER_USERNAME` if you omit the flags.
+
+## Flags
+
+| Flag                         | What it does                                                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `--opencode-hostname <host>` | Address OpenCode listens on. Default is OpenCode's `127.0.0.1`.                                                         |
+| `--opencode-port <port>`     | Port OpenCode listens on. Default is a **random free port**. Use a fixed port on a VPS so you can attach after restart. |
+
+Kimaki itself still talks to the server at **`127.0.0.1`**, even when the process binds `0.0.0.0`. That is correct: `0.0.0.0` means "listen on every interface", including localhost.
+
+## Docker on a VPS
+
+Publish the port and pass the password into the container. Add the flags to `CMD`.
+
+```yaml
+services:
+  kimaki:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "4096:4096"
+    environment:
+      NODE_ENV: production
+      KIMAKI_DATA_DIR: /data
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD}
+    command:
+      [
+        "kimaki",
+        "--gateway",
+        "--data-dir",
+        "/data",
+        "--projects-dir",
+        "/data/projects",
+        "--auto-restart",
+        "--opencode-hostname",
+        "0.0.0.0",
+        "--opencode-port",
+        "4096",
+      ]
+    volumes:
+      - kimaki-data:/data
+
+volumes:
+  kimaki-data:
+```
+
+Set the secret on the host before `docker compose up`:
+
+```bash
+export OPENCODE_SERVER_PASSWORD=replace-me
+docker compose up -d
+```
+
+Do not commit the password. Put it in a `.env` file next to `docker-compose.yml`, or in your process supervisor.
+
+The full container setup is in [Deploy Kimaki on a VPS with Docker](../guides/docker.mdx).
+
+## Firewall
+
+Open **only** the OpenCode port you chose. Do not expose Kimaki's lock port (`KIMAKI_LOCK_PORT`, default `29988`).
+
+```bash
+# example: allow 4096 from your laptop only
+ufw allow from YOUR_LAPTOP_IP to any port 4096 proto tcp
+```
+
+## Related
+
+- [OpenCode server docs](https://opencode.ai/docs/server/)
+- [OpenCode CLI attach](https://opencode.ai/docs/cli/)
+- [Docker on a VPS](../guides/docker.mdx)

@@ -1,20 +1,32 @@
 // Core Discord bot module that handles message events and bot lifecycle.
 // Bridges Discord messages to OpenCode sessions, manages voice connections,
 // and orchestrates the main event loop for the Kimaki bot.
+//
+// Shutdown resilience: during self-restart (gateway reconnect limit, SIGUSR2),
+// discord.js can still fire errors from pending async operations (DNS lookups,
+// WebSocket frames) after the client is destroyed. The uncaughtException handler
+// suppresses these when shuttingDown is already set, and we removeAllListeners()
+// before destroying the client to prevent late events from becoming uncaught.
+
+declare global {
+  // eslint-disable-next-line no-var
+  var shuttingDown: boolean | undefined
+}
 
 import { DiscordOperationError } from './errors.js'
 import {
   initDatabase,
   closeDatabase,
-  getThreadWorktree,
+  getThreadWorktreeOrWorkspace,
   getThreadSession,
   getChannelWorktreesEnabled,
   getChannelMentionMode,
   getChannelDirectory,
   cancelAllPendingIpcRequests,
+  consumeSessionSleepWake,
   deleteChannelDirectoryById,
-  createPendingWorktree,
-  setWorktreeReady,
+  createPendingWorkspace,
+  setWorkspaceReady,
 } from './database.js'
 import {
   stopOpencodeServer,
@@ -41,6 +53,7 @@ import {
 } from './system-message.js'
 import YAML from 'yaml'
 import {
+  getFileAttachments,
   getTextAttachments,
   resolveMentions,
 } from './message-formatting.js'
@@ -49,7 +62,6 @@ import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
   extractQueueSuffix,
-  getChannelReferencePermissionRules,
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
@@ -83,8 +95,13 @@ import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
 import { notifyError } from './sentry.js'
+import { trackEvent, flushAnalytics } from './analytics.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
+import {
+  getDefaultKimakiDirectory,
+  getUserProjectCount,
+} from './channel-management.js'
 import { store } from './store.js'
 import {
   startExternalOpencodeSessionSync,
@@ -238,11 +255,15 @@ function parseSessionStartSourceFromMarker(
     !Number.isInteger(marker.scheduledTaskId) ||
     marker.scheduledTaskId < 1
   ) {
-    return { scheduleKind: marker.scheduledKind }
+    return {
+      scheduleKind: marker.scheduledKind,
+      scheduledTaskRunId: marker.scheduledTaskRunId,
+    }
   }
   return {
     scheduleKind: marker.scheduledKind,
     scheduledTaskId: marker.scheduledTaskId,
+    scheduledTaskRunId: marker.scheduledTaskRunId,
   }
 }
 
@@ -286,6 +307,8 @@ export async function startDiscordBot({
     discordClient = await createDiscordClient()
   }
 
+  store.setState({ useWorktrees: Boolean(useWorktrees) })
+
   let currentAppId: string | undefined = appId
 
   const setupHandlers = async (c: Client<true>) => {
@@ -308,6 +331,17 @@ export async function startDiscordBot({
 
     voiceLogger.log('[READY] Bot is ready')
     markDiscordGatewayReady()
+
+    void (async () => {
+      const userProjectCount = await getUserProjectCount()
+      const props: Record<string, string | number | boolean> = {
+        guild_count: c.guilds.cache.size,
+      }
+      if (userProjectCount !== null) {
+        props.user_project_count = userProjectCount
+      }
+      trackEvent('bot_started', props)
+    })()
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
@@ -402,9 +436,8 @@ export async function startDiscordBot({
       discordLogger.error(
         `[GATEWAY] Shard ${shardId} exceeded ${MAX_RECONNECT_ATTEMPTS} reconnect attempts, self-restarting`,
       )
-      // Self-restart: cleanup then spawn a fresh process. This works whether
-      // the bin.ts wrapper is present or not (unlike process.exit(1) which
-      // only restarts when the wrapper is the parent).
+      // Self-restart: cleanup, then SIGKILL so the bin.ts wrapper
+      // restarts us. Without the wrapper this dies after logging a warning.
       void selfRestart('gateway-reconnect-limit')
     }
   })
@@ -472,6 +505,9 @@ export async function startDiscordBot({
       const cliInjectedInjectionGuardPatterns = isCliInjectedPrompt
         ? promptMarker?.injectionGuardPatterns
         : undefined
+      const cliInjectedParentSessionId = isCliInjectedPrompt
+        ? promptMarker?.parentSessionId
+        : undefined
 
       // Always ignore our own messages (unless CLI-injected prompt above).
       // Without this, assigning the Kimaki role to the bot itself would loop.
@@ -492,15 +528,14 @@ export async function startDiscordBot({
         }
       }
 
-      // Ignore messages that start with a mention of another user (not the bot).
-      // These are likely users talking to each other, not the bot.
+      // Detect messages that start with a mention of another user (not the bot).
+      // In channels these are fully ignored. In threads they are added to the
+      // session context without triggering the AI (noReply), so the agent sees
+      // user-to-user conversation on the next real turn.
       const leadingMentionMatch = message.content?.match(/^<@!?(\d+)>/)
-      if (leadingMentionMatch) {
-        const mentionedUserId = leadingMentionMatch[1]
-        if (mentionedUserId !== discordClient.user?.id) {
-          return
-        }
-      }
+      const isLeadingMentionToOtherUser =
+        leadingMentionMatch &&
+        leadingMentionMatch[1] !== discordClient.user?.id
 
       if (message.partial) {
         discordLogger.log(`Fetching partial message ${message.id}`)
@@ -519,6 +554,14 @@ export async function startDiscordBot({
       // When mention mode is enabled, users without Kimaki role can message
       // without getting a permission error - we just silently ignore.
       const channel = message.channel
+
+      // In text channels, messages starting with a mention to another user
+      // are fully ignored before any permission or mention-mode checks.
+      // This prevents permission-error replies for user-to-user conversation.
+      if (channel.type === ChannelType.GuildText && isLeadingMentionToOtherUser) {
+        return
+      }
+
       if (channel.type === ChannelType.GuildText && !isCliInjectedPrompt) {
         const mentionModeEnabled = await getChannelMentionMode(channel.id)
         if (mentionModeEnabled) {
@@ -600,7 +643,7 @@ export async function startDiscordBot({
         // thread itself (e.g. /new-worktree, /fork, kimaki send). This prevents
         // the bot from hijacking user-created threads in project channels while
         // still responding to bot-created threads that may not yet have a session
-        // row with a non-empty session_id (createPendingWorktree sets ''). (GitHub #84)
+        // row with a non-empty session_id (createPendingWorkspace sets ''). (GitHub #84)
         const hasExistingSession = await getThreadSession(thread.id)
         const botMentioned =
           discordClient.user && message.mentions.has(discordClient.user.id)
@@ -618,6 +661,13 @@ export async function startDiscordBot({
           return
         }
 
+        // Context-only messages (user-to-user replies) can't be stored without
+        // an existing session. Skip early to avoid creating a runtime or running
+        // preprocessing for nothing.
+        if (isLeadingMentionToOtherUser && !hasExistingSession) {
+          return
+        }
+
         const parent = thread.parent as TextChannel | null
         let projectDirectory: string | undefined
         if (parent) {
@@ -632,7 +682,8 @@ export async function startDiscordBot({
         // the preprocess chain (messages queue behind the worktree promise).
         // After a bot restart the runtime is gone, so we must reject messages
         // for pending worktrees to avoid running in the base directory.
-        const worktreeInfo = await getThreadWorktree(thread.id)
+        // Check both thread_workspaces (new) and thread_worktrees (legacy)
+        const worktreeInfo = await getThreadWorktreeOrWorkspace(thread.id)
         if (worktreeInfo) {
           if (worktreeInfo.status === 'pending' && !getRuntime(thread.id)) {
             await message.reply({
@@ -653,7 +704,7 @@ export async function startDiscordBot({
           if (worktreeInfo.project_directory) {
             projectDirectory = worktreeInfo.project_directory
             discordLogger.log(
-              `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.worktree_directory})`,
+              `Using project directory: ${projectDirectory} (worktree: ${worktreeInfo.workspace_directory})`,
             )
           }
         }
@@ -679,8 +730,8 @@ export async function startDiscordBot({
           if (shellCmd) {
             const shellDir =
               worktreeInfo?.status === 'ready' &&
-              worktreeInfo.worktree_directory
-                ? worktreeInfo.worktree_directory
+              worktreeInfo.workspace_directory
+                ? worktreeInfo.workspace_directory
                 : projectDirectory
             const loadingReply = await message.reply({
               content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
@@ -701,10 +752,16 @@ export async function startDiscordBot({
           projectDirectory && worktreeInfo?.status !== 'pending'
             ? extractBtwSuffix(message.content || '')
             : null
-        if (btwResult?.forceBtw && projectDirectory) {
+        if (btwResult?.forceBtw && projectDirectory && !isLeadingMentionToOtherUser) {
+          const btwSdkDir =
+            worktreeInfo?.status === 'ready' &&
+            worktreeInfo.workspace_directory
+              ? worktreeInfo.workspace_directory
+              : projectDirectory
           const result = await forkSessionToBtwThread({
             sourceThread: thread,
             projectDirectory,
+            sdkDirectory: btwSdkDir,
             prompt: btwResult.prompt,
             userId: message.author.id,
             username:
@@ -750,8 +807,8 @@ export async function startDiscordBot({
 
         const sdkDir =
           worktreeInfo?.status === 'ready' &&
-          worktreeInfo.worktree_directory
-            ? worktreeInfo.worktree_directory
+          worktreeInfo.workspace_directory
+            ? worktreeInfo.workspace_directory
             : resolvedProjectDir
         const runtime = getOrCreateRuntime({
           threadId: thread.id,
@@ -763,7 +820,9 @@ export async function startDiscordBot({
         })
 
         // Cancel interactive UI when a real user sends a message.
-        if (!message.author.bot && !isCliInjectedPrompt) {
+        // Context-only messages (user-to-user replies) should not interrupt
+        // the active run or dismiss pending UI.
+        if (!message.author.bot && !isCliInjectedPrompt && !isLeadingMentionToOtherUser) {
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
@@ -780,6 +839,24 @@ export async function startDiscordBot({
             })
           }
           void cancelPendingFileUpload(thread.id)
+        }
+
+        // A sleep wake only becomes a turn if it can still claim its own row.
+        // The claim fails when the user cancelled the sleep while the wake was
+        // being posted, so the superseded wake is dropped instead of starting a
+        // turn the user already replaced. Cancellation for every other kind of
+        // message happens inside runtime.enqueueIncoming().
+        const isSleepWake = Boolean(promptMarker?.sleepWake)
+        if (isSleepWake) {
+          const claimedWake = promptMarker?.sleepId
+            ? await consumeSessionSleepWake({ deliveryId: promptMarker.sleepId })
+            : false
+          if (!claimedWake) {
+            discordLogger.log(
+              `[SLEEP] ignoring superseded wake in thread ${thread.id}`,
+            )
+            return
+          }
         }
 
         // Expensive pre-processing (voice transcription, context fetch,
@@ -800,10 +877,14 @@ export async function startDiscordBot({
           model: cliInjectedModel,
           permissions: cliInjectedPermissions,
           injectionGuardPatterns: cliInjectedInjectionGuardPatterns,
+          parentSessionId: cliInjectedParentSessionId,
+          isSleepWake: isSleepWake || undefined,
+          noReply: isLeadingMentionToOtherUser || undefined,
           sessionStartSource: sessionStartSource
             ? {
                 scheduleKind: sessionStartSource.scheduleKind,
                 scheduledTaskId: sessionStartSource.scheduledTaskId,
+                scheduledTaskRunId: sessionStartSource.scheduledTaskRunId,
               }
             : undefined,
           preprocess: () => {
@@ -821,7 +902,10 @@ export async function startDiscordBot({
 
         // Notify when a voice message was queued instead of sent immediately
         if (enqueueResult.queued && enqueueResult.position) {
-          await sendThreadMessage(thread, `Queued at position ${enqueueResult.position}. Edit your message to update it in queue`)
+          await sendThreadMessage(
+            thread,
+            `Queued at position ${enqueueResult.position}. Edit or delete your message to update the queue`,
+          )
         }
       }
 
@@ -974,14 +1058,9 @@ export async function startDiscordBot({
           })
         }
 
-        const sessionDirectory = await (async () => {
-          if (!worktreePromise) {
-            return projectDirectory
-          }
-          const result = await worktreePromise
-          if (result instanceof Error) return projectDirectory
-          return result
-        })()
+        const worktreeResult = worktreePromise ? await worktreePromise : projectDirectory
+        if (worktreeResult instanceof Error) return
+        const sessionDirectory = worktreeResult
 
         const channelRuntime = getOrCreateRuntime({
           threadId: thread.id,
@@ -1046,6 +1125,10 @@ export async function startDiscordBot({
       if (!message) return
       if (message.author.bot) return
       if (!message.content) return
+      // Discord fires MESSAGE_UPDATE for embed-only updates (link preview
+      // unfurling) without the user actually editing the message content.
+      // editedTimestamp is null for these; skip them to avoid false queue removals.
+      if (!message.editedTimestamp) return
 
       const channel = message.channel
       const isThread = [
@@ -1096,6 +1179,35 @@ export async function startDiscordBot({
     } catch (error) {
       discordLogger.error(
         'Error handling message update:',
+        error instanceof Error ? error.stack : String(error),
+      )
+    }
+  })
+
+  // Handle user message deletes to remove queued messages.
+  // Discord delete events do not include author/content, so attribution comes
+  // from the queued item captured at enqueue time.
+  discordClient.on(Events.MessageDelete, async (message) => {
+    try {
+      const channel = message.channel
+      if (!channel.isThread()) return
+
+      const runtime = getRuntime(channel.id)
+      if (!runtime) return
+
+      const removed = runtime.removeQueuedMessage(message.id)
+      if (!removed) return
+
+      discordLogger.log(
+        `[MESSAGE_DELETE] Removed queued message ${message.id} in thread ${channel.id}`,
+      )
+      await sendThreadMessage(
+        channel,
+        `⬦ **${removed.username}** removed message from queue`,
+      )
+    } catch (error) {
+      discordLogger.error(
+        'Error handling message delete:',
         error instanceof Error ? error.stack : String(error),
       )
     }
@@ -1158,7 +1270,10 @@ export async function startDiscordBot({
         `[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`,
       )
 
-      const textAttachmentsContent = await getTextAttachments(starterMessage)
+      const [textAttachmentsContent, fileAttachments] = await Promise.all([
+        getTextAttachments(starterMessage),
+        getFileAttachments(starterMessage),
+      ])
       const messageText = resolveMentions(starterMessage).trim()
       const prompt = textAttachmentsContent
         ? `${messageText}\n\n${textAttachmentsContent}`
@@ -1191,16 +1306,28 @@ export async function startDiscordBot({
         return
       }
 
-      // Start worktree creation concurrently if requested.
+      // Start worktree creation concurrently if requested via marker OR
+      // if the channel/global toggle enables auto-worktrees.
       // The runtime is created immediately so follow-up messages queue
       // naturally; the worktree promise is awaited inside enqueueIncoming.
+      const autoWorktreeEnabled =
+        !marker.worktree &&
+        !marker.cwd &&
+        (store.getState().useWorktrees ||
+          (await getChannelWorktreesEnabled(parent.id)))
+      const effectiveWorktreeName =
+        marker.worktree ||
+        (autoWorktreeEnabled
+          ? formatAutoWorktreeName(thread.name.slice(0, 50))
+          : undefined)
+
       let worktreePromise: Promise<string | Error> | undefined
-      if (marker.worktree && (await isGitRepositoryRoot(projectDirectory))) {
-        discordLogger.log(`[BOT_SESSION] Creating worktree: ${marker.worktree}`)
+      if (effectiveWorktreeName && (await isGitRepositoryRoot(projectDirectory))) {
+        discordLogger.log(`[BOT_SESSION] Creating worktree: ${effectiveWorktreeName}`)
 
         const worktreeStatusMessage = await thread
           .send({
-            content: worktreeCreatingMessage(marker.worktree),
+            content: worktreeCreatingMessage(effectiveWorktreeName),
             flags: SILENT_MESSAGE_FLAGS,
           })
           .catch(() => undefined)
@@ -1208,7 +1335,7 @@ export async function startDiscordBot({
         worktreePromise = createWorktreeInBackground({
           thread,
           starterMessage: worktreeStatusMessage,
-          worktreeName: marker.worktree,
+          worktreeName: effectiveWorktreeName,
           projectDirectory,
           rest: discordClient.rest,
         })
@@ -1216,11 +1343,15 @@ export async function startDiscordBot({
         discordLogger.warn(
           `[BOT_SESSION] Skipping requested worktree for non-git project directory: ${projectDirectory}`,
         )
+      } else if (autoWorktreeEnabled) {
+        discordLogger.warn(
+          `[BOT_SESSION] Skipping auto-worktree for non-git project directory: ${projectDirectory}`,
+        )
       }
 
       // --cwd: reuse an existing project subfolder or worktree directory. Revalidate at bot-time
       // (CLI validated at send-time but the path could become stale).
-      // Only worktree directories are stored in thread_worktrees. Project
+      // Only worktree directories are stored in thread_workspaces. Project
       // subfolders simply become the OpenCode session directory.
       // --cwd: if it matches projectDirectory, ignore silently (already the default).
       let cwdDirectory: string | undefined
@@ -1249,14 +1380,15 @@ export async function startDiscordBot({
             ? path.basename(cwdDirectory)
             : branchResult
 
-          await createPendingWorktree({
+          await createPendingWorkspace({
             threadId: thread.id,
-            worktreeName: cwdWorktreeName,
+            workspaceType: 'kimaki-worktree',
+            workspaceName: cwdWorktreeName,
             projectDirectory,
           })
-          await setWorktreeReady({
+          await setWorkspaceReady({
             threadId: thread.id,
-            worktreeDirectory: cwdDirectory,
+            workspaceDirectory: cwdDirectory,
           })
 
           // React with tree emoji to mark as worktree thread
@@ -1275,17 +1407,9 @@ export async function startDiscordBot({
 
       const botThreadStartSource = parseSessionStartSourceFromMarker(marker)
 
-      const sessionDirectory = await (async () => {
-        if (cwdDirectory) {
-          return cwdDirectory
-        }
-        if (!worktreePromise) {
-          return projectDirectory
-        }
-        const result = await worktreePromise
-        if (result instanceof Error) return projectDirectory
-        return result
-      })()
+      const worktreeResult = worktreePromise ? await worktreePromise : undefined
+      if (worktreeResult instanceof Error) return
+      const sessionDirectory = cwdDirectory ?? worktreeResult ?? projectDirectory
 
       const runtime = getOrCreateRuntime({
         threadId: thread.id,
@@ -1304,18 +1428,21 @@ export async function startDiscordBot({
         model: marker.model,
         permissions: marker.permissions,
         injectionGuardPatterns: marker.injectionGuardPatterns,
+        parentSessionId: marker.parentSessionId,
         mode: 'opencode',
         sessionStartSource: botThreadStartSource
           ? {
               scheduleKind: botThreadStartSource.scheduleKind,
               scheduledTaskId: botThreadStartSource.scheduledTaskId,
+              scheduledTaskRunId: botThreadStartSource.scheduledTaskRunId,
             }
           : undefined,
         preprocess: async () => {
-          const permissionRules = await getChannelReferencePermissionRules({
-            message: starterMessage,
-          })
-          return { prompt, permissionRules, mode: 'opencode' }
+          return {
+            prompt,
+            mode: 'opencode',
+            ...(fileAttachments.length > 0 && { images: fileAttachments }),
+          }
         },
       })
     } catch (error) {
@@ -1352,6 +1479,17 @@ export async function startDiscordBot({
   // channel are disposed by their own ThreadDelete events from Discord.
   discordClient.on(Events.ChannelDelete, async (channel) => {
     try {
+      // Check if this is the default kimaki channel. If so, preserve the
+      // channel_directories row as a tombstone so we don't recreate it.
+      const mapping = await getChannelDirectory(channel.id)
+      const defaultDir = getDefaultKimakiDirectory()
+      if (mapping && mapping.directory === defaultDir) {
+        discordLogger.log(
+          `Preserving channel_directories row for deleted default channel ${channel.id} as tombstone`,
+        )
+        return
+      }
+
       const deleted = await deleteChannelDirectoryById(channel.id)
       if (deleted) {
         discordLogger.log(
@@ -1395,11 +1533,11 @@ export async function startDiscordBot({
   const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
     discordLogger.log(`Received ${signal}, cleaning up...`)
 
-    if ((global as any).shuttingDown) {
+    if (global.shuttingDown) {
       discordLogger.log('Already shutting down, ignoring duplicate signal')
       return
     }
-    ;(global as any).shuttingDown = true
+    global.shuttingDown = true
 
     try {
       await stopRuntimeIdleSweeper()
@@ -1411,6 +1549,8 @@ export async function startDiscordBot({
           error instanceof Error ? error.stack : String(error),
         )
       })
+
+      await flushAnalytics()
 
       // Cancel pending IPC requests so plugin tools don't hang
       await cancelAllPendingIpcRequests().catch((e) => {
@@ -1447,6 +1587,10 @@ export async function startDiscordBot({
       await stopHranaServer()
 
       discordLogger.log('Destroying Discord client...')
+      // Remove all listeners before destroy to prevent late-arriving shard
+      // errors (from pending DNS lookups, WebSocket frames) from becoming
+      // uncaught exceptions after the client's internal handlers are torn down.
+      discordClient.removeAllListeners()
       void discordClient.destroy()
 
       discordLogger.log('Cleanup complete.')
@@ -1489,7 +1633,11 @@ export async function startDiscordBot({
     })
   })
 
-  // Self-restart: prefer bin.ts wrapper (keeps Ctrl+C), fall back to detached spawn.
+  // Self-restart: die so the bin.ts wrapper restarts us with exponential
+  // backoff and crash-loop detection. process.exit() can hang joining native
+  // worker threads after Discord gateway failures, so SIGKILL instead.
+  // When running without the wrapper (e.g. `tsx src/cli.ts`), the process
+  // just dies — use `tsx src/bin.ts` for auto-restart support.
   let selfRestarting = false
   async function selfRestart(reason: string) {
     if (selfRestarting) {
@@ -1498,27 +1646,19 @@ export async function startDiscordBot({
     }
     selfRestarting = true
     discordLogger.log(`Self-restarting (reason: ${reason})...`)
+    setTimeout(() => process.kill(process.pid, 'SIGKILL'), 15_000)
     try {
       await handleShutdown(reason, { skipExit: true })
     } catch (error) {
       voiceLogger.error(`[${reason}] Error during shutdown:`, error)
     }
 
-    if (process.env.__KIMAKI_CHILD) {
-      discordLogger.log('Wrapper detected, exiting for wrapper restart')
-      process.exit(1)
+    if (!process.env.__KIMAKI_CHILD) {
+      discordLogger.warn(
+        'No restart wrapper detected. Run via `tsx src/bin.ts` (dev) or `kimaki` (npm) for auto-restart on crash.',
+      )
     }
-
-    const { spawn } = await import('node:child_process')
-    const env = { ...process.env }
-    delete env.__KIMAKI_CHILD
-    spawn(process.argv[0]!, [...process.execArgv, ...process.argv.slice(1)], {
-      stdio: 'inherit',
-      detached: true,
-      cwd: process.cwd(),
-      env,
-    }).unref()
-    process.exit(0)
+    process.kill(process.pid, 'SIGKILL')
   }
 
   process.on('SIGUSR2', () => {
@@ -1527,6 +1667,17 @@ export async function startDiscordBot({
   })
 
   process.on('uncaughtException', (error) => {
+    // During self-restart or shutdown, discord.js can still fire errors from
+    // pending async operations (DNS lookups, WebSocket frames) after the client
+    // is destroyed. These are expected and must not interfere with the restart
+    // flow — let the existing selfRestart/handleShutdown finish cleanly.
+    if (selfRestarting || global.shuttingDown) {
+      discordLogger.log(
+        'Ignoring uncaught exception during shutdown:',
+        error?.message || String(error),
+      )
+      return
+    }
     discordLogger.error('Uncaught exception:', formatErrorWithStack(error))
     notifyError(error, 'Uncaught exception in bot process')
     void handleShutdown('uncaughtException', { skipExit: true }).catch(
@@ -1543,7 +1694,7 @@ export async function startDiscordBot({
   })
 
   process.on('unhandledRejection', (reason, promise) => {
-    if ((global as any).shuttingDown) {
+    if (global.shuttingDown) {
       discordLogger.log('Ignoring unhandled rejection during shutdown:', reason)
       return
     }

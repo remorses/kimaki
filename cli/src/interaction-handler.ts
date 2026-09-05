@@ -20,7 +20,6 @@ import {
   handleMergeWorktreeCommand,
   handleMergeWorktreeAutocomplete,
 } from './commands/merge-worktree.js'
-import { handleToggleWorktreesCommand } from './commands/worktree-settings.js'
 import { handleWorktreesCommand } from './commands/worktrees.js'
 import { handleTasksCommand } from './commands/tasks.js'
 import { handleLastSessionsCommand } from './commands/last-sessions.js'
@@ -40,7 +39,6 @@ import {
 import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
-import { handleAddDirCommand } from './commands/add-dir.js'
 import { handleCompactCommand } from './commands/compact.js'
 import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
@@ -59,7 +57,6 @@ import {
   handleModelSelectMenu,
   handleModelScopeSelectMenu,
 } from './commands/model.js'
-import { handleUnsetModelCommand } from './commands/unset-model.js'
 import {
   handleLoginCommand,
   handleLoginSelect,
@@ -106,10 +103,7 @@ import { handleSessionIdCommand } from './commands/session-id.js'
 
 import { handleUpgradeAndRestartCommand } from './commands/upgrade.js'
 import { handleMcpCommand, handleMcpSelectMenu } from './commands/mcp.js'
-import {
-  handleScreenshareCommand,
-  handleScreenshareStopCommand,
-} from './commands/screenshare.js'
+import { handleScreenshareCommand } from './commands/screenshare.js'
 import { handleVscodeCommand } from './commands/vscode.js'
 import { handleModelVariantSelectMenu } from './commands/model.js'
 import {
@@ -195,26 +189,14 @@ export function registerInteractionHandler({
         // Multi-machine routing: only handle interactions for channels owned
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
+        // Setup commands (create-new-project, add-project) bypass this check
+        // because they are designed to run from any channel — they create new
+        // project channels rather than requiring one to already exist.
+        const isSetupCommand =
+          interaction.isChatInputCommand() &&
+          SETUP_COMMANDS.has(interaction.commandName)
         const owned = await isInteractionOwnedByThisMachine(interaction)
-        if (!owned) {
-          // Setup commands get a helpful reply instead of silent ignore.
-          // Both machines may race to reply; one wins, the other silently
-          // fails (interaction tokens are single-use). The message is the
-          // same from either machine so the race is harmless.
-          if (
-            interaction.isChatInputCommand() &&
-            SETUP_COMMANDS.has(interaction.commandName)
-          ) {
-            await interaction.reply({
-              content:
-                'Run this command in an existing Kimaki project channel.\nTo add a new project channel from the terminal, run:\n```\nkimaki project add /path/to/folder\n```',
-              flags: MessageFlags.Ephemeral,
-            }).catch(() => {
-              // Another machine already responded, safe to ignore
-            })
-            return
-          }
-
+        if (!owned && !isSetupCommand) {
           interactionLogger.log(
             `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
           )
@@ -290,13 +272,6 @@ export function registerInteractionHandler({
               await handleMergeWorktreeCommand({ command: interaction, appId })
               return
 
-            case 'toggle-worktrees':
-              await handleToggleWorktreesCommand({
-                command: interaction,
-                appId,
-              })
-              return
-
             case 'worktrees':
               await handleWorktreesCommand({
                 command: interaction,
@@ -342,10 +317,6 @@ export function registerInteractionHandler({
               await handleAbortCommand({ command: interaction, appId })
               return
 
-            case 'add-dir':
-              await handleAddDirCommand({ command: interaction, appId })
-              return
-
             case 'compact':
               await handleCompactCommand({ command: interaction, appId })
               return
@@ -376,10 +347,6 @@ export function registerInteractionHandler({
 
             case 'model-variant':
               await handleModelVariantCommand({ interaction, appId })
-              return
-
-            case 'unset-model-override':
-              await handleUnsetModelCommand({ interaction, appId })
               return
 
             case 'login':
@@ -469,13 +436,6 @@ export function registerInteractionHandler({
 
             case 'screenshare':
               await handleScreenshareCommand({ command: interaction, appId })
-              return
-
-            case 'screenshare-stop':
-              await handleScreenshareStopCommand({
-                command: interaction,
-                appId,
-              })
               return
 
             case 'vscode':

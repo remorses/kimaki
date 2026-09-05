@@ -5,7 +5,6 @@
 import { describe, test, expect } from 'vitest'
 import {
   deriveThreadNameFromSessionTitle,
-  deriveThreadRenameFromSessionUpdate,
 } from './session-handler/thread-session-runtime.js'
 
 describe('deriveThreadNameFromSessionTitle', () => {
@@ -116,6 +115,15 @@ describe('deriveThreadNameFromSessionTitle', () => {
     ).toMatchInlineSnapshot(`"Fork: Forked task title"`)
   })
 
+  test('does not double a worktree prefix copied from the Discord thread name', () => {
+    expect(
+      deriveThreadNameFromSessionTitle({
+        sessionTitle: '⬦ Fix queue draining',
+        currentName: '⬦ Old name',
+      }),
+    ).toMatchInlineSnapshot(`"⬦ Fix queue draining"`)
+  })
+
   test('returns undefined for null/undefined title', () => {
     expect(
       deriveThreadNameFromSessionTitle({
@@ -129,52 +137,5 @@ describe('deriveThreadNameFromSessionTitle', () => {
         currentName: 'seed',
       }),
     ).toMatchInlineSnapshot(`undefined`)
-  })
-})
-
-describe('deriveThreadRenameFromSessionUpdate', () => {
-  test('skips auto-rename after the thread differs from the persisted synced name', () => {
-    expect(
-      deriveThreadRenameFromSessionUpdate({
-        sessionTitle: 'New OpenCode title',
-        currentName: 'custom name from user',
-        lastSyncedName: 'Old OpenCode title',
-      }),
-    ).toMatchInlineSnapshot(`
-      {
-        "desiredName": null,
-        "nextSyncedName": "Old OpenCode title",
-      }
-    `)
-  })
-
-  test('returns desired name while thread still matches the persisted synced name', () => {
-    expect(
-      deriveThreadRenameFromSessionUpdate({
-        sessionTitle: 'New OpenCode title',
-        currentName: 'Old OpenCode title',
-        lastSyncedName: 'Old OpenCode title',
-      }),
-    ).toMatchInlineSnapshot(`
-      {
-        "desiredName": "New OpenCode title",
-        "nextSyncedName": "New OpenCode title",
-      }
-    `)
-  })
-
-  test('remembers a no-op matching title as synced for later manual rename detection', () => {
-    expect(
-      deriveThreadRenameFromSessionUpdate({
-        sessionTitle: 'Old OpenCode title',
-        currentName: 'Old OpenCode title',
-        lastSyncedName: null,
-      }),
-    ).toMatchInlineSnapshot(`
-      {
-        "desiredName": null,
-        "nextSyncedName": "Old OpenCode title",
-      }
-    `)
   })
 })

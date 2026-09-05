@@ -1,0 +1,158 @@
+---
+$schema: https://holocron.so/frontmatter.json
+title: Debug sessions and report bugs
+sidebarTitle: Report a bug
+description: Export session events, share evidence in a secret gist, and open a Kimaki GitHub issue with ground truth. Never open a pull request unless remorses agrees.
+icon: lucide:bug
+---
+
+Export the session, put the evidence in a **secret gist**, then open a GitHub issue. Do not open a pull request.
+
+Agents must **read this page first** before filing anything on [remorses/kimaki](https://github.com/remorses/kimaki).
+
+```diagram
+  /session-id
+       │
+       v
+  export jsonl ──> jq ──> ground truth (events, not guesses)
+       │
+       v
+  kimaki.log + prompts + model id
+       │
+       v
+  secret gist ──> jsonl + log + session markdown
+       │
+       v
+  gh issue create (body links gist)
+       │
+       v
+  wait for remorses ──> PR only if he agrees in a comment
+```
+
+## Collect ground truth
+
+Do not describe what you think happened. Quote what the files show.
+
+1. Get the **session id** with `/session-id` in the Discord thread, or `kimaki session list`.
+2. Export the **event stream**. This is the source of truth for session-state bugs (footer after abort, stuck typing, missed idle).
+3. Copy **`kimaki.log`**. It resets on every bot restart, so grab it before you restart.
+4. Record the **model id** and the **verbatim user prompts**. Do not paraphrase.
+
+```bash
+kimaki session export-events-jsonl --session ses_xxx --out ./tmp/ses_xxx.jsonl
+kimaki session read ses_xxx > ./tmp/ses_xxx.md
+kimaki --version
+```
+
+Kimaki keeps only the **last 1000 events per session** in SQLite, so export while the bug is fresh.
+
+The log file is `~/.kimaki/kimaki.log` by default, or `<dataDir>/kimaki.log` if you passed `--data-dir`.
+
+<Aside>
+<Note>
+The jsonl dump is only for Discord-mapped Kimaki sessions. `opencode run` sessions are not in that SQLite buffer. Use `kimaki session read` for those.
+</Note>
+</Aside>
+
+### Model id and prompts
+
+`kimaki session read` includes the exact **`providerID/modelID`** on each assistant message and the verbatim user prompts. Copy both from `./tmp/ses_xxx.md`; do not rely on memory.
+
+Before upload, **remove secrets** such as tokens, API keys, cookies, and unrelated private prompts. Keep event order, timestamps, model ids, and relevant error lines unchanged.
+
+### Inspect the jsonl
+
+Each line is `{ timestamp, threadId, projectDirectory, event }`. Read it before you write the issue.
+
+```bash
+# event type counts
+jq -r '.event.type' ./tmp/ses_xxx.jsonl | sort | uniq -c
+
+# lifecycle only
+jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ./tmp/ses_xxx.jsonl
+
+# timestamps + types
+jq -r '[.timestamp, .event.type] | @tsv' ./tmp/ses_xxx.jsonl
+```
+
+If the stream does not contain the event you expected, say that. Do not invent a cause.
+
+## Open an issue, never a PR
+
+File issues on [github.com/remorses/kimaki/issues](https://github.com/remorses/kimaki/issues).
+
+**Never open a pull request.** If you have a fix or a reproduction, put it on the issue. A PR is allowed only after **remorses** agrees in a comment on that issue.
+
+### Share evidence in a gist
+
+Put the **jsonl, log, session markdown, and reproduction code** in one secret gist. Paste the URL printed by `gh gist create` into the issue body.
+
+A secret gist is **unlisted, not private**. Anyone with its URL can read it. Remove secrets and unrelated private data before upload. If the evidence cannot be public, do not upload it; state that private evidence is available to the maintainer.
+
+```bash
+# gists are secret by default; omit the reproduction file if you do not have one
+gh gist create --desc "kimaki ses_xxx debug" \
+  ./tmp/ses_xxx.jsonl \
+  ./tmp/ses_xxx.md \
+  ~/.kimaki/kimaki.log \
+  ./tmp/reproduction.ts
+
+# paste the returned gist URL into ./tmp/kimaki-issue.md, then create the issue
+gh issue create -R remorses/kimaki \
+  --title "Footer appears after abort in ses_xxx" \
+  --body-file ./tmp/kimaki-issue.md
+```
+
+### Issue body
+
+Keep it short. Use facts from the jsonl and log.
+
+```markdown
+**Session:** ses_xxx
+**Model:** anthropic/claude-opus-4-6
+**Kimaki version:** output of `kimaki --version`
+**OS:** macOS 15.2
+**Gist:** https://gist.github.com/...
+
+**Steps to reproduce:**
+1. ...
+2. ...
+
+**User prompts** (verbatim, in order):
+1. ...
+2. ...
+
+**What the files show:**
+- jsonl line N: `session.status` busy at <timestamp>
+- jsonl line M: `session.idle` then a footer message was posted
+- log: <exact error line>
+
+**What I expected:**
+No footer after abort.
+```
+
+Do not write "probably a race" or "might be Discord". If you do not have an event or a log line, say **unknown**.
+
+## Reproduce with a test
+
+Only if you have the Kimaki repo. Copy the exported jsonl into `cli/src/session-handler/event-stream-fixtures/` and extend `event-stream-state.test.ts`. That is how session-state bugs are locked down: pure derivation over a recorded stream.
+
+```bash
+kimaki session export-events-jsonl --session ses_xxx --out ./tmp/ses_xxx.jsonl
+cp ./tmp/ses_xxx.jsonl cli/src/session-handler/event-stream-fixtures/ses_xxx.jsonl
+```
+
+Live event capture (optional, needs a bot restart or a test run):
+
+```bash
+KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1 kimaki
+# writes <dataDir>/opencode-session-events/ses_xxx.jsonl
+```
+
+Put the failing test on the **issue** (gist or snippet). Do not open a PR unless remorses asked for one.
+
+## Related
+
+- [Troubleshooting](./troubleshooting.mdx) for restarts and stuck sessions
+- [Managing Sessions](../core-concepts/sessions.mdx) for `/session-id` and `/share`
+- [Commands reference](../reference/commands.mdx) for `kimaki session` subcommands

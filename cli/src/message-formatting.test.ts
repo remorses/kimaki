@@ -1,5 +1,8 @@
-import { describe, test, expect } from 'vitest'
-import { formatPart, formatTodoList, serializeEmbeds, serializePoll, serializeMessageSnapshots } from './message-formatting.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { afterEach, describe, test, expect } from 'vitest'
+import { formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, serializeEmbeds, serializePoll, serializeMessageSnapshots, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
 
@@ -45,6 +48,164 @@ describe('formatPart', () => {
       ## Summary
       Done."
     `)
+  })
+})
+
+describe('formatTaskToolTitle', () => {
+  function taskPart({
+    status,
+    input = {},
+    title = '',
+    sessionId,
+  }: {
+    status: 'running' | 'completed'
+    input?: { description?: string; subagent_type?: string }
+    title?: string
+    sessionId?: string
+  }): Extract<Part, { type: 'tool' }> {
+    const base = {
+      id: 'prt_task',
+      type: 'tool' as const,
+      tool: 'task',
+      callID: 'call_task',
+      sessionID: 'ses_parent',
+      messageID: 'msg_assistant',
+    }
+    if (status === 'completed') {
+      return {
+        ...base,
+        state: {
+          status,
+          input,
+          output: '',
+          title,
+          metadata: sessionId ? { sessionId } : {},
+          time: { start: 1, end: 2 },
+        },
+      }
+    }
+    return {
+      ...base,
+      state: {
+        status,
+        input,
+        title,
+        metadata: sessionId ? { sessionId } : {},
+        time: { start: 1 },
+      },
+    }
+  }
+
+  test('uses the running task title when OpenAI omits the description', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'running',
+          input: { subagent_type: 'general' },
+          title: 'Classify pending changes',
+          sessionId: 'ses_child',
+        }),
+      ),
+    ).toMatchInlineSnapshot(`"┣ general **Classify pending changes**"`)
+  })
+
+  test('prefers input description on running parts', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'running',
+          input: { description: 'inspect repo', subagent_type: 'explore' },
+          title: 'ignored title',
+          sessionId: 'ses_child',
+        }),
+      ),
+    ).toMatchInlineSnapshot(`"┣ explore **inspect repo**"`)
+  })
+
+  test('does not format completed parts so Discord does not post the line at the end', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'completed',
+          input: { subagent_type: 'general' },
+          title: 'Classify pending changes',
+          sessionId: 'ses_child',
+        }),
+      ),
+    ).toBe('')
+  })
+
+  test('shows queued task calls before the child session exists', () => {
+    expect(
+      formatTaskToolTitle(
+        taskPart({
+          status: 'running',
+          input: {
+            description: 'audit customer pages',
+            subagent_type: 'general',
+          },
+        }),
+      ),
+    ).toMatchInlineSnapshot(`"┣ general **audit customer pages**"`)
+  })
+})
+
+describe('formatBashToolTitle', () => {
+  test('short single-line command shown in full', () => {
+    expect(formatBashToolTitle({ command: 'echo hello' })).toMatchInlineSnapshot(`" _echo hello_"`)
+  })
+
+  test('multiline command without description truncates to first line', () => {
+    expect(
+      formatBashToolTitle({ command: 'echo hello\necho world\necho done' }),
+    ).toMatchInlineSnapshot(`" _echo hello…_"`)
+  })
+
+  test('long single-line command is truncated with ellipsis', () => {
+    const longCommand = 'a'.repeat(150)
+    const result = formatBashToolTitle({ command: longCommand })
+    expect(result).toContain('…')
+    expect(result.length).toBeLessThan(150)
+  })
+
+  test('description is preferred over truncated command when present', () => {
+    expect(
+      formatBashToolTitle({
+        command: 'echo hello\necho world',
+        description: 'Print greeting',
+      }),
+    ).toMatchInlineSnapshot(`" _Print greeting_"`)
+  })
+
+  test('stateTitle used as last resort', () => {
+    expect(
+      formatBashToolTitle({ command: '', stateTitle: 'Running tests' }),
+    ).toMatchInlineSnapshot(`" _Running tests_"`)
+  })
+
+  test('empty inputs return empty string', () => {
+    expect(formatBashToolTitle({ command: '' })).toBe('')
+  })
+
+  test('leading blank line skipped, uses first meaningful line', () => {
+    expect(
+      formatBashToolTitle({ command: '\npnpm test\npnpm build' }),
+    ).toMatchInlineSnapshot(`" _pnpm test…_"`)
+  })
+
+  test('whitespace-only first line skipped', () => {
+    expect(
+      formatBashToolTitle({ command: '   \npnpm test' }),
+    ).toMatchInlineSnapshot(`" _pnpm test…_"`)
+  })
+
+  test('no description field (new opencode) with multiline command', () => {
+    // This is the exact scenario that was broken: opencode removed `description`
+    // from the bash tool schema, so multiline commands rendered as just "┣ bash"
+    const command = 'git diff HEAD~1 --stat && git log --oneline -5'
+    expect(formatBashToolTitle({ command: command + '\n' + 'echo done' })).toMatchInlineSnapshot(
+      `" _git diff HEAD\\~1 --stat && git log --oneline -5…_"`,
+    )
   })
 })
 
@@ -367,6 +528,173 @@ describe('serializeMessageSnapshots', () => {
       <forwarded-message>
       Second forwarded
       </forwarded-message>"
+    `)
+  })
+})
+
+describe('getTextAttachments', () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  function stubFetch(impl: (url: string) => Promise<Response>) {
+    const fetchFn = async (input: string | URL | Request) => impl(String(input))
+    fetchFn.preconnect = () => {}
+    globalThis.fetch = fetchFn
+  }
+
+  function messageWithAttachments(
+    attachments: Array<{
+      id: string
+      name: string
+      contentType: string
+      url: string
+      size: number
+    }>,
+  ) {
+    return {
+      attachments: new Map(attachments.map((attachment) => {
+        return [attachment.id, attachment]
+      })),
+    } as unknown as Message
+  }
+
+  function snapshotAttachments(result: string) {
+    return result.replaceAll(getDataDir(), '<dataDir>')
+  }
+
+  test('inlines small text files and saves them locally', async () => {
+    stubFetch(async () => {
+      return new Response('hello from file', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att1',
+          name: 'notes.txt',
+          contentType: 'text/plain',
+          url: 'https://cdn.example/notes.txt',
+          size: 16,
+        },
+      ]),
+    )
+
+    const savedPath = path.join(getDataDir(), 'attachments', 'att1-notes.txt')
+    expect(fs.readFileSync(savedPath, 'utf8')).toBe('hello from file')
+    expect(result).toContain('https://cdn.example/notes.txt')
+    expect(result).toContain(savedPath)
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="notes.txt" mime="text/plain" size="16" url="https://cdn.example/notes.txt" path="<dataDir>/attachments/att1-notes.txt">
+      hello from file
+      </attachment>"
+    `)
+  })
+
+  test('saves large text files locally without inlining contents', async () => {
+    stubFetch(async () => {
+      return new Response('SHOULD NOT BE INLINED', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att2',
+          name: 'huge.log',
+          contentType: 'text/plain',
+          url: 'https://cdn.discordapp.com/attachments/1/2/huge.log',
+          size: TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 1,
+        },
+      ]),
+    )
+
+    const savedPath = path.join(getDataDir(), 'attachments', 'att2-huge.log')
+    expect(fs.readFileSync(savedPath, 'utf8')).toBe('SHOULD NOT BE INLINED')
+    expect(result).not.toContain('SHOULD NOT BE INLINED')
+    expect(result).toContain('https://cdn.discordapp.com/attachments/1/2/huge.log')
+    expect(result).toContain(savedPath)
+    expect(result).toContain('text/plain')
+    expect(result).toContain(String(TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 1))
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="huge.log" mime="text/plain" size="65537" url="https://cdn.discordapp.com/attachments/1/2/huge.log" path="<dataDir>/attachments/att2-huge.log" large="true">
+      This file is large (64 KB, text/plain). Contents were not inlined to save context. Read the local path.
+      </attachment>"
+    `)
+  })
+
+  test('still inlines large prompt.md attachments from kimaki send', async () => {
+    stubFetch(async () => {
+      return new Response('the actual long prompt', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att3',
+          name: 'prompt.md',
+          contentType: 'text/markdown',
+          url: 'https://cdn.example/prompt.md',
+          size: TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 1,
+        },
+      ]),
+    )
+
+    const savedPath = path.join(getDataDir(), 'attachments', 'att3-prompt.md')
+    expect(fs.readFileSync(savedPath, 'utf8')).toBe('the actual long prompt')
+    expect(result).toContain('the actual long prompt')
+    expect(result).toContain('https://cdn.example/prompt.md')
+    expect(result).toContain(savedPath)
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="prompt.md" mime="text/markdown" size="65537" url="https://cdn.example/prompt.md" path="<dataDir>/attachments/att3-prompt.md">
+      the actual long prompt
+      </attachment>"
+    `)
+  })
+
+  test('keeps small files inlined next to large file references', async () => {
+    stubFetch(async (url) => {
+      if (url.includes('small.txt')) {
+        return new Response('tiny', { status: 200 })
+      }
+      return new Response('SHOULD NOT BE INLINED', { status: 200 })
+    })
+
+    const result = await getTextAttachments(
+      messageWithAttachments([
+        {
+          id: 'att4',
+          name: 'small.txt',
+          contentType: 'text/plain',
+          url: 'https://cdn.example/small.txt',
+          size: 4,
+        },
+        {
+          id: 'att5',
+          name: 'dump.json',
+          contentType: 'application/json',
+          url: 'https://cdn.example/dump.json',
+          size: TEXT_ATTACHMENT_INLINE_LIMIT_BYTES + 50,
+        },
+      ]),
+    )
+
+    expect(result).toContain('tiny')
+    expect(result).not.toContain('SHOULD NOT BE INLINED')
+    expect(result).toContain('https://cdn.example/small.txt')
+    expect(result).toContain('https://cdn.example/dump.json')
+    expect(result).toContain(path.join(getDataDir(), 'attachments', 'att4-small.txt'))
+    expect(result).toContain(path.join(getDataDir(), 'attachments', 'att5-dump.json'))
+    expect(result).toContain('application/json')
+    expect(snapshotAttachments(result)).toMatchInlineSnapshot(`
+      "<attachment filename="small.txt" mime="text/plain" size="4" url="https://cdn.example/small.txt" path="<dataDir>/attachments/att4-small.txt">
+      tiny
+      </attachment>
+
+      <attachment filename="dump.json" mime="application/json" size="65586" url="https://cdn.example/dump.json" path="<dataDir>/attachments/att5-dump.json" large="true">
+      This file is large (64 KB, application/json). Contents were not inlined to save context. Read the local path.
+      </attachment>"
     `)
   })
 })

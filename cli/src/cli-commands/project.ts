@@ -5,13 +5,14 @@ import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
 import type { OpencodeClient, Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
-import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
+import { Events, ActivityType, type PresenceStatusData, type Guild, type Client, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
+import { getDefaultKimakiDirectory } from '../channel-management.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
@@ -38,6 +39,11 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
+import {
+  flushAnalytics,
+  initAnalytics,
+  setAnalyticsBotMode,
+} from '../analytics.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -77,6 +83,9 @@ cli
       const { token: botToken, appId } = await resolveBotCredentials({
         appIdOverride: options.appId,
       })
+      const botRow = await getBotTokenWithMode()
+      setAnalyticsBotMode(botRow?.mode === 'gateway' ? 'gateway' : 'self_hosted')
+      initAnalytics()
 
       if (!appId) {
         cliLogger.error(
@@ -98,74 +107,7 @@ cli
 
       cliLogger.log('Finding guild...')
 
-      // Find guild
-      let guild: Guild
-      if (options.guild) {
-        const guildId = String(options.guild)
-        const foundGuild = client.guilds.cache.get(guildId)
-        if (!foundGuild) {
-          cliLogger.log('Guild not found')
-          cliLogger.error(`Guild not found: ${guildId}`)
-          void client.destroy()
-          process.exit(EXIT_NO_RESTART)
-        }
-        guild = foundGuild
-      } else {
-        const existingChannelId = await (await getDb()).query.channel_directories.findFirst({
-          where: { channel_type: 'text' },
-          orderBy: { created_at: 'desc' },
-          columns: { channel_id: true },
-        }).then((row) => row?.channel_id)
-
-        if (existingChannelId) {
-          try {
-            const ch = await client.channels.fetch(existingChannelId)
-            if (ch && !ch.isDMBased()) {
-              guild = ch.guild
-            } else {
-              throw new Error('Channel has no guild')
-            }
-          } catch (error) {
-            cliLogger.debug(
-              'Failed to fetch existing channel while selecting guild:',
-              error instanceof Error ? error.stack : String(error),
-            )
-            let firstGuild = client.guilds.cache.first()
-            if (!firstGuild) {
-              // Cache might be empty, try fetching guilds from API
-              const fetched = await client.guilds.fetch()
-              const firstOAuth2Guild = fetched.first()
-              if (firstOAuth2Guild) {
-                firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-              }
-            }
-            if (!firstGuild) {
-              cliLogger.log('No guild found')
-              cliLogger.error('No guild found. Add the bot to a server first.')
-              void client.destroy()
-              process.exit(EXIT_NO_RESTART)
-            }
-            guild = firstGuild
-          }
-        } else {
-          let firstGuild = client.guilds.cache.first()
-          if (!firstGuild) {
-            // Cache might be empty, try fetching guilds from API
-            const fetched = await client.guilds.fetch()
-            const firstOAuth2Guild = fetched.first()
-            if (firstOAuth2Guild) {
-              firstGuild = await client.guilds.fetch(firstOAuth2Guild.id)
-            }
-          }
-          if (!firstGuild) {
-            cliLogger.log('No guild found')
-            cliLogger.error('No guild found. Add the bot to a server first.')
-            void client.destroy()
-            process.exit(EXIT_NO_RESTART)
-          }
-          guild = firstGuild
-        }
-      }
+      const guild = await resolveGuildForProjectCommand({ client, guildIdOverride: options.guild })
 
       // Check if channel already exists in this guild
       cliLogger.log('Checking for existing channel...')
@@ -204,6 +146,7 @@ cli
           guild,
           projectDirectory: absolutePath,
           botName: client.user?.username,
+          analyticsSource: 'cli',
         })
 
       void client.destroy()
@@ -220,6 +163,7 @@ cli
       )
 
       cliLogger.log(channelUrl)
+      await flushAnalytics()
       process.exit(0)
     },
   )
@@ -230,8 +174,10 @@ cli
     'List all registered projects with their Discord channels',
   )
   .option('--json', 'Output as JSON')
+  .option('--all', 'Include remote projects from other machines (scans Kimaki category in Discord)')
+  .option('-g, --guild <guildId>', 'Discord guild/server ID to scan (used with --all when no local projects exist)')
   .option('--prune', 'Remove stale entries whose Discord channel no longer exists')
-  .action(async (options: { json?: boolean; prune?: boolean }) => {
+  .action(async (options) => {
     await initDatabase()
 
     const db = await getDb()
@@ -240,25 +186,25 @@ cli
       orderBy: { created_at: 'desc' },
     })
 
-    if (channels.length === 0) {
-      cliLogger.log('No projects registered')
-      process.exit(0)
-    }
-
-    // Fetch Discord channel names via REST API
+    // Fetch Discord channel names and guild IDs via REST API
     const botRow = await getBotTokenWithMode()
     const rest = botRow ? createDiscordRest(botRow.token) : null
+
+    const localChannelIds = new Set(channels.map((ch) => ch.channel_id))
 
     const enriched = await Promise.all(
       channels.map(async (ch) => {
         let channelName = ''
+        let guildId = ''
         let deleted = false
         if (rest) {
           try {
             const data = (await rest.get(Routes.channel(ch.channel_id))) as {
               name?: string
+              guild_id?: string
             }
             channelName = data.name || ''
+            guildId = data.guild_id || ''
           } catch (error) {
             // Only mark as deleted for Unknown Channel (10003) or 404,
             // not transient errors like rate limits or 5xx
@@ -268,15 +214,131 @@ cli
             deleted = isUnknownChannel
           }
         }
-        return { ...ch, channelName, deleted }
+        return { ...ch, channelName, guildId, deleted, isLocal: true as boolean }
       }),
     )
 
+    // Fetch guild names for unique guild IDs (deduplicated to save API calls)
+    const guildNameMap = new Map<string, string>()
+    // Collect guild IDs from local channels + explicit --guild flag
+    const guildIdsFromChannels = enriched.map((ch) => ch.guildId).filter(Boolean)
+    if (options.guild) {
+      guildIdsFromChannels.push(options.guild)
+    }
+    const uniqueGuildIds = [...new Set(guildIdsFromChannels)]
+    if (rest) {
+      await Promise.all(
+        uniqueGuildIds.map(async (guildId) => {
+          try {
+            const data = (await rest.get(Routes.guild(guildId))) as { name?: string }
+            guildNameMap.set(guildId, data.name || '')
+          } catch (error) {
+            cliLogger.debug(
+              `Failed to fetch guild ${guildId}:`,
+              error instanceof Error ? error.stack : String(error),
+            )
+          }
+        }),
+      )
+    }
+
+    // When --all is passed, scan each guild's channels to find Kimaki category
+    // text channels not in our local DB (projects from other machines).
+    // Fail explicitly when prerequisites are missing so the user doesn't
+    // confuse "scan never ran" with "no remote projects found".
+    let remoteEntries: typeof enriched = []
+    if (options.all) {
+      if (!rest) {
+        cliLogger.error('Discord credentials are required to scan remote projects. Run `kimaki` first.')
+        process.exit(EXIT_NO_RESTART)
+      }
+      if (uniqueGuildIds.length === 0) {
+        cliLogger.error(
+          'Cannot determine which Discord server to scan. Pass `--guild <guildId>` or register a local project first.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      let guildScanFailures = 0
+      for (const guildId of uniqueGuildIds) {
+        try {
+          const guildChannels = (await rest.get(Routes.guildChannels(guildId))) as Array<{
+            id: string
+            name: string
+            type: number
+            parent_id: string | null
+          }>
+
+          // Find Kimaki category channels (type 4 = GuildCategory)
+          const kimakiCategoryIds = new Set(
+            guildChannels
+              .filter((ch) => ch.type === 4 && /^kimaki(\s|$)/i.test(ch.name))
+              .map((ch) => ch.id),
+          )
+
+          // Find text channels (type 0) in Kimaki categories that are not in our local DB
+          for (const ch of guildChannels) {
+            if (
+              ch.type === 0 &&
+              ch.parent_id &&
+              kimakiCategoryIds.has(ch.parent_id) &&
+              !localChannelIds.has(ch.id)
+            ) {
+              remoteEntries.push({
+                channel_id: ch.id,
+                directory: '',
+                channel_type: 'text' as const,
+                guild_id: guildId,
+                created_at: null,
+                channelName: ch.name,
+                guildId,
+                deleted: false,
+                isLocal: false,
+              })
+            }
+          }
+        } catch (error) {
+          guildScanFailures++
+          cliLogger.warn(
+            `Failed to scan guild ${guildNameMap.get(guildId) || guildId}: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
+      if (guildScanFailures === uniqueGuildIds.length) {
+        cliLogger.error('Failed to scan all guilds. Check bot permissions or try again.')
+        process.exit(EXIT_NO_RESTART)
+      }
+    }
+
+    // Build final enriched entries with guild names resolved
+    const allEntries = [...enriched, ...remoteEntries]
+    const enrichedWithGuild = allEntries.map((ch) => ({
+      ...ch,
+      guildName: ch.guildId ? (guildNameMap.get(ch.guildId) || '') : '',
+    }))
+
+    // Warn on stderr if the same directory appears in multiple channels (multi-guild duplicates)
+    const directoryCounts = new Map<string, number>()
+    for (const ch of enrichedWithGuild) {
+      if (!ch.deleted && ch.directory) {
+        directoryCounts.set(ch.directory, (directoryCounts.get(ch.directory) || 0) + 1)
+      }
+    }
+    for (const [dir, count] of directoryCounts) {
+      if (count > 1) {
+        cliLogger.warn(
+          `Directory "${dir}" is registered in ${count} channels. Use channel_id to disambiguate.`,
+        )
+      }
+    }
+
     // Prune stale entries if requested
+    let finalEntries = enrichedWithGuild
     if (options.prune) {
-      const stale = enriched.filter((ch) => {
-        return ch.deleted
-      })
+      // Skip default kimaki directory tombstones — those are preserved
+      // intentionally so the tutorial channel isn't recreated after deletion.
+      const defaultDir = getDefaultKimakiDirectory()
+      const stale = finalEntries.filter((ch) => ch.deleted && ch.isLocal && ch.directory !== defaultDir)
       if (stale.length === 0) {
         cliLogger.log('No stale channels to prune')
       } else {
@@ -286,40 +348,83 @@ cli
         }
         cliLogger.log(`Pruned ${stale.length} stale channel(s)`)
       }
-      // Re-filter to only show live entries after pruning
-      const live = enriched.filter((ch) => {
-        return !ch.deleted
-      })
-      if (live.length === 0) {
+      finalEntries = finalEntries.filter((ch) => !ch.deleted)
+      if (finalEntries.length === 0) {
         cliLogger.log('No projects registered')
         process.exit(0)
       }
-      enriched.length = 0
-      enriched.push(...live)
+    }
+
+    if (finalEntries.length === 0) {
+      cliLogger.log('No projects registered')
+      process.exit(0)
     }
 
     if (options.json) {
-      const output = enriched.map((ch) => ({
+      const output = finalEntries.map((ch) => ({
         channel_id: ch.channel_id,
         channel_name: ch.channelName,
-        directory: ch.directory,
-        folder_name: path.basename(ch.directory),
+        guild_id: ch.guildId,
+        guild_name: ch.guildName,
+        directory: ch.directory || null,
+        folder_name: ch.directory ? path.basename(ch.directory) : null,
         deleted: ch.deleted,
+        is_local: ch.isLocal,
       }))
       console.log(JSON.stringify(output, null, 2))
       process.exit(0)
     }
 
-    for (const ch of enriched) {
-      const folderName = path.basename(ch.directory)
+    for (const ch of finalEntries) {
       const deletedTag = ch.deleted ? ' (deleted from Discord)' : ''
+      const remoteTag = !ch.isLocal ? ' [remote]' : ''
       const channelLabel = ch.channelName ? `#${ch.channelName}` : ch.channel_id
-      console.log(`\n${channelLabel}${deletedTag}`)
-      console.log(`   Folder: ${folderName}`)
-      console.log(`   Directory: ${ch.directory}`)
+      const guildLabel = ch.guildName || ch.guildId || ''
+      const guildSuffix = guildLabel ? ` (${guildLabel})` : ''
+      console.log(`\n${channelLabel}${guildSuffix}${deletedTag}${remoteTag}`)
+      if (ch.isLocal && ch.directory) {
+        const folderName = path.basename(ch.directory)
+        console.log(`   Folder: ${folderName}`)
+        console.log(`   Directory: ${ch.directory}`)
+      } else if (!ch.isLocal) {
+        console.log(`   (Not registered on this machine)`)
+      }
       console.log(`   Channel ID: ${ch.channel_id}`)
+      if (ch.guildId) {
+        console.log(`   Guild ID: ${ch.guildId}`)
+      }
     }
 
+    process.exit(0)
+  })
+
+cli
+  .command(
+    'project remove <channelId>',
+    'Remove a project channel mapping from the local database (does not delete the Discord channel)',
+  )
+  .action(async (channelId: string) => {
+    await initDatabase()
+
+    const db = await getDb()
+    const row = await db.query.channel_directories.findFirst({
+      where: { channel_id: channelId },
+    })
+
+    if (!row) {
+      cliLogger.error(`No channel mapping found for channel ID: ${channelId}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+
+    const removed = await deleteChannelDirectoryById(channelId)
+    if (!removed) {
+      cliLogger.error(`Channel mapping disappeared before it could be removed: ${channelId}`)
+      process.exit(EXIT_NO_RESTART)
+    }
+    cliLogger.log(`Removed channel mapping:`)
+    cliLogger.log(`  Channel ID: ${channelId}`)
+    cliLogger.log(`  Directory: ${row.directory}`)
+    cliLogger.log(`  Type: ${row.channel_type}`)
     process.exit(0)
   })
 
@@ -436,6 +541,8 @@ cli
     }
 
     const { token: botToken } = botRow
+    setAnalyticsBotMode(botRow.mode === 'gateway' ? 'gateway' : 'self_hosted')
+    initAnalytics()
 
     const projectsDir = getProjectsDir()
     const projectDirectory = path.join(projectsDir, sanitizedName)
@@ -466,29 +573,13 @@ cli
       client.login(botToken).catch(reject)
     })
 
-    let guild: Guild
-    if (options.guild) {
-      const found = client.guilds.cache.get(options.guild)
-      if (!found) {
-        cliLogger.error(`Guild not found: ${options.guild}`)
-        void client.destroy()
-        process.exit(EXIT_NO_RESTART)
-      }
-      guild = found
-    } else {
-      const first = client.guilds.cache.first()
-      if (!first) {
-        cliLogger.error('No guild found. Add the bot to a server first.')
-        void client.destroy()
-        process.exit(EXIT_NO_RESTART)
-      }
-      guild = first
-    }
+    const guild = await resolveGuildForProjectCommand({ client, guildIdOverride: options.guild })
 
     const { textChannelId, channelName } = await createProjectChannels({
       guild,
       projectDirectory,
       botName: client.user?.username,
+      analyticsSource: 'cli',
     })
 
     void client.destroy()
@@ -501,8 +592,105 @@ cli
     )
 
     cliLogger.log(channelUrl)
+    await flushAnalytics()
     process.exit(0)
   })
 
+
+// Resolve the guild for project add/create commands. In gateway mode the
+// guild cache only contains authorized guilds, so picking from cache is safe.
+// The old approach fetched an existing channel to infer the guild, but that
+// breaks when the channel belongs to a different guild (e.g. old self-hosted
+// bot channels) and the gateway proxy rejects the REST call. This led to a
+// non-deterministic fallback that picked the wrong guild.
+async function resolveGuildForProjectCommand({ client, guildIdOverride }: { client: Client; guildIdOverride?: string }): Promise<Guild> {
+  if (guildIdOverride) {
+    const found = client.guilds.cache.get(guildIdOverride)
+    if (!found) {
+      cliLogger.error(`Guild not found: ${guildIdOverride}`)
+      void client.destroy()
+      process.exit(EXIT_NO_RESTART)
+    }
+    return found
+  }
+
+  // Try existing channel lookup to find the guild the user already has channels in.
+  // This handles multi-guild setups where we want to add to the same guild.
+  const db = await getDb()
+  const existingChannels = await db.query.channel_directories.findMany({
+    where: { channel_type: 'text' },
+    orderBy: { created_at: 'desc' },
+    columns: { channel_id: true },
+    limit: 20,
+  })
+
+  // Log available guilds for debugging guild selection issues
+  const cachedGuilds = Array.from(client.guilds.cache.values())
+  cliLogger.debug(`Guilds in cache (${cachedGuilds.length}): ${cachedGuilds.map((g) => `${g.name} (${g.id})`).join(', ')}`)
+
+  // When multiple guilds are available, find which guild has the most
+  // existing channels. The user's main guild will have far more channels
+  // than a test/demo guild.
+  const guildHits = new Map<string, { guild: Guild; count: number }>()
+  for (const row of existingChannels) {
+    try {
+      const ch = await client.channels.fetch(row.channel_id)
+      if (ch && !ch.isDMBased()) {
+        const entry = guildHits.get(ch.guild.id)
+        if (entry) {
+          entry.count++
+        } else {
+          guildHits.set(ch.guild.id, { guild: ch.guild, count: 1 })
+        }
+      }
+    } catch {
+      // Channel might be in a different guild (gateway proxy rejects) or deleted, skip
+    }
+  }
+
+  if (guildHits.size > 0) {
+    // Pick the guild with the most channels
+    const best = Array.from(guildHits.values()).sort((a, b) => b.count - a.count)[0]!
+    cliLogger.debug(
+      `Guild channel counts: ${Array.from(guildHits.values()).map((e) => `${e.guild.name} (${e.guild.id}): ${e.count}`).join(', ')}`,
+    )
+    cliLogger.debug(`Selected guild: ${best.guild.name} (${best.guild.id}) with ${best.count} channels`)
+    return best.guild
+  }
+
+  cliLogger.debug('Could not resolve guild from existing channels, falling back to cache')
+
+  // If only one guild in cache, use it directly (common case).
+  // If multiple guilds, error out and ask the user to specify --guild
+  // since we can't determine which one to use.
+  if (cachedGuilds.length === 1) {
+    return cachedGuilds[0]!
+  }
+  if (cachedGuilds.length > 1) {
+    cliLogger.error(
+      `Multiple guilds found. Use --guild to specify which one:\n${cachedGuilds.map((g) => `  ${g.id}  ${g.name}`).join('\n')}`,
+    )
+    void client.destroy()
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  // Cache empty, try fetching
+  const fetched = await client.guilds.fetch()
+  if (fetched.size === 1) {
+    const firstOAuth2Guild = fetched.first()!
+    return await client.guilds.fetch(firstOAuth2Guild.id)
+  }
+  if (fetched.size > 1) {
+    cliLogger.error(
+      `Multiple guilds found. Use --guild to specify which one:\n${Array.from(fetched.values()).map((g) => `  ${g.id}  ${g.name}`).join('\n')}`,
+    )
+    void client.destroy()
+    process.exit(EXIT_NO_RESTART)
+  }
+
+  cliLogger.error('No guild found. Add the bot to a server first.')
+  void client.destroy()
+  process.exit(EXIT_NO_RESTART)
+}
 
 export default cli

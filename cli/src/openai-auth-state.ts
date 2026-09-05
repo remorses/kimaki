@@ -1,3 +1,4 @@
+// LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 /**
  * OpenAI OAuth account store and rotation.
  * Mirrors anthropic-auth-state.ts but for OpenAI/Codex OAuth accounts.
@@ -181,6 +182,25 @@ export async function detectAndRememberNewOpenAIAccount(): Promise<AccountIdenti
       })
     }
     return undefined
+  }
+
+  // Check if the identity matches an existing account even though tokens
+  // don't match (happens after token refresh rotates both tokens).
+  // Without this check we'd show a false "account added" toast.
+  if (identity.email || identity.accountId) {
+    const matchesByIdentity = store.accounts.some((account) => {
+      if (identity.accountId && account.accountId === identity.accountId) return true
+      if (identity.email && account.email?.toLowerCase() === identity.email.toLowerCase()) return true
+      return false
+    })
+    if (matchesByIdentity) {
+      await withAuthStateLock(async () => {
+        const freshStore = await loadOpenAIAccountStore()
+        upsertAccount(freshStore, { ...auth, ...identity })
+        await saveOpenAIAccountStore(freshStore)
+      })
+      return undefined
+    }
   }
 
   // New account: upsert with identity

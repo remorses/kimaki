@@ -40,6 +40,36 @@ async handler({ state }) {
 }
 ```
 
+# local dev database
+
+Local development uses a **Prisma Dev** instance (PGlite-based local Postgres)
+instead of hitting the production PlanetScale database. Data persists across
+restarts; only `prisma dev rm kimaki` deletes it.
+
+The `pnpm dev` script in website automatically starts the local database before
+starting vite. You can also manage it manually from the `db/` package.
+
+```bash
+# start the local database (idempotent, returns immediately if already running)
+cd db && pnpm dev
+
+# push schema changes to local database (run db dev first)
+cd db && pnpm push:dev
+
+# push schema changes to production (only humans should run this)
+cd db && pnpm push:prod
+
+# browse local database with Prisma Studio
+cd db && pnpm studio
+
+# start the website dev server (starts local db automatically)
+cd website && pnpm dev
+```
+
+The Doppler `dev` config for the `website` project has `DATABASE_URL` pointing
+at the local Prisma Dev instance (`localhost:51218`). The Doppler `production`
+config still points at PlanetScale.
+
 # secrets: doppler is the source of truth
 
 **Doppler is the single source of truth for all secrets.** Never add secrets
@@ -48,6 +78,16 @@ directly to Cloudflare or wrangler.json.
 - **Add/update a secret:** `doppler secrets set -c dev KEY='val'` and `-c production`
 - **Push to Cloudflare:** `pnpm secrets:prod`
 - **Local dev:** `pnpm dev` (injects doppler dev secrets automatically)
+
+# strada error tracking
+
+Website errors go to Strada (`@strada.sh/sdk`). Server init is in
+`src/strada-init.ts` (reads `STRADA_PROJECT_ID` + `STRADA_TOKEN` from env).
+Browser init is `src/strada-browser.tsx`.
+
+When an error is handled inline (returned early, logged, status response)
+and never reaches `.onError`, call `reportWebsiteError(error, { route: '…' })`
+from `strada-init.ts`. Do not swallow errors with only `console.error`.
 
 # split with gateway-proxy
 

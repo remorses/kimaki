@@ -60,10 +60,15 @@ import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
-import { uploadFilesToDiscord, stripMentions } from './discord-utils.js'
+import {
+  uploadFilesToDiscord,
+  stripMentions,
+  isThreadChannelType,
+} from './discord-utils.js'
 import { setDataDir, getDataDir } from './config.js'
 import { execAsync } from './worktrees.js'
 import { backgroundUpgradeKimaki } from './upgrade.js'
+import { initAnalytics, setAnalyticsBotMode } from './analytics.js'
 import { sendWelcomeMessage } from './onboarding-welcome.js'
 import { startHranaServer } from './hrana-server.js'
 import { startIpcPolling, stopIpcPolling } from './ipc-polling.js'
@@ -198,12 +203,44 @@ export async function resolveBotCredentials({ appIdOverride }: { appIdOverride?:
   process.exit(EXIT_NO_RESTART)
 }
 
-export function isThreadChannelType(type: number): boolean {
-  return [
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread,
-  ].includes(type)
+export { isThreadChannelType }
+
+/** Wrap long lines so prompt.md is readable in Discord's attachment preview. */
+function wrapPromptAttachmentText(prompt: string): string {
+  return prompt
+    .split('\n')
+    .flatMap((line) => {
+      if (line.length <= 120) {
+        return [line]
+      }
+      const wrapped: string[] = []
+      let remaining = line
+      const maxCol = 120
+      // Only soft-break at a space if it's reasonably close to maxCol,
+      // otherwise hard-break to avoid tiny fragments from early spaces
+      const minSoftBreak = 90
+      while (remaining.length > maxCol) {
+        const lastSpace = remaining.lastIndexOf(' ', maxCol)
+        const useSoftBreak = lastSpace >= minSoftBreak
+        const breakAt = useSoftBreak ? lastSpace : maxCol
+        wrapped.push(remaining.slice(0, breakAt))
+        // Only consume the separator space on soft breaks
+        remaining = useSoftBreak
+          ? remaining.slice(breakAt + 1)
+          : remaining.slice(breakAt)
+      }
+      if (remaining.length > 0) {
+        wrapped.push(remaining)
+      }
+      return wrapped
+    })
+    .join('\n')
+}
+
+function promptAttachmentBlob(text: string) {
+  return new Blob([new Uint8Array(Buffer.from(text, 'utf8'))], {
+    type: 'text/markdown',
+  })
 }
 
 export async function sendDiscordMessageWithOptionalAttachment({
@@ -213,18 +250,101 @@ export async function sendDiscordMessageWithOptionalAttachment({
   embeds,
   rest,
   splitInsteadOfAttach,
+  files,
 }: {
   channelId: string
   prompt: string
   botToken: string
   embeds?: Array<{ color: number; footer: { text: string } }>
-  rest: REST
+  /** Only `post` is used (short prompt / split paths). Accept a narrow shape so tests need no cast. */
+  rest: Pick<REST, 'post'>
   /** When true, long messages are split into multiple Discord messages instead of
    *  being attached as a file. Useful for notify-only messages where the content
    *  should be directly visible in the channel. */
   splitInsteadOfAttach?: boolean
+  /** Local file paths to attach to the message (images, text files, etc.). */
+  files?: string[]
 }): Promise<{ id: string }> {
   const discordMaxLength = 2000
+
+  // When files are provided, always use multipart FormData upload
+  if (files?.length) {
+    const { DISCORD_DEFAULT_MAX_FILE_SIZE } = await import('./discord-utils.js')
+    const { default: mime } = await import('mime')
+
+    for (const file of files) {
+      const stat = fs.statSync(file)
+      if (stat.size > DISCORD_DEFAULT_MAX_FILE_SIZE) {
+        const fileMB = (stat.size / 1024 / 1024).toFixed(1)
+        const limitMB = (DISCORD_DEFAULT_MAX_FILE_SIZE / 1024 / 1024).toFixed(0)
+        throw new Error(
+          `File "${path.basename(file)}" is ${fileMB} MB, which exceeds Discord's ${limitMB} MB upload limit`,
+        )
+      }
+    }
+
+    // When prompt exceeds Discord's limit, attach it as prompt.md alongside
+    // user files so nothing is silently lost. Build prompt.md from memory so
+    // parallel kimaki send processes never share or unlink a temp path.
+    const isLongPrompt = prompt.length > discordMaxLength
+    const content = isLongPrompt
+      ? `Prompt attached as file (${prompt.length} chars)\n\n> ${prompt.slice(0, 100).replace(/\n/g, ' ')}...`
+      : prompt
+
+    const allFiles: Array<{ data: Uint8Array; filename: string; mimeType: string }> =
+      files.map((file) => ({
+        data: new Uint8Array(fs.readFileSync(file)),
+        filename: path.basename(file),
+        mimeType: mime.getType(file) || 'application/octet-stream',
+      }))
+
+    if (isLongPrompt) {
+      allFiles.push({
+        data: new Uint8Array(Buffer.from(prompt, 'utf8')),
+        filename: 'prompt.md',
+        mimeType: 'text/markdown',
+      })
+    }
+
+    const attachments = allFiles.map((f, index) => ({
+      id: index,
+      filename: f.filename,
+    }))
+
+    const formData = new FormData()
+    formData.append(
+      'payload_json',
+      JSON.stringify({
+        content,
+        attachments,
+        embeds,
+        allowed_mentions: { parse: store.getState().allowedMentions },
+      }),
+    )
+
+    for (const [index, f] of allFiles.entries()) {
+      formData.append(
+        `files[${index}]`,
+        new Blob([f.data], { type: f.mimeType }),
+        f.filename,
+      )
+    }
+
+    const response = await fetch(
+      discordApiUrl(`/channels/${channelId}/messages`),
+      {
+        method: 'POST',
+        headers: { Authorization: `Bot ${botToken}` },
+        body: formData,
+      },
+    )
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`Discord API error: ${response.status} - ${error}`)
+    }
+    return (await response.json()) as { id: string }
+  }
+
   if (prompt.length <= discordMaxLength) {
     return (await rest.post(Routes.channelMessages(channelId), {
       body: {
@@ -263,84 +383,42 @@ export async function sendDiscordMessageWithOptionalAttachment({
 
   const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
   const summaryContent = `Prompt attached as file (${prompt.length} chars)\n\n> ${preview}...`
+  // In-memory Blob only — no temp file. Parallel send must never share a path.
+  const formData = new FormData()
+  formData.append(
+    'payload_json',
+    JSON.stringify({
+      content: summaryContent,
+      attachments: [{ id: 0, filename: 'prompt.md' }],
+      embeds,
+      allowed_mentions: { parse: store.getState().allowedMentions },
+    }),
+  )
+  formData.append(
+    'files[0]',
+    promptAttachmentBlob(wrapPromptAttachmentText(prompt)),
+    'prompt.md',
+  )
 
-  const tmpDir = path.join(process.cwd(), 'tmp')
-  if (!fs.existsSync(tmpDir)) {
-    fs.mkdirSync(tmpDir, { recursive: true })
-  }
-  const tmpFile = path.join(tmpDir, `prompt-${Date.now()}.md`)
-  // Wrap long lines so the file is readable in Discord's preview
-  // (Discord doesn't wrap text in file attachments)
-  const wrappedPrompt = prompt
-    .split('\n')
-    .flatMap((line) => {
-      if (line.length <= 120) {
-        return [line]
-      }
-      const wrapped: string[] = []
-      let remaining = line
-      const maxCol = 120
-      // Only soft-break at a space if it's reasonably close to maxCol,
-      // otherwise hard-break to avoid tiny fragments from early spaces
-      const minSoftBreak = 90
-      while (remaining.length > maxCol) {
-        const lastSpace = remaining.lastIndexOf(' ', maxCol)
-        const useSoftBreak = lastSpace >= minSoftBreak
-        const breakAt = useSoftBreak ? lastSpace : maxCol
-        wrapped.push(remaining.slice(0, breakAt))
-        // Only consume the separator space on soft breaks
-        remaining = useSoftBreak
-          ? remaining.slice(breakAt + 1)
-          : remaining.slice(breakAt)
-      }
-      if (remaining.length > 0) {
-        wrapped.push(remaining)
-      }
-      return wrapped
-    })
-    .join('\n')
-  fs.writeFileSync(tmpFile, wrappedPrompt)
-
-  try {
-    const formData = new FormData()
-    formData.append(
-      'payload_json',
-      JSON.stringify({
-        content: summaryContent,
-        attachments: [{ id: 0, filename: 'prompt.md' }],
-        embeds,
-        allowed_mentions: { parse: store.getState().allowedMentions },
-      }),
-    )
-    const buffer = fs.readFileSync(tmpFile)
-    formData.append(
-      'files[0]',
-      new Blob([buffer], { type: 'text/markdown' }),
-      'prompt.md',
-    )
-
-    const starterMessageResponse = await fetch(
-      discordApiUrl(`/channels/${channelId}/messages`),
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bot ${botToken}`,
-        },
-        body: formData,
+  const starterMessageResponse = await fetch(
+    discordApiUrl(`/channels/${channelId}/messages`),
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${botToken}`,
       },
+      body: formData,
+    },
+  )
+
+  if (!starterMessageResponse.ok) {
+    const error = await starterMessageResponse.text()
+    throw new Error(
+      `Discord API error: ${starterMessageResponse.status} - ${error}`,
     )
-
-    if (!starterMessageResponse.ok) {
-      const error = await starterMessageResponse.text()
-      throw new Error(
-        `Discord API error: ${starterMessageResponse.status} - ${error}`,
-      )
-    }
-
-    return (await starterMessageResponse.json()) as { id: string }
-  } finally {
-    fs.unlinkSync(tmpFile)
   }
+
+  return (await starterMessageResponse.json()) as { id: string }
 }
 
 export function formatRelativeTime(target: Date): string {
@@ -378,6 +456,10 @@ export function formatTaskScheduleLine(schedule: ParsedSendAt): string {
 }
 
 export const EXIT_NO_RESTART = 64
+// Temporary failure (sysexits EX_TEMPFAIL). Wrapper retries forever with
+// backoff and does not count this toward the crash-loop detector. Used when
+// Discord login fails because the network is down.
+export const EXIT_TEMPFAIL = 75
 
 export type GuildMemberSearchResult = {
   user: { id: string; username: string; global_name?: string }
@@ -386,7 +468,7 @@ export type GuildMemberSearchResult = {
 
 export type DiscordUserTarget = {
   id: string
-  username: string
+  username?: string
 }
 
 export function isGuildMemberSearchResult(value: object | null): value is GuildMemberSearchResult {
@@ -440,6 +522,74 @@ function readErrorField(error: object | null, key: string): unknown {
   return undefined
 }
 
+/** Transient network errors that may resolve on retry (DNS down, gateway unreachable, TLS blips). */
+const TRANSIENT_ERROR_CODES = new Set([
+  'ENOTFOUND',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'EAI_AGAIN',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  // TLS/cert errors can be transient (intermediate CA blip, MITM proxy, cert rotation).
+  // Without these, Discord login failure exits EXIT_NO_RESTART and the bin wrapper
+  // never restarts — the bot dies permanently on "unable to verify the first certificate".
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY',
+  'CERT_SIGNATURE_FAILURE',
+  'CERT_NOT_YET_VALID',
+  'CERT_HAS_EXPIRED',
+  'CRL_HAS_EXPIRED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+  // undici fetch/WebSocket connect failures when the network is down.
+  // Without these, Discord login exits EXIT_NO_RESTART and the wrapper never
+  // comes back after a connect timeout to discord-gateway.kimaki.dev.
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+])
+
+const TRANSIENT_ERROR_NAMES = new Set([
+  'ConnectTimeoutError',
+  'HeadersTimeoutError',
+  'BodyTimeoutError',
+  'SocketError',
+])
+
+const TRANSIENT_ERROR_MESSAGE_PATTERNS = [
+  /unable to verify the first certificate/i,
+  /certificate has expired/i,
+  /self[- ]signed certificate/i,
+  /unable to get local issuer certificate/i,
+  /connect timeout error/i,
+  /headers timeout error/i,
+  /body timeout error/i,
+]
+
+export function isTransientNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const code = (error as NodeJS.ErrnoException).code
+  if (code && TRANSIENT_ERROR_CODES.has(code)) return true
+  if (TRANSIENT_ERROR_NAMES.has(error.name)) return true
+  // Fallback when code is stripped by wrappers (discord.js sometimes rethrows by message only).
+  if (
+    TRANSIENT_ERROR_MESSAGE_PATTERNS.some((pattern) =>
+      pattern.test(error.message),
+    )
+  ) {
+    return true
+  }
+  // discord.js wraps errors in cause chains
+  if (error.cause instanceof Error) return isTransientNetworkError(error.cause)
+  return false
+}
+
 export function isDiscordMemberLookupUnavailable(error: Error): boolean {
   const status = readErrorField(error, 'status')
   if (status === 403) {
@@ -486,7 +636,7 @@ export async function resolveDiscordUserOption({
   const directUserId = getDiscordUserIdFromUserOption(user)
   if (directUserId) {
     cliLogger.log(`Using Discord user ID: ${directUserId}`)
-    return { id: directUserId, username: directUserId }
+    return { id: directUserId }
   }
 
   cliLogger.log(`Searching for user "${user}" in guild...`)
@@ -971,6 +1121,8 @@ export async function ensureDefaultChannelsWithWelcome({
   isGatewayMode: boolean
   installerDiscordUserId?: string
 }): Promise<{ name: string; id: string; guildId: string }[]> {
+  if (process.env['KIMAKI_NO_DEFAULT_CHANNEL'] === '1') return []
+
   const created: { name: string; id: string; guildId: string }[] = []
   for (const guild of guilds) {
     try {
@@ -1483,6 +1635,9 @@ export async function run({
     gatewayCallbackUrl,
   })
 
+  setAnalyticsBotMode(isGatewayMode ? 'gateway' : 'self_hosted')
+  initAnalytics()
+
   const gatewayToken = await ensureServiceAuthToken({
     appId,
     preferredGatewayToken: isGatewayMode ? token : undefined,
@@ -1624,6 +1779,15 @@ export async function run({
     cliLogger.error(
       'Error: ' + (error instanceof Error ? error.stack : String(error)),
     )
+    // Transient network errors (DNS down, gateway unreachable, connect
+    // timeout) should allow the bin.ts wrapper to restart us after a delay.
+    // EXIT_TEMPFAIL skips the crash-loop detector so a long outage cannot
+    // permanently stop the bot. Only truly fatal errors (bad token, invalid
+    // intent, etc.) should use EXIT_NO_RESTART.
+    if (isTransientNetworkError(error)) {
+      cliLogger.error('Transient network error, exiting for wrapper restart...')
+      process.exit(EXIT_TEMPFAIL)
+    }
     process.exit(EXIT_NO_RESTART)
   }
   await setBotToken(appId, token)
@@ -1862,6 +2026,7 @@ export async function run({
               projectDirectory: project.worktree,
               botName: discordClient.user?.username,
               enableVoiceChannels,
+              analyticsSource: 'onboarding',
             })
 
             createdChannels.push({

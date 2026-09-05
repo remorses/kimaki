@@ -1,6 +1,7 @@
 // Tests Anthropic system prompt rewriting so project instructions survive OpenCode prompt layout changes.
 
 import { describe, expect, test } from 'vitest'
+import { applyClaudeCodeRequestIdentity } from './anthropic-account-identity.js'
 import { replacer } from './anthropic-auth-plugin.js'
 
 async function transformSystem(systemText: string) {
@@ -17,6 +18,24 @@ async function transformSystem(systemText: string) {
   )
   return output.system.join('\n')
 }
+
+describe('Anthropic OAuth request identity', () => {
+  test('applies the current external Claude Code client headers', () => {
+    const headers = applyClaudeCodeRequestIdentity({
+      headers: new Headers({ Accept: 'application/json' }),
+      accessToken: 'access-token',
+    })
+
+    expect(Object.fromEntries(headers.entries())).toMatchInlineSnapshot(`
+      {
+        "accept": "application/json",
+        "authorization": "Bearer access-token",
+        "user-agent": "claude-cli/2.1.257 (external, cli)",
+        "x-app": "cli",
+      }
+    `)
+  })
+})
 
 describe('Anthropic system prompt rewriting', () => {
   test('preserves instructions when OpenCode places them before skills', async () => {

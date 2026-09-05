@@ -85,9 +85,24 @@ import {
 
 const MAX_VITEST_WAIT_TIMEOUT_MS = 10_000
 
+// LESSON: the deterministic provider answers instantly, but the FIRST turn
+// against a freshly booted opencode server still costs 2-4s: session create,
+// config + agent discovery, provider load, and the kimaki plugin loading.
+// Most e2e waits were written with a 4s budget, which sits right on that p99,
+// so the first assertion of a file failed randomly (~50% under any machine
+// load) while later turns finished in ~0.5s. Clamping to a floor fixes this
+// without hiding regressions: a wait only burns its full budget when the test
+// is already failing, so a higher floor costs nothing on green runs.
+// Tests that assert something never appears must use their own polling loop,
+// not these helpers (see AGENTS.md).
+const MIN_VITEST_WAIT_TIMEOUT_MS = 8_000
+
 function normalizeWaitTimeout(timeout: number): number {
   if (process.env['KIMAKI_VITEST'] === '1') {
-    return Math.min(timeout, MAX_VITEST_WAIT_TIMEOUT_MS)
+    return Math.min(
+      Math.max(timeout, MIN_VITEST_WAIT_TIMEOUT_MS),
+      MAX_VITEST_WAIT_TIMEOUT_MS,
+    )
   }
   return timeout
 }
