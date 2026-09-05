@@ -149,6 +149,7 @@ import {
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
+  isSummaryAssistantMessage,
   type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -1245,7 +1246,6 @@ export class ThreadSessionRuntime {
           })
         : []
       delete info.system
-      delete info.summary
       delete info.tools
       delete info.parts
       if (partsSummary.length > 0) {
@@ -2008,6 +2008,10 @@ export class ThreadSessionRuntime {
     if (msg.role !== 'assistant') {
       return
     }
+    if (msg.summary === true) {
+      logger.info(`[SKIP] message.updated for compaction summary ${msg.id}`)
+      return
+    }
     if (!sessionId) {
       return
     }
@@ -2122,8 +2126,18 @@ export class ThreadSessionRuntime {
   }
 
   private async handlePartUpdated(part: Part): Promise<void> {
-    this.storePart(part)
     const sessionId = this.state?.sessionId
+
+    if (isSummaryAssistantMessage({
+      events: this.eventBuffer,
+      sessionId: part.sessionID,
+      messageId: part.messageID,
+    })) {
+      logger.info(`[SKIP] message.part.updated for compaction summary ${part.messageID}`)
+      return
+    }
+
+    this.storePart(part)
 
     const subtaskInfo = this.getSubtaskInfoForSession(part.sessionID)
     const isSubtaskEvent = Boolean(subtaskInfo)
