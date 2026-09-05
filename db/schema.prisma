@@ -106,6 +106,7 @@ model gateway_clients {
   platform      gateway_client_platform @default(discord)
   bot_token     String? // Slack installs store the workspace bot token here; Discord rows leave it null.
   reachable_url String? // When set, the gateway-proxy connects outbound to this URL's /gateway WS endpoint instead of waiting for the client to connect inbound.
+  next_wake_at  DateTime? @db.Timestamptz // Soonest local task/sleep. Gateway-proxy wakes the machine ~30s early.
   created_at    DateTime  @default(now()) @db.Timestamptz
   updated_at    DateTime? @default(now()) @db.Timestamptz
 

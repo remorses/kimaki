@@ -700,12 +700,17 @@ async function runTaskRunnerTick({
   await wakeDueSessionSleeps({ rest })
 }
 
+export type TaskRunnerHandle = {
+  stop: () => Promise<void>
+  isBusy: () => boolean
+}
+
 export function startTaskRunner({
   token,
   pollIntervalMs = 5_000,
   staleRunningMs = 120_000,
   dueBatchSize = 20,
-}: StartTaskRunnerOptions): () => Promise<void> {
+}: StartTaskRunnerOptions): TaskRunnerHandle {
   const rest = createDiscordRest(token)
   let stopped = false
   let ticking = false
@@ -744,16 +749,19 @@ export function startTaskRunner({
 
   taskLogger.log(`[task-runner] started (interval=${pollIntervalMs}ms)`)
 
-  return async () => {
-    if (stopped) {
-      return
-    }
-    stopped = true
-    clearInterval(timer)
-    if (tickPromise) {
-      await tickPromise
-      tickPromise = null
-    }
-    taskLogger.log('[task-runner] stopped')
+  return {
+    isBusy: () => ticking,
+    stop: async () => {
+      if (stopped) {
+        return
+      }
+      stopped = true
+      clearInterval(timer)
+      if (tickPromise) {
+        await tickPromise
+        tickPromise = null
+      }
+      taskLogger.log('[task-runner] stopped')
+    },
   }
 }

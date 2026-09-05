@@ -100,6 +100,7 @@ import { notifyError } from './sentry.js'
 import { trackEvent, flushAnalytics } from './analytics.js'
 import { flushDebouncedProcessCallbacks } from './debounced-process-flush.js'
 import { startRuntimeIdleSweeper } from './runtime-idle-sweeper.js'
+import { startScaleToZeroIdleExit } from './scale-to-zero.js'
 import {
   getDefaultKimakiDirectory,
   getUserProjectCount,
@@ -1529,8 +1530,11 @@ export async function startDiscordBot({
 
   startHeapMonitor()
   startStdinCpuProfListener()
-  const stopTaskRunner = startTaskRunner({ token })
+  const taskRunner = startTaskRunner({ token })
   const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
+  const stopScaleToZeroIdleExit = startScaleToZeroIdleExit({
+    isTaskRunnerBusy: taskRunner.isBusy,
+  })
 
   // Prevent discord.js from permanently killing the REST token on 401.
   // @discordjs/rest calls setToken(null) whenever it receives a 401 response.
@@ -1565,8 +1569,9 @@ export async function startDiscordBot({
           flushed.message,
         )
       }
+      stopScaleToZeroIdleExit()
       await stopRuntimeIdleSweeper()
-      await stopTaskRunner()
+      await taskRunner.stop()
 
       await flushDebouncedProcessCallbacks().catch((error) => {
         discordLogger.warn(

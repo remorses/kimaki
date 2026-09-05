@@ -38,11 +38,23 @@ EOF
   echo "[kimaki-cloud] First boot setup complete."
 fi
 
-# Every boot: update kimaki + opencode in background so the bot starts immediately
-# with whatever version is currently installed. The update runs async;
-# if a new version lands, it's available on next restart.
-echo "[kimaki-cloud] Starting background update check..."
-(npm update -g kimaki opencode 2>/dev/null && echo "[kimaki-cloud] Update check done.") &
+# Wake HTTP hits Fly 443 → internal 8080. /kimaki/wake listens on the lock port.
+export KIMAKI_LOCK_PORT=8080
+export KIMAKI_SCALE_TO_ZERO=1
+
+if [ -n "${KIMAKI_CLOUD_FLY_APP:-}" ]; then
+  export KIMAKI_INTERNET_REACHABLE_URL="https://${KIMAKI_CLOUD_FLY_APP}.fly.dev"
+elif [ -n "${FLY_APP_NAME:-}" ]; then
+  export KIMAKI_INTERNET_REACHABLE_URL="https://${FLY_APP_NAME}.fly.dev"
+fi
+
+if [ -n "${KIMAKI_CLOUD_CLIENT_ID:-}" ] && [ -n "${KIMAKI_CLOUD_CLIENT_SECRET:-}" ]; then
+  export KIMAKI_BOT_TOKEN="${KIMAKI_CLOUD_CLIENT_ID}:${KIMAKI_CLOUD_CLIENT_SECRET}"
+fi
+
+# Delay updates so a scale-to-zero wake is not competing with npm.
+echo "[kimaki-cloud] Starting delayed update check..."
+(sleep 60 && npm update -g kimaki opencode 2>/dev/null && echo "[kimaki-cloud] Update check done.") &
 
 echo "[kimaki-cloud] Starting kimaki..."
 exec kimaki --gateway \

@@ -1047,6 +1047,71 @@ export const app = new Spiceflow({
     },
   })
 
+  // Cloud machines push the soonest local task/sleep so gateway-proxy can
+  // wake a stopped Fly machine before the job is due.
+  .route({
+    method: 'POST',
+    path: '/api/cloud/next-wake',
+    async handler({ request, state }) {
+      const jsonError = (message: string, status: number) => {
+        return new Response(JSON.stringify({ error: message }), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const authHeader = request.headers.get('Authorization') ?? ''
+      const token = authHeader.replace(/^Bearer\s+/i, '')
+      const separatorIndex = token.indexOf(':')
+      if (separatorIndex <= 0 || separatorIndex >= token.length - 1) {
+        return jsonError('Missing or malformed Authorization header', 401)
+      }
+      const clientId = token.slice(0, separatorIndex)
+      const clientSecret = token.slice(separatorIndex + 1)
+      const body = await (request.json() as Promise<{ next_wake_at?: string | null }>).catch(
+        (cause) => {
+          return new Error('Invalid JSON body', { cause })
+        },
+      )
+      if (body instanceof Error) {
+        return jsonError('Invalid JSON body', 400)
+      }
+      const nextWakeAt = (() => {
+        if (body.next_wake_at == null) {
+          return null
+        }
+        if (typeof body.next_wake_at !== 'string') {
+          return new Error('next_wake_at must be an ISO timestamp or null')
+        }
+        const parsed = new Date(body.next_wake_at)
+        if (Number.isNaN(parsed.getTime())) {
+          return new Error('next_wake_at must be an ISO timestamp or null')
+        }
+        return parsed
+      })()
+      if (nextWakeAt instanceof Error) {
+        return jsonError(nextWakeAt.message, 400)
+      }
+
+      const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
+      const updated = await prisma.gateway_clients
+        .updateMany({
+          where: { client_id: clientId, secret: clientSecret },
+          data: { next_wake_at: nextWakeAt },
+        })
+        .catch((cause) => {
+          return new Error('Failed to update next_wake_at', { cause })
+        })
+      if (updated instanceof Error) {
+        reportWebsiteError(updated, { route: '/api/cloud/next-wake' })
+        return jsonError('Failed to update next wake time', 500)
+      }
+      if (updated.count === 0) {
+        return jsonError('Invalid client credentials', 401)
+      }
+      return { ok: true }
+    },
+  })
+
   // ── Dashboard routes ──────────────────────────────────────────────
   // Requires a better-auth session with Discord OAuth.
   // Pages use RSC + server actions for all mutations.

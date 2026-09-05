@@ -17,6 +17,7 @@ export const LogPrefix = {
   ASK_QUESTION: 'QUESTION',
   CHANNEL: 'CHANNEL',
   CLI: 'CLI',
+  CLOUD: 'CLOUD',
   COMPACT: 'COMPACT',
   CREATE_PROJECT: 'NEW_PROJ',
   DB: 'DB',

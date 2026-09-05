@@ -112,6 +112,15 @@ import { computeSkillPermission } from './skill-filter.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
+function omitBotTokenFromEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const {
+    KIMAKI_BOT_TOKEN: _botToken,
+    KIMAKI_CLOUD_CLIENT_SECRET: _cloudSecret,
+    ...rest
+  } = env
+  return rest
+}
+
 /**
  * Build Basic auth headers from OPENCODE_SERVER_PASSWORD env var.
  * Returns empty object when no password is set.
@@ -916,7 +925,7 @@ async function startSingleServer({
       // x-opencode-directory header. Use home dir as a neutral working dir.
       cwd: os.homedir(),
       env: {
-        ...process.env,
+        ...omitBotTokenFromEnv(process.env),
         OPENCODE_CONFIG: opencodeConfigPath,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',

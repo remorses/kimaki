@@ -50,6 +50,16 @@ function countRows<T>(rows: T[]) {
   return rows.length
 }
 
+function pushCloudWakeSync() {
+  void import('./cloud-wake-sync.js').then(({ syncSoonestCloudWakeAt }) => {
+    return syncSoonestCloudWakeAt({ getSoonestWakeAt: getSoonestPlannedWakeAt })
+  }).catch((cause) => {
+    dbLogger.warn(
+      `Failed to sync cloud wake time: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+  })
+}
+
 export async function createScheduledTask({
   scheduleKind,
   runAt,
@@ -91,6 +101,7 @@ export async function createScheduledTask({
     project_directory: projectDirectory ?? null,
   }).returning({ id: schema.scheduled_tasks.id })
   if (!row) throw new Error('Failed to create scheduled task')
+  pushCloudWakeSync()
   return row.id
 }
 
@@ -147,6 +158,9 @@ export async function updateScheduledTask({
       orm.eq(schema.scheduled_tasks.status, 'planned'),
     ))
     .returning({ id: schema.scheduled_tasks.id })
+  if (countRows(rows) > 0) {
+    pushCloudWakeSync()
+  }
   return countRows(rows) > 0
 }
 
@@ -159,7 +173,39 @@ export async function cancelScheduledTask(taskId: number) {
       orm.inArray(schema.scheduled_tasks.status, ['planned', 'running']),
     ))
     .returning({ id: schema.scheduled_tasks.id })
+  if (countRows(rows) > 0) {
+    pushCloudWakeSync()
+  }
   return countRows(rows) > 0
+}
+
+export async function getSoonestPlannedWakeAt() {
+  const db = await getDb()
+  const tasks = await db.query.scheduled_tasks.findMany({
+    where: { status: 'planned' },
+    orderBy: { next_run_at: 'asc' },
+    columns: { next_run_at: true },
+    limit: 1,
+  }).catch((cause) => {
+    return new Error('Failed to read next scheduled task', { cause })
+  })
+  if (tasks instanceof Error) return tasks
+
+  const sleeps = await db.query.session_sleeps.findMany({
+    where: { status: 'planned' },
+    orderBy: { wake_at: 'asc' },
+    columns: { wake_at: true },
+    limit: 1,
+  }).catch((cause) => {
+    return new Error('Failed to read next session sleep', { cause })
+  })
+  if (sleeps instanceof Error) return sleeps
+
+  const taskAt = tasks[0]?.next_run_at ?? null
+  const sleepAt = sleeps[0]?.wake_at ?? null
+  if (!taskAt) return sleepAt
+  if (!sleepAt) return taskAt
+  return taskAt.getTime() <= sleepAt.getTime() ? taskAt : sleepAt
 }
 
 export async function getDuePlannedScheduledTasks({ now, limit }: { now: Date; limit: number }) {
@@ -322,6 +368,7 @@ export async function deleteScheduledTask(taskId: number) {
   const db = await getDb()
   await db.delete(schema.scheduled_tasks)
     .where(orm.eq(schema.scheduled_tasks.id, taskId))
+  pushCloudWakeSync()
 }
 
 export async function markScheduledTaskCronRescheduled({ taskId, completedAt, nextRunAt }: { taskId: number; completedAt: Date; nextRunAt: Date }) {
@@ -329,6 +376,7 @@ export async function markScheduledTaskCronRescheduled({ taskId, completedAt, ne
   await db.update(schema.scheduled_tasks)
     .set({ status: 'planned', last_run_at: completedAt, running_started_at: null, last_error: null, next_run_at: nextRunAt })
     .where(orm.eq(schema.scheduled_tasks.id, taskId))
+  pushCloudWakeSync()
 }
 
 export async function markScheduledTaskFailed({ taskId, failedAt, errorMessage }: { taskId: number; failedAt: Date; errorMessage: string }) {
@@ -342,6 +390,7 @@ export async function markScheduledTaskFailed({ taskId, failedAt, errorMessage }
       attempts: orm.sql`${schema.scheduled_tasks.attempts} + 1`,
     })
     .where(orm.eq(schema.scheduled_tasks.id, taskId))
+  pushCloudWakeSync()
 }
 
 export async function markScheduledTaskCronRetry({ taskId, failedAt, errorMessage, nextRunAt }: { taskId: number; failedAt: Date; errorMessage: string; nextRunAt: Date }) {
@@ -356,6 +405,7 @@ export async function markScheduledTaskCronRetry({ taskId, failedAt, errorMessag
       attempts: orm.sql`${schema.scheduled_tasks.attempts} + 1`,
     })
     .where(orm.eq(schema.scheduled_tasks.id, taskId))
+  pushCloudWakeSync()
 }
 
 export async function setSessionStartSource({ sessionId, scheduleKind, scheduledTaskId }: { sessionId: string; scheduleKind: ScheduledTaskScheduleKind; scheduledTaskId?: number }) {
@@ -401,6 +451,7 @@ export async function upsertSessionSleep({
         created_at: new Date(),
       },
     })
+  pushCloudWakeSync()
   return deliveryId
 }
 
@@ -490,6 +541,9 @@ export async function markSessionSleepFailed({
       orm.eq(schema.session_sleeps.status, 'planned'),
     ))
     .returning({ session_id: schema.session_sleeps.session_id })
+  if (countRows(rows) > 0) {
+    pushCloudWakeSync()
+  }
   return countRows(rows) > 0
 }
 
@@ -509,6 +563,9 @@ export async function consumeSessionSleepWake({ deliveryId }: { deliveryId: stri
       orm.eq(schema.session_sleeps.status, 'planned'),
     ))
     .returning({ session_id: schema.session_sleeps.session_id })
+  if (countRows(rows) > 0) {
+    pushCloudWakeSync()
+  }
   return countRows(rows) > 0
 }
 
@@ -531,6 +588,9 @@ export async function cancelSessionSleepForThread({ threadId }: { threadId: stri
       ),
     ))
     .returning({ session_id: schema.session_sleeps.session_id })
+  if (countRows(rows) > 0) {
+    pushCloudWakeSync()
+  }
   return countRows(rows) > 0
 }
 

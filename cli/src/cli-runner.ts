@@ -145,6 +145,17 @@ export function stripBracketedPaste(value: string | undefined): string {
 // The first segment is the bot's user ID (= Application ID) base64-encoded.
 // For gateway mode tokens (client_id:secret format), this function returns
 // undefined -- the caller should use KIMAKI_GATEWAY_APP_ID instead.
+export function splitGatewayToken(token: string): { clientId: string; clientSecret: string } | null {
+  const separatorIndex = token.indexOf(':')
+  if (separatorIndex <= 0 || separatorIndex >= token.length - 1) {
+    return null
+  }
+  return {
+    clientId: token.slice(0, separatorIndex),
+    clientSecret: token.slice(separatorIndex + 1),
+  }
+}
+
 export function appIdFromToken(token: string): string | undefined {
   // Gateway mode tokens use "client_id:secret" format, not base64.
   if (token.includes(':')) {
@@ -1252,18 +1263,46 @@ export async function resolveCredentials({
       })
     : undefined
 
-  // 1. Env var takes precedence (headless deployments)
-  if (envToken && !forceRestartOnboarding && !forceGateway) {
-    const derivedAppId = appIdFromToken(envToken)
-    if (!derivedAppId) {
-      cliLogger.error(
-        'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
-      )
-      process.exit(EXIT_NO_RESTART)
+  // 1. Env var takes precedence (headless deployments).
+  // Gateway tokens are `clientId:clientSecret`. Self-hosted Discord bot tokens
+  // have no colon. `--gateway` still accepts a gateway env token so cloud
+  // machines can boot without the install wizard.
+  if (envToken && !forceRestartOnboarding) {
+    const gatewayParts = splitGatewayToken(envToken)
+    if (gatewayParts) {
+      if (!KIMAKI_GATEWAY_APP_ID) {
+        cliLogger.error(
+          'KIMAKI_BOT_TOKEN looks like a gateway credential, but KIMAKI_GATEWAY_APP_ID is not configured.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+      await setBotMode({
+        appId: KIMAKI_GATEWAY_APP_ID,
+        mode: 'gateway',
+        clientId: gatewayParts.clientId,
+        clientSecret: gatewayParts.clientSecret,
+        proxyUrl: KIMAKI_GATEWAY_PROXY_REST_BASE_URL,
+      })
+      cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (gateway mode, App ID: ${KIMAKI_GATEWAY_APP_ID})`)
+      return {
+        appId: KIMAKI_GATEWAY_APP_ID,
+        token: envToken,
+        credentialSource: 'env',
+        isGatewayMode: true,
+      }
     }
-    await setBotToken(derivedAppId, envToken)
-    cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
-    return { appId: derivedAppId, token: envToken, credentialSource: 'env', isGatewayMode: false }
+    if (!forceGateway) {
+      const derivedAppId = appIdFromToken(envToken)
+      if (!derivedAppId) {
+        cliLogger.error(
+          'Could not derive Application ID from KIMAKI_BOT_TOKEN. The token appears malformed.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+      await setBotToken(derivedAppId, envToken)
+      cliLogger.log(`Using KIMAKI_BOT_TOKEN env var (App ID: ${derivedAppId})`)
+      return { appId: derivedAppId, token: envToken, credentialSource: 'env', isGatewayMode: false }
+    }
   }
 
   // 2. Saved credentials in the database

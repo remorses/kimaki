@@ -341,6 +341,30 @@ export function getRuntimeCount(): number {
   return runtimes.size
 }
 
+export function areAllRuntimesIdleForScaleToZero({
+  idleMs,
+  nowMs = Date.now(),
+}: {
+  idleMs: number
+  nowMs?: number
+}): {
+  allIdle: boolean
+  lastActivityMs: number | null
+} {
+  if (runtimes.size === 0) {
+    return { allIdle: true, lastActivityMs: null }
+  }
+  let lastActivityMs = 0
+  for (const runtime of runtimes.values()) {
+    const snapshot = runtime.getInactivitySnapshot({ nowMs })
+    lastActivityMs = Math.max(lastActivityMs, nowMs - snapshot.inactiveForMs)
+    if (!runtime.isIdleForInactivityTimeout({ idleMs, nowMs })) {
+      return { allIdle: false, lastActivityMs }
+    }
+  }
+  return { allIdle: true, lastActivityMs }
+}
+
 export function disposeInactiveRuntimes({
   idleMs,
   nowMs = Date.now(),

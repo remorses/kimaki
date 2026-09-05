@@ -109,6 +109,10 @@ export function createCloudActions(env: Env) {
             KIMAKI_CLOUD_CLIENT_ID: clientId,
             KIMAKI_CLOUD_CLIENT_SECRET: clientSecret,
             KIMAKI_CLOUD_FLY_APP: appName,
+            KIMAKI_BOT_TOKEN: `${clientId}:${clientSecret}`,
+            KIMAKI_INTERNET_REACHABLE_URL: `https://${appName}.fly.dev`,
+            KIMAKI_LOCK_PORT: '8080',
+            KIMAKI_SCALE_TO_ZERO: '1',
           },
           guest: {
             cpu_kind: 'shared',
