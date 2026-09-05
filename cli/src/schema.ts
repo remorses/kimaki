@@ -83,6 +83,10 @@ export const bot_api_keys = sqliteCore.sqliteTable('bot_api_keys', {
   app_id: sqliteCore.text('app_id').primaryKey().notNull().references(() => bot_tokens.app_id, { onUpdate: 'cascade' }),
   gemini_api_key: sqliteCore.text('gemini_api_key'),
   openai_api_key: sqliteCore.text('openai_api_key'),
+  /** Custom OpenAI-compatible base URL for voice transcription (e.g. a local Whisper service). */
+  openai_base_url: sqliteCore.text('openai_base_url'),
+  /** Built-in local whisper model id (fast/balanced/accurate). Takes priority over cloud transcription. */
+  transcription_local_model: sqliteCore.text('transcription_local_model'),
   xai_api_key: sqliteCore.text('xai_api_key'),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
