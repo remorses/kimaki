@@ -552,6 +552,7 @@ export type IngressInput = {
   // First-dispatch-only overrides (used when creating a new session)
   agent?: string
   model?: string
+  variant?: string | null
   /**
    * Raw permission rule strings from --permission flag ("tool:action" or
    * "tool:pattern:action"). Parsed into PermissionRuleset entries by
@@ -3077,6 +3078,7 @@ export class ThreadSessionRuntime {
         directory: this.sdkDirectory,
         agentOverride: input.agent,
         modelOverride: input.model,
+        variantOverride: input.variant,
         force: createdNewSession,
       })
 
@@ -3116,11 +3118,13 @@ export class ThreadSessionRuntime {
           }
           return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
         })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
-        getVariantCascade({
-          sessionId: session.id,
-          channelId,
-          appId: resolvedAppId,
-        }),
+        input.variant !== undefined
+          ? input.variant
+          : getVariantCascade({
+              sessionId: session.id,
+              channelId,
+              appId: resolvedAppId,
+            }),
       ])
       if (modelResult instanceof Error) {
         await cleanupOnError(`Failed to resolve model: ${modelResult.message}`)
@@ -3334,6 +3338,7 @@ export class ThreadSessionRuntime {
       command: input.command,
       agent: input.agent,
       model: input.model,
+      variant: input.variant,
       permissions: input.permissions,
       injectionGuardPatterns: input.injectionGuardPatterns,
       parentSessionId: input.parentSessionId,
@@ -3885,6 +3890,7 @@ export class ThreadSessionRuntime {
       directory: this.sdkDirectory,
       agentOverride: input.agent,
       modelOverride: input.model,
+      variantOverride: input.variant,
       force: createdNewSession,
     })
 
@@ -3931,11 +3937,13 @@ export class ThreadSessionRuntime {
         }
         return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
       })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
-      getVariantCascade({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-      }),
+      input.variant !== undefined
+        ? input.variant
+        : getVariantCascade({
+            sessionId: session.id,
+            channelId,
+            appId: resolvedAppId,
+          }),
     ])
     if (earlyModelResult instanceof Error) {
       this.stopTyping()

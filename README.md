@@ -71,6 +71,7 @@ Kimaki adds a layer of orchestration features on top of OpenCode. The ones worth
 - **[Shell commands](https://kimaki.dev/docs/features/shell-commands)** — prefix any message with `!` to run a shell command in the project directory.
 - **[Tunnels](https://kimaki.dev/docs/remote-access/tunnels)** — expose a local dev server to a public URL so you can view it on your phone or another machine.
 - **[Quick agent switching](https://kimaki.dev/docs/getting-started/model-switching)** — instantly change model or system prompt with a `/<name>-agent` command.
+- **[Configurable model shortcuts](https://kimaki.dev/docs/getting-started/model-switching#configurable-model-shortcuts)** — register direct model commands and launch isolated model-pinned prompts.
 
 ## How messages reach a session
 

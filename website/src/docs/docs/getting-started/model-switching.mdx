@@ -4,7 +4,27 @@ description: How to quickly switch models and thinking levels using agent markdo
 icon: repeat
 ---
 
-Kimaki gives you two main ways to switch models: **agent files** (`.opencode/agent/*.md`) for one-command switching, and the **`/model` slash command** for interactive selection. From `/model` you can also change the thinking level or clear an override via buttons on the same reply. Agent files are the fastest option for day-to-day use; `/model` is useful for one-off changes.
+Kimaki supports **model shortcuts**, **agent files** (`.opencode/agent/*.md`), and the interactive **`/model` slash command**. Model shortcuts switch models directly and select the standard `build` agent. Agent files combine a model with custom agent instructions and permissions. `/model` is useful for one-off interactive selection.
+
+## Configurable model shortcuts
+
+Pass one or more `--model-shortcut` options when starting Kimaki:
+
+```bash
+kimaki \
+  --model-shortcut glm=zai-coding-plan/glm-5.3,max,low,high,max \
+  --model-shortcut sol=openai/gpt-5.6-sol,high,low,medium,high,xhigh,max
+```
+
+The format is `name=provider/model[,default-effort[,allowed-effort...]]`. Each entry registers a bare Discord command such as `/glm` or `/sol`. When allowed efforts are listed, Discord shows them as choices. If no default effort is configured or selected, the shortcut clears any inherited effort instead of carrying a different model's effort forward.
+
+- Run `/glm` in a project channel to make that model the channel default for new sessions.
+- Run `/glm` in a thread to switch that thread's OpenCode session.
+- Add `effort:` to override the configured default effort.
+- Add `prompt:` in a project channel to launch a fresh, isolated thread with that model and effort. The channel's existing model and agent defaults remain unchanged.
+- Add `prompt:` in a thread to send the prompt immediately and keep that session pinned to the selected model.
+
+Model shortcuts use the standard `build` agent so they change the model without introducing custom agent instructions. Built-in command names and the `-agent`, `-cmd`, `-skill`, and `-mcp-prompt` suffixes are reserved. Restart Kimaki after changing startup options so Discord commands are re-registered.
 
 ## Why agents are faster than /model
 
