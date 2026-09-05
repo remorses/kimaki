@@ -1,17 +1,10 @@
 /**
- * Full-bleed hero with VideoBackgroundShader (raw WebGL fluid sim), serif title,
- * install CTA, and links.
- *
- * Breaks out of the Above column constraint via w-screen + negative margin
- * (same pattern as holocron's own hero-section.tsx).
- *
- * Dark mode: blue dots on near-black background.
- * Light mode: video is CSS-inverted, dots blend with light background.
- * Gradient overlays handled by VideoBackgroundShader's fadeTop/fadeBottom.
+ * Full-bleed hero with serif title, install CTA, and Discord playground.
+ * Heading on the left, playground on the right. Background shader is off.
  */
 'use client'
 
-import { ArrowDown, MessageSquare } from 'lucide-react'
+import { MessageSquare } from 'lucide-react'
 
 function GithubIcon({ size = 14 }: { size?: number }) {
   return (
@@ -22,16 +15,17 @@ function GithubIcon({ size = 14 }: { size?: number }) {
 }
 import { InstallCommand } from './install-command.tsx'
 import { StradaBrowser } from '../strada-browser.tsx'
-import { VideoBackgroundShader } from '@holocron.so/vite/mdx'
+import { DiscordPlayground } from './discord-playground.tsx'
+// import { VideoBackgroundShader } from '@holocron.so/vite/mdx'
 
 const GITHUB_URL = 'https://github.com/remorses/kimaki'
 const DISCORD_URL = 'https://discord.gg/qz3hapKcMM'
 
 export function HeroSection() {
   return (
-    <div className='relative mt-2 lg:mt-4 mb-4 lg:mb-6 w-screen ml-[calc(-50vw+50%)] flex flex-col items-center overflow-hidden'>
+    <div className='relative mt-10 mb-16 lg:mt-14 lg:mb-20 w-full'>
       <StradaBrowser />
-      <VideoBackgroundShader
+      {/* <VideoBackgroundShader
         src='/assets/hero-bg.mp4'
         className='absolute inset-0 w-full h-full'
         canvasClassName=''
@@ -44,14 +38,22 @@ export function HeroSection() {
         enableMask={false}
         fluidStrength={0.2}
         fluidCurl={80}
-      />
+      /> */}
 
-      {/* Foreground content */}
-      <div className='relative z-[2] flex flex-col items-center justify-center px-6 pt-10 sm:pt-14 pb-4'>
-        <div className='flex flex-col items-center text-center'>
-          <h1 className='flex flex-col items-center leading-none'>
+      <div className='relative z-[2] flex w-full flex-col items-stretch gap-8 lg:flex-row lg:items-center lg:gap-10'>
+        <div className='flex w-full max-w-[280px] shrink-0 flex-col items-start text-left'>
+          <h1 className='flex flex-col items-start leading-none text-left'>
             <span
-              className='italic text-[36px] sm:text-[48px] md:text-[60px] font-normal text-foreground'
+              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
+              style={{
+                fontFamily:
+                  "'Playfair Display', Georgia, 'Times New Roman', serif",
+              }}
+            >
+              Kimaki
+            </span>
+            <span
+              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground -mt-1 sm:-mt-2'
               style={{
                 fontFamily:
                   "'Playfair Display', Georgia, 'Times New Roman', serif",
@@ -60,7 +62,7 @@ export function HeroSection() {
               your AI dev team,
             </span>
             <span
-              className='italic text-[36px] sm:text-[48px] md:text-[60px] font-normal text-foreground -mt-1 sm:-mt-2'
+              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground -mt-1 sm:-mt-2'
               style={{
                 fontFamily:
                   "'Playfair Display', Georgia, 'Times New Roman', serif",
@@ -90,13 +92,9 @@ export function HeroSection() {
               Discord
             </a>
           </div>
-          <a
-            href='#quick-start'
-            className='mt-6 mb-2 flex flex-col items-center gap-1 text-[11px] font-mono text-foreground/30 hover:text-foreground/60 transition-colors'
-          >
-            Learn more
-            <ArrowDown size={12} />
-          </a>
+        </div>
+        <div className='min-w-0 flex-1'>
+          <DiscordPlayground />
         </div>
       </div>
     </div>
