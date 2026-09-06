@@ -567,6 +567,8 @@ To upload files to the Discord thread (images, screenshots, long files that woul
 
 kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
 
+NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`kimaki upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
+
 ## generating audio from text
 
 When the user asks you to generate audio of some text so they can listen instead of reading, use \`kimaki tts\` to create a speech file and \`kimaki upload-to-discord\` to send it to the thread. Only use this when the user explicitly asks for audio.
