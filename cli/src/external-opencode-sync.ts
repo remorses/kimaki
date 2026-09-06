@@ -160,6 +160,30 @@ export function getRenderableUserTextParts({
   })
 }
 
+export function getIgnoredNoticeTextParts({
+  message,
+}: {
+  message: SessionMessageLike
+}): RenderableUserTextPart[] {
+  if (message.info.role !== 'user') {
+    return []
+  }
+
+  return message.parts.flatMap((part) => {
+    if (part.type !== 'text') {
+      return [] as RenderableUserTextPart[]
+    }
+    if (part.ignored !== true || isSyntheticTextPart(part)) {
+      return [] as RenderableUserTextPart[]
+    }
+    const text = part.text?.trim()
+    if (!text) {
+      return [] as RenderableUserTextPart[]
+    }
+    return [{ id: part.id, text }]
+  })
+}
+
 function getExternalUserMirrorText({
   username,
   prompt,
@@ -373,6 +397,20 @@ function collectUnsyncedChunks({
 
   for (const message of messages) {
     if (message.info.role === 'user') {
+      const ignoredNoticeParts = getIgnoredNoticeTextParts({ message }).filter((part) => {
+        return !syncedPartIds.has(part.id)
+      })
+      if (ignoredNoticeParts.length > 0) {
+        chunks.push({
+          partIds: ignoredNoticeParts.map((part) => {
+            return part.id
+          }),
+          content: ignoredNoticeParts.map((part) => {
+            return part.text
+          }).join('\n\n'),
+          kind: 'text',
+        })
+      }
       const renderableParts = getRenderableUserTextParts({ message })
       const unsyncedParts = renderableParts.filter((p) => {
         return !syncedPartIds.has(p.id)

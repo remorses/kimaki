@@ -2315,6 +2315,11 @@ export class ThreadSessionRuntime {
       return
     }
 
+    if (part.type === 'text' && part.ignored === true) {
+      await this.sendPartMessage({ part, repulseTyping: false })
+      return
+    }
+
     if (part.type === 'text' && part.time?.end) {
       await this.sendPartMessage({ part })
       await this.tryShowPendingQuestion()

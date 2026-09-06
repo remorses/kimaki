@@ -2,6 +2,7 @@
 
 import { describe, expect, test } from 'vitest'
 import {
+  getIgnoredNoticeTextParts,
   getRenderableUserTextParts,
   isLatestUserTurnFromDiscord,
   type SessionMessageLike,
@@ -41,13 +42,39 @@ describe('external OpenCode user-message filtering', () => {
     ])
   })
 
-  test('skips ignored plugin notices', () => {
+  test('skips ignored plugin notices from user mirroring', () => {
     const message = textMessage({
       text: 'Subrouter: xai/grok-4.6 was rate limited.',
       ignored: true,
     })
 
     expect(getRenderableUserTextParts({ message })).toEqual([])
+  })
+
+  test('collects ignored plugin notices as bot text', () => {
+    const message = textMessage({
+      text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+      ignored: true,
+    })
+
+    expect(getIgnoredNoticeTextParts({ message })).toEqual([
+      {
+        id: 'part-1',
+        text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+      },
+    ])
+  })
+
+  test('does not collect synthetic or normal user text as ignored notices', () => {
+    expect(getIgnoredNoticeTextParts({
+      message: textMessage({ text: 'Run the tests' }),
+    })).toEqual([])
+    expect(getIgnoredNoticeTextParts({
+      message: textMessage({
+        text: '<discord-user name="Tommy" />',
+        synthetic: true,
+      }),
+    })).toEqual([])
   })
 
   test('skips synthetic context parts', () => {
