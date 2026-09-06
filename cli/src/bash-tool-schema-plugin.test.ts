@@ -5,52 +5,7 @@ import {
 } from './bash-tool-schema-plugin.js'
 
 describe('extendBashToolDefinition', () => {
-  test('keeps parameters and merges extra fields into jsonSchema', () => {
-    const parameters = { keep: true }
-    const output: ToolDefinitionOutput = {
-      description: 'Execute a shell command',
-      parameters,
-      jsonSchema: {
-        type: 'object',
-        properties: {
-          command: { type: 'string', description: 'The command to execute' },
-          timeout: { type: 'integer' },
-        },
-        required: ['command'],
-      },
-    }
-
-    extendBashToolDefinition(output)
-
-    expect(output.parameters).toBe(parameters)
-    expect(output.jsonSchema).toMatchInlineSnapshot(`
-      {
-        "properties": {
-          "command": {
-            "description": "The command to execute",
-            "type": "string",
-          },
-          "description": {
-            "description": "Short 5-10 word summary shown in Discord when the command is longer than 50 characters",
-            "type": "string",
-          },
-          "hasSideEffect": {
-            "description": "True if the command writes files, modifies state, installs packages, or triggers external effects",
-            "type": "boolean",
-          },
-          "timeout": {
-            "type": "integer",
-          },
-        },
-        "required": [
-          "command",
-        ],
-        "type": "object",
-      }
-    `)
-  })
-
-  test('synthesizes jsonSchema when it is missing', () => {
+  test('keeps parameters and assigns jsonSchema from bashParameters', () => {
     const parameters = { keep: true }
     const output: ToolDefinitionOutput = {
       description: 'Execute a shell command',
@@ -62,6 +17,8 @@ describe('extendBashToolDefinition', () => {
     expect(output.parameters).toBe(parameters)
     expect(output.jsonSchema).toMatchInlineSnapshot(`
       {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
         "properties": {
           "command": {
             "description": "The command to execute",
@@ -77,6 +34,8 @@ describe('extendBashToolDefinition', () => {
           },
           "timeout": {
             "description": "Optional timeout in milliseconds",
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
             "type": "integer",
           },
           "workdir": {
@@ -86,6 +45,8 @@ describe('extendBashToolDefinition', () => {
         },
         "required": [
           "command",
+          "description",
+          "hasSideEffect",
         ],
         "type": "object",
       }
