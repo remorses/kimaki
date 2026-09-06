@@ -66,7 +66,7 @@ Delivery is **retried until it lands**. A sleep is only marked delivered once th
 
 ## Cancelling a sleep
 
-Send **any message** in the thread and the pending sleep is cancelled. The agent picks up your new message instead, and no wake arrives later.
+Send **any message** in the thread and the pending sleep is cancelled. The agent picks up your new message instead, and no wake arrives later. If it still needs the later wake after answering, it should call **`kimaki_sleep` again** with the original `until` time.
 
 This is not limited to chat messages. **`/queue`**, **`/abort`**, slash commands, and prompts sent with `kimaki send` all supersede a pending sleep, because cancelling happens wherever a new turn enters the session.
 
@@ -95,5 +95,5 @@ Use **sleep** when the current conversation must continue later. Use **scheduled
 
 - Only the **main thread session** can sleep. Subagents cannot.
 - Wake granularity is about **5 seconds**, so very short sleeps can overshoot slightly.
-- The agent should call `kimaki_sleep` **last**, after its text, and stop there.
+- The agent should call `kimaki_sleep` **last**, after its text, and stop there. The tool result is not a wake. Work continues only after Kimaki posts the **wake message**.
 - If the thread is **deleted** before the wake, the sleep is dropped instead of retried.

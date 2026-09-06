@@ -57,6 +57,18 @@ describe('system-message', () => {
     expect(message).toContain('<callout accent="#f59e0b">')
   })
 
+  test('tells the model the sleep tool result is not a wake', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('The tool result is not a wake')
+    expect(message).toContain('Woke after sleeping until')
+    expect(message).toContain(
+      'If you still need to wake later after answering, call `kimaki_sleep` again',
+    )
+    expect(message).not.toContain('After wake, continue the wait reason')
+  })
+
   test('requires interactive tools after all text, using exact tool names', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
@@ -361,7 +373,9 @@ describe('system-message', () => {
       Use \`kimaki_sleep\` to pause this session for hours or days, then continue when the time is reached. The sleep is stored in SQLite and survives bot restarts.
       Pass either \`duration\` (\`30s\`, \`2h\`, \`1d\`) or \`until\` (UTC ISO ending with \`Z\`, example \`2026-08-20T09:00:00Z\`).
       You MUST call \`kimaki_sleep\` LAST, after ALL text. Do not call more tools after it.
-      A new user message cancels the sleep. After wake, continue the wait reason.
+      A new user message cancels the sleep. If you still need to wake later after answering, call \`kimaki_sleep\` again with \`until\` set to the original UTC time.
+      The tool result is not a wake. After it succeeds, write one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
+      Wake is a later Discord message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
 
       ## archiving the current thread
 

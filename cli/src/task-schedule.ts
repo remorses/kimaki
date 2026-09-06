@@ -1,4 +1,4 @@
-// Scheduled task parsing utilities for `send --send-at` and task runner execution.
+// Scheduled task parsing for `send --send-at`, plus kimaki_sleep wake/result text.
 
 import { CronExpressionParser } from 'cron-parser'
 import * as errore from 'errore'
@@ -194,6 +194,26 @@ export function formatSessionSleepWakePrompt({
   const until = formatSessionSleepWakeAt(wakeAt)
   const reasonLine = reason?.trim() ? `\nReason: ${reason.trim()}` : ''
   return `⬦ Woke after sleeping until ${until}${reasonLine}\nContinue the work you were waiting for.`
+}
+
+// Tool result after persist. Keep "Sleeping until" first so e2e matchers still hit.
+// Do not say "woken" or "Woke after": models treat that as the wake turn.
+export function formatSessionSleepToolOutput({
+  wakeAt,
+  reason,
+}: {
+  wakeAt: Date
+  reason?: string
+}): string {
+  const until = formatSessionSleepWakeAt(wakeAt)
+  const reasonText = reason?.trim() ? ` Reason: ${reason.trim()}.` : ''
+  return [
+    `Sleeping until ${until}.${reasonText}`,
+    'This tool result is not a wake. Do not continue the waited work. Do not call more tools.',
+    'Reply with one short line that you are waiting until that time, then stop.',
+    'The real wake is a later Discord message that starts with "Woke after sleeping until". Only then continue the wait reason.',
+    'A new user message in this thread cancels the sleep. If you still need that later wake after answering, call kimaki_sleep again with until set to the same UTC time.',
+  ].join(' ')
 }
 
 export function parseSendAtValue({

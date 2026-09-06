@@ -225,13 +225,21 @@ const ipcToolsPlugin: any = async () => {
       }),
       kimaki_sleep: tool({
         description: dedent`
-          Sleep this session until a future time, then wake with a new message.
+          Sleep this session until a future time. Kimaki later posts a wake
+          message in this thread and the same session continues.
           Use this to wait hours or days for CI, a deploy, a date, or any later event.
           The sleep is stored in SQLite and survives bot restarts.
 
           Pass either duration (2h, 30m, 1d) or until (UTC ISO ending with Z).
           Do not pass both. You MUST call kimaki_sleep LAST, after ALL text.
-          Do not call more tools after it. A new user message cancels the sleep.
+          Do not call more tools after it.
+
+          The tool result is not a wake. After it succeeds, write one short
+          waiting line and stop. Do not continue the waited work until a later
+          Discord message that starts with "Woke after sleeping until".
+          A new user message cancels the sleep. If you still need that later
+          wake after answering, call kimaki_sleep again with until set to the
+          original UTC time.
         `,
         args: {
           duration: z
@@ -252,9 +260,11 @@ const ipcToolsPlugin: any = async () => {
             .describe('Why the session is sleeping. Shown when it wakes.'),
         },
         async execute({ duration, until, reason }, context) {
-          const { parseSleepWakeAt, formatSessionSleepWakeAt } = await import(
-            './task-schedule.js'
-          )
+          const {
+            parseSleepWakeAt,
+            formatSessionSleepWakeAt,
+            formatSessionSleepToolOutput,
+          } = await import('./task-schedule.js')
           const wakeAt = parseSleepWakeAt({
             duration,
             until,
@@ -283,12 +293,9 @@ const ipcToolsPlugin: any = async () => {
           // The title carries the resolved absolute time so Discord shows the
           // real wake instant instead of a relative input like "2h".
           const untilLabel = formatSessionSleepWakeAt(wakeAt)
-          const reasonText = reason?.trim()
-            ? ` Reason: ${reason.trim()}.`
-            : ''
           return {
             title: `until ${untilLabel}`,
-            output: `Sleeping until ${untilLabel}.${reasonText} Stop now. You will be woken with a new message.`,
+            output: formatSessionSleepToolOutput({ wakeAt, reason }),
           }
         },
       }),
