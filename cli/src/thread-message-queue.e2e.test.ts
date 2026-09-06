@@ -707,7 +707,7 @@ e2eTest('thread message queue ordering', () => {
         running create file
         ┣ bash _Create marker file for e2e test_
         file created
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
