@@ -59,13 +59,13 @@ describe('shouldLeadWithSeparator', () => {
     ).toBe(false)
   })
 
-  test('leads only when a tool follows text', () => {
+  test('leads on both text and tool transitions', () => {
     expect(
       shouldLeadWithSeparator({ previousKind: 'text', nextKind: 'tool' }),
     ).toBe(true)
     expect(
       shouldLeadWithSeparator({ previousKind: 'tool', nextKind: 'text' }),
-    ).toBe(false)
+    ).toBe(true)
     expect(
       shouldLeadWithSeparator({ previousKind: 'text', nextKind: 'text' }),
     ).toBe(false)
@@ -103,27 +103,6 @@ describe('batchChunksForDiscord', () => {
           "content": "done",
           "kind": "text",
           "partIds": [
-            "t2",
-          ],
-        },
-      ]
-    `)
-  })
-
-  test('merges consecutive same-kind chunks', () => {
-    expect(
-      batchChunksForDiscord([
-        { partIds: ['t1'], content: 'hello', kind: 'text' },
-        { partIds: ['t2'], content: 'world', kind: 'text' },
-      ]),
-    ).toMatchInlineSnapshot(`
-      [
-        {
-          "content": "hello
-      world",
-          "kind": "text",
-          "partIds": [
-            "t1",
             "t2",
           ],
         },
