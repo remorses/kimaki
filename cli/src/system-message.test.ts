@@ -25,6 +25,15 @@ afterEach(async () => {
 })
 
 describe('system-message', () => {
+  test('requires kimaki upload for Discord images, not markdown', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('NEVER show images with markdown')
+    expect(message).toContain('Discord does not render local markdown images')
+    expect(message).toContain('ALWAYS upload them with `kimaki upload-to-discord`')
+  })
+
   test('requires reading the report-bugs guide before filing kimaki issues', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
@@ -323,6 +332,8 @@ describe('system-message', () => {
       To upload files to the Discord thread (images, screenshots, long files that would clutter the chat), run:
 
       kimaki upload-to-discord --session ses_123 <file1> [file2] ...
+
+      NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`kimaki upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
 
       ## generating audio from text
 
