@@ -180,7 +180,7 @@ export function shouldLeadWithSeparator({
   nextKind: SessionPartKind
 }): boolean {
   if (!previousKind) return false
-  return previousKind === 'text' && nextKind === 'tool'
+  return previousKind !== nextKind
 }
 
 // A chunk of formatted content with associated part IDs, ready to be
