@@ -38,6 +38,8 @@ Unlike the [queue suffix](../features/queue), the `btw` suffix **requires punctu
 
 The forked session is told its only job is to answer your question: it will not continue, resume, or reference the original task.
 
+Session lists such as **`/last-sessions`** and **`kimaki session list --active`** show these threads with a **`btw:`** title prefix. They are side sessions, not duplicates of the original task.
+
 <Aside>
 <Note>
 The original thread is never paused or interrupted. btw runs as a separate session in parallel.
@@ -46,9 +48,9 @@ The original thread is never paused or interrupted. btw runs as a separate sessi
 
 ## btw vs fork vs queue
 
-| Want to...                                         | Use            |
-|----------------------------------------------------|----------------|
-| Ask a side question in parallel, keep the run going | **btw**        |
+| Want to...                                          | Use                              |
+| --------------------------------------------------- | -------------------------------- |
+| Ask a side question in parallel, keep the run going | **btw**                          |
 | Continue from a specific earlier message            | [`/fork`](../reference/commands) |
-| Add a follow-up for after the run finishes          | [the queue](../features/queue) |
-| Redirect the agent right now                         | a normal message |
+| Add a follow-up for after the run finishes          | [the queue](../features/queue)   |
+| Redirect the agent right now                        | a normal message                 |

@@ -616,6 +616,8 @@ describe('system-message', () => {
       kimaki session list --active
       \`\`\`
 
+      Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
+
       To search past sessions (supports plain text or /regex/flags). Defaults to this project. Use \`--all\` to search every locally registered project:
 
       \`\`\`bash
