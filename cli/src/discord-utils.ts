@@ -331,20 +331,89 @@ export async function ensureThreadMember({
   if (addMemberResult instanceof Error) return addMemberResult
 }
 
+export type FooterMentionMember = {
+  id: string
+  bot?: boolean
+  joinedTimestamp?: number | null
+}
+
 export function resolveFooterMentionUserId({
   sessionUserId,
   botUserId,
   threadOwnerId,
-  memberIds,
+  members,
 }: {
   sessionUserId: string | undefined
   botUserId: string | undefined
   threadOwnerId: string | undefined
-  memberIds: string[]
+  members: FooterMentionMember[]
 }): string | undefined {
   if (sessionUserId && sessionUserId !== botUserId) return sessionUserId
   if (!botUserId || threadOwnerId !== botUserId) return undefined
-  return memberIds.find((id) => id && id !== botUserId)
+  const humans = members
+    .filter((member) => member.id && member.id !== botUserId && member.bot === false)
+    .sort((a, b) => {
+      const aJoined = a.joinedTimestamp ?? Number.POSITIVE_INFINITY
+      const bJoined = b.joinedTimestamp ?? Number.POSITIVE_INFINITY
+      if (aJoined !== bJoined) return aJoined - bJoined
+      return a.id.localeCompare(b.id)
+    })
+  return humans[0]?.id
+}
+
+function footerMentionMembersFromCache(thread: ThreadChannel): FooterMentionMember[] {
+  return [...thread.members.cache.values()].map((member) => ({
+    id: member.id,
+    bot: member.user?.bot,
+    joinedTimestamp: member.joinedTimestamp ?? null,
+  }))
+}
+
+export async function resolveThreadFooterMentionUserId({
+  sessionUserId,
+  thread,
+}: {
+  sessionUserId: string | undefined
+  thread: ThreadChannel
+}): Promise<string | undefined> {
+  const botUserId = thread.client.user?.id
+  if (sessionUserId && sessionUserId !== botUserId) return sessionUserId
+  if (!botUserId || thread.ownerId !== botUserId) return undefined
+
+  const cached = footerMentionMembersFromCache(thread)
+  if (cached.some((member) => member.bot === false && member.id !== botUserId)) {
+    return resolveFooterMentionUserId({
+      sessionUserId,
+      botUserId,
+      threadOwnerId: thread.ownerId ?? undefined,
+      members: cached,
+    })
+  }
+
+  const fetched = await thread.members.fetch().catch((e) => {
+    return new DiscordOperationError({ operation: 'fetchThreadMembers', cause: e })
+  })
+  if (fetched instanceof Error) {
+    discordLogger.warn(`[FOOTER] Failed to fetch thread members: ${fetched.message}`)
+    return resolveFooterMentionUserId({
+      sessionUserId,
+      botUserId,
+      threadOwnerId: thread.ownerId ?? undefined,
+      members: cached,
+    })
+  }
+
+  const members = [...fetched.values()].map((member) => ({
+    id: member.id,
+    bot: member.user?.bot,
+    joinedTimestamp: member.joinedTimestamp ?? null,
+  }))
+  return resolveFooterMentionUserId({
+    sessionUserId,
+    botUserId,
+    threadOwnerId: thread.ownerId ?? undefined,
+    members,
+  })
 }
 
 /** Remove Discord mentions from text so they don't appear in thread titles */
