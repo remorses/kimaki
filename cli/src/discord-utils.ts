@@ -630,7 +630,7 @@ export function splitMarkdownForDiscord({
 }
 
 export async function sendThreadMessage(
-  thread: ThreadChannel,
+  thread: ThreadChannel | TextChannel,
   content: string,
   options?: { flags?: number },
 ): Promise<Message> {

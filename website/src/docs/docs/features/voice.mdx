@@ -1,7 +1,11 @@
 ---
 title: Voice Messages
+sidebarTitle: Voice Messages
 description: Record a voice message in Discord and Kimaki transcribes it using your project's file tree for accuracy.
 icon: lucide:mic
+prompt: |
+  Explain Discord voice transcription, queueing, and explicit chat creation from
+  @/cli/src/voice.ts, @/cli/src/voice-handler.ts, and @/cli/src/message-preprocessing.ts.
 ---
 
 Record a **voice message** in Discord and Kimaki transcribes it, then processes it as a normal prompt. Speaking is often faster than typing a long instruction, especially from your phone.
@@ -17,6 +21,32 @@ Record a **voice message** in Discord and Kimaki transcribes it, then processes 
 1. You record a voice note in the thread.
 2. Kimaki sends the audio to a transcription model.
 3. The transcribed text appears in the thread prefixed with **📝 Transcribed message:** and is sent to the agent.
+
+## Queue a voice request
+
+Say **"queue this message"** with the task to wait until the current turn finishes. Kimaki removes the queue instruction from the transcription. If the session is idle, the request starts immediately.
+
+```text
+Queue this message. Add tests for the login form.
+```
+
+## Create a separate chat
+
+Ask **explicitly** for a new chat, session, or thread. A plain new-chat request starts fresh with no conversation history:
+
+```text
+Fix the login bug. Create a new chat for this.
+```
+
+To keep the current conversation context, explicitly request a **side chat or fork** from a thread that already has a session:
+
+```text
+Explain the parser. Create a side chat with the current context for this.
+```
+
+Both routes send the task **only to the destination thread** and preserve the source's pending questions and permission requests. Routing takes priority over queueing. The destination inherits the current working directory. A voice note in a project channel already creates a fresh thread.
+
+**Conversational phrases** such as "by the way" do not move a voice request to another chat. Include a task with the routing instruction; a routing-only note does not start an empty turn. You can also say "use the plan agent" with either route.
 
 ## Accuracy from your project file tree
 
@@ -36,6 +66,8 @@ Kimaki auto-detects the provider from the API key you configure for audio:
 - **Gemini** key → uses `gemini-2.5-flash`.
 
 You'll be prompted for an audio API key during setup, or you can add one later from Discord when you first send a voice message.
+
+**Queue, chat, and agent detection require OpenAI or Gemini transcription.** The gateway's key-free Whisper fallback only transcribes speech; it does not interpret these routing instructions.
 
 ## Sending audio back
 

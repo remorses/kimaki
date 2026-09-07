@@ -10,6 +10,7 @@ import {
   extractTranscription,
   normalizeAudioMediaType,
   getOpenAIAudioConversionStrategy,
+  buildTranscriptionTool,
 } from './voice.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -110,6 +111,17 @@ describe('voice attachment detection', () => {
 })
 
 describe('extractTranscription', () => {
+  test('only offers contextual routing when a source session exists', () => {
+    expect(buildTranscriptionTool({}).inputSchema).toMatchObject({
+      properties: { sessionAction: { enum: ['new-session'] } },
+    })
+    expect(buildTranscriptionTool({ canForkSession: true }).inputSchema).toMatchObject({
+      properties: { sessionAction: { enum: ['btw', 'new-session'] } },
+    })
+    expect(JSON.stringify(buildTranscriptionTool({ canForkSession: true })))
+      .not.toContain('by the way')
+  })
+
   test.each(['btw', 'new-session'])('extracts %s routing without queueing', (sessionAction) => {
     const result = extractTranscription([{
       type: 'tool-call',

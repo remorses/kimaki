@@ -836,7 +836,8 @@ export async function startDiscordBot({
         // Cancel interactive UI when a real user sends a message.
         // Context-only messages (user-to-user replies) should not interrupt
         // the active run or dismiss pending UI.
-        if (!message.author.bot && !isCliInjectedPrompt && !isLeadingMentionToOtherUser) {
+        const dismissSourceUi = async () => {
+          if (message.author.bot || isCliInjectedPrompt || isLeadingMentionToOtherUser) return
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
@@ -853,6 +854,9 @@ export async function startDiscordBot({
             })
           }
           void cancelPendingFileUpload(thread.id)
+        }
+        if (!hasVoiceAttachment) {
+          await dismissSourceUi()
         }
 
         // A sleep wake only becomes a turn if it can still claim its own row.
@@ -901,8 +905,8 @@ export async function startDiscordBot({
                 scheduledTaskRunId: sessionStartSource.scheduledTaskRunId,
               }
             : undefined,
-          preprocess: () => {
-            return preprocessExistingThreadMessage({
+          preprocess: async () => {
+            const result = await preprocessExistingThreadMessage({
               message,
               thread,
               projectDirectory: resolvedProjectDir,
@@ -911,6 +915,12 @@ export async function startDiscordBot({
               hasVoiceAttachment,
               appId: currentAppId,
             })
+            // Routing must finish before touching source UI. This chain is separate
+            // from dispatchAction, so abort waiting does not block session events.
+            if (hasVoiceAttachment && !result.skip) {
+              await dismissSourceUi()
+            }
+            return result
           },
         })
 
