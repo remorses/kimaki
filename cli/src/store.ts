@@ -25,6 +25,7 @@ export type RegisteredUserCommand = {
 export type DeterministicTranscriptionConfig = {
   transcription: string
   queueMessage: boolean
+  sessionAction?: 'btw' | 'new-session'
   /** Exercise the production API-key prompt before returning the canned result. */
   requireApiKey?: boolean
   /** Agent name extracted from voice message. Only set if user explicitly requested an agent. */

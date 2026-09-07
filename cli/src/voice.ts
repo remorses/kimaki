@@ -274,6 +274,12 @@ function buildTranscriptionTool({
       description:
         'Set to true ONLY if the user explicitly says "queue this message", "queue this", or similar phrasing indicating they want this message queued instead of sent immediately. If not mentioned, omit or set to false.',
     },
+    sessionAction: {
+      type: 'string',
+      enum: ['btw', 'new-session'],
+      description:
+        'Use "btw" when the voice message ends with "by the way" or explicitly requests a side chat with current context. Use "new-session" for an explicit request such as "create this as a new chat session": a separate thread with no conversation history. Remove routing instructions from transcription. Omit for normal messages. Never combine with queueMessage.',
+    },
   }
 
   if (agentNames && agentNames.length > 0) {
@@ -301,6 +307,7 @@ function buildTranscriptionTool({
 export type TranscriptionResult = {
   transcription: string
   queueMessage: boolean
+  sessionAction?: 'btw' | 'new-session'
   /** Agent name extracted from voice message, only set if user explicitly requested an agent. */
   agent?: string
 }
@@ -308,7 +315,7 @@ export type TranscriptionResult = {
 /**
  * Extract transcription result from doGenerate content array.
  * Looks for a tool-call named 'transcriptionResult', falls back to text content.
- * Returns structured result with transcription text and queueMessage flag.
+ * Returns transcription text, queue/session routing, and optional agent selection.
  */
 export function extractTranscription(
   content: Array<LanguageModelV3Content>,
@@ -327,7 +334,10 @@ export function extractTranscription(
       return {}
     })()
     const transcription = (typeof args.transcription === 'string' ? args.transcription : '').trim()
-    const queueMessage = args.queueMessage === true
+    const sessionAction = args.sessionAction === 'btw' || args.sessionAction === 'new-session'
+      ? args.sessionAction
+      : undefined
+    const queueMessage = !sessionAction && args.queueMessage === true
     const agent = typeof args.agent === 'string' ? args.agent : undefined
     voiceLogger.log(
       `Transcription result received: "${transcription.slice(0, 100)}..."${queueMessage ? ' [QUEUE]' : ''}${agent ? ` [AGENT:${agent}]` : ''}`,
@@ -335,7 +345,7 @@ export function extractTranscription(
     if (!transcription) {
       return new EmptyTranscriptionError()
     }
-    return { transcription, queueMessage, agent }
+    return { transcription, queueMessage, agent, sessionAction }
   }
 
   // Fall back to text content if no tool call
@@ -595,6 +605,17 @@ This is a software development environment. The speaker is giving instructions t
  - Example: "Queue this message. Fix the login bug in auth.ts" → transcription: "Fix the login bug in auth.ts", queueMessage: true
  - If removing the queue phrase would leave empty content (user only said "queue this" with nothing else), keep the full spoken text as the transcription — never return an empty transcription.
  - If no queue intent is detected, omit queueMessage or set it to false.
+
+ SESSION ROUTING:
+ - If the message ends with "by the way", set sessionAction to "btw". An explicit request for a side chat also means "btw": fork a separate thread with the current conversation context.
+ - If the user explicitly says "create this as a new chat session", "start a fresh session", or equivalent, set sessionAction to "new-session": a separate thread with NO conversation history. A new chat is NOT a side chat.
+ - Remove these routing words from the transcription. Include only the actual request, not instructions about where to send it.
+ - Example: "Explain the parser, by the way" -> transcription: "Explain the parser", sessionAction: "btw".
+ - Example: "Fix the login bug. Create this as a new chat session" -> transcription: "Fix the login bug", sessionAction: "new-session".
+ - "By the way" in the middle or beginning of normal speech is not a routing command. Do not infer routing from the task content or session context.
+ - If both routing and queueing are requested, sessionAction takes priority; set queueMessage to false. An explicit fresh-session request takes priority over "by the way".
+ - If there is no actual request after removing routing words, use "[no message content]" and omit sessionAction. Never send routing words to the coding agent.
+ - Otherwise omit sessionAction. Agent selection can be combined with either route.
 ${agents && agents.length > 0 ? `
  AGENT SELECTION:
  - Only set the agent field when the user explicitly says phrases like "use the X agent", "switch to X agent", "with the X agent", or similar phrasing that clearly names a specific agent to switch to.

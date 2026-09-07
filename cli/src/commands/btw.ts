@@ -20,6 +20,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { copyCurrentSessionModel } from './model.js'
+import type { DiscordFileAttachment } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
@@ -31,6 +32,8 @@ export async function forkSessionToBtwThread({
   userId,
   username,
   appId,
+  agent,
+  images,
 }: {
   sourceThread: ThreadChannel
   projectDirectory: string
@@ -40,6 +43,8 @@ export async function forkSessionToBtwThread({
   userId: string
   username: string
   appId: string | undefined
+  agent?: string
+  images?: DiscordFileAttachment[]
 }): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
   // Parallelize: session lookup + opencode init + parent channel resolve are independent
   const [sessionId, getClientResult, textChannel] = await Promise.all([
@@ -124,6 +129,8 @@ export async function forkSessionToBtwThread({
   })
   await runtime.enqueueIncoming({
     prompt: wrappedPrompt,
+    agent,
+    images,
     userId,
     username,
     appId,

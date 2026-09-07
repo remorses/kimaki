@@ -2,6 +2,7 @@
 // Works in both text channels and threads. When used in a thread, the new
 // session inherits the same working directory (worktree/workspace) so the
 // user stays in the same folder context.
+// Also owns the fresh-thread creation flow used by voice routing.
 
 import { ChannelType, type TextChannel, type ThreadChannel } from 'discord.js'
 import fs from 'node:fs'
@@ -23,8 +24,83 @@ import {
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
+import type { DiscordFileAttachment } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.SESSION)
+
+// Shared fresh-session flow for slash commands and voice routing. No history is copied.
+export async function createNewSessionThread({
+  textChannel,
+  projectDirectory,
+  sdkDirectory,
+  sourceWorkspace,
+  prompt,
+  files = [],
+  images,
+  agent,
+  userId,
+  username,
+  appId,
+}: {
+  textChannel: TextChannel
+  projectDirectory: string
+  sdkDirectory: string
+  sourceWorkspace?: Awaited<ReturnType<typeof getThreadWorktreeOrWorkspace>>
+  prompt: string
+  files?: string[]
+  images?: DiscordFileAttachment[]
+  agent?: string
+  userId: string
+  username: string
+  appId?: string
+}): Promise<ThreadChannel | Error> {
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (getClient instanceof Error) return getClient
+
+  const starterMessage = await textChannel.send({
+    content: `**Starting OpenCode session**\n${prompt}${files.length > 0 ? `\nFiles: ${files.join(', ')}` : ''}`,
+    flags: SILENT_MESSAGE_FLAGS,
+  })
+  const thread = await starterMessage.startThread({
+    name: prompt.slice(0, 100),
+    autoArchiveDuration: 1440,
+    reason: 'OpenCode session',
+  })
+
+  // Persist the directory association for later commands and bot restarts.
+  if (sourceWorkspace?.status === 'ready' && sourceWorkspace.workspace_directory) {
+    await createPendingWorkspace({
+      threadId: thread.id,
+      workspaceType: sourceWorkspace.workspace_type,
+      workspaceName: sourceWorkspace.workspace_name ?? '',
+      projectDirectory,
+    })
+    await setWorkspaceReady({
+      threadId: thread.id,
+      workspaceId: sourceWorkspace.workspace_id ?? undefined,
+      workspaceDirectory: sourceWorkspace.workspace_directory,
+    })
+  }
+  await thread.members.add(userId)
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
+    thread,
+    projectDirectory,
+    sdkDirectory,
+    channelId: textChannel.id,
+    appId,
+  })
+  await runtime.enqueueIncoming({
+    prompt: files.length > 0 ? `${prompt}\n\n@${files.join(' @')}` : prompt,
+    images,
+    userId,
+    username,
+    agent,
+    appId,
+    mode: 'opencode',
+  })
+  return thread
+}
 
 export async function handleSessionCommand({
   command,
@@ -91,70 +167,28 @@ export async function handleSessionCommand({
   }
 
   try {
-    const getClient = await initializeOpencodeForDirectory(projectDirectory)
-    if (getClient instanceof Error) {
-      await command.editReply(getClient.message)
-      return
-    }
-
     const files = filesString
       .split(',')
       .map((f) => f.trim())
       .filter((f) => f)
 
-    let fullPrompt = prompt
-    if (files.length > 0) {
-      fullPrompt = `${prompt}\n\n@${files.join(' @')}`
-    }
-
-    const starterMessage = await textChannel.send({
-      content: `**Starting OpenCode session**\n${prompt}${files.length > 0 ? `\nFiles: ${files.join(', ')}` : ''}`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
-
-    const thread = await starterMessage.startThread({
-      name: prompt.slice(0, 100),
-      autoArchiveDuration: 1440,
-      reason: 'OpenCode session',
-    })
-
-    // Persist workspace association so commands in the new thread resolve the
-    // correct working directory, and the runtime survives bot restarts.
-    if (sourceWorkspace?.status === 'ready' && sourceWorkspace.workspace_directory) {
-      await createPendingWorkspace({
-        threadId: thread.id,
-        workspaceType: sourceWorkspace.workspace_type,
-        workspaceName: sourceWorkspace.workspace_name ?? '',
-        projectDirectory,
-      })
-      await setWorkspaceReady({
-        threadId: thread.id,
-        workspaceId: sourceWorkspace.workspace_id ?? undefined,
-        workspaceDirectory: sourceWorkspace.workspace_directory,
-      })
-    }
-
-    // Add user to thread so it appears in their sidebar
-    await thread.members.add(command.user.id)
-
-    await command.editReply(`Created new session in ${thread.toString()}`)
-
-    const runtime = getOrCreateRuntime({
-      threadId: thread.id,
-      thread,
+    const thread = await createNewSessionThread({
+      textChannel,
       projectDirectory,
       sdkDirectory,
-      channelId: textChannel.id,
-      appId,
-    })
-    await runtime.enqueueIncoming({
-      prompt: fullPrompt,
+      sourceWorkspace,
+      prompt,
+      files,
       userId: command.user.id,
       username: command.user.displayName,
       agent,
       appId,
-      mode: 'opencode',
     })
+    if (thread instanceof Error) {
+      await command.editReply(thread.message)
+      return
+    }
+    await command.editReply(`Created new session in ${thread.toString()}`)
   } catch (error) {
     logger.error('[SESSION] Error:', error)
     await command.editReply(
