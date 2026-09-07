@@ -29,6 +29,9 @@ import {
   setChannelDirectory,
   setChannelVerbosity,
   getThreadSession,
+  createPendingWorkspace,
+  setWorkspaceReady,
+  getThreadWorktreeOrWorkspace,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
@@ -430,10 +433,11 @@ e2eTest('voice message handling', () => {
 
   // ── Test 1: Voice message in a channel creates thread + session ──
 
-  test(
-    'voice session routing creates separate threads with the correct history',
-    async () => {
-      for (const sessionAction of ['btw', 'new-session'] as const) {
+  // Vitest disallows inline snapshots in test.each; register separate tests instead.
+  for (const sessionAction of ['btw', 'new-session'] as const) {
+    test(
+      `voice ${sessionAction} routing creates a separate thread with the correct history`,
+      async () => {
         await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID)
           .sendMessage({ content: `Source history for voice ${sessionAction}` })
         const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
@@ -442,12 +446,34 @@ e2eTest('voice message handling', () => {
         })
         await waitForFooterMessage({ discord, threadId: thread.id, timeout: 4_000 })
         const sourceSessionId = await getThreadSession(thread.id)
+        await createPendingWorkspace({
+          threadId: thread.id,
+          workspaceType: 'worktree',
+          workspaceName: 'voice-workspace',
+          projectDirectory: directories.projectDirectory,
+        })
+        await setWorkspaceReady({
+          threadId: thread.id,
+          workspaceId: 'voice-workspace-id',
+          workspaceDirectory: directories.projectDirectory,
+        })
         const prompt = `Explain voice routing ${sessionAction}`
         setDeterministicTranscription({ transcription: prompt, queueMessage: false, sessionAction })
         await discord.thread(thread.id).user(TEST_USER_ID).sendVoiceMessage()
+        const confirmation = sessionAction === 'btw' ? 'Session forked!' : 'Created new session in'
+        const routingMessages = await waitForBotMessageContaining({
+          discord,
+          threadId: thread.id,
+          text: confirmation,
+          timeout: 4_000,
+        })
+        // OpenCode can rename the destination before discovery; follow its confirmed ID.
+        const targetId = routingMessages.find((message) => message.content.includes(confirmation))
+          ?.content.match(/<#(\d+)>/)?.[1]
+        if (!targetId) throw new Error('Expected destination thread link')
         const target = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
           timeout: 4_000,
-          predicate: (candidate) => candidate.id !== thread.id && Boolean(candidate.name?.includes(prompt)),
+          predicate: (candidate) => candidate.id === targetId,
         })
         await waitForFooterMessage({ discord, threadId: target.id, timeout: 4_000 })
         const th = discord.thread(target.id)
@@ -501,22 +527,27 @@ e2eTest('voice message handling', () => {
             }
           `)
         }
-        expect(await th.getMessages()).toEqual(expect.arrayContaining([
-          expect.objectContaining({ content: 'session-reply' }),
-        ]))
         const targetSessionId = await getThreadSession(target.id)
         expect(targetSessionId).toBeTruthy()
         expect(targetSessionId).not.toBe(sourceSessionId)
+        expect(await getThreadWorktreeOrWorkspace(target.id)).toMatchObject({
+          status: 'ready',
+          workspace_type: 'worktree',
+          workspace_name: 'voice-workspace',
+          workspace_id: 'voice-workspace-id',
+          workspace_directory: directories.projectDirectory,
+        })
         const client = getOpencodeClientForTest(directories.projectDirectory)
         const targetMessages = await client.session.messages({ sessionID: targetSessionId! })
         const targetTexts = getUserTexts(targetMessages.data ?? []).join('\n')
         expect(targetTexts).toContain(prompt)
+        expect(targetTexts).toContain(`Voice message transcription from Discord user:\n${prompt}`)
         expect(targetTexts.includes(`Source history for voice ${sessionAction}`)).toBe(sessionAction === 'btw')
         const sourceMessages = await client.session.messages({ sessionID: sourceSessionId! })
         expect(getUserTexts(sourceMessages.data ?? []).join('\n')).not.toContain(prompt)
-      }
-    },
-  )
+      },
+    )
+  }
 
   test(
     'voice message in channel creates thread and starts session',

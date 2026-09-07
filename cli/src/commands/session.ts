@@ -16,6 +16,8 @@ import {
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
+  sendThreadMessage,
+  splitMarkdownForDiscord,
   SILENT_MESSAGE_FLAGS,
   resolveProjectDirectoryFromAutocomplete,
   resolveWorkingDirectory,
@@ -23,49 +25,43 @@ import {
 } from '../discord-utils.js'
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import * as errore from 'errore'
-import type { DiscordFileAttachment } from '../message-formatting.js'
+import { DiscordOperationError } from '../errors.js'
 
 const logger = createLogger(LogPrefix.SESSION)
 
-// Shared fresh-session flow for slash commands and voice routing. No history is copied.
+// Create only: callers confirm the destination before dispatching the full prompt.
 export async function createNewSessionThread({
   textChannel,
   projectDirectory,
-  sdkDirectory,
   sourceWorkspace,
   prompt,
   files = [],
-  images,
-  agent,
   userId,
-  username,
-  appId,
 }: {
   textChannel: TextChannel
   projectDirectory: string
-  sdkDirectory: string
   sourceWorkspace?: Awaited<ReturnType<typeof getThreadWorktreeOrWorkspace>>
   prompt: string
   files?: string[]
-  images?: DiscordFileAttachment[]
-  agent?: string
   userId: string
-  username: string
-  appId?: string
 }): Promise<ThreadChannel | Error> {
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
-  const starterMessage = await textChannel.send({
+  const [starter, ...remaining] = splitMarkdownForDiscord({
     content: `**Starting OpenCode session**\n${prompt}${files.length > 0 ? `\nFiles: ${files.join(', ')}` : ''}`,
-    flags: SILENT_MESSAGE_FLAGS,
+    maxLength: 2000,
   })
+  if (!starter) return new Error('No session request to send. Retry with /new-session and a prompt.')
+  const starterMessage = await textChannel.send({ content: starter, flags: SILENT_MESSAGE_FLAGS })
   const thread = await starterMessage.startThread({
     name: prompt.slice(0, 100),
     autoArchiveDuration: 1440,
     reason: 'OpenCode session',
   })
+  for (const chunk of remaining) {
+    await sendThreadMessage(thread, chunk)
+  }
 
   // Persist the directory association for later commands and bot restarts.
   if (sourceWorkspace?.status === 'ready' && sourceWorkspace.workspace_directory) {
@@ -81,23 +77,8 @@ export async function createNewSessionThread({
       workspaceDirectory: sourceWorkspace.workspace_directory,
     })
   }
-  await thread.members.add(userId)
-  const runtime = getOrCreateRuntime({
-    threadId: thread.id,
-    thread,
-    projectDirectory,
-    sdkDirectory,
-    channelId: textChannel.id,
-    appId,
-  })
-  await runtime.enqueueIncoming({
-    prompt: files.length > 0 ? `${prompt}\n\n@${files.join(' @')}` : prompt,
-    images,
-    userId,
-    username,
-    agent,
-    appId,
-    mode: 'opencode',
+  await thread.members.add(userId).catch((error) => {
+    logger.warn('Could not add session member:', error)
   })
   return thread
 }
@@ -166,35 +147,44 @@ export async function handleSessionCommand({
     return
   }
 
-  try {
-    const files = filesString
-      .split(',')
-      .map((f) => f.trim())
-      .filter((f) => f)
+  const files = filesString
+    .split(',')
+    .map((f) => f.trim())
+    .filter((f) => f)
 
-    const thread = await createNewSessionThread({
-      textChannel,
-      projectDirectory,
-      sdkDirectory,
-      sourceWorkspace,
-      prompt,
-      files,
-      userId: command.user.id,
-      username: command.user.displayName,
-      agent,
-      appId,
-    })
-    if (thread instanceof Error) {
-      await command.editReply(thread.message)
-      return
-    }
-    await command.editReply(`Created new session in ${thread.toString()}`)
-  } catch (error) {
-    logger.error('[SESSION] Error:', error)
-    await command.editReply(
-      `Failed to create session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    )
+  const thread = await createNewSessionThread({
+    textChannel,
+    projectDirectory,
+    sourceWorkspace,
+    prompt,
+    files,
+    userId: command.user.id,
+  }).catch((cause) => new DiscordOperationError({ operation: 'createSessionThread', cause }))
+  if (thread instanceof Error) {
+    logger.error('New session creation failed:', thread)
+    await command.editReply(`${thread.message}. Retry with /new-session.`)
+    return
   }
+  await command.editReply(`Created new session in ${thread.toString()}`)
+  const runtime = getOrCreateRuntime({
+    threadId: thread.id,
+    thread,
+    projectDirectory,
+    sdkDirectory,
+    channelId: textChannel.id,
+    appId,
+  })
+  await runtime.enqueueIncoming({
+    prompt: files.length > 0 ? `${prompt}\n\n@${files.join(' @')}` : prompt,
+    userId: command.user.id,
+    username: command.user.displayName,
+    agent,
+    appId,
+    mode: 'opencode',
+  }).catch(async (error) => {
+    logger.error('New session dispatch failed:', error)
+    await sendThreadMessage(thread, 'Could not send the request to OpenCode. Send your request again in this thread.')
+  })
 }
 
 async function handleAgentAutocomplete({

@@ -9,7 +9,13 @@ import {
   type ThreadChannel,
   MessageFlags,
 } from 'discord.js'
-import { getThreadSession, setThreadSession } from '../database.js'
+import {
+  getThreadSession,
+  setThreadSession,
+  getThreadWorktreeOrWorkspace,
+  createPendingWorkspace,
+  setWorkspaceReady,
+} from '../database.js'
 import {
   resolveWorkingDirectory,
   resolveTextChannel,
@@ -29,6 +35,7 @@ export async function forkSessionToBtwThread({
   projectDirectory,
   sdkDirectory,
   prompt,
+  modelPrompt = prompt,
   userId,
   username,
   appId,
@@ -40,6 +47,7 @@ export async function forkSessionToBtwThread({
   /** Worktree directory when forking from a worktree thread, otherwise same as projectDirectory */
   sdkDirectory: string
   prompt: string
+  modelPrompt?: string
   userId: string
   username: string
   appId: string | undefined
@@ -66,7 +74,7 @@ export async function forkSessionToBtwThread({
   }
 
   // Fork must succeed before creating the Discord thread to avoid orphan threads
-  const forkResponse = await getClientResult().session.fork({ sessionID: sessionId })
+  const forkResponse = await getClientResult().session.fork({ sessionID: sessionId, directory: sdkDirectory })
   if (!forkResponse.data) {
     return new Error('Failed to fork session')
   }
@@ -79,7 +87,7 @@ export async function forkSessionToBtwThread({
     channelId,
     appId,
     getClient: getClientResult,
-    directory: projectDirectory,
+    directory: sdkDirectory,
   })
 
   const thread = await textChannel.threads.create({
@@ -90,11 +98,27 @@ export async function forkSessionToBtwThread({
 
   // DB mapping must complete before user-visible actions so the thread is routable
   await setThreadSession(thread.id, forkedSession.id)
+  const sourceWorkspace = await getThreadWorktreeOrWorkspace(sourceThread.id)
+  if (sourceWorkspace?.status === 'ready' && sourceWorkspace.workspace_directory) {
+    await createPendingWorkspace({
+      threadId: thread.id,
+      workspaceType: sourceWorkspace.workspace_type,
+      workspaceName: sourceWorkspace.workspace_name ?? '',
+      projectDirectory,
+    })
+    await setWorkspaceReady({
+      threadId: thread.id,
+      workspaceId: sourceWorkspace.workspace_id ?? undefined,
+      workspaceDirectory: sourceWorkspace.workspace_directory,
+    })
+  }
 
   // Parallelize: member add and status message are independent best-effort actions
   const sourceThreadLink = `<#${sourceThread.id}>`
   await Promise.all([
-    thread.members.add(userId).catch(() => {}),
+    thread.members.add(userId).catch((error) => {
+      logger.warn('Could not add fork member:', error)
+    }),
     sendThreadMessage(
       thread,
       `Reusing context from ${sourceThreadLink} to answer prompt...\n${prompt}`,
@@ -116,7 +140,7 @@ export async function forkSessionToBtwThread({
     `Parent session: ${sessionId} (thread <#${sourceThread.id}>)`,
     `Do NOT send messages to the parent session unless the user explicitly asks you to.`,
     ``,
-    prompt,
+    modelPrompt,
   ].join('\n')
 
   const runtime = getOrCreateRuntime({
@@ -135,6 +159,9 @@ export async function forkSessionToBtwThread({
     username,
     appId,
     mode: 'opencode',
+  }).catch(async (error) => {
+    logger.error('Fork dispatch failed:', error)
+    await sendThreadMessage(thread, 'Could not send the request to OpenCode. Send your request again in this thread.')
   })
 
   return {

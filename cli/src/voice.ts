@@ -258,16 +258,18 @@ type TranscriptionLoopError =
 
 // Build the transcription tool schema dynamically so the agent field can
 // use an enum constrained to the actual available agent names.
-function buildTranscriptionTool({
+export function buildTranscriptionTool({
   agentNames,
+  canForkSession = false,
 }: {
   agentNames?: string[]
+  canForkSession?: boolean
 }): LanguageModelV3FunctionTool {
   const properties: Record<string, Record<string, unknown>> = {
     transcription: {
       type: 'string',
       description:
-        'The final transcription of the audio. MUST be non-empty. If audio is unclear, transcribe your best interpretation. If silent, too short to understand, or completely incomprehensible, use "[inaudible audio]".',
+        'The final transcription of the audio. If only a session routing instruction was spoken with no request, return an empty string. If audio is unclear, transcribe your best interpretation. If silent, too short to understand, or completely incomprehensible, use "[inaudible audio]".',
     },
     queueMessage: {
       type: 'boolean',
@@ -276,9 +278,10 @@ function buildTranscriptionTool({
     },
     sessionAction: {
       type: 'string',
-      enum: ['btw', 'new-session'],
+      enum: canForkSession ? ['btw', 'new-session'] : ['new-session'],
       description:
-        'Use "btw" when the voice message ends with "by the way" or explicitly requests a side chat with current context. Use "new-session" for an explicit request such as "create this as a new chat session": a separate thread with no conversation history. Remove routing instructions from transcription. Omit for normal messages. Never combine with queueMessage.',
+        'Use "new-session" only when explicitly asked to create a new chat, session, or thread with no conversation history. Remove routing instructions from transcription. Omit for normal messages. Never combine with queueMessage.' +
+        (canForkSession ? ' Use "btw" only when explicitly asked to create a side chat or fork with current context.' : ''),
     },
   }
 
@@ -373,6 +376,7 @@ async function runTranscriptionOnce({
   mediaType,
   temperature,
   agentNames,
+  canForkSession,
   provider,
 }: {
   model: LanguageModelV3
@@ -381,9 +385,10 @@ async function runTranscriptionOnce({
   mediaType: string
   temperature: number
   agentNames?: string[]
+  canForkSession?: boolean
   provider?: TranscriptionProvider
 }): Promise<TranscriptionLoopError | TranscriptionResult> {
-  const tool = buildTranscriptionTool({ agentNames })
+  const tool = buildTranscriptionTool({ agentNames, canForkSession })
   const options: LanguageModelV3CallOptions = {
     prompt: [
       {
@@ -481,6 +486,7 @@ export async function transcribeAudio({
   currentSessionContext,
   lastSessionContext,
   agents,
+  canForkSession = false,
 }: {
   audio: Buffer | Uint8Array | ArrayBuffer | string
   prompt?: string
@@ -495,6 +501,7 @@ export async function transcribeAudio({
   lastSessionContext?: string
   /** Available agents for agent selection via voice. Names used as enum values in the tool schema. */
   agents?: Array<{ name: string; description?: string }>
+  canForkSession?: boolean
 }): Promise<TranscribeAudioErrors | TranscriptionResult> {
   const apiKey =
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
@@ -607,14 +614,13 @@ This is a software development environment. The speaker is giving instructions t
  - If no queue intent is detected, omit queueMessage or set it to false.
 
  SESSION ROUTING:
- - If the message ends with "by the way", set sessionAction to "btw". An explicit request for a side chat also means "btw": fork a separate thread with the current conversation context.
- - If the user explicitly says "create this as a new chat session", "start a fresh session", or equivalent, set sessionAction to "new-session": a separate thread with NO conversation history. A new chat is NOT a side chat.
+  - Only route when the user explicitly asks to create a new chat, session, or thread for the request. Set sessionAction to "new-session": a separate thread with NO conversation history.
+  ${canForkSession ? '- If the user explicitly asks to create a side chat or fork with current context, set sessionAction to "btw" instead.' : '- Context-preserving side chats and forks are unavailable here. Preserve requests for them as spoken text without setting sessionAction.'}
  - Remove these routing words from the transcription. Include only the actual request, not instructions about where to send it.
- - Example: "Explain the parser, by the way" -> transcription: "Explain the parser", sessionAction: "btw".
  - Example: "Fix the login bug. Create this as a new chat session" -> transcription: "Fix the login bug", sessionAction: "new-session".
- - "By the way" in the middle or beginning of normal speech is not a routing command. Do not infer routing from the task content or session context.
- - If both routing and queueing are requested, sessionAction takes priority; set queueMessage to false. An explicit fresh-session request takes priority over "by the way".
- - If there is no actual request after removing routing words, use "[no message content]" and omit sessionAction. Never send routing words to the coding agent.
+  - Do not infer routing from conversational phrases, task content, or session context.
+  - If both routing and queueing are requested, sessionAction takes priority; set queueMessage to false. An explicit fresh-session request takes priority over a contextual fork.
+  - If there is no actual request after removing routing words, return an empty transcription and omit sessionAction. Never invent placeholder content.
  - Otherwise omit sessionAction. Agent selection can be combined with either route.
 ${agents && agents.length > 0 ? `
  AGENT SELECTION:
@@ -655,6 +661,7 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
     mediaType,
     temperature: temperature ?? 0.3,
     agentNames: agentNames && agentNames.length > 0 ? agentNames : undefined,
+    canForkSession,
     provider: resolvedProvider,
   })
 }

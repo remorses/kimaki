@@ -41,7 +41,7 @@ import {
 } from './discord-utils.js'
 import { requestAudioApiKey } from './commands/gemini-apikey.js'
 import { transcribeAudio, type TranscriptionResult } from './voice.js'
-import { DiscordOperationError, FetchError } from './errors.js'
+import { DiscordOperationError, FetchError, EmptyTranscriptionError, TranscriptionError } from './errors.js'
 import { store } from './store.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -486,6 +486,7 @@ type ProcessVoiceAttachmentArgs = {
   lastSessionContext?: string
   /** Available agents for voice-based agent selection. Passed to the transcription prompt as enum values. */
   agents?: Array<{ name: string; description?: string }>
+  canForkSession?: boolean
 }
 
 // Per-thread serialization is handled by ThreadSessionRuntime.enqueueIncoming()
@@ -499,7 +500,8 @@ export async function processVoiceAttachment({
   currentSessionContext,
   lastSessionContext,
   agents,
-}: ProcessVoiceAttachmentArgs): Promise<TranscriptionResult | null> {
+  canForkSession = false,
+}: ProcessVoiceAttachmentArgs): Promise<TranscriptionResult | TranscriptionError | EmptyTranscriptionError | null> {
   const audioAttachment = Array.from(message.attachments.values()).find(
     (attachment) => isVoiceAttachment(attachment),
   )
@@ -546,6 +548,10 @@ export async function processVoiceAttachment({
       agent: deterministicConfig.agent,
       sessionAction: deterministicConfig.sessionAction,
     }
+    if (!result.transcription.trim()) {
+      await sendThreadMessage(thread, 'No request was transcribed. Record another voice message with the task to send.')
+      return new EmptyTranscriptionError()
+    }
     voiceLogger.log(
       `[DETERMINISTIC] Returning canned transcription: "${result.transcription}"${result.queueMessage ? ' [QUEUE]' : ''}`,
     )
@@ -567,6 +573,10 @@ export async function processVoiceAttachment({
       thread,
       `📝 **Transcribed message:** ${escapeDiscordFormatting(result.transcription)}`,
     )
+    if (result.sessionAction === 'btw' && !canForkSession) {
+      await sendThreadMessage(thread, 'A contextual side chat needs an existing session. Nothing was sent to the agent. Retry from a session, or ask to create a fresh chat with this request.')
+      return new TranscriptionError({ reason: 'Contextual routing is unavailable without a source session' })
+    }
     return result
   }
 
@@ -678,14 +688,18 @@ export async function processVoiceAttachment({
         currentSessionContext,
         lastSessionContext,
         agents,
+        canForkSession,
       })
 
   if (transcription instanceof Error) {
+    if (transcription instanceof EmptyTranscriptionError) {
+      await sendThreadMessage(thread, 'No request was transcribed. Record another voice message with the task to send.')
+      return transcription
+    }
     const errMsg = errore.matchError(transcription, {
       ApiKeyMissingError: (e) => e.message,
       InvalidAudioFormatError: (e) => e.message,
       TranscriptionError: (e) => e.message,
-      EmptyTranscriptionError: (e) => e.message,
       NoResponseContentError: (e) => e.message,
       NoToolResponseError: (e) => e.message,
       Error: (e) => e.message,
@@ -729,6 +743,10 @@ export async function processVoiceAttachment({
     thread,
     `📝 **Transcribed message:** ${escapeDiscordFormatting(text)}`,
   )
+  if (transcription.sessionAction === 'btw' && !canForkSession) {
+    await sendThreadMessage(thread, 'A contextual side chat needs an existing session. Nothing was sent to the agent. Retry from a session, or ask to create a fresh chat with this request.')
+    return new TranscriptionError({ reason: 'Contextual routing is unavailable without a source session' })
+  }
   if (agent) {
     await sendThreadMessage(thread, `Detected agent: ${agent}`)
   }
