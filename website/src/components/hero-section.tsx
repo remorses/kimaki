@@ -37,7 +37,7 @@ export function HeroSection() {
                   "'Playfair Display', Georgia, 'Times New Roman', serif",
               }}
             >
-              Kimaki:
+              AI coding agents
             </span>
             <span
               className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
@@ -46,16 +46,7 @@ export function HeroSection() {
                   "'Playfair Display', Georgia, 'Times New Roman', serif",
               }}
             >
-              your AI dev team,
-            </span>
-            <span
-              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
-              style={{
-                fontFamily:
-                  "'Playfair Display', Georgia, 'Times New Roman', serif",
-              }}
-            >
-              on Discord.
+              from Discord.
             </span>
           </h1>
           <InstallCommand />
