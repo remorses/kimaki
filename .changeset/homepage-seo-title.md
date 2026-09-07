@@ -2,6 +2,6 @@
 'website': patch
 ---
 
-Put **Kimaki** in the homepage title and H1 so Google can match the brand query.
+Put ranking keywords in the homepage title and H1. Holocron already appends ` — Kimaki`.
 
-The old title was `AI coding agents orchestrated from Discord — Kimaki`, and the page had two H1s that never said Kimaki. The homepage now uses `Kimaki: AI coding agents from Discord`, one hero H1 starting with Kimaki, and `hideTitle` so Holocron does not inject a second heading.
+The title and hero H1 are both `AI coding agents from Discord`. The browser tab becomes `AI coding agents from Discord — Kimaki`. The H1 does not repeat the site name.
