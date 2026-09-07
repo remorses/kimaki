@@ -44,7 +44,7 @@ import {
   NOTIFY_MESSAGE_FLAGS,
   raceDiscordRename,
   DISCORD_THREAD_RENAME_TIMEOUT_MS,
-  resolveFooterMentionUserId,
+  resolveThreadFooterMentionUserId,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
 import {
@@ -4819,35 +4819,13 @@ export class ThreadSessionRuntime {
       ? `${truncatedFolder} ⋅ ${truncatedBranch} ⋅ `
       : `${truncatedFolder} ⋅ `
     const hasQueuedMessage = this.getQueueLength() > 0
-    const botUserId = this.thread.client.user?.id
-    const needsMemberFallback = Boolean(
-      store.getState().footerMentionsEnabled
-      && !hasQueuedMessage
-      && botUserId
-      && this.thread.ownerId === botUserId
-      && (!this.state?.sessionUserId || this.state.sessionUserId === botUserId)
-    )
-    const memberIds = needsMemberFallback
-      ? await this.thread.members.fetch()
-        .then((members) => [...members.keys()])
-        .catch((e) => {
-          logger.warn(
-            `[FOOTER] Failed to fetch thread members: ${e instanceof Error ? e.message : String(e)}`,
-          )
-          return [...this.thread.members.cache.keys()]
+    const mentionUserId = store.getState().footerMentionsEnabled && !hasQueuedMessage
+      ? await resolveThreadFooterMentionUserId({
+          sessionUserId: this.state?.sessionUserId,
+          thread: this.thread,
         })
-      : [...this.thread.members.cache.keys()]
-    const mentionUserId = resolveFooterMentionUserId({
-      sessionUserId: this.state?.sessionUserId,
-      botUserId,
-      threadOwnerId: this.thread.ownerId ?? undefined,
-      memberIds,
-    })
-    const mention = store.getState().footerMentionsEnabled
-      && !hasQueuedMessage
-      && mentionUserId
-      ? ` <@${mentionUserId}>`
-      : ''
+      : undefined
+    const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`
     this.stopTyping()
 

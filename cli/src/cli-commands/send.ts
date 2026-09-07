@@ -554,6 +554,10 @@ cli
 
           const threadPromptMarker: ThreadStartMarker = {
             start: true,
+            ...(threadTargetUser && {
+              userId: threadTargetUser.id,
+              ...(threadTargetUser.username && { username: threadTargetUser.username }),
+            }),
             ...(options.agent && { agent: options.agent }),
             ...(options.model && { model: options.model }),
             ...(options.permission?.length ? { permissions: options.permission } : {}),
