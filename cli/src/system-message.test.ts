@@ -860,7 +860,7 @@ describe('system-message', () => {
 
       ## running dev servers with tunnel access
 
-      ALWAYS use \`kimaki tunnel\` when starting any dev server. NEVER run \`pnpm dev\`, \`npm run dev\`, or any dev server command without wrapping it in \`kimaki tunnel\`. Always invoke Kimaki directly as \`kimaki\`, never via \`npx\` or \`bunx\`. The user is on Discord, not at the terminal — localhost URLs are useless to them. They need a tunnel URL to access the site.
+      When starting a local dev server that the Discord user should open in a browser, prefer wrapping it in \`kimaki tunnel\` so they get a public URL. Localhost URLs are useless from Discord. Invoke Kimaki directly as \`kimaki\`, not via \`npx\` or \`bunx\`.
 
       Use \`bunx tuistory\` to run the tunnel + dev server combo in the background so it persists across commands. This is preferable to raw shell backgrounding because you can wait for real output, read logs, and interact with the running process.
 
