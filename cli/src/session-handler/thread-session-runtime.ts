@@ -44,6 +44,7 @@ import {
   NOTIFY_MESSAGE_FLAGS,
   raceDiscordRename,
   DISCORD_THREAD_RENAME_TIMEOUT_MS,
+  resolveFooterMentionUserId,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
 import {
@@ -3482,7 +3483,10 @@ export class ThreadSessionRuntime {
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
     await waitForCurrentThreadIngress()
     threadState.setSessionUsername(this.threadId, input.username)
-    threadState.setSessionUserId(this.threadId, input.userId)
+    const botUserId = this.thread.client.user?.id
+    if (input.userId && input.userId !== botUserId) {
+      threadState.setSessionUserId(this.threadId, input.userId)
+    }
     await this.ensureParentSessionId({
       parentSessionId: input.parentSessionId,
     })
@@ -4799,10 +4803,34 @@ export class ThreadSessionRuntime {
       ? `${truncatedFolder} ⋅ ${truncatedBranch} ⋅ `
       : `${truncatedFolder} ⋅ `
     const hasQueuedMessage = this.getQueueLength() > 0
+    const botUserId = this.thread.client.user?.id
+    const needsMemberFallback = Boolean(
+      store.getState().footerMentionsEnabled
+      && !hasQueuedMessage
+      && botUserId
+      && this.thread.ownerId === botUserId
+      && (!this.state?.sessionUserId || this.state.sessionUserId === botUserId)
+    )
+    const memberIds = needsMemberFallback
+      ? await this.thread.members.fetch()
+        .then((members) => [...members.keys()])
+        .catch((e) => {
+          logger.warn(
+            `[FOOTER] Failed to fetch thread members: ${e instanceof Error ? e.message : String(e)}`,
+          )
+          return [...this.thread.members.cache.keys()]
+        })
+      : [...this.thread.members.cache.keys()]
+    const mentionUserId = resolveFooterMentionUserId({
+      sessionUserId: this.state?.sessionUserId,
+      botUserId,
+      threadOwnerId: this.thread.ownerId ?? undefined,
+      memberIds,
+    })
     const mention = store.getState().footerMentionsEnabled
       && !hasQueuedMessage
-      && this.state?.sessionUserId
-      ? ` <@${this.state.sessionUserId}>`
+      && mentionUserId
+      ? ` <@${mentionUserId}>`
       : ''
     const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`
     this.stopTyping()

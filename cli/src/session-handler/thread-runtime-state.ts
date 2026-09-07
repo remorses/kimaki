@@ -183,6 +183,7 @@ export function setSessionUsername(threadId: string, username: string): void {
 }
 
 export function setSessionUserId(threadId: string, userId: string): void {
+  if (!userId) return
   updateThread(threadId, (t) => {
     if (t.sessionUserId) {
       return t

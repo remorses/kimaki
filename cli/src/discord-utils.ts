@@ -331,6 +331,22 @@ export async function ensureThreadMember({
   if (addMemberResult instanceof Error) return addMemberResult
 }
 
+export function resolveFooterMentionUserId({
+  sessionUserId,
+  botUserId,
+  threadOwnerId,
+  memberIds,
+}: {
+  sessionUserId: string | undefined
+  botUserId: string | undefined
+  threadOwnerId: string | undefined
+  memberIds: string[]
+}): string | undefined {
+  if (sessionUserId && sessionUserId !== botUserId) return sessionUserId
+  if (!botUserId || threadOwnerId !== botUserId) return undefined
+  return memberIds.find((id) => id && id !== botUserId)
+}
+
 /** Remove Discord mentions from text so they don't appear in thread titles */
 export function stripMentions(text: string): string {
   return text

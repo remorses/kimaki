@@ -4,6 +4,7 @@ import {
   hasKimakiAdminPermission,
   hasKimakiBotPermission,
   raceDiscordRename,
+  resolveFooterMentionUserId,
   resolveGuildMessageMember,
   splitMarkdownForDiscord,
 } from './discord-utils.js'
@@ -291,6 +292,44 @@ describe('resolveGuildMessageMember', () => {
     } as unknown as Message
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(null)
+  })
+})
+
+describe('resolveFooterMentionUserId', () => {
+  test('uses the session user when it is not the bot', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: 'user-1',
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      memberIds: ['bot-1', 'user-2'],
+    })).toBe('user-1')
+  })
+
+  test('skips the bot and uses the first human member when the bot created the thread', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: 'bot-1',
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      memberIds: ['bot-1', 'user-2', 'user-3'],
+    })).toBe('user-2')
+  })
+
+  test('does not mention anyone when the bot created the thread and no human member exists', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: 'bot-1',
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      memberIds: ['bot-1'],
+    })).toBeUndefined()
+  })
+
+  test('uses the first human member when the bot created the thread and no session user is set', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: undefined,
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      memberIds: ['bot-1', 'user-2'],
+    })).toBe('user-2')
   })
 })
 
