@@ -544,6 +544,7 @@ export async function processVoiceAttachment({
       transcription: deterministicConfig.transcription,
       queueMessage: deterministicConfig.queueMessage,
       agent: deterministicConfig.agent,
+      sessionAction: deterministicConfig.sessionAction,
     }
     voiceLogger.log(
       `[DETERMINISTIC] Returning canned transcription: "${result.transcription}"${result.queueMessage ? ' [QUEUE]' : ''}`,
@@ -627,7 +628,7 @@ export async function processVoiceAttachment({
   // No user-configured key: gateway-mode installs get one free transcription
   // via the kimaki.dev Whisper fallback before we bother the user with the
   // "add API key" dialog. This fallback has no tool-calling, so it can't
-  // detect queueMessage/agent hints spoken in the voice message the way the
+  // detect queueMessage/sessionAction/agent hints spoken in the voice message the way the
   // OpenAI/Gemini path can.
   let gatewayTranscription: string | undefined
   if (!transcriptionApiKey) {

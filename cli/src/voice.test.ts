@@ -110,6 +110,36 @@ describe('voice attachment detection', () => {
 })
 
 describe('extractTranscription', () => {
+  test.each(['btw', 'new-session'])('extracts %s routing without queueing', (sessionAction) => {
+    const result = extractTranscription([{
+      type: 'tool-call',
+      toolCallId: 'routing',
+      toolName: 'transcriptionResult',
+      input: JSON.stringify({
+        transcription: 'Explain the authentication flow',
+        sessionAction,
+        queueMessage: true,
+        agent: 'plan',
+      }),
+    }])
+    expect(result).toEqual({
+      transcription: 'Explain the authentication flow',
+      sessionAction,
+      queueMessage: false,
+      agent: 'plan',
+    })
+  })
+
+  test('ignores unknown session routing', () => {
+    const result = extractTranscription([{
+      type: 'tool-call',
+      toolCallId: 'routing',
+      toolName: 'transcriptionResult',
+      input: JSON.stringify({ transcription: 'Keep working', sessionAction: 'invalid' }),
+    }])
+    expect(result).toEqual({ transcription: 'Keep working', queueMessage: false, agent: undefined })
+  })
+
   test('extracts transcription from tool call', () => {
     const result = extractTranscription([
       {
@@ -123,6 +153,7 @@ describe('extractTranscription', () => {
       {
         "agent": undefined,
         "queueMessage": false,
+        "sessionAction": undefined,
         "transcription": "hello world",
       }
     `)
@@ -144,6 +175,7 @@ describe('extractTranscription', () => {
       {
         "agent": undefined,
         "queueMessage": true,
+        "sessionAction": undefined,
         "transcription": "Fix the login bug in auth.ts",
       }
     `)

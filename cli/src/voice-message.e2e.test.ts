@@ -28,6 +28,7 @@ import {
   closeDatabase,
   setChannelDirectory,
   setChannelVerbosity,
+  getThreadSession,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
@@ -428,6 +429,94 @@ e2eTest('voice message handling', () => {
   })
 
   // ── Test 1: Voice message in a channel creates thread + session ──
+
+  test(
+    'voice session routing creates separate threads with the correct history',
+    async () => {
+      for (const sessionAction of ['btw', 'new-session'] as const) {
+        await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID)
+          .sendMessage({ content: `Source history for voice ${sessionAction}` })
+        const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+          timeout: 4_000,
+          predicate: (candidate) => Boolean(candidate.name?.includes(`Source history for voice ${sessionAction}`)),
+        })
+        await waitForFooterMessage({ discord, threadId: thread.id, timeout: 4_000 })
+        const sourceSessionId = await getThreadSession(thread.id)
+        const prompt = `Explain voice routing ${sessionAction}`
+        setDeterministicTranscription({ transcription: prompt, queueMessage: false, sessionAction })
+        await discord.thread(thread.id).user(TEST_USER_ID).sendVoiceMessage()
+        const target = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+          timeout: 4_000,
+          predicate: (candidate) => candidate.id !== thread.id && Boolean(candidate.name?.includes(prompt)),
+        })
+        await waitForFooterMessage({ discord, threadId: target.id, timeout: 4_000 })
+        const th = discord.thread(target.id)
+        const transcript = {
+          source: (await discord.thread(thread.id).text()).replaceAll(target.id, 'TARGET_THREAD'),
+          target: (await th.text()).replaceAll(thread.id, 'SOURCE_THREAD'),
+        }
+        if (sessionAction === 'btw') {
+          expect(transcript).toMatchInlineSnapshot(`
+            {
+              "source": "--- from: user (voice-tester)
+            Source history for voice btw
+            --- from: assistant (TestBot)
+            *using deterministic-provider/deterministic-v2*
+            session-reply
+            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+            --- from: user (voice-tester)
+            [attachment: voice-message.ogg]
+            --- from: assistant (TestBot)
+            🎤 Transcribing voice message...
+            📝 **Transcribed message:** Explain voice routing btw
+            Session forked! Continue in <#TARGET_THREAD>",
+              "target": "--- from: assistant (TestBot)
+            Reusing context from <#SOURCE_THREAD> to answer prompt...
+            Explain voice routing btw
+            session-reply
+            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>",
+            }
+          `)
+        } else {
+          expect(transcript).toMatchInlineSnapshot(`
+            {
+              "source": "--- from: user (voice-tester)
+            Source history for voice new-session
+            --- from: assistant (TestBot)
+            *using deterministic-provider/deterministic-v2*
+            session-reply
+            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+            --- from: user (voice-tester)
+            [attachment: voice-message.ogg]
+            --- from: assistant (TestBot)
+            🎤 Transcribing voice message...
+            📝 **Transcribed message:** Explain voice routing new-session
+            Created new session in <#TARGET_THREAD>",
+              "target": "--- from: assistant (TestBot)
+            **Starting OpenCode session**
+            Explain voice routing new-session
+            *using deterministic-provider/deterministic-v2*
+            session-reply
+            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>",
+            }
+          `)
+        }
+        expect(await th.getMessages()).toEqual(expect.arrayContaining([
+          expect.objectContaining({ content: 'session-reply' }),
+        ]))
+        const targetSessionId = await getThreadSession(target.id)
+        expect(targetSessionId).toBeTruthy()
+        expect(targetSessionId).not.toBe(sourceSessionId)
+        const client = getOpencodeClientForTest(directories.projectDirectory)
+        const targetMessages = await client.session.messages({ sessionID: targetSessionId! })
+        const targetTexts = getUserTexts(targetMessages.data ?? []).join('\n')
+        expect(targetTexts).toContain(prompt)
+        expect(targetTexts.includes(`Source history for voice ${sessionAction}`)).toBe(sessionAction === 'btw')
+        const sourceMessages = await client.session.messages({ sessionID: sourceSessionId! })
+        expect(getUserTexts(sourceMessages.data ?? []).join('\n')).not.toContain(prompt)
+      }
+    },
+  )
 
   test(
     'voice message in channel creates thread and starts session',
