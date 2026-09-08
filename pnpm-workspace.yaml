@@ -6,3 +6,6 @@ packages:
   - '!./subrouter'
   - ./subrouter/cli
   - ./subrouter/opencode
+  # OpenCode v2 submodule is bun-only. Tests import its tester files, not as a workspace package.
+  - '!./opencode-v2'
+  - '!./opencode-v2/**'
