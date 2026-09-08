@@ -27,7 +27,8 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "@discordjs/opus"
+      "@discordjs/opus",
+      "@opencode-ai/cli"
     ],
     "overrides": {},
     "packageExtensions": {
