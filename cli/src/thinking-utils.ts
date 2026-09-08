@@ -59,3 +59,24 @@ export function matchThinkingValue({
     return availableValue.toLowerCase() === normalizedRequestedValue
   })
 }
+
+export function resolveRequestedThinkingVariant({
+  requestedValue,
+  providers,
+  providerId,
+  modelId,
+}: {
+  requestedValue: string
+  providers: ThinkingProvider[]
+  providerId: string
+  modelId: string
+}): string | undefined {
+  return matchThinkingValue({
+    requestedValue,
+    availableValues: getThinkingValuesForModel({
+      providers,
+      providerId,
+      modelId,
+    }),
+  })
+}

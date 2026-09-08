@@ -65,6 +65,32 @@ function truncateCommandDescription(description: string): string {
   return description.slice(0, 100)
 }
 
+export function buildQuickAgentSlashCommand({
+  commandName,
+  description,
+}: {
+  commandName: string
+  description: string
+}) {
+  return new SlashCommandBuilder()
+    .setName(commandName)
+    .setDescription(truncateCommandDescription(description))
+    .setDMPermission(false)
+    .addStringOption((opt) =>
+      opt
+        .setName('prompt')
+        .setDescription('Send a prompt with this agent')
+        .setRequired(false),
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName('variant')
+        .setDescription('Model thinking level for this agent')
+        .setRequired(false)
+        .setAutocomplete(true),
+    )
+}
+
 export async function registerCommands({
   token,
   appId,
@@ -505,17 +531,7 @@ export async function registerCommands({
     })
 
     commands.push(
-      new SlashCommandBuilder()
-        .setName(commandName)
-        .setDescription(truncateCommandDescription(description))
-        .setDMPermission(false)
-        .addStringOption((opt) =>
-          opt
-            .setName('prompt')
-            .setDescription('Send a prompt with this agent')
-            .setRequired(false),
-        )
-        .toJSON(),
+      buildQuickAgentSlashCommand({ commandName, description }).toJSON(),
     )
   }
 
