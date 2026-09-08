@@ -23,6 +23,7 @@ import {
   doesLatestUserTurnHaveNaturalCompletion,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
+  getAssistantMessageKind,
   isSummaryAssistantMessage,
   isSessionBusy,
   isAssistantTextReadyForQuestion,
@@ -418,6 +419,21 @@ describe('compaction summary during an active user turn', () => {
   })
 
   test('summary identity is derivable while its billed usage remains counted', () => {
+    expect(getAssistantMessageKind({
+      events: activeEvents.slice(0, 2),
+      sessionId,
+      messageId: summaryMessageId,
+    })).toBe('unknown')
+    expect(getAssistantMessageKind({
+      events: activeEvents,
+      sessionId,
+      messageId: summaryMessageId,
+    })).toBe('summary')
+    expect(getAssistantMessageKind({
+      events: activeEvents,
+      sessionId,
+      messageId: replyMessageId,
+    })).toBe('user-facing')
     expect(isSummaryAssistantMessage({
       events: activeEvents,
       sessionId,
