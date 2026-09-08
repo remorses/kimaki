@@ -39,6 +39,34 @@ function isUserFacingAssistantMessage(message: AssistantMessage): boolean {
   return message.summary !== true
 }
 
+export type AssistantMessageKind = 'user-facing' | 'summary' | 'unknown'
+
+export function getAssistantMessageKind({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex?: number
+}): AssistantMessageKind {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+      continue
+    }
+    return info.summary === true ? 'summary' : 'user-facing'
+  }
+  return 'unknown'
+}
+
 function getTaskChildSessionId({
   part,
 }: {
@@ -1074,19 +1102,12 @@ export function isSummaryAssistantMessage({
   messageId: string
   upToIndex?: number
 }): boolean {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
-      continue
-    }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
-      continue
-    }
-    return info.summary === true
-  }
-  return false
+  return getAssistantMessageKind({
+    events,
+    sessionId,
+    messageId,
+    upToIndex,
+  }) === 'summary'
 }
 
 // Returns a stable 1-based subtask index for candidateSessionId.

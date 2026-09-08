@@ -16,6 +16,8 @@ type RuntimeInternals = {
   handleMessageUpdated: (message: OpenCodeMessage) => Promise<void>
   handlePartUpdated: (part: Part) => Promise<void>
   handleNaturalAssistantCompletion: () => Promise<void>
+  handleMainPart: (part: Part) => Promise<void>
+  handleSubtaskPart: (part: Part) => Promise<void>
 }
 
 function summaryMessageEvent({
@@ -123,6 +125,44 @@ describe('ThreadSessionRuntime compaction summary routing', () => {
     runtime.partBuffer = new Map()
 
     await runtime.handlePartUpdated(summaryTextPart({ sessionId, messageId }))
+
+    expect(runtime.partBuffer.size).toBe(0)
+  })
+
+  test.each([
+    ['main session', 'ses_main'],
+    ['subagent session', 'ses_child'],
+  ])('holds %s parts until summary identity arrives, then drops them', async (_, sessionId) => {
+    const messageId = `msg_summary_unknown_${sessionId}`
+    const runtime = Object.create(ThreadSessionRuntime.prototype) as RuntimeInternals
+    Object.defineProperty(runtime, 'state', {
+      value: { sessionId: 'ses_main' },
+      configurable: true,
+    })
+    runtime.eventBuffer = []
+    runtime.partBuffer = new Map()
+    runtime.handleMainPart = async () => {
+      throw new Error('Unknown summary parts must not render')
+    }
+    runtime.handleSubtaskPart = async () => {
+      throw new Error('Unknown summary parts must not render')
+    }
+    runtime.flushBufferedParts = async () => {
+      throw new Error('Summary message must not flush parts')
+    }
+    runtime.handleNaturalAssistantCompletion = async () => {
+      throw new Error('Summary message must not complete the Discord turn')
+    }
+
+    await runtime.handlePartUpdated(summaryTextPart({ sessionId, messageId }))
+
+    expect(runtime.partBuffer.get(messageId)?.size).toBe(1)
+
+    const event = summaryMessageEvent({ sessionId, messageId })
+    if (event.type !== 'message.updated') {
+      throw new Error('Expected summary message event')
+    }
+    await runtime.handleMessageUpdated(event.properties.info)
 
     expect(runtime.partBuffer.size).toBe(0)
   })

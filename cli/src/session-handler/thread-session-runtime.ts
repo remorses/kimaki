@@ -148,10 +148,10 @@ import {
   getTokenUsageSessionIdsForIdle,
   isDerivedChildSession,
   getLatestAssistantMessageIdForLatestUserTurn,
+  getAssistantMessageKind,
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
-  isSummaryAssistantMessage,
   type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -2056,14 +2056,21 @@ export class ThreadSessionRuntime {
   private async handleMessageUpdated(msg: OpenCodeMessage): Promise<void> {
     const sessionId = this.state?.sessionId
 
-    if (msg.sessionID !== sessionId) {
-      return
-    }
     if (msg.role !== 'assistant') {
       return
     }
     if (msg.summary === true) {
+      this.clearBufferedPartsForMessages([msg.id])
       logger.info(`[SKIP] message.updated for compaction summary ${msg.id}`)
+      return
+    }
+    if (msg.sessionID !== sessionId) {
+      const subtaskInfo = this.getSubtaskInfoForSession(msg.sessionID)
+      if (subtaskInfo) {
+        for (const part of this.getBufferedParts(msg.id)) {
+          await this.handleSubtaskPart(part, subtaskInfo)
+        }
+      }
       return
     }
     if (!sessionId) {
@@ -2074,6 +2081,7 @@ export class ThreadSessionRuntime {
       sessionId,
       messageId: msg.id,
     })) {
+      this.clearBufferedPartsForMessages([msg.id])
       logger.info(`[SKIP] message.updated for old assistant message ${msg.id}, not in latest user turn`)
       return
     }
@@ -2181,17 +2189,23 @@ export class ThreadSessionRuntime {
 
   private async handlePartUpdated(part: Part): Promise<void> {
     const sessionId = this.state?.sessionId
-
-    if (isSummaryAssistantMessage({
+    const messageKind = getAssistantMessageKind({
       events: this.eventBuffer,
       sessionId: part.sessionID,
       messageId: part.messageID,
-    })) {
+    })
+
+    if (messageKind === 'summary') {
+      this.clearBufferedPartsForMessages([part.messageID])
       logger.info(`[SKIP] message.part.updated for compaction summary ${part.messageID}`)
       return
     }
 
     this.storePart(part)
+
+    if (messageKind === 'unknown') {
+      return
+    }
 
     const subtaskInfo = this.getSubtaskInfoForSession(part.sessionID)
     const isSubtaskEvent = Boolean(subtaskInfo)
