@@ -52,6 +52,8 @@ export async function bootKimaki2E2e({
   const options = {
     token: discord.botToken,
     restApi: discord.restUrl,
+    clientId: discord.botUserId,
+    guildId: discord.guildId,
     channels: { [TEXT_CHANNEL_ID]: projectDirectory },
   }
   const config = deterministicConfig({
@@ -62,6 +64,7 @@ export async function bootKimaki2E2e({
       dirs.render,
       dirs.btw,
       dirs.permissions,
+      { package: dirs.commands, options },
     ],
   })
   if (turnDelayMs > 0) {
