@@ -7,6 +7,7 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
+  type Interaction,
   type Message,
 } from 'discord.js'
 
@@ -39,10 +40,12 @@ async function startDiscord({
   token,
   restApi,
   onMessage,
+  onInteraction,
 }: {
   token: string
   restApi?: string
   onMessage: (message: Message) => Promise<void>
+  onInteraction?: (interaction: Interaction) => Promise<void>
 }) {
   const client = new Client({
     intents: [
@@ -53,10 +56,15 @@ async function startDiscord({
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
     rest: restApi ? { api: restApi, version: '10' } : undefined,
   })
-  const handler = (message: Message) => {
+  const messageHandler = (message: Message) => {
     void onMessage(message).catch(logPluginError)
   }
-  client.on(Events.MessageCreate, handler)
+  const interactionHandler = (interaction: Interaction) => {
+    if (!onInteraction) return
+    void onInteraction(interaction).catch(logPluginError)
+  }
+  client.on(Events.MessageCreate, messageHandler)
+  client.on(Events.InteractionCreate, interactionHandler)
   await client.login(token)
   let stopped = false
   return {
@@ -64,7 +72,8 @@ async function startDiscord({
     stop() {
       if (stopped) return
       stopped = true
-      client.off(Events.MessageCreate, handler)
+      client.off(Events.MessageCreate, messageHandler)
+      client.off(Events.InteractionCreate, interactionHandler)
       void client.destroy()
     },
   }
@@ -74,17 +83,19 @@ export async function acquireDiscord({
   token,
   restApi,
   onMessage,
+  onInteraction,
 }: {
   token: string
   restApi?: string
   onMessage: (message: Message) => Promise<void>
+  onInteraction?: (interaction: Interaction) => Promise<void>
 }) {
   if (globalThis.__kimaki2Discord) {
     globalThis.__kimaki2Discord.refs++
     return
   }
   if (!globalThis.__kimaki2DiscordStarting) {
-    globalThis.__kimaki2DiscordStarting = startDiscord({ token, restApi, onMessage })
+    globalThis.__kimaki2DiscordStarting = startDiscord({ token, restApi, onMessage, onInteraction })
       .then((started) => {
         const host: DiscordHost = { refs: 0, client: started.client, stop: started.stop }
         globalThis.__kimaki2Discord = host
