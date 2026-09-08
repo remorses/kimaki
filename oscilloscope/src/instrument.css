@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Responsive enamel oscilloscope with procedural surface grain and mechanical controls. */
+/* Responsive enamel oscilloscope with surface grain and image-textured hardware. */
 
 :root {
   font-family: Arial, "Helvetica Neue", sans-serif;
@@ -246,70 +246,15 @@ body {
   width: 2.8cqw;
   height: 4.65cqw;
   padding: 0;
-  border: 0.1cqw solid #676239;
-  border-radius: 0.22cqw;
+  border: 0;
   cursor: pointer;
-  background:
-    var(--grain),
-    linear-gradient(
-      105deg,
-      #bdb57d,
-      #8c804a 18%,
-      #c0b77b 48%,
-      #82743d 85%,
-      #d1c18b
-    );
-  box-shadow:
-    inset 0.1cqw 0.1cqw 0.12cqw #eee1ac99,
-    inset -0.1cqw -0.1cqw 0.15cqw #514a26,
-    0.4cqw 0.6cqw 0.5cqw #27231680;
+  background: transparent url("/textures/switch-up.webp") center / 100% 100%
+    no-repeat;
+  box-shadow: none;
+  filter: drop-shadow(0.25cqw 0.35cqw 0.25cqw #27231680);
 }
-.toggle-slot {
-  position: absolute;
-  inset: 0.25cqw 0.35cqw 0.6cqw;
-  border: 0.14cqw solid #aa9665;
-  border-radius: 0.2cqw;
-  background: linear-gradient(90deg, #151c13, #3a3921 70%, #141b12);
-  box-shadow:
-    inset 0.1cqw 0.15cqw 0.2cqw #050b07,
-    0 0.1cqw 0.07cqw #e4d79a;
-}
-.toggle-lever {
-  position: absolute;
-  left: 0.79cqw;
-  top: 0.08cqw;
-  width: 1.05cqw;
-  height: 2.8cqw;
-  border-radius: 45% 45% 30% 30%;
-  background:
-    radial-gradient(
-      ellipse at 35% 12%,
-      #fff6cf 0%,
-      #dccba1 11%,
-      #726344 23%,
-      transparent 34%
-    ),
-    linear-gradient(
-      90deg,
-      #3a3020,
-      #ad9666 17%,
-      #74603a 30%,
-      #292418 48%,
-      #100f0b 73%,
-      #1c2117
-    );
-  box-shadow:
-    inset 0 0.16cqw 0.1cqw #e7e5ba,
-    inset 0 -0.35cqw 0.2cqw #343426,
-    0.25cqw 0.7cqw 0.4cqw #101b12a6;
-  transform: perspective(8cqw) rotateX(-12deg);
-  transition:
-    top 120ms,
-    transform 120ms;
-}
-.toggle[aria-checked="true"] .toggle-lever {
-  top: 1.35cqw;
-  transform: perspective(8cqw) rotateX(18deg);
+.toggle[aria-checked="true"] {
+  background-image: url("/textures/switch-down.webp");
 }
 
 .lamp-pair {
@@ -508,82 +453,20 @@ body {
   border-radius: 50%;
   cursor: ew-resize;
 }
-.dial-ticks {
-  position: absolute;
-  inset: 0.1cqw 0.45cqw;
-  border-radius: 50%;
-  z-index: 1;
-}
-.dial-ticks > i {
-  position: absolute;
-  top: 0;
-  left: calc(50% - 0.125cqw);
-  width: 0.25cqw;
-  height: 0.6cqw;
-  background: #171813;
-  transform-origin: 50% 6.1cqw;
-}
 .dial::before {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #b4bea2, #667462 55%, #374c3b);
-  box-shadow:
-    0.5cqw 0.8cqw 0.8cqw #26362770,
-    0.13cqw 0.2cqw 0.15cqw #344733,
-    inset 0.1cqw 0.13cqw 0.15cqw #d9dec3;
+  background: url("/textures/dial-base.webp") center / 100% 100% no-repeat;
 }
 .dial-grip {
   position: absolute;
   z-index: 2;
-  inset: 2.25cqw 2.65cqw;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 34% 23%,
-    #a9b5a0,
-    #8c9e87 40%,
-    #697d65 76%,
-    #536b52
-  );
-  box-shadow:
-    inset 0.15cqw 0.2cqw 0.4cqw #e3e5c96b,
-    inset -0.2cqw -0.3cqw 0.4cqw #2b442f99,
-    0.16cqw 0.25cqw 0.25cqw #24392988;
-}
-.flute {
-  position: absolute;
-  left: calc(50% - 0.7cqw);
-  top: calc(50% - 0.65cqw);
-  width: 1.4cqw;
-  height: 1.3cqw;
-  border-radius: 44%;
-  background: linear-gradient(110deg, #a4b299, #81947a 48%, #52684f);
-  box-shadow:
-    inset 0.06cqw 0.1cqw 0.12cqw #c7d0b680,
-    inset -0.08cqw -0.12cqw 0.14cqw #354e3980;
-}
-.dial-grip::after {
-  content: "";
-  position: absolute;
-  inset: 0.75cqw;
-  border-radius: 50%;
-  background:
-    var(--grain), linear-gradient(135deg, #434d3b, #6a7660 55%, #a3ad94);
-  box-shadow:
-    inset 0.2cqw 0.3cqw 0.5cqw #29312590,
-    0 0.1cqw 0.2cqw #dbe0c280;
-}
-.dial-pointer {
-  position: absolute;
-  top: 0.15cqw;
-  left: calc(50% - 0.12cqw);
-  width: 0.4cqw;
-  height: 2.7cqw;
-  border-radius: 0.12cqw;
-  background: #293c2c;
-  box-shadow: 0.06cqw 0 0.05cqw #d0d7b5;
-  z-index: 1;
+  top: calc(50% - 4.5cqw);
+  left: calc(50% - 4.5cqw);
+  width: 9cqw;
+  height: 9cqw;
+  background: url("/textures/dial-grip.webp") center / contain no-repeat;
 }
 .dial-input {
   position: absolute;
@@ -594,10 +477,4 @@ body {
   opacity: 0;
   cursor: ew-resize;
   z-index: 3;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .toggle-lever {
-    transition: none;
-  }
 }

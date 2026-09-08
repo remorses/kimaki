@@ -1,6 +1,6 @@
 "use client";
 
-// Reusable physical controls and a live, projected phosphor signal.
+// Image-textured hardware controls and a live, projected phosphor signal.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 function Screws({ side = false }: { side?: boolean }) {
@@ -57,10 +57,7 @@ function Toggle({
         aria-checked={value}
         onClick={onChange}
         title={`${label}: ${value ? right : left}`}
-      >
-        <span className="toggle-slot" />
-        <span className="toggle-lever" />
-      </button>
+      />
       <span>{right}</span>
     </div>
   );
@@ -437,30 +434,11 @@ export function Instrument() {
             className="dial"
             title="Drag to tune the signal. Arrow keys for fine adjustment."
           >
-            <span className="dial-ticks" aria-hidden="true">
-              {Array.from({ length: 13 }, (_, i) => (
-                <i
-                  key={i}
-                  style={{ transform: `rotate(${i * 25 - 150}deg)` }}
-                />
-              ))}
-            </span>
             <span
               className="dial-grip"
               aria-hidden="true"
               style={{ transform: `rotate(${signal.frequency * 1.5}deg)` }}
-            >
-              {Array.from({ length: 14 }, (_, i) => (
-                <span
-                  className="flute"
-                  key={i}
-                  style={{
-                    transform: `rotate(${(i * 360) / 14}deg) translateY(-3.3cqw)`,
-                  }}
-                />
-              ))}
-              <i className="dial-pointer" />
-            </span>
+            />
             <input
               className="dial-input"
               type="range"
