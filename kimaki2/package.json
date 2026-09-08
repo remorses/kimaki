@@ -1,0 +1,58 @@
+{
+  "name": "kimaki2",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "OpenCode v2 Kimaki: Discord as plugins on one opencode2 process.",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc && tsc -p opencode-plugins/tsconfig.json",
+    "test": "vitest",
+    "prepublishOnly": "rimraf dist \"*.tsbuildinfo\" && pnpm build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/kimaki",
+    "directory": "kimaki2"
+  },
+  "homepage": "https://github.com/remorses/kimaki",
+  "bugs": {
+    "url": "https://github.com/remorses/kimaki/issues"
+  },
+  "keywords": [
+    "kimaki",
+    "opencode",
+    "discord",
+    "plugin"
+  ],
+  "dependencies": {
+    "@opencode-ai/plugin": "0.0.0-beta-19271",
+    "discord.js": "^14.26.3"
+  },
+  "devDependencies": {
+    "@opencode-ai/cli": "0.0.0-beta-19271",
+    "@types/node": "^24.3.0",
+    "discord-digital-twin": "workspace:^",
+    "opencode-deterministic-provider": "workspace:^",
+    "rimraf": "^6.0.1"
+  }
+}
