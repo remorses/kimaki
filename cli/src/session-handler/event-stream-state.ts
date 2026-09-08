@@ -35,6 +35,10 @@ export function getEventBufferSessionId(event: EventBufferEvent): string | undef
 type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
 type UserMessage = Extract<OpenCodeMessage, { role: 'user' }>
 
+function isUserFacingAssistantMessage(message: AssistantMessage): boolean {
+  return message.summary !== true
+}
+
 function getTaskChildSessionId({
   part,
 }: {
@@ -312,6 +316,9 @@ export function isAssistantMessageNaturalCompletion({
 }: {
   message: AssistantMessage
 }): boolean {
+  if (!isUserFacingAssistantMessage(message)) {
+    return false
+  }
   if (typeof message.time.completed !== 'number') {
     return false
   }
@@ -784,6 +791,9 @@ export function getLatestRunInfo({
     if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
       continue
     }
+    if (!isUserFacingAssistantMessage(msg)) {
+      continue
+    }
     return {
       model: msg.modelID,
       providerID: msg.providerID,
@@ -828,6 +838,9 @@ export function getAssistantMessageIdsForLatestUserTurn({
     if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
       continue
     }
+    if (!isUserFacingAssistantMessage(msg)) {
+      continue
+    }
     if (msg.parentID === latestUserMessage.id) {
       assistantMessageIds.add(msg.id)
     }
@@ -867,6 +880,9 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
     }
     const info = event.properties.info
     if (info.sessionID !== sessionId || info.role !== 'assistant') {
+      continue
+    }
+    if (!isUserFacingAssistantMessage(info)) {
       continue
     }
     if (info.parentID !== latestUserMessage.id) {
@@ -1045,6 +1061,32 @@ export function isAssistantMessageInLatestUserTurn({
     upToIndex,
   })
   return assistantMessageIds.has(messageId)
+}
+
+export function isSummaryAssistantMessage({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+      continue
+    }
+    return info.summary === true
+  }
+  return false
 }
 
 // Returns a stable 1-based subtask index for candidateSessionId.

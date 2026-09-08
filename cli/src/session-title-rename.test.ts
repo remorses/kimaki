@@ -97,6 +97,42 @@ describe('deriveThreadNameFromSessionTitle', () => {
     ).toMatchInlineSnapshot(`undefined`)
   })
 
+  test('ignores a title containing only OpenCode callout markup', () => {
+    expect(
+      deriveThreadNameFromSessionTitle({
+        sessionTitle: '<callout accent="#ef4444">',
+        currentName: 'Useful existing title',
+      }),
+    ).toMatchInlineSnapshot(`undefined`)
+  })
+
+  test('ignores paired OpenCode callout markup with no title text', () => {
+    expect(
+      deriveThreadNameFromSessionTitle({
+        sessionTitle: '<callout accent="#ef4444"></callout>',
+        currentName: 'Useful existing title',
+      }),
+    ).toMatchInlineSnapshot(`undefined`)
+  })
+
+  test('keeps useful text while removing OpenCode callout wrappers', () => {
+    expect(
+      deriveThreadNameFromSessionTitle({
+        sessionTitle: '<callout accent="#ef4444">Useful title</callout>',
+        currentName: 'seed',
+      }),
+    ).toMatchInlineSnapshot(`"Useful title"`)
+  })
+
+  test('preserves a thread prefix around a multiline uppercase callout', () => {
+    expect(
+      deriveThreadNameFromSessionTitle({
+        sessionTitle: '<CALLOUT icon="info">\nUseful title\n</CALLOUT>',
+        currentName: 'btw: original title',
+      }),
+    ).toMatchInlineSnapshot(`"btw: Useful title"`)
+  })
+
   test('preserves btw: prefix from current name', () => {
     expect(
       deriveThreadNameFromSessionTitle({

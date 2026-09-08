@@ -23,6 +23,7 @@ import {
   doesLatestUserTurnHaveNaturalCompletion,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
+  isSummaryAssistantMessage,
   isSessionBusy,
   isAssistantTextReadyForQuestion,
   deriveLatestUnansweredQuestion,
@@ -323,6 +324,134 @@ describe('session-user-interruption', () => {
 
   test('latest user turn start time follows the follow-up user message', () => {
     expect(getCurrentTurnStartTime({ events, sessionId })).toBe(1772636335777)
+  })
+})
+
+describe('compaction summary during an active user turn', () => {
+  const sessionId = 'ses_compaction'
+  const userMessageId = 'msg_user_compaction'
+  const replyMessageId = 'msg_reply_compaction'
+  const summaryMessageId = 'msg_summary_compaction'
+
+  function assistantEvent({
+    messageId,
+    created,
+    completed,
+    summary,
+  }: {
+    messageId: string
+    created: number
+    completed?: number
+    summary?: true
+  }): EventBufferEntry {
+    return eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: messageId,
+          sessionID: sessionId,
+          role: 'assistant',
+          parentID: userMessageId,
+          time: { created, completed },
+          modelID: summary ? 'compaction-model' : 'reply-model',
+          providerID: 'test-provider',
+          mode: summary ? 'compaction' : 'build',
+          agent: summary ? 'compaction' : 'build',
+          path: { cwd: '/test', root: '/test' },
+          cost: summary ? 2 : 1,
+          tokens: {
+            input: summary ? 20 : 10,
+            output: 1,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          finish: completed ? 'stop' : undefined,
+          summary,
+        },
+      },
+    })
+  }
+
+  const activeEvents = [
+    eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: userMessageId,
+          sessionID: sessionId,
+          role: 'user',
+          time: { created: 1 },
+          agent: 'build',
+          model: { providerID: 'test-provider', modelID: 'reply-model' },
+        },
+      },
+    }),
+    assistantEvent({ messageId: replyMessageId, created: 2 }),
+    assistantEvent({
+      messageId: summaryMessageId,
+      created: 3,
+      completed: 4,
+      summary: true,
+    }),
+  ]
+
+  test('compaction completion does not replace or complete the user-facing reply', () => {
+    expect(getAssistantMessageIdsForLatestUserTurn({
+      events: activeEvents,
+      sessionId,
+    })).toEqual(new Set([replyMessageId]))
+    expect(getLatestAssistantMessageIdForLatestUserTurn({
+      events: activeEvents,
+      sessionId,
+    })).toBe(replyMessageId)
+    expect(isAssistantMessageInLatestUserTurn({
+      events: activeEvents,
+      sessionId,
+      messageId: summaryMessageId,
+    })).toBe(false)
+    expect(doesLatestUserTurnHaveNaturalCompletion({
+      events: activeEvents,
+      sessionId,
+    })).toBe(false)
+  })
+
+  test('summary identity is derivable while its billed usage remains counted', () => {
+    expect(isSummaryAssistantMessage({
+      events: activeEvents,
+      sessionId,
+      messageId: summaryMessageId,
+    })).toBe(true)
+    expect(isAssistantMessageNaturalCompletion({
+      message: getAssistantMessageById({
+        events: activeEvents,
+        sessionId,
+        messageId: summaryMessageId,
+      }),
+    })).toBe(false)
+    expect(getLatestRunInfo({ events: activeEvents, sessionId })).toEqual({
+      model: 'reply-model',
+      providerID: 'test-provider',
+      agent: 'build',
+      tokensUsed: 11,
+    })
+    expect(getLatestTurnTokenUsage({ events: activeEvents, sessionId })).toMatchObject({
+      total: 32,
+      cost: 3,
+      assistantMessageCount: 2,
+    })
+  })
+
+  test('the real continuation still completes normally after compaction', () => {
+    const completedEvents = [
+      ...activeEvents,
+      assistantEvent({ messageId: replyMessageId, created: 2, completed: 5 }),
+    ]
+    expect(doesLatestUserTurnHaveNaturalCompletion({
+      events: completedEvents,
+      sessionId,
+    })).toBe(true)
   })
 })
 
