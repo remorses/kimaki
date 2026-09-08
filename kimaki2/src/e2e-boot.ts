@@ -65,6 +65,7 @@ export async function bootKimaki2E2e({
       dirs.btw,
       dirs.permissions,
       { package: dirs.commands, options },
+      dirs.rpc,
     ],
   })
   if (turnDelayMs > 0) {
@@ -90,6 +91,7 @@ export async function bootKimaki2E2e({
   return {
     discord,
     projectDirectory,
+    server,
     async stop() {
       await server.stop()
       await discord.stop()
