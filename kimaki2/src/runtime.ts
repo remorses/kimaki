@@ -6,4 +6,5 @@ export function resetKimakiRuntime() {
   globalThis.__kimaki2Discord = undefined
   globalThis.__kimaki2DiscordStarting = undefined
   globalThis.__kimaki2Threads = undefined
+  globalThis.__kimaki2Permissions = undefined
 }
