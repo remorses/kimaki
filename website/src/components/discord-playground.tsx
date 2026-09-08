@@ -885,7 +885,7 @@ export function DiscordPlayground() {
   return (
     <div
       data-discord-playground
-      className='relative flex w-full flex-col overflow-hidden rounded-[1.5em] bg-[#1e1f22] font-normal text-[#dbdee1] shadow-[0_1.5em_5em_rgba(0,0,0,0.45)] ring-1 ring-white/10 pointer-events-none lg:pointer-events-auto'
+      className='relative flex w-full flex-col overflow-hidden rounded-[0.85em] bg-[#1e1f22] font-normal text-[#dbdee1] shadow-[0_1.5em_5em_rgba(0,0,0,0.45)] ring-1 ring-white/10 pointer-events-none lg:pointer-events-auto'
       style={{
         fontFamily:
           'Inter, "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif',
