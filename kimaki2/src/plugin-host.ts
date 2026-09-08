@@ -211,16 +211,22 @@ export function memoryStorage(): Plugin.Context['storage'] {
   }
 }
 
+type BusEvent = {
+  type: string
+  location?: { directory?: string }
+  data?: Record<string, string | string[] | undefined>
+}
+
 export function createBus() {
-  const listeners = new Set<(event: unknown) => void>()
+  const listeners = new Set<(event: BusEvent) => void>()
   return {
-    publish(event: unknown) {
+    publish(event: BusEvent) {
       for (const listener of listeners) listener(event)
     },
-    subscribe(): AsyncIterable<unknown> {
-      const queue: unknown[] = []
+    subscribe(_options?: { signal?: AbortSignal }) {
+      const queue: BusEvent[] = []
       let notify: (() => void) | undefined
-      const listener = (event: unknown) => {
+      const listener = (event: BusEvent) => {
         queue.push(event)
         notify?.()
       }
@@ -234,7 +240,8 @@ export function createBus() {
                   notify = resolve
                 })
               }
-              yield queue.shift()
+              const next = queue.shift()
+              if (next) yield next
             }
           } finally {
             listeners.delete(listener)

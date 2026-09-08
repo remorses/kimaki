@@ -1,10 +1,11 @@
 // Discord gateway once. MessageCreate starts a thread and prompts the session.
 
-import { ChannelType, ThreadAutoArchiveDuration, type Message } from 'discord.js'
+import { ChannelType, ThreadAutoArchiveDuration, type Interaction, type Message } from 'discord.js'
 import { Plugin } from '@opencode-ai/plugin'
 import { extractBtwSuffix } from '../../src/btw-suffix.ts'
 import { threadNameFromMessage, usernameOf } from '../../src/discord-text.ts'
 import { startSideSession } from '../btw/side-session.ts'
+import { handlePermissionButton } from '../permissions/index.ts'
 import { createThread, findByThreadId, getContext, getDirectoryForChannel } from '../threads/registry.ts'
 import { acquireDiscord, releaseDiscord } from './client.ts'
 
@@ -65,7 +66,15 @@ export default Plugin.define({
     const token = typeof ctx.options['token'] === 'string' ? ctx.options['token'] : process.env['KIMAKI_BOT_TOKEN']
     if (!token) return
     const restApi = typeof ctx.options['restApi'] === 'string' ? ctx.options['restApi'] : undefined
-    await acquireDiscord({ token, restApi, onMessage })
+    await acquireDiscord({
+      token,
+      restApi,
+      onMessage,
+      onInteraction: async (interaction: Interaction) => {
+        if (!interaction.isButton()) return
+        await handlePermissionButton(interaction)
+      },
+    })
     return () => {
       releaseDiscord()
     }

@@ -61,6 +61,7 @@ export async function bootKimaki2E2e({
       { package: dirs.discord, options },
       dirs.render,
       dirs.btw,
+      dirs.permissions,
     ],
   })
   if (turnDelayMs > 0) {

@@ -145,6 +145,7 @@ export function pluginDirs() {
     discord: path.join(root, 'discord'),
     render: path.join(root, 'render'),
     btw: path.join(root, 'btw'),
+    permissions: path.join(root, 'permissions'),
   }
 }
 
