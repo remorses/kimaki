@@ -113,6 +113,40 @@ test('queue suffix waits for the current turn then drains', async () => {
   await stop()
 }, 30_000)
 
+test('slash queue waits for the current turn then drains', async () => {
+  const { discord, stop } = await bootKimaki2E2e({
+    dirName: 'kimaki2-slash-queue',
+    turnDelayMs: 400,
+  })
+  await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+    content: 'Reply with exactly: setup',
+  })
+  const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+    timeout: 8_000,
+    predicate: (item) => item.name === 'Reply with exactly: setup',
+  })
+  await discord.thread(thread.id).user(TEST_USER_ID).runSlashCommand({
+    name: 'queue',
+    options: [{ name: 'message', type: 3, value: 'Reply with exactly: queued' }],
+  })
+  await waitForThreadText({
+    discord,
+    threadId: thread.id,
+    includes: '» **queue-tester:** Reply with exactly: queued\nok',
+  })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (queue-tester)
+    Reply with exactly: setup
+    --- from: assistant (TestBot)
+    Queued: Reply with exactly: queued
+    *using deterministic-provider/deterministic-v2*
+    ok
+    » **queue-tester:** Reply with exactly: queued
+    ok"
+  `)
+  await stop()
+}, 30_000)
+
 test('btw suffix forks a side thread', async () => {
   const { discord, stop } = await bootKimaki2E2e({ dirName: 'kimaki2-btw' })
   await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({

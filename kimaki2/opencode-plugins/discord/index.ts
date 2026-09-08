@@ -5,6 +5,7 @@ import { Plugin } from '@opencode-ai/plugin'
 import { extractBtwSuffix } from '../../src/btw-suffix.ts'
 import { threadNameFromMessage, usernameOf } from '../../src/discord-text.ts'
 import { startSideSession } from '../btw/side-session.ts'
+import { handleQueueCommand } from '../commands/index.ts'
 import { handlePermissionButton } from '../permissions/index.ts'
 import { createThread, findByThreadId, getContext, getDirectoryForChannel } from '../threads/registry.ts'
 import { acquireDiscord, releaseDiscord } from './client.ts'
@@ -71,6 +72,10 @@ export default Plugin.define({
       restApi,
       onMessage,
       onInteraction: async (interaction: Interaction) => {
+        if (interaction.isChatInputCommand() && interaction.commandName === 'queue') {
+          await handleQueueCommand(interaction)
+          return
+        }
         if (!interaction.isButton()) return
         await handlePermissionButton(interaction)
       },
