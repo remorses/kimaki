@@ -147,6 +147,7 @@ export function pluginDirs() {
     btw: path.join(root, 'btw'),
     permissions: path.join(root, 'permissions'),
     commands: path.join(root, 'commands'),
+    rpc: path.join(root, 'rpc'),
   }
 }
 
