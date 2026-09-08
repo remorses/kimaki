@@ -146,6 +146,7 @@ export function pluginDirs() {
     render: path.join(root, 'render'),
     btw: path.join(root, 'btw'),
     permissions: path.join(root, 'permissions'),
+    commands: path.join(root, 'commands'),
   }
 }
 
