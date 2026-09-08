@@ -76,6 +76,7 @@ import {
   handleAgentCommand,
   handleAgentSelectMenu,
   handleQuickAgentCommand,
+  handleQuickAgentAutocomplete,
 } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import {
@@ -267,6 +268,13 @@ export function registerInteractionHandler({
               return
 
             default:
+              if (
+                interaction.commandName.endsWith('-agent') &&
+                interaction.commandName !== 'agent'
+              ) {
+                await handleQuickAgentAutocomplete({ interaction, appId })
+                return
+              }
               await interaction.respond([])
               return
           }

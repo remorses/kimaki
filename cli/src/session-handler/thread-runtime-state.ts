@@ -43,6 +43,8 @@ export type QueuedMessage = {
   // Set by --agent/--model/--permission flags on kimaki send or slash commands.
   agent?: string
   model?: string
+  // Thinking-level variant from `/xxx-agent variant:`.
+  variant?: string
   // Raw permission rule strings ("tool:action" or "tool:pattern:action").
   // Parsed and merged into session permissions on creation.
   permissions?: string[]

@@ -21,7 +21,7 @@ import {
   test,
   expect,
 } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder } from 'discord.js'
+import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencodeConfig,
@@ -42,6 +42,7 @@ import {
   getSessionModel,
   getSessionAgent,
   getChannelAgent,
+  getChannelModel,
   setSessionModel,
   type VerbosityLevel,
 } from './database.js'
@@ -58,6 +59,7 @@ import {
   waitForFooterMessage,
 } from './test-utils.js'
 import { buildQuickAgentCommandDescription } from './commands/agent.js'
+import { buildQuickAgentSlashCommand } from './discord-command-registration.js'
 
 
 const TEST_USER_ID = '200000000000000920'
@@ -339,6 +341,9 @@ describe('agent model resolution', () => {
     }
     providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
     providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
+    Object.assign(providerConfig.models[PLAN_AGENT_MODEL], {
+      variants: { high: {}, max: {} },
+    })
     providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
 
     fs.writeFileSync(
@@ -400,22 +405,13 @@ describe('agent model resolution', () => {
     // Register quick agent slash commands so /plan-agent and /test-agent-agent
     // are resolvable by handleQuickAgentCommand via guild.commands.fetch().
     const agentCommands = ['test-agent', 'plan', 'plain'].map((agentName) => {
-      return new SlashCommandBuilder()
-        .setName(`${agentName}-agent`)
-        .setDescription(
-          buildQuickAgentCommandDescription({
-            agentName,
-            description: `Switch to ${agentName} agent`,
-          }),
-        )
-        .setDMPermission(false)
-        .addStringOption((opt) =>
-          opt
-            .setName('prompt')
-            .setDescription('Send a prompt with this agent')
-            .setRequired(false),
-        )
-        .toJSON()
+      return buildQuickAgentSlashCommand({
+        commandName: `${agentName}-agent`,
+        description: buildQuickAgentCommandDescription({
+          agentName,
+          description: `Switch to ${agentName} agent`,
+        }),
+      }).toJSON()
     })
     const rest = new REST({ version: '10', api: discord.restUrl }).setToken(
       discord.botToken,
@@ -1001,6 +997,111 @@ describe('agent model resolution', () => {
         ok
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent with prompt persists a supported thinking variant',
+    async () => {
+      const prompt = 'Reply with exactly: inline-plan-agent-variant-msg'
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'plan-agent',
+          options: [
+            { name: 'prompt', type: 3, value: prompt },
+            { name: 'variant', type: 3, value: 'high' },
+          ],
+        })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => t.name === prompt,
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const sessionId = await getThreadSession(thread.id)
+      expect(sessionId).toBeDefined()
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
+        *using deterministic-provider/plan-model-v2 ⋅ plan*
+        ok
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+      `)
+      expect(sessionId ? await getSessionModel(sessionId) : undefined).toMatchInlineSnapshot(`
+        {
+          "modelId": "deterministic-provider/plan-model-v2",
+          "variant": "high",
+        }
+      `)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent variant persists on the channel without a prompt',
+    async () => {
+      const db = await getDb()
+      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
+
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'plan-agent',
+          options: [{ name: 'variant', type: 3, value: 'max' }],
+        })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      const start = Date.now()
+      let confirmation = ''
+      while (Date.now() - start < 4_000) {
+        const messages = await discord.channel(TEXT_CHANNEL_ID).getMessages()
+        const match = [...messages].reverse().find((message) => {
+          return (
+            message.author.id === discord.botUserId &&
+            message.content.includes('Variant: **max**')
+          )
+        })
+        if (match) {
+          confirmation = match.content
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+
+      expect(confirmation).toMatchInlineSnapshot(`
+        "Switched to **plan** agent for this channel (was **test-agent**)
+        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        Variant: **max**
+        All new sessions will use this agent."
+      `)
+      expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('plan')
+      expect(await getChannelModel(TEXT_CHANNEL_ID)).toMatchInlineSnapshot(`
+        {
+          "modelId": "deterministic-provider/plan-model-v2",
+          "variant": "max",
+        }
+      `)
+
+      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
     },
     20_000,
   )

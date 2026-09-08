@@ -64,6 +64,7 @@ import {
   setThreadParentSessionId,
   getThreadWorktreeOrWorkspace,
   setSessionAgent,
+  setSessionModel,
   clearSessionModel,
   getVariantCascade,
   setSessionStartSource,
@@ -174,6 +175,7 @@ export const pendingPermissions = new Map<
 import {
   getThinkingValuesForModel,
   matchThinkingValue,
+  resolveRequestedThinkingVariant,
 } from '../thinking-utils.js'
 import { execAsync } from '../worktrees.js'
 import {
@@ -621,6 +623,11 @@ export type IngressInput = {
   agent?: string
   model?: string
   /**
+   * Thinking-level variant from `/xxx-agent variant:`. Applied after
+   * agent/model snapshot so it wins over cascade for this turn.
+   */
+  variant?: string
+  /**
    * Raw permission rule strings from --permission flag ("tool:action" or
    * "tool:pattern:action"). Parsed into PermissionRuleset entries by
    * parsePermissionRules() and appended after buildSessionPermissions()
@@ -1057,6 +1064,50 @@ export class ThreadSessionRuntime {
       return false
     }
     return isSessionBusy({ events: this.eventBuffer, sessionId })
+  }
+
+  private async persistIngressVariant({
+    sessionId,
+    channelId,
+    appId,
+    agentPreference,
+    getClient,
+    variant,
+  }: {
+    sessionId: string
+    channelId?: string
+    appId?: string
+    agentPreference?: string
+    getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
+    variant?: string
+  }) {
+    if (!variant) return
+    if (getClient instanceof Error) return
+    const variantModelInfo = await getCurrentModelInfo({
+      sessionId,
+      channelId,
+      appId,
+      agentPreference,
+      getClient,
+      directory: this.sdkDirectory,
+    })
+    if (variantModelInfo.type === 'none') return
+    const providersResponse = await getClient()
+      .provider.list({ directory: this.sdkDirectory })
+      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
+    if (providersResponse instanceof Error || !providersResponse.data) return
+    const matchedVariant = resolveRequestedThinkingVariant({
+      requestedValue: variant,
+      providers: providersResponse.data.all,
+      providerId: variantModelInfo.providerID,
+      modelId: variantModelInfo.modelID,
+    })
+    if (!matchedVariant) return
+    await setSessionModel({
+      sessionId,
+      modelId: variantModelInfo.model,
+      variant: matchedVariant,
+    })
   }
 
   private getAssistantMessageIdsForCurrentTurn({
@@ -3189,6 +3240,15 @@ export class ThreadSessionRuntime {
       const availableAgents = agentResult.agents
       releaseCurrentThreadIngress()
 
+      await this.persistIngressVariant({
+        sessionId: session.id,
+        channelId,
+        appId: resolvedAppId,
+        agentPreference: resolvedAgent,
+        getClient,
+        variant: input.variant,
+      })
+
       const [modelResult, preferredVariant] = await Promise.all([
         (async () => {
           if (input.model) {
@@ -3429,6 +3489,7 @@ export class ThreadSessionRuntime {
       command: input.command,
       agent: input.agent,
       model: input.model,
+      variant: input.variant,
       permissions: input.permissions,
       injectionGuardPatterns: input.injectionGuardPatterns,
       parentSessionId: input.parentSessionId,
@@ -4008,6 +4069,15 @@ export class ThreadSessionRuntime {
     }
     const earlyAgentPreference = earlyAgentResult.agentPreference
     const earlyAvailableAgents = earlyAgentResult.agents
+
+    await this.persistIngressVariant({
+      sessionId: session.id,
+      channelId,
+      appId: resolvedAppId,
+      agentPreference: earlyAgentPreference,
+      getClient,
+      variant: input.variant,
+    })
 
     const [earlyModelResult, preferredVariant] = await Promise.all([
       (async () => {
