@@ -4,7 +4,12 @@
 
 export type ThinkingProvider = {
   id: string
-  models?: Record<string, unknown>
+  name?: string
+  models?: Record<string, {
+    name?: string
+    variants?: Record<string, unknown>
+    limit?: { context?: number }
+  } | undefined>
 }
 
 function getModelVariants(model: unknown): Record<string, unknown> | undefined {
@@ -18,6 +23,42 @@ function getModelVariants(model: unknown): Record<string, unknown> | undefined {
   }
 
   return variants as Record<string, unknown>
+}
+
+export type ListedModelForThinking = {
+  providerID: string
+  modelID: string
+  name?: string
+  variants?: Array<{ id: string }>
+  limit?: { context?: number }
+}
+
+export function thinkingProvidersFromListedModels({
+  models,
+}: {
+  models: ListedModelForThinking[]
+}): ThinkingProvider[] {
+  const byProvider = new Map<string, ThinkingProvider>()
+  for (const model of models) {
+    const provider = byProvider.get(model.providerID) ?? {
+      id: model.providerID,
+      name: model.providerID,
+      models: {},
+    }
+    const variants = Object.fromEntries(
+      (model.variants ?? []).map((variant) => [variant.id, variant]),
+    )
+    provider.models = {
+      ...provider.models,
+      [model.modelID]: {
+        name: model.name,
+        variants,
+        limit: model.limit,
+      },
+    }
+    byProvider.set(model.providerID, provider)
+  }
+  return [...byProvider.values()]
 }
 
 export function getThinkingValuesForModel({

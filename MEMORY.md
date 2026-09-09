@@ -154,6 +154,26 @@ project opencode.json deep-merges on top instead of replacing a plain string).
 which must beat user config on purpose. Same trap for
 `config.agent.<name>.permission`: opencode appends it after the user ruleset, so
 do not set `external_directory` inside the generated `agent.explore` block.
-A session never needs an allow rule for its own working directory —
-`containsPath` in `tool/external-directory.ts` skips the gate for paths inside
-the active instance.
+  A session never needs an allow rule for its own working directory —
+  `containsPath` in `tool/external-directory.ts` skips the gate for paths inside
+  the active instance.
+
+## v2 agent names vs slash commands
+
+v2 built-in agents use capitalized names (`Plan`, `Build`). Kimaki slash
+commands stay lowercase (`/plan-agent`). Match agents case-insensitively, then
+pass `agent.id` to `session.switchAgent`. Passing the display name `Plan` fails
+with `Agent not found`.
+
+## Do not wait for SSE inside dispatchAction
+
+`handleEvent` runs on the same action queue as `session.prompt`. Awaiting
+`waitForEvent` inside `dispatchAction` deadlocks: the interrupt never reaches
+the buffer. Append lifecycle events in the SSE listener before queueing
+`handleEvent`. Await abort HTTP and settled events outside `dispatchAction`.
+
+## v2 forms can be idle
+
+A pending v2 question form can leave `isSessionBusy` false. Do not drain the
+local queue while `pendingQuestionContexts` has an entry. On dismiss, cancel
+pending forms with `form.list` + `form.cancel` before the next prompt.

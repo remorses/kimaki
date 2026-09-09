@@ -424,15 +424,12 @@ async function hasRunningSession(task: ScheduledTask): Promise<boolean | Error> 
     }
     const getClient = await initializeOpencodeForDirectory(run.project_directory)
     if (getClient instanceof Error) return getClient
-    const statusResponse = await getClient().session.status({
-      directory: run.project_directory,
-    }).catch((error) => new Error('Failed to check scheduled session status', {
+    const statusResponse = await getClient().session.active().catch((error: unknown) => new Error('Failed to check scheduled session status', {
       cause: error,
     }))
     if (statusResponse instanceof Error) return statusResponse
-    if (statusResponse.error) return new Error('Failed to check scheduled session status')
-    const status = statusResponse.data?.[run.session_id]
-    if (status && status.type !== 'idle') {
+    const status = statusResponse[run.session_id]
+    if (status) {
       active = true
       continue
     }

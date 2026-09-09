@@ -77,26 +77,20 @@ export async function waitForSessionComplete({
   }
 
   while (Date.now() - startTime < timeoutMs) {
-    const statusResponse = await getClient().session.status({
-      directory: projectDirectory,
-    })
-    if (statusResponse.error) {
-      throw new Error('Failed to check session status')
-    }
-    const sessionStatus = statusResponse.data?.[sessionId]
+    const activeSessions = await getClient().session.active()
+    const sessionStatus = activeSessions[sessionId]
 
-    const messagesResponse = await getClient().session.messages({
+    const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
-      directory: projectDirectory,
     })
-    const messages = messagesResponse.data || []
+    const messages = messagesResponse.data
     const events = await loadPersistedSessionEvents({ sessionId })
     const pendingPermissions = derivePendingPermissionRequests({
       events,
       sessionId,
     })
 
-    const isIdle = !sessionStatus || sessionStatus.type === 'idle'
+    const isIdle = !sessionStatus
     const hasPendingPermissions = pendingPermissions.length > 0
     const hasCompletedTurn = hasCompletedUserTurn({
       messages,
@@ -199,19 +193,16 @@ async function loadPersistedSessionEvents({
 
 function hasCompletedUserTurn({
   messages,
-  sessionId,
   waitStartedAtMs,
 }: {
-  messages: Array<{ info: OpenCodeMessage }>
+  messages: Array<{ type: string; time: { created: number; completed?: number } }>
   sessionId: string
   waitStartedAtMs: number
 }): boolean {
   const latestUserMessage = [...messages]
     .reverse()
-    .map((message) => message.info)
     .find((message) => {
-      return message.sessionID === sessionId
-        && message.role === 'user'
+      return message.type === 'user'
         && message.time.created >= waitStartedAtMs
     })
   if (!latestUserMessage) {
@@ -220,17 +211,12 @@ function hasCompletedUserTurn({
 
   const latestAssistant = [...messages]
     .reverse()
-    .map((message) => message.info)
-    .find((message): message is Extract<OpenCodeMessage, { role: 'assistant' }> => {
-      return message.sessionID === sessionId
-        && message.role === 'assistant'
-        && message.parentID === latestUserMessage.id
+    .find((message) => {
+      return message.type === 'assistant'
+        && typeof message.time.completed === 'number'
+        && message.time.created >= latestUserMessage.time.created
     })
-  if (!latestAssistant) {
-    return false
-  }
-
-  return isAssistantMessageNaturalCompletion({ message: latestAssistant })
+  return Boolean(latestAssistant)
 }
 
 /**
