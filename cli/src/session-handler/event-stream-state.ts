@@ -8,6 +8,7 @@ import type {
   Message as OpenCodeMessage,
   Part,
 } from '@opencode-ai/sdk/v2'
+import type { V2Event } from '@opencode-ai/client'
 import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 
 type QueueQuestionHandoffStartedEvent = {
@@ -17,7 +18,7 @@ type QueueQuestionHandoffStartedEvent = {
   }
 }
 
-export type EventBufferEvent = OpenCodeEvent | QueueQuestionHandoffStartedEvent
+export type EventBufferEvent = OpenCodeEvent | V2Event | QueueQuestionHandoffStartedEvent
 
 export type EventBufferEntry = {
   event: EventBufferEvent
@@ -209,11 +210,35 @@ function getTaskPartStatus(
   return { callID, status: part.state.status }
 }
 
+function getV2ToolCallId(event: EventBufferEvent): string | undefined {
+  if (
+    event.type !== 'session.tool.input.started'
+    && event.type !== 'session.tool.called'
+    && event.type !== 'session.tool.success'
+    && event.type !== 'session.tool.failed'
+  ) {
+    return undefined
+  }
+  const id = 'data' in event ? event.data.id : undefined
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
+function isV2TaskToolStart(event: EventBufferEvent, sessionId: string): boolean {
+  if (event.type !== 'session.tool.input.started') {
+    return false
+  }
+  if (getEventBufferSessionId(event) !== sessionId) {
+    return false
+  }
+  return event.data.name === 'task'
+}
+
 // Scans backward for most recent session-scoped lifecycle event.
-// Returns true if the latest lifecycle event for sessionId is session.status busy.
-// If status/idle were evicted from the bounded buffer, a still-running task
-// tool on that session also counts as busy. That stops `. queue` from draining
-// (and the 3s interrupt plugin from aborting) while a subagent is in flight.
+// Busy when the latest lifecycle fact is status busy/retry, execution.started,
+// or step.started. Idle on execution terminal events and session.idle.
+// If those were evicted from the bounded buffer, a still-running parent task
+// tool also counts as busy. That stops `. queue` from draining (and the 3s
+// interrupt plugin from aborting) while a subagent is in flight.
 export function isSessionBusy({
   events,
   sessionId,
@@ -225,6 +250,8 @@ export function isSessionBusy({
 }): boolean {
   const end = upToIndex ?? events.length - 1
   const latestTaskStatusByCallId = new Map<string, string>()
+  const terminalV2ToolIds = new Set<string>()
+  const pendingV2TaskIds = new Set<string>()
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
@@ -235,20 +262,75 @@ export function isSessionBusy({
     if (eid !== sessionId) {
       continue
     }
-    if (e.type === 'session.idle') {
+    if (
+      e.type === 'session.idle' ||
+      e.type === 'session.execution.succeeded' ||
+      e.type === 'session.execution.interrupted' ||
+      e.type === 'session.execution.failed'
+    ) {
       return false
     }
+    if (e.type === 'session.execution.started' || e.type === 'session.step.started') {
+      return true
+    }
     if (e.type === 'session.status') {
-      return e.properties.status.type === 'busy'
+      const status =
+        'data' in e && e.data && typeof e.data === 'object' && 'status' in e.data
+          ? (e.data as { status?: { type?: string } }).status
+          : 'properties' in e
+            ? (e as { properties?: { status?: { type?: string } } }).properties?.status
+            : undefined
+      return status?.type === 'busy' || status?.type === 'retry'
     }
     const taskPart = getTaskPartStatus(e, sessionId)
     if (taskPart && !latestTaskStatusByCallId.has(taskPart.callID)) {
       latestTaskStatusByCallId.set(taskPart.callID, taskPart.status)
     }
+    const toolCallId = getV2ToolCallId(e)
+    if (toolCallId && (e.type === 'session.tool.success' || e.type === 'session.tool.failed')) {
+      terminalV2ToolIds.add(toolCallId)
+    }
+    if (toolCallId && isV2TaskToolStart(e, sessionId) && !terminalV2ToolIds.has(toolCallId)) {
+      pendingV2TaskIds.add(toolCallId)
+    }
+  }
+  if (pendingV2TaskIds.size > 0) {
+    return true
   }
   return [...latestTaskStatusByCallId.values()].some((status) => {
     return status === 'running' || status === 'pending'
   })
+}
+
+// True when this drain produced Discord-visible assistant output.
+// Scan backward from the current index until execution.started so a later
+// empty drain does not inherit text.ended / tool.called from a prior run.
+export function hasVisibleV2OutputSinceExecutionStart({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (!event) {
+      continue
+    }
+    if (getEventBufferSessionId(event) !== sessionId) {
+      continue
+    }
+    if (event.type === 'session.execution.started') {
+      return false
+    }
+    if (event.type === 'session.text.ended' || event.type === 'session.tool.called') {
+      return true
+    }
+  }
+  return false
 }
 
 export function didQuestionQueueHandoffSinceLatestQuestionAsked({
@@ -411,12 +493,26 @@ export function derivePendingPermissionRequests({
     }
 
     if (event.type === 'permission.asked') {
-      permissions.add(event.properties.id)
+      const requestId = 'data' in event && event.data && 'id' in event.data
+        ? event.data.id
+        : 'properties' in event
+          ? (event as { properties?: { id?: string } }).properties?.id
+          : undefined
+      if (requestId) {
+        permissions.add(requestId)
+      }
       continue
     }
 
     if (event.type === 'permission.replied') {
-      permissions.delete(event.properties.requestID)
+      const requestId = 'data' in event && event.data && 'requestID' in event.data
+        ? event.data.requestID
+        : 'properties' in event
+          ? (event as { properties?: { requestID?: string } }).properties?.requestID
+          : undefined
+      if (requestId) {
+        permissions.delete(requestId)
+      }
     }
   }
 
@@ -662,6 +758,9 @@ function getSessionInfoTokenUsage({
     if (event?.type !== 'session.updated' && event?.type !== 'session.created') {
       continue
     }
+    if (!('properties' in event) || !event.properties || !('info' in event.properties)) {
+      continue
+    }
     const info = event.properties.info
     if (info.id !== sessionId) {
       continue
@@ -769,7 +868,7 @@ function findPreviousIdleIndexInTurn({
 }): number | undefined {
   for (let i = beforeIndex - 1; i > firstUserMessageIndex; i--) {
     const event = events[i]?.event
-    if (event?.type === 'session.idle' && event.properties.sessionID === sessionId) {
+    if (event?.type === 'session.idle' && getEventBufferSessionId(event) === sessionId) {
       return i
     }
   }
@@ -1085,7 +1184,32 @@ export function getLatestRunInfo({
       continue
     }
     const e = entry.event
-    if (e.type !== 'message.updated') {
+    if (e.type === 'session.step.started' && 'data' in e) {
+      const data = e.data
+      if (data.sessionID !== sessionId) {
+        continue
+      }
+      if (!result.model) {
+        result.model = data.model.id
+        result.providerID = data.model.providerID
+        result.agent = data.agent
+      }
+      if (result.tokensUsed > 0) {
+        return result
+      }
+      continue
+    }
+    if (e.type === 'session.step.ended' && 'data' in e) {
+      const data = e.data
+      if (data.sessionID !== sessionId) {
+        continue
+      }
+      if (result.tokensUsed === 0 && data.tokens) {
+        result.tokensUsed = getTokenTotal(data.tokens)
+      }
+      continue
+    }
+    if (e.type !== 'message.updated' || !('properties' in e)) {
       continue
     }
     const msg = e.properties.info
@@ -1596,12 +1720,19 @@ function getParentIdFromSessionEvent(event: EventBufferEvent): {
   if (event.type !== 'session.created' && event.type !== 'session.updated') {
     return undefined
   }
-  const parentID = event.properties.info.parentID
+  if (!('properties' in event) || !event.properties || !('info' in event.properties)) {
+    return undefined
+  }
+  const info = event.properties.info
+  const parentID = info.parentID
   if (typeof parentID !== 'string' || parentID.length === 0) {
     return undefined
   }
+  if (typeof info.id !== 'string') {
+    return undefined
+  }
   return {
-    sessionId: event.properties.info.id,
+    sessionId: info.id,
     parentID,
   }
 }
@@ -1672,7 +1803,19 @@ export function shouldRetainSessionEvent({
   if (!eventSessionId || eventSessionId === mainSessionId) {
     return true
   }
-  return event.type !== 'message.part.updated'
+  if (event.type === 'message.part.updated') {
+    return false
+  }
+  if (
+    event.type === 'session.text.ended'
+    || event.type === 'session.reasoning.ended'
+    || event.type === 'session.step.started'
+    || event.type === 'session.step.finished'
+    || event.type.startsWith('session.tool.')
+  ) {
+    return false
+  }
+  return true
 }
 
 export function trimEventBuffer({

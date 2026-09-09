@@ -10,18 +10,20 @@ import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
 import type {
-  Event as OpenCodeEvent,
   Part,
   PermissionRequest,
   QuestionRequest,
   Message as OpenCodeMessage,
 } from '@opencode-ai/sdk/v2'
+import type { V2Event } from '@opencode-ai/client'
 import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
 import type { QueuedMessage } from './thread-runtime-state.js'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '../opencode.js'
+
+type OpenCodeEvent = V2Event
 import {
   getOpencodeClient,
   initializeOpencodeForDirectory,
@@ -105,6 +107,7 @@ import {
   pendingQuestionContexts,
   cancelPendingQuestion,
   findPendingQuestionContextForRequest,
+  type AskUserQuestionInput,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
@@ -168,6 +171,7 @@ import {
   getLatestAssistantMessageIdForLatestUserTurn,
   getAssistantMessageKind,
   hasAssistantMessageCompletedBefore,
+  hasVisibleV2OutputSinceExecutionStart,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
   shouldBufferSessionEvent,
@@ -197,6 +201,7 @@ export const pendingPermissions = new Map<
 import {
   getThinkingValuesForModel,
   matchThinkingValue,
+  thinkingProvidersFromListedModels,
 } from '../thinking-utils.js'
 import { execAsync } from '../worktrees.js'
 import {
@@ -223,6 +228,32 @@ function extractToastSessionId({ message }: { message: string }): string | undef
 
 function stripToastSessionId({ message }: { message: string }): string {
   return message.replace(TOAST_SESSION_ID_REGEX, '').trimEnd()
+}
+
+function isEphemeralV2StreamEvent(event: { type: string }) {
+  return (
+    event.type === 'session.text.delta'
+    || event.type === 'session.reasoning.delta'
+    || event.type === 'session.tool.input.delta'
+    || event.type === 'session.tool.progress'
+    || event.type === 'session.compaction.delta'
+  )
+}
+
+function isSessionSettledEvent({
+  event,
+  sessionId,
+}: {
+  event: EventBufferEvent
+  sessionId: string
+}) {
+  if (getOpencodeEventSessionId(event) !== sessionId) return false
+  return (
+    event.type === 'session.idle'
+    || event.type === 'session.execution.interrupted'
+    || event.type === 'session.execution.succeeded'
+    || event.type === 'session.execution.failed'
+  )
 }
 
 const shouldLogSessionEvents =
@@ -511,8 +542,8 @@ function cleanupPendingUiForThread(threadId: string): void {
           void Promise.all(
             requestIds.map((requestId) => {
               return client.permission.reply({
+                sessionID: ctx.permission.sessionID,
                 requestID: requestId,
-                directory: ctx.directory,
                 reply: 'reject',
               })
             }),
@@ -925,6 +956,20 @@ export class ThreadSessionRuntime {
   // Part output buffering (write-side cache, not domain state)
   private partBuffer = new Map<string, Map<string, Part>>()
   private shownQuestionRequestIds = new Set<string>()
+  private v2ToolNames = new Map<string, string>()
+  private v2InboxItems = new Map<string, { delivery: string; text: string }>
+  private v2VisibleOutput = false
+  private abortInFlight: Promise<void> | null = null
+  private v2ExecutionStartedAt = new Map<string, number>()
+  private v2OpenTextMessageIds = new Set<string>()
+  private pendingV2Question:
+    | {
+        formId: string
+        sessionId: string
+        messageId?: string
+        questions: AskUserQuestionInput['questions']
+      }
+    | undefined
 
   // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
@@ -977,6 +1022,9 @@ export class ThreadSessionRuntime {
     // directory are demuxed and dispatched through our action queue.
     registerEventListener(this.threadId, (event) => {
       if (this.disposed) return
+      if (!isEphemeralV2StreamEvent(event)) {
+        this.appendEventToBuffer(event)
+      }
       void this.dispatchAction(async () => {
         await this.sentPartIdsBootstrap
         await this.handleEvent(event)
@@ -1249,14 +1297,14 @@ export class ThreadSessionRuntime {
       directory: this.sdkDirectory,
     })
     if (variantModelInfo.type === 'none') return
-    const providersResponse = await getClient()
-      .provider.list({ directory: this.sdkDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error || !providersResponse.data) return
+    const modelsResponse = await getClient()
+      .model.list({ location: { directory: this.sdkDirectory } })
+      .catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+    if (modelsResponse instanceof Error || !modelsResponse.data) return
     const matchedVariant = matchThinkingValue({
       requestedValue: variant,
       availableValues: getThinkingValuesForModel({
-        providers: providersResponse.data.all,
+        providers: thinkingProvidersFromListedModels({ models: [...modelsResponse.data] }),
         providerId: variantModelInfo.providerID,
         modelId: variantModelInfo.modelID,
       }),
@@ -1579,6 +1627,7 @@ export class ThreadSessionRuntime {
         status: { type: 'busy' },
       },
     })
+    this.ensureTypingNow()
   }
 
   private markQueueDispatchIdle(sessionId: string): void {
@@ -1658,60 +1707,27 @@ export class ThreadSessionRuntime {
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
-    const sessionId = this.state?.sessionId
-    if (!shouldBufferSessionEvent({
-      event,
-      mainSessionId: sessionId,
-      isKnownChildSession: (candidateSessionId) => {
-        return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
-      },
-    })) {
+    // session.diff can carry repeated full-file before/after snapshots and is
+    // not used by event-derived runtime state, queueing, typing, or UI routing.
+    // Drop it at ingress so large diff payloads never hit memory buffers.
+    if (event.type === 'session.text.delta') {
+      this.applyV2TextDelta(event)
       return
     }
-
-    // Skip message.part.delta from the event buffer — no derivation function
-    // (isSessionBusy, doesLatestUserTurnHaveNaturalCompletion, waitForEvent,
-    // etc.) uses them. During long streaming responses they flood the 1000-slot
-    // buffer, evicting session.status busy events that isSessionBusy needs,
-    // causing tryDrainQueue to drain the local queue while the session is
-    // actually still busy. This was the root cause of "? queue" messages
-    // interrupting instead of queuing.
-    // Child task part floods are also dropped at retain time for the same reason.
-    if (event.type !== 'message.part.delta') {
-      this.appendEventToBuffer(event)
+    if (isEphemeralV2StreamEvent(event)) {
+      return
     }
 
     const eventSessionId = getOpencodeEventSessionId(event)
     const toastSessionId = event.type === 'tui.toast.show'
-      ? extractToastSessionId({ message: event.properties.message })
+      ? extractToastSessionId({
+          message: event.data.message,
+        })
       : undefined
 
     if (shouldLogSessionEvents) {
-      const eventDetails = (() => {
-        if (event.type === 'session.error') {
-          const errorName = event.properties.error?.name || 'unknown'
-          return ` error=${errorName}`
-        }
-        if (event.type === 'session.status') {
-          const status = event.properties.status || 'unknown'
-          return ` status=${status}`
-        }
-        if (event.type === 'message.updated') {
-          return ` role=${event.properties.info.role} messageID=${event.properties.info.id}`
-        }
-        if (event.type === 'message.part.updated') {
-          const partType = event.properties.part.type
-          const partId = event.properties.part.id
-          const messageId = event.properties.part.messageID
-          const toolSuffix = partType === 'tool'
-            ? ` tool=${event.properties.part.tool} status=${event.properties.part.state.status}`
-            : ''
-          return ` part=${partType} partID=${partId} messageID=${messageId}${toolSuffix}`
-        }
-        return ''
-      })()
       logger.log(
-        `[EVENT] type=${event.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}${eventDetails}`,
+        `[EVENT] type=${event.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}`,
       )
     }
 
@@ -1746,53 +1762,366 @@ export class ThreadSessionRuntime {
     }
 
     switch (event.type) {
-      case 'message.updated':
-        await this.handleMessageUpdated(event.properties.info)
+      case 'session.text.started':
+        this.handleV2TextStarted(event)
         break
-      case 'message.part.updated':
-        await this.handlePartUpdated(event.properties.part)
+      case 'session.text.ended':
+        await this.handleV2TextEnded(event)
         break
-      case 'session.idle':
-        await completeScheduledTaskRunsForSession(event.properties.sessionID)
-        await this.handleSessionIdle(event.properties.sessionID)
+      case 'session.tool.input.started':
+        this.v2ToolNames.set(event.data.id, event.data.name)
         break
-      case 'session.error':
-        if (event.properties.sessionID) {
-          const sessionError = event.properties.error
-          const errorMessage = sessionError && typeof sessionError === 'object'
-            ? String(sessionError.data?.message || sessionError.name || 'Session failed')
-            : 'Session failed'
-          await failScheduledTaskRunsForSession({
-            sessionId: event.properties.sessionID,
-            error: errorMessage,
-          })
-        }
-        await this.handleSessionError(event.properties)
+      case 'session.tool.called':
+        await this.handleV2ToolCalled(event)
         break
-      case 'permission.asked':
-        await this.handlePermissionAsked(event.properties)
+      case 'session.tool.success':
+        await this.handleV2ToolSuccess(event)
         break
-      case 'permission.replied':
-        this.handlePermissionReplied(event.properties)
+      case 'session.tool.failed':
+        await this.handleV2ToolFailed(event)
         break
-      case 'question.asked':
-        await this.handleQuestionAsked(event.properties)
+      case 'session.execution.succeeded':
+        await completeScheduledTaskRunsForSession(event.data.sessionID)
+        await this.handleV2ExecutionSucceeded(event)
         break
-      case 'question.replied':
-        this.handleQuestionReplied(event.properties)
+      case 'session.execution.interrupted':
+        await this.handleV2ExecutionInterrupted(event)
+        break
+      case 'session.execution.failed':
+        await failScheduledTaskRunsForSession({
+          sessionId: event.data.sessionID,
+          error: 'Session failed',
+        })
+        await this.handleV2ExecutionFailed(event)
         break
       case 'session.status':
-        await this.handleSessionStatus(event.properties)
+        await this.handleSessionStatus({
+          sessionID: event.data.sessionID,
+          status: event.data.status,
+        })
         break
-      case 'session.updated':
-        await this.handleSessionUpdated(event.properties.info)
+      case 'session.step.started':
+        if (event.data.sessionID === this.state?.sessionId) {
+          this.restartTypingKeepalive({ sendNow: true })
+        }
+        break
+      case 'permission.asked':
+        await this.handlePermissionAsked(this.mapV2PermissionAsked(event.data))
+        break
+      case 'permission.replied':
+        this.handlePermissionReplied({
+          sessionID: event.data.sessionID,
+          requestID: event.data.requestID,
+          reply: event.data.reply,
+        })
+        break
+      case 'form.created':
+        await this.handleV2FormCreated(event)
+        break
+      case 'session.inbox.enqueued':
+        this.v2InboxItems.set(event.data.inboxID, {
+          delivery: event.data.item.delivery,
+          text: 'payload' in event.data.item && event.data.item.payload && 'text' in event.data.item.payload
+            ? String(event.data.item.payload.text ?? '')
+            : '',
+        })
+        break
+      case 'session.inbox.cancelled':
+        this.v2InboxItems.delete(event.data.inboxID)
+        break
+      case 'session.inbox.delivered':
+        await this.handleV2InboxDelivered(event)
+        break
+      case 'session.execution.started':
+        this.v2ExecutionStartedAt.set(event.data.sessionID, Date.now())
+        if (event.data.sessionID === this.state?.sessionId) {
+          this.ensureTypingNow()
+        }
         break
       case 'tui.toast.show':
-        await this.handleTuiToast(event.properties)
+        await this.handleTuiToast({
+          message: event.data.message,
+          variant: event.data.variant,
+          title: event.data.title,
+          duration: event.data.duration,
+        })
         break
       default:
         break
     }
+  }
+
+  private mapV2PermissionAsked(data: {
+    id: string
+    sessionID: string
+    action: string
+    resources: readonly string[]
+    message?: string
+  }): PermissionRequest {
+    return {
+      id: data.id,
+      sessionID: data.sessionID,
+      permission: data.action,
+      patterns: [...data.resources],
+      metadata: { message: data.message },
+    } as unknown as PermissionRequest
+  }
+
+  private handleV2TextStarted(event: Extract<V2Event, { type: 'session.text.started' }>): void {
+    this.v2OpenTextMessageIds.add(event.data.assistantMessageID)
+    this.storePart({
+      id: `${event.data.assistantMessageID}:${event.data.ordinal}`,
+      type: 'text',
+      sessionID: event.data.sessionID,
+      messageID: event.data.assistantMessageID,
+      text: '',
+      time: { start: Date.now() },
+    } as unknown as Part)
+  }
+
+  private applyV2TextDelta(event: Extract<V2Event, { type: 'session.text.delta' }>): void {
+    const partId = `${event.data.assistantMessageID}:${event.data.ordinal}`
+    const existing = this.partBuffer.get(event.data.assistantMessageID)?.get(partId)
+    if (!existing || existing.type !== 'text') {
+      this.v2OpenTextMessageIds.add(event.data.assistantMessageID)
+      this.storePart({
+        id: partId,
+        type: 'text',
+        sessionID: event.data.sessionID,
+        messageID: event.data.assistantMessageID,
+        text: event.data.delta,
+        time: { start: Date.now() },
+      } as unknown as Part)
+      return
+    }
+    this.storePart({
+      ...existing,
+      text: `${existing.text || ''}${event.data.delta}`,
+    })
+  }
+
+  private async handleV2TextEnded(event: Extract<V2Event, { type: 'session.text.ended' }>): Promise<void> {
+    const partId = `${event.data.assistantMessageID}:${event.data.ordinal}`
+    this.v2OpenTextMessageIds.delete(event.data.assistantMessageID)
+    const part = {
+      id: partId,
+      type: 'text' as const,
+      sessionID: event.data.sessionID,
+      messageID: event.data.assistantMessageID,
+      text: event.data.text,
+      time: { start: Date.now(), end: Date.now() },
+    } as unknown as Part
+    this.storePart(part)
+    await this.sendPartMessage({ part, repulseTyping: true })
+    await this.tryShowPendingV2Question()
+  }
+
+  private async handleV2ToolCalled(event: Extract<V2Event, { type: 'session.tool.called' }>): Promise<void> {
+    const toolName = this.v2ToolNames.get(event.data.id) || 'tool'
+    const part = {
+      id: event.data.id,
+      type: 'tool' as const,
+      sessionID: event.data.sessionID,
+      messageID: event.data.assistantMessageID,
+      tool: toolName,
+      state: {
+        status: 'running' as const,
+        input: event.data.input,
+        raw: '',
+      },
+    } as unknown as Part
+    this.storePart(part)
+    await this.sendPartMessage({ part, repulseTyping: true })
+  }
+
+  private async handleV2ToolSuccess(event: Extract<V2Event, { type: 'session.tool.success' }>): Promise<void> {
+    const toolName = this.v2ToolNames.get(event.data.id) || 'tool'
+    const output = event.data.content
+      .filter((item) => item.type === 'text')
+      .map((item) => item.text)
+      .join('\n')
+    const part = {
+      id: `${event.data.id}:done`,
+      type: 'tool' as const,
+      sessionID: event.data.sessionID,
+      messageID: event.data.assistantMessageID,
+      tool: toolName,
+      state: {
+        status: 'completed' as const,
+        input: {},
+        output,
+        title: toolName,
+        metadata: event.data.metadata ?? {},
+        time: { start: Date.now(), end: Date.now() },
+      },
+    } as unknown as Part
+    this.storePart(part)
+  }
+
+  private async handleV2ToolFailed(event: Extract<V2Event, { type: 'session.tool.failed' }>): Promise<void> {
+    const toolName = this.v2ToolNames.get(event.data.id) || 'tool'
+    const part = {
+      id: `${event.data.id}:fail`,
+      type: 'tool' as const,
+      sessionID: event.data.sessionID,
+      messageID: event.data.assistantMessageID,
+      tool: toolName,
+      state: {
+        status: 'error' as const,
+        input: {},
+        error: event.data.error.message || 'Tool failed',
+        time: { start: Date.now(), end: Date.now() },
+      },
+    } as unknown as Part
+    this.storePart(part)
+    await this.sendPartMessage({ part, repulseTyping: true })
+  }
+
+  private async handleV2ExecutionSucceeded(event: Extract<V2Event, { type: 'session.execution.succeeded' }>): Promise<void> {
+    const sessionId = event.data.sessionID
+    if (sessionId !== this.state?.sessionId) {
+      return
+    }
+    this.stopTyping()
+    if (hasVisibleV2OutputSinceExecutionStart({
+      events: this.eventBuffer,
+      sessionId,
+    })) {
+      const runStartTime = this.v2ExecutionStartedAt.get(sessionId) ?? Date.now()
+      await this.emitFooter({
+        completedAt: Date.now(),
+        runStartTime,
+      })
+    }
+    this.resetPerRunState()
+    await this.tryDrainQueue({ showIndicator: true })
+  }
+
+  private async handleV2ExecutionInterrupted(event: Extract<V2Event, { type: 'session.execution.interrupted' }>): Promise<void> {
+    if (event.data.sessionID !== this.state?.sessionId) {
+      return
+    }
+    this.stopTyping()
+    this.resetPerRunState()
+  }
+
+  private async handleV2ExecutionFailed(event: Extract<V2Event, { type: 'session.execution.failed' }>): Promise<void> {
+    if (event.data.sessionID !== this.state?.sessionId) {
+      return
+    }
+    this.stopTyping()
+    const errorMessage = event.data.error.message.trim() || 'Session failed'
+    const sendResult = await sendThreadMessage(
+      this.thread,
+      `✗ ${errorMessage}`,
+      { flags: NOTIFY_MESSAGE_FLAGS },
+    ).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    if (sendResult instanceof Error) {
+      discordLogger.error('Failed to send execution error:', sendResult)
+    }
+    this.resetPerRunState()
+    await this.tryDrainQueue({ showIndicator: true })
+  }
+
+  private async handleV2InboxDelivered(event: Extract<V2Event, { type: 'session.inbox.delivered' }>): Promise<void> {
+    const item = this.v2InboxItems.get(event.data.inboxID)
+    this.v2InboxItems.delete(event.data.inboxID)
+    if (!item || item.delivery !== 'queue') {
+      return
+    }
+    if (!item.text.trim()) {
+      return
+    }
+    const username = this.state?.sessionUsername || 'user'
+    await sendThreadMessage(this.thread, `» **${username}:** ${item.text}`, {
+      flags: SILENT_MESSAGE_FLAGS,
+    }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+  }
+
+  private async handleV2FormCreated(event: Extract<V2Event, { type: 'form.created' }>): Promise<void> {
+    const form = event.data.form
+    const metadata = form.metadata
+    if (!metadata || metadata.kind !== 'question') {
+      return
+    }
+    const sessionId = this.state?.sessionId
+    if (!sessionId || form.sessionID !== sessionId) {
+      return
+    }
+    const questions = form.fields.flatMap((field) => {
+      if (field.type !== 'string' && field.type !== 'multiselect') {
+        return []
+      }
+      const options = (field.options ?? []).map((option) => {
+        return {
+          label: option.label,
+          description: option.description || '',
+          value: option.value,
+        }
+      })
+      return [{
+        question: field.description || field.title || field.key,
+        header: field.title || field.key,
+        key: field.key,
+        options,
+        multiple: field.type === 'multiselect',
+      }]
+    })
+    if (questions.length === 0) {
+      return
+    }
+    const tool = metadata.tool
+    const messageId = (() => {
+      if (!tool || typeof tool !== 'object') return undefined
+      const value = Reflect.get(tool, 'messageID')
+      if (typeof value !== 'string') return undefined
+      return value
+    })()
+    this.pendingV2Question = {
+      formId: form.id,
+      sessionId,
+      messageId,
+      questions,
+    }
+    await this.tryShowPendingV2Question()
+  }
+
+  // form.created can arrive while session.text is still open. Wait so Discord
+  // posts the plan text before the question dropdown.
+  private async tryShowPendingV2Question(): Promise<void> {
+    const pending = this.pendingV2Question
+    if (!pending) {
+      return
+    }
+    if (pending.messageId && this.v2OpenTextMessageIds.has(pending.messageId)) {
+      return
+    }
+    if (!pending.messageId && this.v2OpenTextMessageIds.size > 0) {
+      return
+    }
+    if (this.shownQuestionRequestIds.has(pending.formId)) {
+      this.pendingV2Question = undefined
+      return
+    }
+    this.shownQuestionRequestIds.add(pending.formId)
+    this.pendingV2Question = undefined
+    await this.showInteractiveUi({
+      flushMessageId: pending.messageId,
+      show: async () => {
+        await showAskUserQuestionDropdowns({
+          thread: this.thread,
+          sessionId: pending.sessionId,
+          directory: this.sdkDirectory,
+          requestId: pending.formId,
+          input: { questions: pending.questions },
+          silent: this.getQueueLength() > 0,
+        })
+      },
+    })
+    this.maybeHandoffQueuedItemForPendingQuestion({
+      sessionId: pending.sessionId,
+      reason: 'question-shown',
+    })
   }
 
   // ── Serialized Action Queue (§7.4) ──────────────────────────
@@ -2235,21 +2564,20 @@ export class ThreadSessionRuntime {
     if (!client) {
       return
     }
-    const providersResponse = await client.provider.list({ directory: this.sdkDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error) {
+    const modelsResponse = await client.model.list({
+      location: { directory: this.sdkDirectory },
+    })
+      .catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+    if (modelsResponse instanceof Error) {
       logger.error(
         'Failed to fetch provider info for context limit:',
-        providersResponse,
+        modelsResponse,
       )
       return
     }
-    const provider = providersResponse.data?.all?.find(
-      (p) => {
-        return p.id === providerID
-      },
-    )
-    const model = provider?.models?.[modelID]
+    const model = modelsResponse.data.find((candidate) => {
+      return candidate.providerID === providerID && candidate.modelID === modelID
+    })
     const contextLimit = model?.limit?.context || getFallbackContextLimit({
       providerID,
     })
@@ -2733,7 +3061,7 @@ export class ThreadSessionRuntime {
     let idleEventIndex: number | undefined
     for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
       const event = this.eventBuffer[i]?.event
-      if (event?.type === 'session.idle' && event.properties.sessionID === idleSessionId) {
+      if (event?.type === 'session.idle' && getOpencodeEventSessionId(event) === idleSessionId) {
         idleEventIndex = i
         break
       }
@@ -3381,6 +3709,17 @@ export class ThreadSessionRuntime {
    */
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
+    if (this.abortInFlight) {
+      await this.abortInFlight
+      const sessionId = this.state?.sessionId
+      if (sessionId) {
+        await this.waitForEvent({
+          predicate: (event) => isSessionSettledEvent({ event, sessionId }),
+          sinceTimestamp: Date.now() - 10_000,
+          timeoutMs: 2_000,
+        })
+      }
+    }
     let skippedBySessionGuard = false
 
     await this.dispatchAction(async () => {
@@ -3432,16 +3771,12 @@ export class ThreadSessionRuntime {
 
       const { session, getClient, createdNewSession } = sessionResult
 
-      const updatePermissionsResult = await this.updateExistingSessionPermissions({
+      void this.updateExistingSessionPermissions({
         client: getClient(),
         sessionId: session.id,
         createdNewSession,
         permissions: input.permissions,
       })
-      if (updatePermissionsResult instanceof Error) {
-        await cleanupOnError(`Failed to update session permissions: ${updatePermissionsResult.message}`)
-        return
-      }
 
       // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
       const channelId = this.channelId
@@ -3547,13 +3882,15 @@ export class ThreadSessionRuntime {
         if (!preferredVariant) {
           return undefined
         }
-        const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
-          .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-        if (providersResponse instanceof Error || !providersResponse.data) {
+        const modelsResponse = await getClient().model.list({
+          location: { directory: this.sdkDirectory },
+        })
+          .catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+        if (modelsResponse instanceof Error || !modelsResponse.data) {
           return undefined
         }
         const availableValues = getThinkingValuesForModel({
-          providers: providersResponse.data.all,
+          providers: thinkingProvidersFromListedModels({ models: [...modelsResponse.data] }),
           providerId: modelField.providerID,
           modelId: modelField.modelID,
         })
@@ -3638,39 +3975,60 @@ export class ThreadSessionRuntime {
         ...images,
       ]
 
-      const request = {
-        sessionID: session.id,
-        directory: this.sdkDirectory,
-        parts,
-        system: getOpencodeSystemMessage({
-          sessionId: session.id,
-          channelId,
-          guildId: this.thread.guildId,
-          threadId: this.thread.id,
-          channelTopic,
-          agents: availableAgents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-          parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-          scheduledTask: await this.resolveScheduledTaskContext(session.id),
-        }),
-        ...(resolvedAgent ? { agent: resolvedAgent } : {}),
-        ...(modelField ? { model: modelField } : {}),
-        ...variantField,
-        ...(input.noReply ? { noReply: true } : {}),
+      if (resolvedAgent) {
+        await getClient().session.switchAgent({
+          sessionID: session.id,
+          agent: resolvedAgent,
+        }).catch((e) => new OpenCodeSdkError({ operation: 'session.switchAgent', cause: e }))
       }
+      if (modelField) {
+        await getClient().session.switchModel({
+          sessionID: session.id,
+          model: {
+            providerID: modelField.providerID,
+            id: modelField.modelID,
+            ...('variant' in variantField ? { variant: variantField.variant } : {}),
+          },
+        }).catch((e) => new OpenCodeSdkError({ operation: 'session.switchModel', cause: e }))
+      }
+      const promptText = parts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n')
+      const files = images.map((image) => ({
+        uri: image.url || image.sourceUrl || '',
+        name: image.filename,
+      })).filter((file) => file.uri)
       await waitForGlobalEventListener()
-      const promptResult = await getClient().session.promptAsync(request)
-        .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
-      if (promptResult instanceof Error || promptResult.error) {
-        const errorMessage = promptResult instanceof Error
-          ? promptResult.message
-          : extractSdkErrorMessage(promptResult.error)
-        const errObj = promptResult instanceof Error
-          ? promptResult
-          : new Error(errorMessage)
-        void notifyError(errObj, 'promptAsync failed in submitViaOpencodeQueue')
-        await cleanupOnError(`✗ OpenCode API error: ${errorMessage}`)
+      const delivery = input.mode === 'local-queue' ? 'queue' : 'steer'
+      const wasBusy = this.isMainSessionBusy()
+      // Mark busy before prompt() so a fast v2 drain cannot finish first and
+      // leave a synthetic busy event after execution.succeeded.
+      if (!input.noReply) {
+        this.markQueueDispatchBusy(session.id)
+      }
+      const promptResult = await getClient().session.prompt({
+        sessionID: session.id,
+        text: promptText,
+        ...(files.length > 0 ? { files } : {}),
+        delivery,
+      }).catch((e) => new OpenCodeSdkError({ operation: 'session.prompt', cause: e }))
+      if (
+        !(promptResult instanceof Error) &&
+        delivery === 'steer' &&
+        wasBusy
+      ) {
+        await getClient().session.interrupt({
+          sessionID: session.id,
+          continue: true,
+        }).catch((e) => new OpenCodeSdkError({ operation: 'session.interrupt', cause: e }))
+      }
+      if (promptResult instanceof Error) {
+        if (!input.noReply) {
+          this.markQueueDispatchIdle(session.id)
+        }
+        void notifyError(promptResult, 'session.prompt failed in submitViaOpencodeQueue')
+        await cleanupOnError(`✗ OpenCode API error: ${promptResult.message}`)
         return
       }
 
@@ -3693,11 +4051,6 @@ export class ThreadSessionRuntime {
           source: resolveTurnSource(input),
           agent: resolvedAgent,
         })
-      }
-
-      // noReply messages don't trigger the agent loop, so don't mark as busy
-      if (!input.noReply) {
-        this.markQueueDispatchBusy(session.id)
       }
     })
 
@@ -3979,10 +4332,9 @@ export class ThreadSessionRuntime {
     logger.log(
       `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} start`,
     )
-    const abortResult = await client.session.abort({
+    const abortResult = await client.session.interrupt({
       sessionID: sessionId,
-      directory: this.sdkDirectory,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.abort', cause: e }))
+    }).catch((e) => new OpenCodeSdkError({ operation: 'session.interrupt', cause: e }))
     if (!(abortResult instanceof Error)) {
       logger.log(
         `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} success durationMs=${Date.now() - startedAt}`,
@@ -4021,6 +4373,7 @@ export class ThreadSessionRuntime {
 
     this.stopTyping()
     this.deferredQuestionShow.clear()
+    this.pendingV2Question = undefined
 
     // The aborted run owns the question request, so the dropdown dies with it.
     // Questions have no TTL, so this is the only thing that clears them here.
@@ -4029,6 +4382,14 @@ export class ThreadSessionRuntime {
     const apiAbortPromise = sessionId
       ? this.abortSessionViaApi({ abortId, reason, sessionId })
       : undefined
+    this.abortInFlight = apiAbortPromise ?? null
+    if (apiAbortPromise) {
+      void apiAbortPromise.finally(() => {
+        if (this.abortInFlight === apiAbortPromise) {
+          this.abortInFlight = null
+        }
+      })
+    }
 
     logger.log(
       `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} apiAbort=${Boolean(sessionId)} ${this.formatRunStateForLog()}`,
@@ -4041,18 +4402,21 @@ export class ThreadSessionRuntime {
     }
   }
 
-  /** Explicit user abort: stops the run and drops all queued messages. Returns the removed items. */
-  async abortActiveRun(reason: string): Promise<threadState.QueuedMessage[]> {
+  abortActiveRun(reason: string): void {
+    const leftoverMessageIds = [...this.partBuffer.keys()]
     const outcome = this.abortActiveRunInternal({
       reason,
     })
     if (outcome.apiAbortPromise) {
       void outcome.apiAbortPromise
     }
-    // Enqueued synchronously, so it runs before the abort's session.idle can drain the queue.
-    let cleared: threadState.QueuedMessage[] = []
-    await this.dispatchAction(async () => {
-      cleared = await this.clearQueueNow()
+    void this.dispatchAction(async () => {
+      await this.flushBufferedPartsForMessages({
+        messageIDs: leftoverMessageIds,
+        force: true,
+      })
+      this.v2OpenTextMessageIds.clear()
+      return this.tryDrainQueue({ showIndicator: true })
     })
     return cleared
   }
@@ -4087,10 +4451,7 @@ export class ThreadSessionRuntime {
       return
     }
     await this.waitForEvent({
-      predicate: (event) => {
-        return event.type === 'session.idle'
-          && (event.properties as { sessionID?: string }).sessionID === sessionId
-      },
+      predicate: (event) => isSessionSettledEvent({ event, sessionId }),
       sinceTimestamp: waitSinceTimestamp,
       timeoutMs,
     })
@@ -4346,11 +4707,15 @@ export class ThreadSessionRuntime {
     if (thread.queueItems.length === 0) {
       return
     }
-    // Interactive UI (action buttons, questions, permissions) does NOT block
-    // queue drain. The isSessionBusy check is sufficient: questions and
-    // permissions keep the OpenCode session busy, so drain is naturally
-    // blocked. Action buttons are fire-and-forget (session already idle),
-    // so queued messages should dispatch immediately.
+    // v2 forms/permissions can leave the session idle while Discord UI is
+    // still pending. Do not drain the local queue until the user answers or
+    // the UI is dismissed. Action buttons stay fire-and-forget.
+    if (this.hasPendingQuestionUi()) {
+      return
+    }
+    if ((pendingPermissions.get(this.thread.id)?.size ?? 0) > 0) {
+      return
+    }
 
     const sessionBusy = thread.sessionId
       ? isSessionBusy({ events: this.eventBuffer, sessionId: thread.sessionId })
@@ -4447,21 +4812,12 @@ export class ThreadSessionRuntime {
     }
     const { session, getClient, createdNewSession } = sessionResult
 
-    const updatePermissionsResult = await this.updateExistingSessionPermissions({
+    void this.updateExistingSessionPermissions({
       client: getClient(),
       sessionId: session.id,
       createdNewSession,
       permissions: input.permissions,
     })
-    if (updatePermissionsResult instanceof Error) {
-      this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to update session permissions: ${updatePermissionsResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
-      return false
-    }
 
     // ── Resolve model + agent preferences ─────────────────────
     const channelId = this.channelId
@@ -4583,13 +4939,15 @@ export class ThreadSessionRuntime {
       if (!preferredVariant) {
         return undefined
       }
-      const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
-        .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-      if (providersResponse instanceof Error || !providersResponse.data) {
+      const modelsResponse = await getClient().model.list({
+        location: { directory: this.sdkDirectory },
+      })
+        .catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+      if (modelsResponse instanceof Error || !modelsResponse.data) {
         return undefined
       }
       const availableValues = getThinkingValuesForModel({
-        providers: providersResponse.data.all,
+        providers: thinkingProvidersFromListedModels({ models: [...modelsResponse.data] }),
         providerId: earlyModelParam.providerID,
         modelId: earlyModelParam.modelID,
       })
@@ -4764,13 +5122,8 @@ export class ThreadSessionRuntime {
       const commandResponse = await getClient().session.command(
         {
           sessionID: session.id,
-
-          directory: this.sdkDirectory,
           command: queuedCommand.name,
-          arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
-          agent: earlyAgentPreference,
-          model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
-          ...variantField,
+          text: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
         },
         { signal: commandSignal },
       ).catch((e) => new OpenCodeSdkError({ operation: 'session.command', cause: e }))
@@ -4803,6 +5156,36 @@ export class ThreadSessionRuntime {
           return true
         }
 
+        const commandCause = commandResponse.cause
+        const commandNotFoundName = (() => {
+          const parsed = parseOpenCodeErrorMessage(commandCause)
+          if (parsed.includes('Command not found')) {
+            if (commandCause && typeof commandCause === 'object' && 'command' in commandCause && typeof commandCause.command === 'string') {
+              return commandCause.command
+            }
+            return queuedCommand.name
+          }
+          if (!commandCause || typeof commandCause !== 'object') return undefined
+          const tag = ('_tag' in commandCause && commandCause._tag) || ('name' in commandCause && commandCause.name)
+          if (tag !== 'CommandNotFoundError') return undefined
+          if ('command' in commandCause && typeof commandCause.command === 'string') {
+            return commandCause.command
+          }
+          return queuedCommand.name
+        })()
+        if (commandNotFoundName) {
+          this.stopTyping()
+          await sendThreadMessage(
+            this.thread,
+            `Command not found: "${commandNotFoundName}"`,
+            { flags: NOTIFY_MESSAGE_FLAGS },
+          )
+          await this.dispatchAction(() => {
+            return this.tryDrainQueue({ showIndicator: true })
+          })
+          return
+        }
+
         logger.error(
           `[DISPATCH] Command SDK call failed: ${commandResponse.message}`,
         )
@@ -4810,28 +5193,9 @@ export class ThreadSessionRuntime {
         this.stopTyping()
         await sendThreadMessage(
           this.thread,
-          `✗ Unexpected bot Error: ${commandResponse.message}`,
+          `✗ Unexpected bot Error: ${parseOpenCodeErrorMessage(commandCause) || commandResponse.message}`,
           { flags: NOTIFY_MESSAGE_FLAGS },
         )
-        return false
-      }
-
-      if (commandResponse.error) {
-        const errorMessage = parseOpenCodeErrorMessage(commandResponse.error)
-        if (errorMessage.includes('aborted')) {
-          logger.log(
-            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
-          )
-          this.stopTyping()
-          return true
-        }
-        const apiError = new Error(`OpenCode API error: ${errorMessage}`)
-        logger.error(`[DISPATCH] ${apiError.message}`)
-        void notifyError(apiError, 'OpenCode API error during command')
-        this.stopTyping()
-        await sendThreadMessage(this.thread, `✗ ${apiError.message}`, {
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
         return false
       }
 
@@ -4846,32 +5210,18 @@ export class ThreadSessionRuntime {
     }
 
     await waitForGlobalEventListener()
-    const promptResponse = await getClient().session.promptAsync({
+    const promptText = parts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n')
+    const promptResponse = await getClient().session.prompt({
       sessionID: session.id,
-      directory: this.sdkDirectory,
-      parts,
-      system: getOpencodeSystemMessage({
-        sessionId: session.id,
-        channelId,
-        guildId: this.thread.guildId,
-        threadId: this.thread.id,
-        channelTopic,
-        agents: earlyAvailableAgents,
-        username: this.state?.sessionUsername || input.username,
-        userId: this.state?.sessionUserId || input.userId,
-        parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-        scheduledTask: await this.resolveScheduledTaskContext(session.id),
-      }),
-      model: earlyModelParam,
-      agent: earlyAgentPreference,
-      ...variantField,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
+      text: promptText,
+      delivery: 'steer',
+    }).catch((e) => new OpenCodeSdkError({ operation: 'session.prompt', cause: e }))
 
-    if (promptResponse instanceof Error || promptResponse.error) {
-      const errorMessage = (() => {
-        if (promptResponse instanceof Error) return promptResponse.message
-        return parseOpenCodeErrorMessage(promptResponse.error)
-      })()
+    if (promptResponse instanceof Error) {
+      const errorMessage = promptResponse.message
       const errorObject = promptResponse instanceof Error
         ? promptResponse
         : new Error(errorMessage)
@@ -4946,33 +5296,15 @@ export class ThreadSessionRuntime {
   }
 
   private async updateExistingSessionPermissions({
-    client,
-    sessionId,
     createdNewSession,
-    permissions,
   }: {
     client: OpencodeClient
     sessionId: string
     createdNewSession: boolean
     permissions?: string[]
   }) {
-    if (createdNewSession) {
-      return null
-    }
-
-    const rules = parsePermissionRules(permissions ?? [])
-    if (rules.length === 0) {
-      return null
-    }
-
-    const updateResult = await client.session.update({
-      sessionID: sessionId,
-      permission: rules,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
-    if (updateResult instanceof Error) return updateResult
-    if (updateResult.error) {
-      return new Error('OpenCode rejected permission update')
-    }
+    // v2 session.create has no permission field and session.update is gone.
+    void createdNewSession
     return null
   }
 
@@ -5031,14 +5363,13 @@ export class ThreadSessionRuntime {
     if (sessionId) {
       const sessionResponse = await getClient().session.get({
         sessionID: sessionId,
-        directory: this.sdkDirectory,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.get', cause: e }))
       if (sessionResponse instanceof Error) {
         logger.warn(
           `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
         )
-      } else if (sessionResponse.data) {
-        session = sessionResponse.data
+      } else if (sessionResponse.id) {
+        session = sessionResponse
       } else {
         const sdkMessage = extractSdkErrorMessage(sessionResponse.error)
         logger.warn(
@@ -5060,26 +5391,26 @@ export class ThreadSessionRuntime {
         ...parsePermissionRules(permissions ?? []),
       ]
       // Omit title so OpenCode auto-generates a summary from the conversation
+      void sessionPermissions
       const createResult = await getClient().session.create({
-        directory: this.sdkDirectory,
-        permission: sessionPermissions,
+        location: { directory: this.sdkDirectory },
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.create', cause: e }))
       if (createResult instanceof Error) {
+        const causeMessage = createResult.cause instanceof Error
+          ? createResult.cause.message
+          : String(createResult.cause ?? '')
         logger.error(
-          `[ENSURE SESSION] session.create failed: ${createResult.message}`,
+          `[ENSURE SESSION] session.create failed: ${createResult.message} cause=${causeMessage}`,
         )
         return new Error(
-          `Failed to create session: ${createResult.message}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
+          `Failed to create session: ${createResult.message} ${causeMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
           { cause: createResult },
         )
       }
-      if (createResult.error || !createResult.data) {
-        const errorMessage = extractSdkErrorMessage(createResult.error)
-        logger.error(
-          `[ENSURE SESSION] session.create failed: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
-        )
-        return new Error(
-          `Failed to create session: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
+      session = createResult
+      if (!session) {
+        logger.warn(
+          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
         )
       }
       session = createResult.data
@@ -5226,33 +5557,28 @@ export class ThreadSessionRuntime {
         }
         let tokensUsed = runInfo.tokensUsed
         // Fetch final token count from API
-        const [messagesResult, providersResult] = await Promise.all([
+        const [messagesResult, modelsResult] = await Promise.all([
           tokensUsed === 0
-            ? client.session.messages({
+            ? client.message.list({
                 sessionID: sessionId,
-                directory: this.sdkDirectory,
-              }).catch((e) => new OpenCodeSdkError({ operation: 'session.messages', cause: e }))
+                limit: 50,
+                order: 'desc',
+              }).catch((e) => new OpenCodeSdkError({ operation: 'message.list', cause: e }))
             : null,
-          client.provider.list({
-            directory: this.sdkDirectory,
-          }).catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
+          client.model.list({
+            location: { directory: this.sdkDirectory },
+          }).catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e })),
         ])
 
         if (messagesResult && !(messagesResult instanceof Error)) {
-          const messages = messagesResult.data || []
-          const lastAssistant = [...messages]
-            .reverse()
-            .find((m) => {
-              if (m.info.role !== 'assistant') {
-                return false
-              }
-              if (!m.info.tokens) {
-                return false
-              }
-              return getTokenTotal(m.info.tokens) > 0
-            })
-          if (lastAssistant && 'tokens' in lastAssistant.info) {
-            tokensUsed = getTokenTotal(lastAssistant.info.tokens)
+          const lastAssistant = messagesResult.data.find((message) => {
+            if (message.type !== 'assistant' || !message.tokens) {
+              return false
+            }
+            return getTokenTotal(message.tokens) > 0
+          })
+          if (lastAssistant && lastAssistant.type === 'assistant' && lastAssistant.tokens) {
+            tokensUsed = getTokenTotal(lastAssistant.tokens)
           }
         }
 
@@ -5262,16 +5588,15 @@ export class ThreadSessionRuntime {
             })
           : undefined
 
-        const providers = providersResult && !(providersResult instanceof Error)
-          ? providersResult.data?.all ?? []
+        const listedModels = modelsResult && !(modelsResult instanceof Error)
+          ? modelsResult.data
           : []
         let contextLimit = fallbackLimit
-        if (providers.length > 0) {
-          const provider = providers.find((p) => {
-            return p.id === runInfo.providerID
-          })
-          const model = provider?.models?.[runInfo.model || '']
-          contextLimit = model?.limit?.context || contextLimit
+        const listedModel = listedModels.find((candidate) => {
+          return candidate.providerID === runInfo.providerID && candidate.modelID === runInfo.model
+        })
+        if (listedModel?.limit?.context) {
+          contextLimit = listedModel.limit.context
         }
 
         if (contextLimit) {
@@ -5280,7 +5605,7 @@ export class ThreadSessionRuntime {
           )
           contextInfo = ` ⋅ ${percentage}%`
         }
-        return providers
+        return thinkingProvidersFromListedModels({ models: [...listedModels] })
       })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
     ])
     const branchName =
@@ -5345,6 +5670,7 @@ export class ThreadSessionRuntime {
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
     this.lastSentPartKind = undefined
+    this.v2OpenTextMessageIds.clear()
   }
 
   private async maybeNotifyPromptCacheClear({
@@ -5460,10 +5786,7 @@ export class ThreadSessionRuntime {
 
     if (needsIdleWait) {
       await this.waitForEvent({
-        predicate: (event) => {
-          return event.type === 'session.idle'
-            && (event.properties as { sessionID?: string }).sessionID === sessionId
-        },
+        predicate: (event) => isSessionSettledEvent({ event, sessionId }),
         sinceTimestamp: waitSinceTimestamp,
         timeoutMs: 2000,
       })
