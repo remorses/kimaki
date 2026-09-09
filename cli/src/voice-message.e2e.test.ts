@@ -37,6 +37,7 @@ import {
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
 import type { Part, Message } from '@opencode-ai/sdk/v2'
+import { sessionMessagesToGeneric } from './message-formatting.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
@@ -150,11 +151,10 @@ async function waitForSessionMessages({
   const client = getOpencodeClientForTest(projectDirectory)
   const start = Date.now()
   while (Date.now() - start < timeout) {
-    const result = await client.session.messages({
+    const result = await client.message.list({
       sessionID,
-      directory: projectDirectory,
     })
-    const messages = result.data ?? []
+    const messages = sessionMessagesToGeneric(result.data) as SessionMessage[]
     if (predicate(messages)) {
       return messages
     }
@@ -163,11 +163,10 @@ async function waitForSessionMessages({
     })
   }
   // Final attempt for error reporting
-  const finalResult = await client.session.messages({
+  const finalResult = await client.message.list({
     sessionID,
-    directory: projectDirectory,
   })
-  const finalMessages = finalResult.data ?? []
+  const finalMessages = sessionMessagesToGeneric(finalResult.data) as SessionMessage[]
   const userTexts = getUserTexts(finalMessages)
   const assistantTexts = getAssistantTexts(finalMessages)
   throw new Error(
@@ -189,7 +188,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'slow-response',
     priority: 100,
     when: {
-      latestUserTextIncludes: 'SLOW_RESPONSE_MARKER',
+      latestUserTextRegex: '^SLOW_RESPONSE_MARKER',
     },
     then: {
       parts: [
@@ -213,7 +212,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'fast-response',
     priority: 90,
     when: {
-      latestUserTextIncludes: 'FAST_RESPONSE_MARKER',
+      latestUserTextRegex: '^FAST_RESPONSE_MARKER',
     },
     then: {
       parts: [
@@ -539,13 +538,13 @@ e2eTest('voice message handling', () => {
           workspace_directory: directories.projectDirectory,
         })
         const client = getOpencodeClientForTest(directories.projectDirectory)
-        const targetMessages = await client.session.messages({ sessionID: targetSessionId! })
-        const targetTexts = getUserTexts(targetMessages.data ?? []).join('\n')
+        const targetMessages = await client.message.list({ sessionID: targetSessionId! })
+        const targetTexts = getUserTexts(sessionMessagesToGeneric(targetMessages.data) as SessionMessage[]).join('\n')
         expect(targetTexts).toContain(prompt)
         expect(targetTexts).toContain(`Voice message transcription from Discord user:\n${prompt}`)
         expect(targetTexts.includes(`Source history for voice ${sessionAction}`)).toBe(sessionAction === 'btw')
-        const sourceMessages = await client.session.messages({ sessionID: sourceSessionId! })
-        expect(getUserTexts(sourceMessages.data ?? []).join('\n')).not.toContain(prompt)
+        const sourceMessages = await client.message.list({ sessionID: sourceSessionId! })
+        expect(getUserTexts(sessionMessagesToGeneric(sourceMessages.data) as SessionMessage[]).join('\n')).not.toContain(prompt)
       },
     )
   }
