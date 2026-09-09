@@ -24,7 +24,7 @@ import {
 import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
-  buildDeterministicOpencodeConfig,
+  buildDeterministicOpencode2Config,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 import { setDataDir } from './config.js'
@@ -50,7 +50,7 @@ import { getDb } from './db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import { getOpencodeClient, initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
@@ -313,38 +313,52 @@ describe('agent model resolution', () => {
       )
       .toString()
 
-    // Build base config with default model
     const opencodeConfig = {
-      ...buildDeterministicOpencodeConfig({
+      ...buildDeterministicOpencode2Config({
         providerName: PROVIDER_NAME,
-        providerNpm,
+        providerPackage: `aisdk:${providerNpm}`,
         model: DEFAULT_MODEL,
-        smallModel: DEFAULT_MODEL,
+        extraModels: [AGENT_MODEL, PLAN_AGENT_MODEL, CHANNEL_MODEL],
         settings: {
           strict: false,
           matchers: createDeterministicMatchers(),
         },
       }),
-      // OpenCode command used to verify session.command still gets kimaki system
-      command: {
+      commands: {
         [COMMAND_SYSTEM_CHECK_NAME]: {
           description: 'Test command for kimaki system prompt injection',
           template: COMMAND_SYSTEM_CHECK_TEMPLATE,
         },
       },
+      agents: {
+        'test-agent': {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+          model: `${PROVIDER_NAME}/${AGENT_MODEL}`,
+        },
+        plan: {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+          model: `${PROVIDER_NAME}/${PLAN_AGENT_MODEL}`,
+        },
+        plain: {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+        },
+      },
     }
 
-    // Add extra models to the provider so opencode accepts them
-    const providerConfig = opencodeConfig.provider[PROVIDER_NAME]
+    const providerConfig = opencodeConfig.providers[PROVIDER_NAME]
     if (!providerConfig) {
       throw new Error(`Missing deterministic provider config for ${PROVIDER_NAME}`)
     }
-    providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
-    providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
-    Object.assign(providerConfig.models[PLAN_AGENT_MODEL], {
-      variants: { high: {}, max: {} },
+    const planModel = providerConfig.models[PLAN_AGENT_MODEL]
+    if (!planModel) {
+      throw new Error(`Missing deterministic model ${PLAN_AGENT_MODEL}`)
+    }
+    Object.assign(planModel, {
+      variants: [{ id: 'high' }, { id: 'max' }],
     })
-    providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
 
     fs.writeFileSync(
       path.join(directories.projectDirectory, 'opencode.json'),
@@ -427,6 +441,38 @@ describe('agent model resolution', () => {
     )
     if (warmup instanceof Error) {
       throw warmup
+    }
+    const client = getOpencodeClient(directories.projectDirectory)
+    if (!client) {
+      throw new Error('OpenCode client missing after warmup')
+    }
+    const deadline = Date.now() + 5_000
+    let agents: Array<{ name: string; model?: { id?: string } }> = []
+    while (Date.now() < deadline) {
+      const agentsResponse = await client.agent.list({
+        location: { directory: directories.projectDirectory },
+      })
+      agents = agentsResponse.data ?? []
+      const testAgent = agents.find((agent) => agent.name.toLowerCase() === 'test-agent')
+      const planAgent = agents.find((agent) => agent.name.toLowerCase() === 'plan')
+      if (
+        testAgent?.model?.id === AGENT_MODEL
+        && planAgent?.model?.id === PLAN_AGENT_MODEL
+      ) {
+        break
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100)
+      })
+    }
+    const loaded = agents.map((agent) => {
+      return `${agent.name}:${agent.model?.id ?? 'none'}`
+    })
+    if (!loaded.some((entry) => entry.toLowerCase() === `test-agent:${AGENT_MODEL}`)) {
+      throw new Error(`test-agent model not loaded: ${loaded.join(', ')}`)
+    }
+    if (!loaded.some((entry) => entry.toLowerCase() === `plan:${PLAN_AGENT_MODEL}`)) {
+      throw new Error(`plan agent model not loaded: ${loaded.join(', ')}`)
     }
   }, 20_000)
 

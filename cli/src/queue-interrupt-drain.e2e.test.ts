@@ -108,10 +108,8 @@ e2eTest('queue + interrupt drain ordering', () => {
         client,
       })
 
-      const statusResponse = await client.session.status({
-        directory: ctx.directories.projectDirectory,
-      })
-      expect(statusResponse.data?.[sessionId]?.type).toBe('busy')
+      const statusResponse = await client.session.active()
+      expect(statusResponse[sessionId]?.type).toBe('running')
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: continue-after-archive',
