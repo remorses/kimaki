@@ -11,7 +11,6 @@ import { getThreadSession } from '../database.js'
 import {
   initializeOpencodeForDirectory,
   getOpencodeClient,
-  extractSdkErrorMessage,
 } from '../opencode.js'
 import {
   resolveWorkingDirectory,
@@ -97,44 +96,38 @@ export async function handleCompactCommand({
 
   try {
     // Get session messages to find the model from the last user message
-    const messagesResult = await client.session.messages({
+    const messagesResult = await client.message.list({
       sessionID: sessionId,
-      directory: workingDirectory,
+    }).catch((error: unknown) => {
+      logger.error('[COMPACT] Failed to get messages:', error)
+      return null
     })
 
-    if (messagesResult.error || !messagesResult.data) {
-      logger.error('[COMPACT] Failed to get messages:', messagesResult.error)
+    if (!messagesResult) {
       await command.editReply({
         content: 'Failed to compact: Could not retrieve session messages',
       })
       return
     }
 
-    // Find the last user message to get the model
     const lastUserMessage = [...messagesResult.data]
       .reverse()
-      .find((msg) => msg.info.role === 'user')
+      .find((msg) => msg.type === 'user')
 
-    if (!lastUserMessage || lastUserMessage.info.role !== 'user') {
+    if (!lastUserMessage || lastUserMessage.type !== 'user') {
       await command.editReply({
         content: 'Failed to compact: No user message found in session',
       })
       return
     }
 
-    const { providerID, modelID } = lastUserMessage.info.model
-
-    const result = await client.session.summarize({
+    const result = await client.session.compact({
       sessionID: sessionId,
-      directory: workingDirectory,
-      providerID,
-      modelID,
-      auto: false,
-    })
+    }).catch((error: unknown) => error)
 
-    if (result.error) {
-      logger.error('[COMPACT] Error:', result.error)
-      const errorMessage = extractSdkErrorMessage(result.error)
+    if (result instanceof Error) {
+      logger.error('[COMPACT] Error:', result)
+      const errorMessage = result.message
       await command.editReply({
         content: `Failed to compact: ${errorMessage}`,
       })

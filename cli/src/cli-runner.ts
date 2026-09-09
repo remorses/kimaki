@@ -1197,9 +1197,9 @@ export async function backgroundInit({
 
     const [userCommands, agents] = await Promise.all([
       getClient()
-        .command.list({ directory: currentDir })
+        .command.list({ location: { directory: currentDir } })
         .then((r) => r.data || [])
-        .catch((error) => {
+        .catch((error: unknown) => {
           cliLogger.warn(
             'Failed to load user commands during background init:',
             error instanceof Error ? error.stack : String(error),
@@ -1207,9 +1207,9 @@ export async function backgroundInit({
           return []
         }),
       getClient()
-        .app.agents({ directory: currentDir })
+        .agent.list({ location: { directory: currentDir } })
         .then((r) => r.data || [])
-        .catch((error) => {
+        .catch((error: unknown) => {
           cliLogger.warn(
             'Failed to load agents during background init:',
             error instanceof Error ? error.stack : String(error),
@@ -1921,8 +1921,7 @@ export async function run({
     const [projects, allUserCommands, allAgents] = await Promise.all([
       getClient()
         .project.list()
-        .then((r) => r.data || [])
-        .catch((error) => {
+        .catch((error: unknown) => {
           cliLogger.log('Failed to fetch projects')
           cliLogger.error(
             'Error:',
@@ -1932,9 +1931,9 @@ export async function run({
           process.exit(EXIT_NO_RESTART)
         }),
       getClient()
-        .command.list({ directory: currentDir })
+        .command.list({ location: { directory: currentDir } })
         .then((r) => r.data || [])
-        .catch((error) => {
+        .catch((error: unknown) => {
           cliLogger.warn(
             'Failed to load user commands during setup:',
             error instanceof Error ? error.stack : String(error),
@@ -1942,9 +1941,9 @@ export async function run({
           return []
         }),
       getClient()
-        .app.agents({ directory: currentDir })
+        .agent.list({ location: { directory: currentDir } })
         .then((r) => r.data || [])
-        .catch((error) => {
+        .catch((error: unknown) => {
           cliLogger.warn(
             'Failed to load agents during setup:',
             error instanceof Error ? error.stack : String(error),
@@ -1964,15 +1963,15 @@ export async function run({
 
     const availableProjects = deduplicateByKey(
       projects.filter((project) => {
-        if (existingDirs.includes(project.worktree)) {
+        if (existingDirs.includes(project.canonical)) {
           return false
         }
-        if (path.basename(project.worktree).startsWith('opencode-test-')) {
+        if (path.basename(project.canonical).startsWith('opencode-test-')) {
           return false
         }
         return true
       }),
-      (x) => x.worktree,
+      (project) => project.canonical,
     )
 
     if (availableProjects.length === 0) {
@@ -1991,7 +1990,7 @@ export async function run({
         message: 'Select projects to create Discord channels for:',
         options: availableProjects.map((project) => ({
           value: project.id,
-          label: `${path.basename(project.worktree)} (${abbreviatePath(project.worktree)})`,
+          label: `${path.basename(project.canonical)} (${abbreviatePath(project.canonical)})`,
         })),
         required: false,
       })
@@ -2030,13 +2029,13 @@ export async function run({
         cliLogger.log('Creating Discord channels...')
 
         for (const projectId of selectedProjects) {
-          const project = projects.find((p) => p.id === projectId)
+          const project = projects.find((candidate) => candidate.id === projectId)
           if (!project) continue
 
           try {
             const { textChannelId, channelName } = await createProjectChannels({
               guild: targetGuild,
-              projectDirectory: project.worktree,
+              projectDirectory: project.canonical,
               botName: discordClient.user?.username,
               enableVoiceChannels,
               analyticsSource: 'onboarding',
@@ -2049,7 +2048,7 @@ export async function run({
             })
           } catch (error) {
             cliLogger.error(
-              `Failed to create channels for ${path.basename(project.worktree)}:`,
+              `Failed to create channels for ${path.basename(project.canonical)}:`,
               error,
             )
           }
