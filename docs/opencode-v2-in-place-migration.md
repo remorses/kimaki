@@ -7,7 +7,7 @@ description: >
 
 # OpenCode v2 facts for in-place Kimaki migration
 
-Kimaki stays the **Discord bot** (`cli/`). OpenCode v2 is the **child server**. This file is the mental model for that swap. It is **not** the plugin rewrite in `kimaki2/`.
+Kimaki stays the **Discord bot** (`cli/`). OpenCode v2 is the **child server**. This file is the mental model for that swap. Do not rewrite Kimaki as OpenCode plugins.
 
 Pin packages. This worktree used `@opencode-ai/plugin`, `@opencode-ai/client`, `@opencode-ai/cli` at **`0.0.0-beta-19271`**. Binary is `opencode2`. V1 stays `opencode`.
 
