@@ -211,8 +211,8 @@ async function handleAgentAutocomplete({
       return
     }
 
-    const agentsResponse = await getClient().app.agents({
-      directory: projectDirectory,
+    const agentsResponse = await getClient().agent.list({
+      location: { directory: projectDirectory },
     })
 
     if (!agentsResponse.data || agentsResponse.data.length === 0) {
@@ -222,8 +222,7 @@ async function handleAgentAutocomplete({
 
     const agents = agentsResponse.data
       .filter((a) => {
-        const hidden = (a as { hidden?: boolean }).hidden
-        return (a.mode === 'primary' || a.mode === 'all') && !hidden
+        return (a.mode === 'primary' || a.mode === 'all') && !a.hidden
       })
       .filter((a) => a.name.toLowerCase().includes(focusedValue.toLowerCase()))
       .slice(0, 25)
@@ -277,11 +276,12 @@ export async function handleSessionAutocomplete({
       return
     }
 
-    const response = await getClient().find.files({
+    const response = await getClient().file.find({
       query: currentQuery || '',
+      location: { directory: projectDirectory },
     })
 
-    const files = response.data || []
+    const files = response.data.map((entry) => entry.path)
 
     const prefix =
       previousFiles.length > 0 ? previousFiles.join(', ') + ', ' : ''

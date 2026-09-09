@@ -58,6 +58,7 @@ import { store } from '../store.js'
 import {
   getThinkingValuesForModel,
   resolveRequestedThinkingVariant,
+  thinkingProvidersFromListedModels,
 } from '../thinking-utils.js'
 import type { AutocompleteContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
@@ -304,17 +305,17 @@ async function applyQuickAgentVariant({
   const getClient = await initializeOpencodeForDirectory(context.dir)
   if (getClient instanceof Error) return undefined
 
-  const providersResponse = await getClient()
-    .provider.list({ directory: context.workingDirectory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-  if (providersResponse instanceof Error || !providersResponse.data) {
+  const modelsResponse = await getClient()
+    .model.list({ location: { directory: context.workingDirectory } })
+    .catch((e: unknown) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+  if (modelsResponse instanceof Error || !modelsResponse.data) {
     agentLogger.warn(`[AGENT] Skipping variant ${variant}: provider list failed`)
     return undefined
   }
 
   const matchedVariant = resolveRequestedThinkingVariant({
     requestedValue: variant,
-    providers: providersResponse.data.all,
+    providers: thinkingProvidersFromListedModels({ models: [...modelsResponse.data] }),
     providerId: modelInfo.providerID,
     modelId: modelInfo.modelID,
   })
@@ -421,8 +422,8 @@ export async function handleAgentCommand({
       return
     }
 
-    const agentsResponse = await getClient().app.agents({
-      directory: context.workingDirectory,
+    const agentsResponse = await getClient().agent.list({
+      location: { directory: context.workingDirectory },
     })
 
     if (!agentsResponse.data || agentsResponse.data.length === 0) {
@@ -866,11 +867,11 @@ export async function handleQuickAgentAutocomplete({
 
   const [providersResponse, agentsResponse] = await Promise.all([
     getClient()
-      .provider.list({ directory: projectDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
+      .model.list({ location: { directory: projectDirectory } })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'model.list', cause: e })),
     getClient()
-      .app.agents({ directory: projectDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e })),
+      .agent.list({ location: { directory: projectDirectory } })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'agent.list', cause: e })),
   ])
   if (providersResponse instanceof Error || agentsResponse instanceof Error) {
     agentLogger.warn('[AUTOCOMPLETE] Failed to fetch variant choices')
@@ -893,9 +894,9 @@ export async function handleQuickAgentAutocomplete({
   }
 
   const variants = getThinkingValuesForModel({
-    providers: providersResponse.data.all,
+    providers: thinkingProvidersFromListedModels({ models: [...providersResponse.data] }),
     providerId: agentModel.providerID,
-    modelId: agentModel.modelID,
+    modelId: agentModel.id,
   }).filter((variant) => {
     if (!focusedValue) return true
     return variant.toLowerCase().includes(focusedValue)

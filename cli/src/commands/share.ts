@@ -78,29 +78,8 @@ export async function handleShareCommand({
     return
   }
 
-  try {
-    const response = await getClient().session.share({
-      sessionID: sessionId,
-    })
-
-    if (!response.data?.share?.url) {
-      await command.reply({
-        content: 'Failed to generate share URL',
-        flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-      })
-      return
-    }
-
-    await command.reply({
-      content: `🔗 **Session shared:** ${response.data.share.url}`,
-      flags: SILENT_MESSAGE_FLAGS,
-    })
-    logger.log(`Session ${sessionId} shared: ${response.data.share.url}`)
-  } catch (error) {
-    logger.error('[SHARE] Error:', error)
-    await command.reply({
-      content: `Failed to share session: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
-    })
-  }
+  await command.reply({
+    content: 'Session sharing is not available in OpenCode v2 yet.',
+    flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+  })
 }
