@@ -13,7 +13,7 @@ import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
 import { getDefaultKimakiDirectory } from '../channel-management.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, findRegisteredTextChannelForDirectory, formatProjectAlreadyRegisteredError } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -77,8 +77,18 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      // Initialize database
       await initDatabase()
+
+      const existingChannel = await findRegisteredTextChannelForDirectory(absolutePath)
+      if (existingChannel) {
+        cliLogger.error(
+          formatProjectAlreadyRegisteredError({
+            channelId: existingChannel.channel_id,
+            directory: absolutePath,
+          }),
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
 
       const { token: botToken, appId } = await resolveBotCredentials({
         appIdOverride: options.appId,
@@ -108,38 +118,6 @@ cli
       cliLogger.log('Finding guild...')
 
       const guild = await resolveGuildForProjectCommand({ client, guildIdOverride: options.guild })
-
-      // Check if channel already exists in this guild
-      cliLogger.log('Checking for existing channel...')
-      try {
-        const existingChannels = await findChannelsByDirectory({
-          directory: absolutePath,
-          channelType: 'text',
-        })
-
-        for (const existingChannel of existingChannels) {
-          try {
-            const ch = await client.channels.fetch(existingChannel.channel_id)
-            if (ch && !ch.isDMBased() && ch.guild.id === guild.id) {
-              void client.destroy()
-              cliLogger.error(
-                `Channel already exists for this directory in ${guild.name}. Channel ID: ${existingChannel.channel_id}`,
-              )
-              process.exit(EXIT_NO_RESTART)
-            }
-          } catch (error) {
-            cliLogger.debug(
-              `Failed to fetch channel ${existingChannel.channel_id} while checking existing channels:`,
-              error instanceof Error ? error.stack : String(error),
-            )
-          }
-        }
-      } catch (error) {
-        cliLogger.debug(
-          'Database lookup failed while checking existing channels:',
-          error instanceof Error ? error.stack : String(error),
-        )
-      }
 
       const { textChannelId, voiceChannelId, channelName } =
         await createProjectChannels({

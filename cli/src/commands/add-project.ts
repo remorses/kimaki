@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
-  findChannelsByDirectory,
+  findRegisteredTextChannelForDirectory,
   getAllTextChannelDirectories,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -56,14 +56,10 @@ export async function handleAddProjectCommand({
       return
     }
 
-    const existingChannels = await findChannelsByDirectory({
-      directory,
-      channelType: 'text',
-    })
-
-    if (existingChannels.length > 0) {
+    const existingChannel = await findRegisteredTextChannelForDirectory(directory)
+    if (existingChannel) {
       await command.editReply(
-        `A channel already exists for this directory: <#${existingChannels[0]!.channel_id}>`,
+        `A channel already exists for this directory: <#${existingChannel.channel_id}>`,
       )
       return
     }
