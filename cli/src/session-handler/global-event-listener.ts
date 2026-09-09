@@ -7,8 +7,7 @@
 // Architecture mirrors the opencode TUI (packages/app/src/context/global-sdk.tsx)
 // which uses a single global.event() SSE stream for all directories.
 
-import type { Event as OpenCodeEvent, GlobalEvent } from '@opencode-ai/sdk/v2'
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk/v2'
+import { OpenCode, type OpenCodeClient, type V2Event } from '@opencode-ai/client'
 
 import { OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -38,7 +37,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 
 // ── Types ──────────────────────────────────────────────────────
 
-type EventCallback = (event: OpenCodeEvent) => void
+type EventCallback = (event: V2Event) => void
 
 // ── State ──────────────────────────────────────────────────────
 
@@ -98,7 +97,7 @@ export function restartGlobalEventListener(): void {
   controller?.abort()
 }
 
-/** Wait until the event stream is connected before starting event-producing work. */
+/** Wait until the SSE stream has yielded its first event (server.connected). */
 export function waitForGlobalEventListener(): Promise<void> {
   if (callbacks.size === 0 || connected) return Promise.resolve()
   ensureListenerRunning()
@@ -153,14 +152,16 @@ async function resolveBaseUrlGetter(): Promise<() => string | null> {
   return _getBaseUrl
 }
 
-function createGlobalClient(baseUrl: string): OpencodeClient {
-  return createOpencodeClient({ baseUrl, headers: getOpencodeServerAuthHeaders() })
+function createGlobalClient(baseUrl: string): OpenCodeClient {
+  return OpenCode.make({
+    baseUrl,
+    headers: getOpencodeServerAuthHeaders(),
+  })
 }
 
-function dispatchEvent(globalEvent: GlobalEvent): void {
-  const payload = globalEvent.payload as OpenCodeEvent
+function dispatchEvent(event: V2Event): void {
   for (const callback of callbacks.values()) {
-    callback(payload)
+    callback(event)
   }
 }
 
@@ -191,35 +192,20 @@ async function runEventLoop(): Promise<void> {
 
     const client = createGlobalClient(baseUrl)
 
-    const subscribeResult = await client.global.event({ signal })
-      .catch((e) => new OpenCodeSdkError({ operation: 'event.subscribe', cause: e }))
+    const events = client.event.subscribe({ signal })
 
-    if (subscribeResult instanceof Error) {
-      if (isAbortError(subscribeResult)) {
-        if (disposed) return
-        backoffMs = 500
-        continue
-      }
-      logger.warn(
-        `[GLOBAL LISTENER] Subscribe failed, retrying in ${backoffMs}ms:`,
-        subscribeResult.message,
-      )
-      await delay(backoffMs, signal)
-      backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
-      continue
-    }
-
-    const events = subscribeResult.stream
-
-    connected = true
-    for (const resolve of connectionWaiters) resolve()
-    connectionWaiters.clear()
-    logger.log('[GLOBAL LISTENER] Connected to global event stream')
+    logger.log('[GLOBAL LISTENER] Subscribing to global event stream')
 
     let receivedAnyEvent = false
     const iterResult = await (async () => {
       for await (const event of events) {
-        receivedAnyEvent = true
+        if (!receivedAnyEvent) {
+          receivedAnyEvent = true
+          connected = true
+          for (const resolve of connectionWaiters) resolve()
+          connectionWaiters.clear()
+          logger.log('[GLOBAL LISTENER] Connected to global event stream')
+        }
         dispatchEvent(event)
       }
     })()

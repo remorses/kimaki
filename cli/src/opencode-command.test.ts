@@ -114,9 +114,6 @@ describe('buildOpencodeServeArgs', () => {
       '4096',
       '--hostname',
       '127.0.0.1',
-      '--print-logs',
-      '--log-level',
-      'WARN',
     ])
   })
 
@@ -130,9 +127,6 @@ describe('buildOpencodeServeArgs', () => {
       '4096',
       '--hostname',
       '0.0.0.0',
-      '--print-logs',
-      '--log-level',
-      'WARN',
     ])
   })
 })
