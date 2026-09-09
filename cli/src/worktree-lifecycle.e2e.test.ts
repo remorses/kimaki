@@ -70,11 +70,7 @@ function normalizeWorktreeLifecycleText(text: string): string {
       /opencode\/kimaki-rply-wth-exctly-snd-at-wt-[a-z0-9]+/g,
       'AUTO_WORKTREE_BRANCH',
     )
-    // Footers truncate the random auto worktree folder and branch names.
-    .replace(
-      /-# \*rply-wth-exctly-snd-at-wt-[^ ]*… ⋅ opencode\/kimaki-rply-wth-exct[^ ]*… ⋅/g,
-      '-# *AUTO_WORKTREE_FOLDER ⋅ AUTO_WORKTREE_BRANCH ⋅',
-    )
+    .replace(/rply-wth-exctly-snd-at-wt-[a-z0-9]+…?/g, 'AUTO_WORKTREE_FOLDER')
     .replaceAll(WORKTREE_SUFFIX, 'SUFFIX')
     .replace(/ses_[a-zA-Z0-9]+/g, 'ses_TEST')
     .replace(/<#\d+>/g, '<#THREAD_ID>')
@@ -234,7 +230,7 @@ describe('worktree lifecycle', () => {
         matchers: createDeterministicMatchers(),
       },
     })
-    const providerConfig = opencodeConfig.provider['deterministic-provider']
+    const providerConfig = opencodeConfig.providers['deterministic-provider']
     if (!providerConfig) throw new Error('Missing deterministic provider config')
     providerConfig.models[SOURCE_MODEL] = { name: SOURCE_MODEL }
     fs.writeFileSync(
@@ -487,9 +483,8 @@ describe('worktree lifecycle', () => {
       if (getWorktreeClient instanceof Error) throw getWorktreeClient
       const worktreeSessionResponse = await getWorktreeClient().session.get({
         sessionID: worktreeSession,
-        directory: worktreeDirectory,
       })
-      expect(worktreeSessionResponse.data?.directory).toBe(worktreeDirectory)
+      expect(worktreeSessionResponse.location.directory).toBe(worktreeDirectory)
 
       const runtimeAfter = getRuntime(thread.id)
       expect(runtimeAfter).toBe(runtimeBefore)
@@ -547,10 +542,10 @@ describe('worktree lifecycle', () => {
         "--- from: user (worktree-tester)
         Reply with exactly: before-worktree
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000901>
         Creating worktree in <#THREAD_ID>
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (worktree-tester)
         Reply with exactly: after-source-thread
         --- from: assistant (TestBot)
@@ -573,7 +568,7 @@ describe('worktree lifecycle', () => {
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
         ok
-        -# *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2*"
+        > *WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Worktree:')
       expect(worktreeText).toContain('Branch:')
@@ -642,11 +637,12 @@ describe('worktree lifecycle', () => {
         timeout: 10_000,
       })
 
-      // The *using ...deterministic-v2* banner also contains the model id, so
-      // match the real footer. It lands after the final text is unquoted.
-      await waitForFooterMessage({
+      await waitForBotMessageContaining({
         discord,
         threadId: worktreeThread.id,
+        userId: TEST_USER_ID,
+        text: '⋅ deterministic-v2',
+        afterUserMessageIncludes: 'channel-worktree-msg',
         timeout: 4_000,
         afterMessageIncludes: 'channel-worktree-msg',
         afterAuthorId: TEST_USER_ID,
@@ -668,9 +664,9 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        -# *CHANNEL_WORKTREE_NAME ⋅ opencode/kimaki-CHANNEL_WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *CHANNEL_WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Branch:')
       expect(worktreeText).toContain('ok')
@@ -771,13 +767,13 @@ describe('worktree lifecycle', () => {
         afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
       })
-      // Finish the first turn, or the second message interrupts it.
-      await waitForFooterMessage({
+      await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'deterministic-v2',
+        afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
-        afterMessageIncludes: 'non-git-first',
-        afterAuthorId: TEST_USER_ID,
       })
 
       await th.user(TEST_USER_ID).sendMessage({
@@ -806,14 +802,14 @@ describe('worktree lifecycle', () => {
         "--- from: user (worktree-tester)
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        -# *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        *non-git-project ⋅ opencode/kimaki-opncd-v2-kmk-… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
         ok
-        -# *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *non-git-project ⋅ opencode/kimaki-opncd-v2-kmk-… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
       expect(text).toContain('Reply with exactly: non-git-second')
@@ -877,12 +873,12 @@ describe('worktree lifecycle', () => {
         text: 'ok',
         timeout: 10_000,
       })
-      await waitForFooterMessage({
+      await waitForBotMessageContaining({
         discord,
         threadId: threadData.id,
+        userId: discord.botUserId,
+        text: '⋅ deterministic-v2',
         timeout: 4_000,
-        afterMessageIncludes: 'ok',
-        afterAuthorId: discord.botUserId,
       })
 
       // Snapshot the thread content
@@ -897,9 +893,9 @@ describe('worktree lifecycle', () => {
         🌳 **Worktree: AUTO_WORKTREE_BRANCH**
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
-        -# *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        -# *AUTO_WORKTREE_FOLDER ⋅ AUTO_WORKTREE_BRANCH ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *AUTO_WORKTREE_FOLDER ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
 
       // Verify DB has worktree info

@@ -89,20 +89,15 @@ test('creates a workspace from the exact requested clone and commit', async () =
 
   // Load the requested clone first, then overwrite the colliding OpenCode
   // project adapter with the other clone before creating the workspace.
-  await requestedClient.config.get({ directory: requestedClone })
-  await otherClient.config.get({ directory: otherClone })
+  await requestedClient.config.get({ location: { directory: requestedClone } })
+  await otherClient.config.get({ location: { directory: otherClone } })
 
-  const response = await requestedClient.experimental.workspace.create({
-    directory: requestedClone,
-    type: KIMAKI_WORKTREE_ADAPTER_TYPE,
-    branch: WORKTREE_BRANCH,
-    extra: {
-      projectDirectory: requestedClone,
-      baseCommit: requestedCommit,
-    },
+  const workspace = await requestedClient.worktree.create({
+    location: { directory: requestedClone },
+    name: WORKTREE_BRANCH,
+    branch: requestedCommit,
+    from: requestedClone,
   })
-  if (response.error) throw new Error(JSON.stringify(response.error))
-  const workspace = response.data
   if (!workspace) throw new Error('OpenCode returned no workspace')
 
   try {
@@ -138,9 +133,10 @@ test('creates a workspace from the exact requested clone and commit', async () =
         }
       `)
   } finally {
-    await requestedClient.experimental.workspace.remove({
-      id: workspace.id,
-      directory: requestedClone,
+    await requestedClient.worktree.remove({
+      location: { directory: requestedClone },
+      directory: workspace.directory,
+      force: true,
     })
   }
 }, 30_000)
@@ -161,12 +157,11 @@ test('removes workspace state when identity validation rejects creation', async 
   const clientResult = await initializeOpencodeForDirectory(requestedClone)
   if (clientResult instanceof Error) throw clientResult
   const client = clientResult()
-  const listResponse = await client.experimental.workspace.list({
-    directory: requestedClone,
+  const listResponse = await client.worktree.list({
+    location: { directory: requestedClone },
   })
-  if (listResponse.error) throw new Error(JSON.stringify(listResponse.error))
-  const rejectedWorkspaces = (listResponse.data ?? []).filter((workspace) => {
-    return workspace.branch === REJECTED_WORKTREE_BRANCH
+  const rejectedWorkspaces = listResponse.filter((workspace) => {
+    return workspace.directory.includes(REJECTED_WORKTREE_BRANCH)
   })
 
   try {
@@ -203,9 +198,10 @@ test('removes workspace state when identity validation rejects creation', async 
   } finally {
     await Promise.all(
       rejectedWorkspaces.map((workspace) => {
-        return client.experimental.workspace.remove({
-          id: workspace.id,
-          directory: requestedClone,
+        return client.worktree.remove({
+          location: { directory: requestedClone },
+          directory: workspace.directory,
+          force: true,
         })
       }),
     )

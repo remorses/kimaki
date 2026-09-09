@@ -114,11 +114,9 @@ function createDeterministicMatchers() {
         {
           type: 'tool-call',
           toolCallId: 'bash-create-file-call',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt',
-            description: 'Create marker file for e2e test',
-            hasSideEffect: true,
           }),
         },
         {
@@ -250,7 +248,7 @@ function createDeterministicMatchers() {
     id: 'slow-busy-reply',
     priority: 115,
     when: {
-      latestUserTextIncludes: 'SLOW_BUSY_MARKER',
+      latestUserTextRegex: '^SLOW_BUSY_MARKER',
     },
     then: {
       parts: [
@@ -694,6 +692,12 @@ e2eTest('thread message queue ordering', () => {
         userMessageIncludes: 'three',
         timeout: 4_000,
       })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'three',
+      })
 
       // The last text part is quoted until the turn ends, then edited back to
       // full width right before the footer. Snapshot after the footer so the
@@ -724,7 +728,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: three
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -810,7 +814,7 @@ e2eTest('thread message queue ordering', () => {
         > running create file
         > creating marker
 
-        -# ┣ bash _Create marker file for e2e test_
+        ▏shell (command: mkdir -p tmp && printf "created" > tmp/bash-tool-e…)
 
         file created
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
@@ -1158,7 +1162,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: india
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
@@ -1239,19 +1243,21 @@ e2eTest('thread message queue ordering', () => {
         })
         .join('\n')
 
-      const normalizedTextWithoutFooters = textWithoutFooters.replace(
-        [
-          '--- from: assistant (TestBot)',
-          'ok',
-          '--- from: user (queue-tester)',
-          'Reply with exactly: november',
-        ].join('\n'),
-        [
-          '--- from: assistant (TestBot)',
-          '--- from: user (queue-tester)',
-          'Reply with exactly: november',
-        ].join('\n'),
-      )
+      const normalizedTextWithoutFooters = textWithoutFooters
+        .replace(
+          [
+            '--- from: assistant (TestBot)',
+            'ok',
+            '--- from: user (queue-tester)',
+            'Reply with exactly: november',
+          ].join('\n'),
+          [
+            '--- from: assistant (TestBot)',
+            '--- from: user (queue-tester)',
+            'Reply with exactly: november',
+          ].join('\n'),
+        )
+        .replace(/\nok$/, '')
 
       expect(normalizedTextWithoutFooters).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
