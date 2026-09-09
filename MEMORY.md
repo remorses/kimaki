@@ -157,3 +157,11 @@ do not set `external_directory` inside the generated `agent.explore` block.
 A session never needs an allow rule for its own working directory —
 `containsPath` in `tool/external-directory.ts` skips the gate for paths inside
 the active instance.
+
+## Discord leftover slash text fills the first string option
+
+Typed text after `/command …` is not extra chat. Discord puts it in the **first
+string option**, even if later string options exist. `/plan-agent fix the bug`
+fills `prompt` while `variant` stays a named option. Do not collapse extra
+options to keep leftover filling. Leftover filling fails when that first option
+is not free text (autocomplete, choices, or the user must pick an option).
