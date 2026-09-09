@@ -45,6 +45,7 @@
     "plugin"
   ],
   "dependencies": {
+    "@opencode-ai/client": "0.0.0-beta-19271",
     "@opencode-ai/plugin": "0.0.0-beta-19271",
     "discord.js": "^14.26.3"
   },
