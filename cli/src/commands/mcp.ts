@@ -13,7 +13,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type { McpStatus } from '@opencode-ai/sdk/v2'
+import type { McpServer } from '@opencode-ai/client'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -44,11 +44,8 @@ function formatStatusLabel(status: string): string {
 }
 
 /** Extract error string from McpStatus using discriminated union narrowing. */
-function getStatusError(info: McpStatus): string | undefined {
+function getStatusError(info: McpServer['status']): string | undefined {
   if (info.status === 'failed') {
-    return info.error
-  }
-  if (info.status === 'needs_client_registration') {
     return info.error
   }
   return undefined
@@ -131,18 +128,18 @@ export async function handleMcpCommand({
   }
 
   const client = getClient()
-  const { data, error } = await client.mcp.status({
-    directory: projectDirectory,
-  })
+  const listed = await client.mcp.list({
+    location: { directory: projectDirectory },
+  }).catch(() => null)
 
-  if (error || !data) {
+  if (!listed) {
     await command.editReply({
       content: 'Failed to fetch MCP server status.',
     })
     return
   }
 
-  const servers = Object.entries(data)
+  const servers = listed.data.map((server) => [server.name, server] as const)
   if (servers.length === 0) {
     await command.editReply({
       content:
@@ -152,7 +149,7 @@ export async function handleMcpCommand({
   }
 
   const lines = servers.map(([name, info]) => {
-    return formatServerLine({ name, status: info.status, error: getStatusError(info) })
+    return formatServerLine({ name, status: info.status.status, error: getStatusError(info.status) })
   })
 
   const content = `**MCP Servers** (project-wide)\n${lines.join('\n')}`
@@ -167,7 +164,7 @@ export async function handleMcpCommand({
   const options = servers.map(([name, info]) => ({
     label: name.slice(0, 100),
     value: name.slice(0, 100),
-    description: `${formatStatusLabel(info.status)} — click to ${toggleActionLabel(info.status)}`.slice(0, 100),
+    description: `${formatStatusLabel(info.status.status)} — click to ${toggleActionLabel(info.status.status)}`.slice(0, 100),
   }))
 
   const selectMenu = new StringSelectMenuBuilder()
@@ -227,11 +224,11 @@ export async function handleMcpSelectMenu(
 
   const client = getClient()
 
-  const { data: statusData, error: statusError } = await client.mcp.status({
-    directory: projectDirectory,
-  })
+  const listed = await client.mcp.list({
+    location: { directory: projectDirectory },
+  }).catch(() => null)
 
-  if (statusError || !statusData) {
+  if (!listed) {
     await interaction.editReply({
       content: 'Failed to refresh MCP server status.',
       components: [],
@@ -239,7 +236,8 @@ export async function handleMcpSelectMenu(
     return
   }
 
-  if (!statusData[serverName]) {
+  const serverInfo = listed.data.find((server) => server.name === serverName)
+  if (!serverInfo) {
     await interaction.editReply({
       content: `Server **${serverName}** not found.`,
       components: [],
@@ -247,15 +245,13 @@ export async function handleMcpSelectMenu(
     return
   }
 
-  const serverInfo = statusData[serverName]
-
-  if (serverInfo.status === 'connected') {
-    const { error } = await client.mcp.disconnect({
-      name: serverName,
-      directory: projectDirectory,
-    })
-    if (error) {
-      logger.error(`[MCP] Failed to disconnect ${serverName}:`, error)
+  if (serverInfo.status.status === 'connected') {
+    const disconnectResult = await client.mcp.disconnect({
+      server: serverName,
+      location: { directory: projectDirectory },
+    }).catch((error: unknown) => error)
+    if (disconnectResult instanceof Error) {
+      logger.error(`[MCP] Failed to disconnect ${serverName}:`, disconnectResult)
       await interaction.editReply({
         content: `Failed to disconnect **${serverName}**.`,
         components: [],
@@ -270,7 +266,7 @@ export async function handleMcpSelectMenu(
     return
   }
 
-  if (serverInfo.status === 'needs_auth') {
+  if (serverInfo.status.status === 'needs_auth') {
     await interaction.editReply({
       content: `**${serverName}** needs authentication.\nRun \`opencode\` in the project directory to complete the OAuth flow.`,
       components: [],
@@ -278,21 +274,12 @@ export async function handleMcpSelectMenu(
     return
   }
 
-  if (serverInfo.status === 'needs_client_registration') {
-    await interaction.editReply({
-      content: `**${serverName}** needs client registration.${serverInfo.error ? `\n${serverInfo.error}` : ''}`,
-      components: [],
-    })
-    return
-  }
-
-  // Connect (handles disabled and failed)
-  const { error } = await client.mcp.connect({
-    name: serverName,
-    directory: projectDirectory,
-  })
-  if (error) {
-    logger.error(`[MCP] Failed to connect ${serverName}:`, error)
+  const connectResult = await client.mcp.connect({
+    server: serverName,
+    location: { directory: projectDirectory },
+  }).catch((error: unknown) => error)
+  if (connectResult instanceof Error) {
+    logger.error(`[MCP] Failed to connect ${serverName}:`, connectResult)
     await interaction.editReply({
       content: `Failed to connect **${serverName}**.`,
       components: [],
