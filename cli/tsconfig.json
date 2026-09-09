@@ -30,5 +30,5 @@
     "noPropertyAccessFromIndexSignature": false
   },
   "include": ["src"],
-  "exclude": ["scripts"]
+  "exclude": ["scripts", "src/kimaki-opencode-plugin"]
 }
