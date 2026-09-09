@@ -85,12 +85,10 @@ describe('voice routing input boundaries', () => {
     if (!sessionId) throw new Error('Expected target session')
     const client = getOpencodeClient(ctx.directories.projectDirectory)
     if (!client) throw new Error('Expected OpenCode client')
-    const messages = await client.session.messages({ sessionID: sessionId })
+    const messages = await client.message.list({ sessionID: sessionId })
     const userTexts = messages.data
-      ?.filter((message) => message.info.role === 'user')
-      .flatMap((message) =>
-        message.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
-      )
+      .filter((message) => message.type === 'user')
+      .map((message) => message.type === 'user' ? message.text : '')
     expect(userTexts?.join('\n')).toContain(
       `Voice message transcription from Discord user:\n${prompt}`,
     )

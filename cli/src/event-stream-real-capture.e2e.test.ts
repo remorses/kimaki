@@ -108,8 +108,9 @@ function hasToolEvent({ events, tool }: { events: OpencodeEventLogEntry[]; tool:
     if (line.event.type !== 'message.part.updated') {
       return false
     }
-    const part = line.event.properties.part
-    if (part.type !== 'tool') {
+    const properties = line.event.properties as { part?: { type?: string; tool?: string } } | undefined
+    const part = properties?.part
+    if (part?.type !== 'tool') {
       return false
     }
     return part.tool === tool
