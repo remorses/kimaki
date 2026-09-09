@@ -1,0 +1,93 @@
+---
+$schema: https://holocron.so/frontmatter.json
+title: Discord Colored Text Generator
+sidebarTitle: Colored Text
+description: Generate Discord colored text with syntax-highlighted code blocks. Pick a color, copy the markdown, and paste it into Discord.
+icon: lucide:palette
+mode: custom
+maxWidth: 900
+hideTitle: true
+keywords:
+  - discord colored text generator
+  - discord text color
+  - colored text discord
+  - discord code block colors
+prompt: |
+  Create a Discord colored text generator utility page from
+  @https://codepen.io/zgoly/pen/dyWpZaq.
+  Use Holocron custom page mode and put the interactive generator in <Above>.
+  The React tool lives in @/website/src/components/discord-colored-text-generator.tsx.
+  Rank for discord colored text generator with a useful copy-paste tool.
+---
+
+import { DiscordColoredTextGenerator } from '../components/discord-colored-text-generator.tsx'
+
+<Above>
+
+<div className='no-bleed mx-auto flex w-full max-w-[900px] flex-col gap-(--prose-gap) py-10'>
+
+# Discord Colored Text Generator
+
+Free **Discord colored text** tool. Type a message, pick a color, copy the markdown, and paste it in chat.
+
+<DiscordColoredTextGenerator />
+
+</div>
+
+</Above>
+
+## How Discord colored text works
+
+Discord does **not** let you color normal messages. It colors **code blocks** through syntax highlighting. This generator wraps your text in a fenced code block with a language Discord already highlights.
+
+```diagram
+  your text  ──►  language fence  ──►  paste in Discord  ──►  colored code block
+     hi              fix hi                 chat input              yellow hi
+```
+
+Pick a color above, then copy the markdown. Paste it into a Discord channel, thread, or DM.
+
+## Color recipes
+
+Each color uses a **highlight language** Discord already ships. Some languages add a prefix so the highlighter treats the line as a comment, heading, or diff.
+
+| Color       | Language | What the generator wraps |
+| ----------- | -------- | ------------------------ |
+| Red         | `diff`   | `- your text`            |
+| Orange      | `css`    | `[your text]`            |
+| Yellow      | `fix`    | `your text`              |
+| Lime        | `diff`   | `+ your text`            |
+| Cyan        | `yaml`   | `your text`              |
+| Blue        | `ini`    | `[your text]`            |
+| Gray        | plain    | `your text`              |
+| Dark gray   | `yaml`   | `# your text`            |
+| Highlighted | `tex`    | `$ your text`            |
+
+**Yellow** (`fix`) and **cyan** (`yaml`) change the text the least. Use those when you want readable copy, not just a color.
+
+## How to paste colored text in Discord
+
+1. Write the message in the generator.
+2. Click a **color**.
+3. Click **Copy markdown**.
+4. Paste into Discord and send.
+
+The message appears as a **code block**, not as normal chat text. That is a Discord limit, not a generator limit.
+
+<Note>
+Colors work best in **Discord desktop and web**. Mobile clients can show the same code block without syntax colors, so do not use color as the only way to communicate important information.
+</Note>
+
+## Limits
+
+- Colors apply to a **code block**, not to bold, italic, or spoiler text.
+- Some recipes add characters (`- `, `# `, `$ `, `[ ]`). Those characters show in the block.
+- Characters that clash with the language (`]`, `#`, leading spaces) can change the highlight.
+- Discord can change highlighter themes. Colors are close, not guaranteed forever.
+- This tool uses **syntax highlighting**, not ANSI escape sequences.
+
+## Why this exists
+
+People search for a **Discord colored text generator** when they want announcements, role menus, or raid messages to stand out. This page is a small utility next to [Kimaki](./index.mdx), the Discord coding-agent product.
+
+If you want an AI agent that writes, edits, and ships code from Discord threads, install Kimaki with `npx -y kimaki@latest`.
