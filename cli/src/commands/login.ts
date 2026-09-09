@@ -265,7 +265,7 @@ export async function handleLoginCommand({
     }
 
     const providersResponse = await getClient().provider.list({
-      directory: projectDirectory,
+      location: { directory: projectDirectory },
     })
 
     if (!providersResponse.data) {
@@ -273,7 +273,10 @@ export async function handleLoginCommand({
       return
     }
 
-    const { all: allProviders, connected } = providersResponse.data
+    const allProviders = [...providersResponse.data]
+    const connected = allProviders
+      .filter((provider) => provider.activation !== 'disabled')
+      .map((provider) => provider.id)
 
     if (allProviders.length === 0) {
       await interaction.editReply({ content: 'No providers available.' })
@@ -417,12 +420,15 @@ async function handleProviderStep(
       await interaction.editReply({ content: getClient.message, components: [] })
       return
     }
-    const providersResponse = await getClient().provider.list({ directory: ctx.dir })
+    const providersResponse = await getClient().provider.list({ location: { directory: ctx.dir } })
     if (!providersResponse.data) {
       await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
       return
     }
-    const { all: allProviders, connected } = providersResponse.data
+    const allProviders = [...providersResponse.data]
+    const connected = allProviders
+      .filter((provider) => provider.activation !== 'disabled')
+      .map((provider) => provider.id)
     const allProviderOptions = [...allProviders]
       .sort((a, b) => {
         const rankA = PROVIDER_POPULARITY_ORDER.indexOf(a.id)
@@ -464,14 +470,30 @@ async function handleProviderStep(
   }
 
   const providersResponse = await getClient().provider.list({
-    directory: ctx.dir,
+    location: { directory: ctx.dir },
   })
-  const provider = providersResponse.data?.all.find(
-    (p) => p.id === providerId,
+  const provider = providersResponse.data.find(
+    (candidate) => candidate.id === providerId,
   )
   const providerName = provider?.name || providerId
 
-  const authResponse = await getClient().provider.auth({ directory: ctx.dir })
+  const integration = await getClient().integration.get({
+    integrationID: providerId,
+    location: { directory: ctx.dir },
+  }).catch(() => null)
+  const authResponse = {
+    data: {
+      [providerId]: (integration?.data?.methods ?? []).map((method) => {
+        if (method.type === 'oauth') {
+          return { type: 'oauth' as const, label: method.label }
+        }
+        if (method.type === 'key') {
+          return { type: 'api' as const, label: method.label || 'API Key' }
+        }
+        return { type: 'api' as const, label: 'API Key' }
+      }),
+    },
+  }
   if (!authResponse.data) {
     await interaction.deferUpdate()
     await interaction.editReply({
@@ -923,23 +945,23 @@ export async function handleOAuthCodeModalSubmit(
       components: [],
     })
 
-    const callbackResponse = await getClient().provider.oauth.callback({
-      providerID: ctx.providerId,
-      method: ctx.methodIndex,
+    const callbackResponse = await getClient().integration.oauth.complete({
+      integrationID: ctx.providerId,
+      attemptID: ctx.providerId,
+      location: { directory: ctx.dir },
       code,
-      directory: ctx.dir,
-    })
+    }).catch((error: unknown) => error)
 
-    if (callbackResponse.error) {
+    if (callbackResponse instanceof Error) {
       pendingLoginContexts.delete(hash)
       await interaction.editReply({
-        content: `**Authentication Failed**\n${extractErrorMessage({ error: callbackResponse.error, fallback: 'Authorization code was invalid or expired' })}`,
+        content: `**Authentication Failed**\n${callbackResponse.message || 'Authorization code was invalid or expired'}`,
         components: [],
       })
       return
     }
 
-    await getClient().instance.dispose({ directory: ctx.dir })
+    await getClient().debug.location.evict({ location: { directory: ctx.dir } }).catch(() => undefined)
     clearModelListCache()
     pendingLoginContexts.delete(hash)
 
@@ -990,13 +1012,13 @@ export async function handleApiKeyModalSubmit(
       return
     }
 
-    await getClient().auth.set({
-      providerID: ctx.providerId,
-      auth: { type: 'api', key: apiKey.trim() },
+    await getClient().integration.connect.key({
+      integrationID: ctx.providerId,
+      location: { directory: ctx.dir },
+      key: apiKey.trim(),
     })
 
-    // Dispose to refresh provider state so new credentials are recognized
-    await getClient().instance.dispose({ directory: ctx.dir })
+    await getClient().debug.location.evict({ location: { directory: ctx.dir } }).catch(() => undefined)
     clearModelListCache()
 
     await interaction.editReply({
@@ -1148,22 +1170,22 @@ async function startOAuthFlow(
     await interaction.editReply({ content: message, components: [] })
 
     // Auto mode: poll for completion (device flow / localhost callback)
-    const callbackResponse = await getClient().provider.oauth.callback({
-      providerID: ctx.providerId,
-      method: ctx.methodIndex,
-      directory: ctx.dir,
-    })
+    const callbackResponse = await getClient().integration.oauth.complete({
+      integrationID: ctx.providerId,
+      attemptID: ctx.providerId,
+      location: { directory: ctx.dir },
+    }).catch((error: unknown) => error)
 
-    if (callbackResponse.error) {
+    if (callbackResponse instanceof Error) {
       pendingLoginContexts.delete(hash)
       await interaction.editReply({
-        content: `**Authentication Failed**\n${extractErrorMessage({ error: callbackResponse.error, fallback: 'Authorization was not completed' })}`,
+        content: `**Authentication Failed**\n${callbackResponse.message || 'Authorization was not completed'}`,
         components: [],
       })
       return
     }
 
-    await getClient().instance.dispose({ directory: ctx.dir })
+    await getClient().debug.location.evict({ location: { directory: ctx.dir } }).catch(() => undefined)
     clearModelListCache()
     pendingLoginContexts.delete(hash)
 

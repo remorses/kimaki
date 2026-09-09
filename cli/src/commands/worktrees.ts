@@ -690,12 +690,10 @@ async function deleteWorkspace({
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
-  const response = await getClient().experimental.workspace.remove({
-    id: workspaceId,
-    directory: projectDirectory,
-  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.remove', cause: e }))
+  const response = await getClient().workspace.destroy({
+    workspaceID: workspaceId,
+  }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'workspace.destroy', cause: e }))
   if (response instanceof Error) return response
-  if (response.error) return new Error(`Workspace removal failed: ${JSON.stringify(response.error)}`)
 }
 
 export async function handleWorktreesCommand({

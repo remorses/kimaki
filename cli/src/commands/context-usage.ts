@@ -157,14 +157,13 @@ export async function handleContextUsageCommand({
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   try {
-    const messagesResponse = await client.session.messages({
+    const messagesResponse = await client.message.list({
       sessionID: sessionId,
-      directory: workingDirectory,
     })
 
-    const messages = messagesResponse.data || []
+    const messages = messagesResponse.data
     const assistantMessages = messages.filter(
-      (m) => m.info.role === 'assistant',
+      (m) => m.type === 'assistant',
     )
 
     if (assistantMessages.length === 0) {
@@ -175,51 +174,48 @@ export async function handleContextUsageCommand({
     }
 
     const lastAssistant = [...assistantMessages].reverse().find((m) => {
-      if (m.info.role !== 'assistant') {
+      if (m.type !== 'assistant') {
         return false
       }
-      if (!m.info.tokens) {
+      if (!m.tokens) {
         return false
       }
-      return getTokenTotal(m.info.tokens) > 0
+      return getTokenTotal(m.tokens) > 0
     })
 
-    if (!lastAssistant || lastAssistant.info.role !== 'assistant') {
+    if (!lastAssistant || lastAssistant.type !== 'assistant') {
       await command.editReply({
         content: 'Token usage not available for this session yet',
       })
       return
     }
 
-    const { tokens, modelID, providerID } = lastAssistant.info
-    const totalTokens = getTokenTotal(tokens)
-    const inputTokens = tokens.input + tokens.cache.read + tokens.cache.write
+    const { tokens, model } = lastAssistant
+    const modelID = model.id
+    const providerID = model.providerID
+    const totalTokens = tokens ? getTokenTotal(tokens) : 0
 
-    // Sum cost across all assistant messages for accurate session total
-    // (AssistantMessage.cost is per-message, not cumulative)
     const totalCost = assistantMessages.reduce((sum, m) => {
-      if (m.info.role === 'assistant') {
-        return sum + (m.info.cost || 0)
+      if (m.type === 'assistant') {
+        return sum + (m.cost || 0)
       }
       return sum
     }, 0)
 
-    // Fetch model context limit from provider API
     let contextLimit: number | undefined
-    const providersResult = await client.provider.list({ directory: workingDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResult instanceof Error) {
+    const modelsResult = await client.model.list({ location: { directory: workingDirectory } })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+    if (modelsResult instanceof Error) {
       logger.error(
         '[CONTEXT-USAGE] Failed to fetch provider info:',
-        providersResult,
+        modelsResult,
       )
     } else {
-      const provider = providersResult.data?.all?.find(
-        (p) => p.id === providerID,
-      )
-      const model = provider?.models?.[modelID]
-      if (model?.limit?.context) {
-        contextLimit = model.limit.context
+      const listed = modelsResult.data.find((candidate) => {
+        return candidate.providerID === providerID && candidate.modelID === modelID
+      })
+      if (listed?.limit?.context) {
+        contextLimit = listed.limit.context
       }
     }
 

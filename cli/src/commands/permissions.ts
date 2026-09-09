@@ -16,7 +16,8 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import type { OpencodeClient, PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '../opencode.js'
 import { getOpencodeClient } from '../opencode.js'
 import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -25,38 +26,16 @@ import { createLogger, LogPrefix } from '../logger.js'
 const logger = createLogger(LogPrefix.PERMISSIONS)
 
 async function resumeSessionIfIdleAfterPermission({
-  client,
   sessionId,
-  directory,
 }: {
   client: OpencodeClient
   sessionId: string
   directory: string
 }): Promise<Error | boolean> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, 100)
-  })
-
-  const statusResponse = await client.session.status({ directory })
-  if (statusResponse.error) {
-    return new Error('Failed to check session status')
-  }
-
-  const sessionStatus = statusResponse.data?.[sessionId]
-  if (!sessionStatus || sessionStatus.type !== 'idle') {
-    return false
-  }
-
-  const resumeResponse = await client.session.promptAsync({
-    sessionID: sessionId,
-    directory,
-    parts: [],
-  })
-  if (resumeResponse.error) {
-    return new Error('Failed to resume session')
-  }
-
-  return true
+  // v2 continues the drain after permission.reply. Empty promptAsync resume
+  // is a v1 pattern and is not on the v2 client.
+  void sessionId
+  return false
 }
 
 function wildcardMatch({
@@ -183,8 +162,8 @@ export async function showPermissionButtons({
       await Promise.all(
         requestIds.map((requestId) => {
           return client.permission.reply({
+            sessionID: ctx.permission.sessionID,
             requestID: requestId,
-            directory: ctx.directory,
             reply: 'reject',
             message: timeoutFeedback,
           })
@@ -311,8 +290,8 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
     const result = await Promise.all(
       requestIds.map((requestId) => {
         return client.permission.reply({
+          sessionID: pendingContext.permission.sessionID,
           requestID: requestId,
-          directory: pendingContext.directory,
           reply: 'reject',
         })
       }),
@@ -386,8 +365,8 @@ export async function handlePermissionButton(
     await Promise.all(
       requestIds.map((requestId) => {
         return permClient.permission.reply({
+          sessionID: context.permission.sessionID,
           requestID: requestId,
-          directory: context.directory,
           reply: response,
         })
       }),

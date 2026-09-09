@@ -32,9 +32,9 @@ import {
   getDefaultModel,
   resolveDisplayedModelId,
 } from '../session-handler/model-utils.js'
+import { findAgentByName } from '../session-handler/agent-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
-import { resolveAgentPreference } from '../session-handler/agent-utils.js'
-import { getThinkingValuesForModel } from '../thinking-utils.js'
+import { getThinkingValuesForModel, thinkingProvidersFromListedModels } from '../thinking-utils.js'
 import {
   buildHtmlActionCustomId,
   cancelHtmlActionsForOwner,
@@ -433,16 +433,19 @@ export async function getCurrentModelInfo({
         ? await getChannelAgent(channelId)
         : undefined)
   if (effectiveAgent) {
-    const agentsResponse = await getClient().app.agents({ directory })
+    const agentsResponse = await getClient().agent.list({ location: { directory } })
     if (agentsResponse.data) {
-      const agent = agentsResponse.data.find((a) => a.name === effectiveAgent)
+      const agent = findAgentByName({
+        agents: agentsResponse.data,
+        name: effectiveAgent,
+      })
       if (agent?.model) {
-        const model = `${agent.model.providerID}/${agent.model.modelID}`
+        const model = `${agent.model.providerID}/${agent.model.id}`
         return {
           type: 'agent',
           model,
           providerID: agent.model.providerID,
-          modelID: agent.model.modelID,
+          modelID: agent.model.id,
           agentName: effectiveAgent,
         }
       }
@@ -575,7 +578,7 @@ export async function handleModelCommand({
       sessionPref,
       channelPref,
     ] = await Promise.all([
-      getClient().provider.list({ directory: projectDirectory }),
+      getClient().model.list({ location: { directory: projectDirectory } }),
       getCurrentModelInfo({
         sessionId,
         channelId: targetChannelId,
@@ -599,11 +602,13 @@ export async function handleModelCommand({
       return
     }
 
-    const { all: allProviders, connected } = providersResponse.data
-
-    // Filter to only connected providers (have credentials)
-    const availableProviders = allProviders.filter((p) => {
-      return connected.includes(p.id)
+    const allProviders = thinkingProvidersFromListedModels({
+      models: [...providersResponse.data],
+    })
+    const availableProviders = allProviders.filter((provider) => {
+      return providersResponse.data.some((model) => {
+        return model.providerID === provider.id && model.enabled
+      })
     })
 
     if (availableProviders.length === 0) {
@@ -849,13 +854,19 @@ export async function handleProviderSelectMenu(
       await interaction.editReply({ content: getClient.message, components: [] })
       return
     }
-    const providersResponse = await getClient().provider.list({ directory: context.dir })
+    const providersResponse = await getClient().model.list({ location: { directory: context.dir } })
     if (!providersResponse.data) {
       await interaction.editReply({ content: 'Failed to fetch providers', components: [] })
       return
     }
-    const { all: allProviders, connected } = providersResponse.data
-    const availableProviders = allProviders.filter((p) => connected.includes(p.id))
+    const allProviders = thinkingProvidersFromListedModels({
+      models: [...providersResponse.data],
+    })
+    const availableProviders = allProviders.filter((provider) => {
+      return providersResponse.data.some((model) => {
+        return model.providerID === provider.id && model.enabled
+      })
+    })
     const allProviderOptions = [...availableProviders]
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
       .map((p) => {
@@ -890,8 +901,8 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    const providersResponse = await getClient().provider.list({
-      directory: context.dir,
+    const providersResponse = await getClient().model.list({
+      location: { directory: context.dir },
     })
 
     if (!providersResponse.data) {
@@ -902,9 +913,9 @@ export async function handleProviderSelectMenu(
       return
     }
 
-    const provider = providersResponse.data.all.find(
-      (p) => p.id === selectedProviderId,
-    )
+    const provider = thinkingProvidersFromListedModels({
+      models: [...providersResponse.data],
+    }).find((candidate) => candidate.id === selectedProviderId)
 
     if (!provider) {
       await interaction.editReply({
@@ -917,8 +928,8 @@ export async function handleProviderSelectMenu(
     const models = Object.entries(provider.models || {})
       .map(([modelId, model]) => ({
         id: modelId,
-        name: model.name || modelId,
-        releaseDate: model.release_date,
+        name: model?.name || modelId,
+        releaseDate: undefined as string | undefined,
       }))
       .filter((model) => model.id && model.name)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
@@ -1023,8 +1034,10 @@ export async function handleModelSelectMenu(
       await interaction.editReply({ content: getClient.message, components: [] })
       return
     }
-    const providersResponse = await getClient().provider.list({ directory: context.dir })
-    const provider = providersResponse.data?.all.find((p) => p.id === context.providerId)
+    const providersResponse = await getClient().model.list({ location: { directory: context.dir } })
+    const provider = thinkingProvidersFromListedModels({
+      models: [...(providersResponse.data ?? [])],
+    }).find((candidate) => candidate.id === context.providerId)
     if (!provider) {
       await interaction.editReply({ content: 'Provider not found', components: [] })
       return
@@ -1032,11 +1045,9 @@ export async function handleModelSelectMenu(
     const allModelOptions = Object.entries(provider.models || {})
       .map(([modelId, model]) =>
         buildSafeSelectOption({
-          label: model.name || modelId,
+          label: model?.name || modelId,
           value: modelId,
-          description: model.release_date
-            ? new Date(model.release_date).toLocaleDateString()
-            : 'Unknown date',
+          description: 'Available',
         }),
       )
       .filter((option): option is NonNullable<typeof option> => !!option)
@@ -1064,12 +1075,12 @@ export async function handleModelSelectMenu(
     // Check if model has variants (thinking levels) - if so, show variant picker first
     const getClient = await initializeOpencodeForDirectory(context.dir)
     if (!(getClient instanceof Error)) {
-      const providersResponse = await getClient().provider.list({
-        directory: context.dir,
+      const providersResponse = await getClient().model.list({
+        location: { directory: context.dir },
       })
       if (providersResponse.data) {
         const variants = getThinkingValuesForModel({
-          providers: providersResponse.data.all,
+          providers: thinkingProvidersFromListedModels({ models: [...providersResponse.data] }),
           providerId: context.providerId!,
           modelId: selectedModelId,
         })

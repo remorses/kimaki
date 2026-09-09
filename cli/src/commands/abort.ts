@@ -98,7 +98,7 @@ export async function handleAbortCommand({
     try {
       const client = getOpencodeClient(workingDirectory)
       if (client) {
-        await client.session.abort({ sessionID: sessionId, directory: workingDirectory })
+        await client.session.interrupt({ sessionID: sessionId })
       }
     } catch (error) {
       logger.error('[ABORT] API abort failed:', error)
