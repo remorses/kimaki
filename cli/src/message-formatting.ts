@@ -172,7 +172,7 @@ export function sessionPartKind(part: { type: string }): SessionPartKind {
   return part.type === 'text' ? 'text' : 'tool'
 }
 
-export function shouldLeadWithSeparator({
+export function shouldLeadWithBlankLine({
   previousKind,
   nextKind,
 }: {
@@ -181,6 +181,17 @@ export function shouldLeadWithSeparator({
 }): boolean {
   if (!previousKind) return false
   return previousKind !== nextKind
+}
+
+export function sessionPartContent({
+  content,
+  leadWithBlankLine,
+}: {
+  content: string
+  leadWithBlankLine: boolean
+}): string {
+  if (!leadWithBlankLine) return content
+  return `\n${content}`
 }
 
 // A chunk of formatted content with associated part IDs, ready to be

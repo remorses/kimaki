@@ -69,9 +69,9 @@ describe('external directory project deny', () => {
       --- from: assistant (TestBot)
       *using deterministic-provider/deterministic-v2*
       reading external directory
-      ---
+
       ┣ read *probe.txt*
-      ---
+
       external-directory-probe-denied"
     `)
 

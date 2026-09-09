@@ -705,7 +705,9 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         running create file
+
         ┣ bash _Create marker file for e2e test_
+
         file created
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>"
       `)

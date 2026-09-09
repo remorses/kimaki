@@ -348,9 +348,9 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         running tool
-        ---
+
         ┣ bash _echo tool-call-footer-test_
-        ---
+
         tool call completed
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)

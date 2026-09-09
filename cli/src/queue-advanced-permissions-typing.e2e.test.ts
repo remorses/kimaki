@@ -127,7 +127,7 @@ describe('queue advanced: typing around permissions', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         requesting external read permission
-        ---
+
         ┣ read *.zprofile*
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
@@ -135,7 +135,7 @@ describe('queue advanced: typing around permissions', () => {
         **Pattern:** \`/Users/morse/*\`
         ✅ Permission **accepted**
         [user clicks button]
-        ---
+
         permission-flow-done
         *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)

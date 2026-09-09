@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { batchChunksForDiscord, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, serializeEmbeds, serializePoll, serializeMessageSnapshots, shouldLeadWithSeparator, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { batchChunksForDiscord, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
@@ -49,29 +49,52 @@ describe('formatPart', () => {
   })
 })
 
-describe('shouldLeadWithSeparator', () => {
+describe('shouldLeadWithBlankLine', () => {
   test('never leads on the first part', () => {
     expect(
-      shouldLeadWithSeparator({ previousKind: undefined, nextKind: 'text' }),
+      shouldLeadWithBlankLine({ previousKind: undefined, nextKind: 'text' }),
     ).toBe(false)
     expect(
-      shouldLeadWithSeparator({ previousKind: undefined, nextKind: 'tool' }),
+      shouldLeadWithBlankLine({ previousKind: undefined, nextKind: 'tool' }),
     ).toBe(false)
   })
 
   test('leads on both text and tool transitions', () => {
     expect(
-      shouldLeadWithSeparator({ previousKind: 'text', nextKind: 'tool' }),
+      shouldLeadWithBlankLine({ previousKind: 'text', nextKind: 'tool' }),
     ).toBe(true)
     expect(
-      shouldLeadWithSeparator({ previousKind: 'tool', nextKind: 'text' }),
+      shouldLeadWithBlankLine({ previousKind: 'tool', nextKind: 'text' }),
     ).toBe(true)
     expect(
-      shouldLeadWithSeparator({ previousKind: 'text', nextKind: 'text' }),
+      shouldLeadWithBlankLine({ previousKind: 'text', nextKind: 'text' }),
     ).toBe(false)
     expect(
-      shouldLeadWithSeparator({ previousKind: 'tool', nextKind: 'tool' }),
+      shouldLeadWithBlankLine({ previousKind: 'tool', nextKind: 'tool' }),
     ).toBe(false)
+  })
+})
+
+describe('sessionPartContent', () => {
+  test('leaves the first part unchanged', () => {
+    expect(
+      sessionPartContent({ content: 'hello', leadWithBlankLine: false }),
+    ).toBe('hello')
+  })
+
+  test('prepends a newline on text and tool transitions', () => {
+    expect(
+      sessionPartContent({ content: '┣ bash ls', leadWithBlankLine: true }),
+    ).toMatchInlineSnapshot(`
+      "
+      ┣ bash ls"
+    `)
+    expect(
+      sessionPartContent({ content: 'done', leadWithBlankLine: true }),
+    ).toMatchInlineSnapshot(`
+      "
+      done"
+    `)
   })
 })
 

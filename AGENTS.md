@@ -652,7 +652,7 @@ sometimes we need to interrupt the opencode session and restart it. for example 
 
 ## how kimaki messages look like in Discord
 
-Kimaki works by creating threads on the first user message. The bot then replies in that thread. Text parts have no prefix and use classic Discord content so they stay full width. Tool parts use classic Discord content too. When the displayed part kind changes between text and tool, Kimaki sends a Components V2 message that is only a Separator, then the new part as content. Consecutive same-kind parts have no extra separator.
+Kimaki works by creating threads on the first user message. The bot then replies in that thread. Text parts have no prefix and use classic Discord content so they stay full width. Tool parts use classic Discord content too. When the displayed part kind changes between text and tool, Kimaki starts the next part with a blank line. Consecutive same-kind parts have no extra blank line.
 
 tool parts are also displayed in Discord as messages, either prefixed with ┣ or ◼︎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⬦. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking`, file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
 

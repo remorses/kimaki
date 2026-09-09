@@ -51,7 +51,7 @@ import {
   formatPart,
   formatTaskToolTitle,
   sessionPartKind,
-  shouldLeadWithSeparator,
+  shouldLeadWithBlankLine,
 } from '../message-formatting.js'
 import {
   getChannelVerbosity,
@@ -1897,7 +1897,7 @@ export class ThreadSessionRuntime {
 
     const kind = sessionPartKind(part)
     const sendResult = await sendSessionPartMessage(this.thread, content, {
-      leadWithSeparator: shouldLeadWithSeparator({
+      leadWithBlankLine: shouldLeadWithBlankLine({
         previousKind: this.lastSentPartKind,
         nextKind: kind,
       }),
@@ -2247,7 +2247,7 @@ export class ThreadSessionRuntime {
             return { ...t, sentPartIds: newIds }
           })
           const sendResult = await sendSessionPartMessage(this.thread, taskDisplay, {
-            leadWithSeparator: shouldLeadWithSeparator({
+            leadWithBlankLine: shouldLeadWithBlankLine({
               previousKind: this.lastSentPartKind,
               nextKind: 'tool',
             }),
@@ -2452,7 +2452,7 @@ export class ThreadSessionRuntime {
     }
     const kind = sessionPartKind(part)
     const sendResult = await sendSessionPartMessage(this.thread, content, {
-      leadWithSeparator: shouldLeadWithSeparator({
+      leadWithBlankLine: shouldLeadWithBlankLine({
         previousKind: this.lastSentPartKind,
         nextKind: kind,
       }),
