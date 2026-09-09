@@ -4,10 +4,14 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
-
 import { getDataDir } from '../config.js'
 import { FilesystemOperationError } from '../errors.js'
+
+type LooseEvent = {
+  type: string
+  data?: unknown
+  properties?: unknown
+}
 
 let eventLogDirPromise: Promise<string> | null = null
 let eventLogWriteDisabled = false
@@ -16,32 +20,34 @@ export function isOpencodeSessionEventLogEnabled(): boolean {
   return process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS'] === '1'
 }
 
-export function getOpencodeEventSessionId(event: OpenCodeEvent): string | undefined {
-  switch (event.type) {
-    case 'message.updated':
-      return event.properties.info.sessionID
-    case 'message.part.updated':
-      return event.properties.part.sessionID
-    case 'message.part.delta':
-    case 'message.part.removed':
-    case 'session.status':
-    case 'session.idle':
-    case 'session.diff':
-    case 'permission.asked':
-    case 'permission.replied':
-    case 'question.asked':
-    case 'question.replied':
-    case 'question.rejected':
-      return event.properties.sessionID
-    case 'session.error':
-      return event.properties.sessionID
-    case 'session.created':
-    case 'session.updated':
-    case 'session.deleted':
-      return event.properties.info.id
-    default:
-      return undefined
+export function getOpencodeEventSessionId(event: LooseEvent): string | undefined {
+  if ('data' in event && event.data && typeof event.data === 'object') {
+    const data = event.data as { sessionID?: unknown; form?: { sessionID?: unknown } }
+    if (typeof data.sessionID === 'string') {
+      return data.sessionID
+    }
+    if (data.form && typeof data.form === 'object' && typeof data.form.sessionID === 'string') {
+      return data.form.sessionID
+    }
   }
+  const properties = 'properties' in event ? event.properties : undefined
+  if (properties && typeof properties === 'object') {
+    if ('sessionID' in properties && typeof properties.sessionID === 'string') {
+      return properties.sessionID
+    }
+    if ('info' in properties && properties.info && typeof properties.info === 'object') {
+      const info = properties.info as { id?: unknown; sessionID?: unknown }
+      if (typeof info.sessionID === 'string') return info.sessionID
+      if (typeof info.id === 'string' && event.type.startsWith('session.')) {
+        return info.id
+      }
+    }
+    if ('part' in properties && properties.part && typeof properties.part === 'object') {
+      const part = properties.part as { sessionID?: unknown }
+      if (typeof part.sessionID === 'string') return part.sessionID
+    }
+  }
+  return undefined
 }
 
 function sanitizeSessionIdForFilename(sessionId: string): string {
@@ -64,7 +70,7 @@ export type OpencodeEventLogEntry = {
   timestamp: number
   threadId: string
   projectDirectory: string
-  event: OpenCodeEvent
+  event: LooseEvent
 }
 
 export function buildOpencodeEventLogLine({
@@ -76,7 +82,7 @@ export function buildOpencodeEventLogLine({
   timestamp: number
   threadId: string
   projectDirectory: string
-  event: OpenCodeEvent
+  event: LooseEvent
 }): OpencodeEventLogEntry {
   return {
     timestamp,
