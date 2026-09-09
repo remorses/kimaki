@@ -5,7 +5,7 @@ import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
-import type { OpencodeClient, Event as OpenCodeEvent, Session as OpenCodeSession } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '../opencode.js'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -16,6 +16,7 @@ import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpenc
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktreeOrWorkspace, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
+import { sessionMessagesToGeneric } from '../message-formatting.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
 import { formatTimeAgo } from '../commands/worktrees.js'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
@@ -112,6 +113,24 @@ function formatTokenCount(count: number): string {
   return String(count)
 }
 
+type GatheredSession = {
+  session: {
+    id: string
+    title?: string
+    location: { directory: string }
+    time: { updated: number }
+    tokens?: {
+      input: number
+      output: number
+      reasoning: number
+      cache: { read: number; write: number }
+    }
+    model?: { id?: string }
+  }
+  projectDirectory: string
+  status: 'idle' | 'busy' | 'showing-question'
+}
+
 cli
   .command(
     'session list',
@@ -152,19 +171,9 @@ cli
       }
 
       // Connect to each project's OpenCode server and gather sessions plus
-      // their live idle/busy status. Only session.list + session.status are
-      // called per project so the command stays fast; per-session token totals
-      // come straight from the session objects with no message fetching.
-      // A session parked on a `question` tool reports session.status busy but
-      // is really waiting for the user, so it is not "active". Treat it as
-      // `showing-question` (excluded by --active) using OpenCode's
-      // server-authoritative pending-question list.
-      type GatheredSession = {
-        session: OpenCodeSession
-        projectDirectory: string
-        status: 'idle' | 'busy' | 'showing-question'
-      }
-
+      // their live idle/busy status. session.list + session.active stay cheap.
+      // A session parked on a form reports as active but is waiting for the
+      // user, so it is not "active". Treat it as showing-question.
       const gathered: GatheredSession[] = []
       for (const projectDirectory of projectDirectories) {
         cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
@@ -181,27 +190,29 @@ cli
         }
 
         const client = getClient()
-        const [sessionsResponse, statusResponse, questionsResponse] = await Promise.all([
+        const [sessionsResponse, statuses] = await Promise.all([
           client.session.list(),
-          client.session.status({ directory: projectDirectory }).catch(() => null),
-          client.question.list({ directory: projectDirectory }).catch(() => null),
+          client.session.active().catch(() => null),
         ])
-
-        const statuses = statusResponse?.data || {}
-        const sessionsWithPendingQuestion = new Set(
-          (questionsResponse?.data || []).map((request) => request.sessionID),
-        )
+        if (!statuses) {
+          if (options.all) {
+            cliLogger.warn(`Skipping ${projectDirectory}: failed to list active sessions`)
+            continue
+          }
+          cliLogger.error('Failed to list active sessions')
+          process.exit(EXIT_NO_RESTART)
+        }
 
         for (const session of sessionsResponse.data || []) {
-          const status = statuses[session.id]
-          const isBusy = Boolean(status && status.type !== 'idle')
-          // Only relabel to showing-question when the session is actually busy.
-          // An orphaned question left in the list after an abort (session idle)
-          // must not hide or relabel an otherwise-idle session.
+          const isBusy = Boolean(statuses[session.id])
+          const pendingForms = isBusy
+            ? await client.form.list({ sessionID: session.id }).catch(() => [])
+            : []
+          const hasPendingForm = Array.isArray(pendingForms) && pendingForms.length > 0
           gathered.push({
             session,
             projectDirectory,
-            status: isBusy && sessionsWithPendingQuestion.has(session.id)
+            status: isBusy && hasPendingForm
               ? 'showing-question'
               : isBusy
                 ? 'busy'
@@ -272,7 +283,7 @@ cli
           return {
             id: session.id,
             title: session.title || 'Untitled Session',
-            directory: session.directory,
+            directory: session.location.directory,
             updated: new Date(session.time.updated).toISOString(),
             source: sessionToThread.has(session.id) ? 'kimaki' : 'opencode',
             threadId: sessionToThread.get(session.id) || null,
@@ -306,7 +317,7 @@ cli
         const tokens = contextInfo(entry)
         const tokensText = tokens ? ` | tokens: ${formatTokenCount(tokens)}` : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${statusInfo}${tokensText}${threadInfo}${startedBy}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.location.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}${statusInfo}`,
         )
       }
 
@@ -453,23 +464,21 @@ cli
       // project.list() returns all known projects globally from any OpenCode server,
       // but session.list/get are scoped to the server's own project. So we try each.
       cliLogger.log('Session not in current project, searching all projects...')
-      const projectsResponse = await getClient().project.list()
-      const projects = projectsResponse.data || []
+      const projects = await getClient().project.list()
       const otherProjects = projects
-        .filter((p) => path.resolve(p.worktree) !== projectDirectory)
-        .filter((p) => {
+        .filter((project) => path.resolve(project.canonical) !== projectDirectory)
+        .filter((project) => {
           try {
-            fs.accessSync(p.worktree, fs.constants.R_OK)
+            fs.accessSync(project.canonical, fs.constants.R_OK)
             return true
           } catch {
             return false
           }
         })
-        // Sort by most recently created first to find sessions faster
         .sort((a, b) => b.time.created - a.time.created)
 
       for (const project of otherProjects) {
-        const dir = project.worktree
+        const dir = project.canonical
         cliLogger.log(`Trying project: ${dir}`)
         const otherClient = await initializeOpencodeForDirectory(dir)
         if (otherClient instanceof Error) continue
@@ -699,7 +708,7 @@ cli
           searchableSessions.push({
             id: session.id,
             title: session.title || 'Untitled Session',
-            directory: session.directory || listed.projectDirectory,
+            directory: session.location.directory || listed.projectDirectory,
             updated: session.time.updated,
           })
         }
@@ -760,10 +769,10 @@ cli
             if (!getClient) {
               return []
             }
-            const messagesResponse = await getClient().session.messages({
+            const messagesResponse = await getClient().message.list({
               sessionID: session.id,
             })
-            return messagesResponse.data || []
+            return sessionMessagesToGeneric(messagesResponse.data)
           },
         })
 
@@ -848,7 +857,10 @@ cli
     const parsedRows = rows.flatMap((row) => {
       const parsed = errore.try(
         () => {
-          return JSON.parse(row.event_json) as OpenCodeEvent
+          return JSON.parse(row.event_json) as {
+            type: string
+            properties?: { info?: { directory?: string } }
+          }
         },
         (error) => {
           return new Error('Failed to parse persisted event JSON', {
@@ -880,7 +892,7 @@ cli
       if (event.type !== 'session.updated') {
         return directory
       }
-      return event.properties.info.directory
+      return event.properties?.info?.directory || directory
     }, '')
 
     const lines = parsedRows.map(({ row, event }) => {
@@ -1027,9 +1039,9 @@ cli
       // Don't pass directory — the server resolves sessions by ID regardless
       // of the x-opencode-directory header, matching archiveThread's pattern.
       // This avoids issues when --cwd was used (session directory != project directory).
-      const abortResult = await client.session.abort({
+      const abortResult = await client.session.interrupt({
         sessionID: sessionId,
-      }).catch((e) => new Error('Failed to abort session', { cause: e }))
+      }).catch((e: unknown) => new Error('Failed to abort session', { cause: e }))
       if (abortResult instanceof Error) {
         cliLogger.error(abortResult.message)
         process.exit(EXIT_NO_RESTART)
@@ -1115,19 +1127,15 @@ cli
       }
 
       const updateResult = await serverResult()
-        .session.update({
+        .session.rename({
           sessionID: sessionId,
           title: trimmedTitle,
         })
-        .catch((e) =>
-          new OpenCodeSdkError({ operation: 'session.update', cause: e }),
+        .catch((e: unknown) =>
+          new OpenCodeSdkError({ operation: 'session.rename', cause: e }),
         )
       if (updateResult instanceof Error) {
         cliLogger.error(updateResult.message)
-        process.exit(EXIT_NO_RESTART)
-      }
-      if (updateResult.error) {
-        cliLogger.error('OpenCode rejected the session title update')
         process.exit(EXIT_NO_RESTART)
       }
 

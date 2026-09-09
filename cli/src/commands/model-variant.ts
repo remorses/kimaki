@@ -33,7 +33,7 @@ import {
   type CurrentModelInfo,
 } from './model.js'
 
-import { getThinkingValuesForModel } from '../thinking-utils.js'
+import { getThinkingValuesForModel, thinkingProvidersFromListedModels } from '../thinking-utils.js'
 import { resolveDisplayedModelId } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
@@ -196,7 +196,7 @@ export async function showModelVariantPicker({
         channelId: targetChannelId,
         appId,
       }),
-      getClient().provider.list({ directory: projectDirectory }),
+      getClient().model.list({ location: { directory: projectDirectory } }),
     ])
 
   if (currentModelInfo.type === 'none') {
@@ -217,19 +217,21 @@ export async function showModelVariantPicker({
   const variantLabel = cascadeVariant ? ` (${cascadeVariant})` : ''
   const displayedModelId =
     (await resolveDisplayedModelId({
-      providers: providersResponse.data.all,
+      providers: thinkingProvidersFromListedModels({ models: [...providersResponse.data] }),
       providerID,
       modelID,
       sessionID: sessionId,
     })) ?? fullModelId
 
-  const provider = providersResponse.data.all.find((p) => {
-    return p.id === providerID
+  const provider = thinkingProvidersFromListedModels({
+    models: [...providersResponse.data],
+  }).find((candidate) => {
+    return candidate.id === providerID
   })
-  const providerName = provider?.name || providerID
+  const providerName = provider?.id || providerID
 
   const variants = getThinkingValuesForModel({
-    providers: providersResponse.data.all,
+    providers: thinkingProvidersFromListedModels({ models: [...providersResponse.data] }),
     providerId: providerID,
     modelId: modelID,
   })

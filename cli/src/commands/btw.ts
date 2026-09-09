@@ -84,45 +84,26 @@ export async function forkSessionToBtwThread({
     return new Error('Could not resolve parent text channel')
   }
 
-  // Fork and thread creation are independent round trips, so run them together.
-  // If either side fails, remove whichever side succeeded.
-  const initMs = Date.now() - startedAt
-  const [forkSettled, threadSettled] = await Promise.allSettled([
-    timed(getClientResult().session.fork({ sessionID: sessionId, directory: sdkDirectory })),
-    timed(textChannel.threads.create({
-      name: `btw: ${prompt}`.slice(0, 100),
-      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-      reason: `btw fork from session ${sessionId}`,
-    })),
-  ])
-  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value[0].data : undefined
-  const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value[0] : undefined
-  const cleanup = async () => {
-    await Promise.all([
-      createdThread?.delete('btw fork setup failed').catch((error) => {
-        logger.warn(`Could not delete orphan btw thread ${createdThread.id}:`, error)
-      }),
-      forkedSession && getClientResult()
-        .session.delete({ sessionID: forkedSession.id, directory: sdkDirectory })
-        .catch((error) => {
-          logger.warn(`Could not delete orphan btw session ${forkedSession.id}:`, error)
-        }),
-    ])
+  // Fork must succeed before creating the Discord thread to avoid orphan threads
+  const messages = await getClientResult().message.list({
+    sessionID: sessionId,
+    limit: 1,
+    order: 'desc',
+  }).catch((error: unknown) => {
+    return new Error('Failed to load session messages for fork', { cause: error })
+  })
+  if (messages instanceof Error) return messages
+  const boundaryMessageID = messages.data[0]?.id
+  if (!boundaryMessageID) {
+    return new Error('Failed to fork session: no messages to copy')
   }
-  if (!forkedSession) {
-    await cleanup()
-    const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkSettled.value[0].error
-    return new OpenCodeSdkError({ operation: 'session.fork', cause })
-  }
-  if (!createdThread) {
-    await cleanup()
-    return new Error('Failed to create the btw thread', {
-      cause: threadSettled.status === 'rejected' ? threadSettled.reason : undefined,
-    })
-  }
-  const thread = createdThread
-  const forkMs = forkSettled.status === 'fulfilled' ? forkSettled.value[1] : -1
-  const threadMs = threadSettled.status === 'fulfilled' ? threadSettled.value[1] : -1
+  const forkedSession = await getClientResult().session.fork({
+    sessionID: sessionId,
+    boundary: { type: 'through' },
+  }).catch((error: unknown) => {
+    return new Error('Failed to fork session', { cause: error })
+  })
+  if (forkedSession instanceof Error) return forkedSession
   const channelId = sourceThread.parentId || sourceThread.id
   const sourceThreadLink = `<#${sourceThread.id}>`
 

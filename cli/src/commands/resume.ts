@@ -21,7 +21,7 @@ import {
   resolveProjectDirectoryFromAutocomplete,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import { collectSessionChunks, batchChunksForDiscord } from '../message-formatting.js'
+import { collectSessionChunks, batchChunksForDiscord, sessionMessagesToGeneric } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
@@ -79,14 +79,14 @@ export async function handleResumeCommand({
 
     const sessionResponse = await getClient().session.get({
       sessionID: sessionId,
-    })
+    }).catch(() => null)
 
-    if (!sessionResponse.data) {
+    if (!sessionResponse) {
       await command.editReply('Session not found')
       return
     }
 
-    const sessionTitle = sessionResponse.data.title
+    const sessionTitle = sessionResponse.title ?? 'Untitled'
 
     const thread = await channel.threads.create({
       name: `Resume: ${sessionTitle}`.slice(0, 100),
@@ -103,7 +103,7 @@ export async function handleResumeCommand({
 
     logger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
 
-    const messagesResponse = await getClient().session.messages({
+    const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
     })
 
@@ -119,12 +119,12 @@ export async function handleResumeCommand({
 
     await sendThreadMessage(
       thread,
-      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
     )
 
     try {
       const { chunks, skippedCount } = collectSessionChunks({
-        messages,
+        messages: sessionMessagesToGeneric(messages),
         limit: 30,
       })
 
@@ -202,7 +202,7 @@ export async function handleResumeAutocomplete({
     const sessions = sessionsResponse.data
       .filter((session) => !existingSessionIds.has(session.id))
       .filter((session) =>
-        session.title.toLowerCase().includes(focusedValue.toLowerCase()),
+        (session.title ?? '').toLowerCase().includes(focusedValue.toLowerCase()),
       )
       .slice(0, 25)
       .map((session) => {
@@ -210,7 +210,7 @@ export async function handleResumeAutocomplete({
         const suffix = ` (${dateStr})`
         const maxTitleLength = 100 - suffix.length
 
-        let title = session.title
+        let title = session.title ?? 'Untitled'
         if (title.length > maxTitleLength) {
           title = title.slice(0, Math.max(0, maxTitleLength - 1)) + '…'
         }
