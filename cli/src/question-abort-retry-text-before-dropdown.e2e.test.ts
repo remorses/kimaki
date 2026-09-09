@@ -131,6 +131,13 @@ describe('question text before dropdown after abort retry', () => {
       }
       runtime.abortActiveRun('test-question-abort-retry-flush')
 
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: 'LEFTOVER_ABORTED_TEXT',
+        timeout: 8_000,
+      })
+
       await th.user(TEST_USER_ID).sendMessage({
         content: 'QUESTION_AFTER_ABORT_RETRY_MARKER',
       })
@@ -148,10 +155,10 @@ describe('question text before dropdown after abort retry', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         abort-retry-started
+        LEFTOVER_ABORTED_TEXT
         --- from: user (question-abort-retry-tester)
         QUESTION_AFTER_ABORT_RETRY_MARKER
         --- from: assistant (TestBot)
-        LEFTOVER_ABORTED_TEXT
         PLAN_AFTER_ABORT_RETRY
         **Next step**
         What next after abort?"

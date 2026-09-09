@@ -16,7 +16,7 @@ import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import { waitForBotMessageContaining } from './test-utils.js'
+import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001023'
 
@@ -29,10 +29,10 @@ describe('external directory project deny', () => {
     // Exactly what a user would write in their own opencode.json to protect a
     // folder. Kimaki's generated config allows '*', this must still beat it.
     projectPermission: {
-      external_directory: {
-        [EXTERNAL_DIRECTORY_PROBE_DIR]: 'deny',
-        [`${EXTERNAL_DIRECTORY_PROBE_DIR}/*`]: 'deny',
-      },
+      permissions: [
+        { action: 'external_directory', resource: EXTERNAL_DIRECTORY_PROBE_DIR, effect: 'deny' },
+        { action: 'external_directory', resource: `${EXTERNAL_DIRECTORY_PROBE_DIR}/*`, effect: 'deny' },
+      ],
     },
   })
 
@@ -61,6 +61,12 @@ describe('external directory project deny', () => {
       text: 'external-directory-probe-denied',
       timeout: 8_000,
     })
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'external-directory-probe-denied',
+    })
 
     const text = await th.text()
     expect(text).toMatchInlineSnapshot(`
@@ -71,8 +77,10 @@ describe('external directory project deny', () => {
       reading external directory
 
       ▏read *probe.txt*
+      ⨯ read Permission denied: external_directory
 
-      external-directory-probe-denied"
+      external-directory-probe-denied
+      > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
     `)
 
     // A deny is silent: it must not fall back to asking the user.
