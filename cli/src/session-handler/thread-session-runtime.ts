@@ -176,7 +176,6 @@ export const pendingPermissions = new Map<
 import {
   getThinkingValuesForModel,
   matchThinkingValue,
-  resolveRequestedThinkingVariant,
 } from '../thinking-utils.js'
 import { execAsync } from '../worktrees.js'
 import {
@@ -1099,11 +1098,13 @@ export class ThreadSessionRuntime {
       .provider.list({ directory: this.sdkDirectory })
       .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
     if (providersResponse instanceof Error || !providersResponse.data) return
-    const matchedVariant = resolveRequestedThinkingVariant({
+    const matchedVariant = matchThinkingValue({
       requestedValue: variant,
-      providers: providersResponse.data.all,
-      providerId: variantModelInfo.providerID,
-      modelId: variantModelInfo.modelID,
+      availableValues: getThinkingValuesForModel({
+        providers: providersResponse.data.all,
+        providerId: variantModelInfo.providerID,
+        modelId: variantModelInfo.modelID,
+      }),
     })
     if (!matchedVariant) return
     await setSessionModel({

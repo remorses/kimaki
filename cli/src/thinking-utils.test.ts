@@ -2,10 +2,11 @@
 
 import { describe, expect, test } from 'vitest'
 import {
-  resolveRequestedThinkingVariant,
+  getThinkingValuesForModel,
+  matchThinkingValue,
 } from './thinking-utils.js'
 
-describe('resolveRequestedThinkingVariant', () => {
+describe('matchThinkingValue', () => {
   const providers = [
     {
       id: 'anthropic',
@@ -19,25 +20,26 @@ describe('resolveRequestedThinkingVariant', () => {
       },
     },
   ]
+  const availableValues = getThinkingValuesForModel({
+    providers,
+    providerId: 'anthropic',
+    modelId: 'claude-opus-4-6',
+  })
 
   test('matches a supported thinking level case-insensitively', () => {
     expect(
-      resolveRequestedThinkingVariant({
+      matchThinkingValue({
         requestedValue: 'HIGH',
-        providers,
-        providerId: 'anthropic',
-        modelId: 'claude-opus-4-6',
+        availableValues,
       }),
     ).toBe('high')
   })
 
   test('returns undefined for an unsupported thinking level', () => {
     expect(
-      resolveRequestedThinkingVariant({
+      matchThinkingValue({
         requestedValue: 'not-a-real-level',
-        providers,
-        providerId: 'anthropic',
-        modelId: 'claude-opus-4-6',
+        availableValues,
       }),
     ).toBeUndefined()
   })
