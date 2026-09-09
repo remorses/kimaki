@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
-import type { OpencodeClient, Provider } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '../opencode.js'
 import {
   formatCandidateRef,
   PROVIDER_ID as SUBROUTER_PROVIDER_ID,
@@ -229,27 +229,24 @@ subscribeOpencodeServerLifecycle(() => {
   clearModelListCache()
 })
 
-function flattenProviderModels({
-  providers,
-  connected,
+function flattenListedModels({
+  models,
 }: {
-  providers: Provider[]
-  connected: string[]
+  models: Array<{
+    providerID: string
+    modelID: string
+    name?: string
+    enabled?: boolean
+  }>
 }): ListedModel[] {
-  const connectedSet = new Set(connected)
-  const models: ListedModel[] = []
-  for (const provider of providers) {
-    const isConnected = connectedSet.has(provider.id)
-    for (const [modelID, model] of Object.entries(provider.models)) {
-      models.push({
-        providerID: provider.id,
-        modelID,
-        name: model.name || modelID,
-        connected: isConnected,
-      })
+  return models.map((model) => {
+    return {
+      providerID: model.providerID,
+      modelID: model.modelID,
+      name: model.name || model.modelID,
+      connected: model.enabled !== false,
     }
-  }
-  return models
+  })
 }
 
 export async function listModels({
@@ -265,17 +262,14 @@ export async function listModels({
   if (cached?.status === 'pending') return cached.promise
 
   const promise = (async () => {
-    const providersResponse = await getClient()
-      .provider.list({ directory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error) return providersResponse
-    if (!providersResponse.data) {
-      return new OpenCodeSdkError({ operation: 'provider.list' })
+    const modelsResponse = await getClient()
+      .model.list(directory ? { location: { directory } } : undefined)
+      .catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+    if (modelsResponse instanceof Error) return modelsResponse
+    if (!modelsResponse.data) {
+      return new OpenCodeSdkError({ operation: 'model.list' })
     }
-    return flattenProviderModels({
-      providers: providersResponse.data.all,
-      connected: providersResponse.data.connected,
-    })
+    return flattenListedModels({ models: [...modelsResponse.data] })
   })()
 
   modelListCache.set(cacheKey, { status: 'pending', promise })
@@ -411,36 +405,40 @@ export async function getDefaultModel({
     return { ...configModel, source: 'opencode-config' }
   }
 
-  // Fetch connected providers to validate any model we return
-  const providersResponse = await getClient().provider.list({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-  if (providersResponse instanceof Error) {
+  const listed = await listModels({ getClient, directory })
+  if (listed instanceof Error) {
     sessionLogger.log(
-      `[MODEL] Failed to fetch providers for default model:`,
-      providersResponse.message,
+      `[MODEL] Failed to fetch models for default model:`,
+      listed.message,
     )
     return undefined
   }
-  if (!providersResponse.data) {
+  const connectedModels = listed.filter((model) => model.connected)
+  if (connectedModels.length === 0) {
+    sessionLogger.log(`[MODEL] No connected models found`)
     return undefined
   }
 
-  const {
-    connected,
-    default: defaults,
-    all: providers,
-  } = providersResponse.data
-  if (connected.length === 0) {
-    sessionLogger.log(`[MODEL] No connected providers found`)
-    return undefined
+  const isListed = (model: { providerID: string; modelID: string }) => {
+    return connectedModels.some((candidate) => {
+      return candidate.providerID === model.providerID && candidate.modelID === model.modelID
+    })
   }
 
-  // 1. Check OpenCode config.model setting (highest priority after user preference)
-  const configResponse = await getClient().config.get({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'config.get', cause: e }))
-  if (!(configResponse instanceof Error) && configResponse.data?.model) {
-    const configModel = parseModelId(configResponse.data.model)
-    if (configModel && isModelValid(configModel, connected, providers)) {
+  const configResponse = await getClient().config.get(
+    directory ? { location: { directory } } : undefined,
+  ).catch((e) => new OpenCodeSdkError({ operation: 'config.get', cause: e }))
+  const configModelValue = !(configResponse instanceof Error) && 'model' in configResponse
+    ? configResponse.model
+    : undefined
+  const configModelText = typeof configModelValue === 'string'
+    ? configModelValue
+    : configModelValue && typeof configModelValue === 'object' && 'providerID' in configModelValue
+      ? `${configModelValue.providerID}/${'model' in configModelValue ? configModelValue.model : ''}`
+      : undefined
+  if (configModelText) {
+    const configModel = parseModelId(configModelText)
+    if (configModel && isListed(configModel)) {
       sessionLogger.log(
         `[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`,
       )
@@ -448,15 +446,14 @@ export async function getDefaultModel({
     }
     if (configModel) {
       sessionLogger.log(
-        `[MODEL] Config model ${configResponse.data.model} not available, checking recent`,
+        `[MODEL] Config model ${configModelText} not available, checking recent`,
       )
     }
   }
 
-  // 2. Try to use user's recent models from TUI state (iterate until finding valid one)
   const recentModels = getRecentModelsFromTuiState()
   for (const recentModel of recentModels) {
-    if (isModelValid(recentModel, connected, providers)) {
+    if (isListed(recentModel)) {
       sessionLogger.log(
         `[MODEL] Using recent TUI model: ${recentModel.providerID}/${recentModel.modelID}`,
       )
@@ -467,23 +464,30 @@ export async function getDefaultModel({
     sessionLogger.log(`[MODEL] No valid recent TUI models found`)
   }
 
-  // 3. Fall back to first connected provider's default model
-  const firstConnected = connected[0]
-  if (!firstConnected) {
-    return undefined
-  }
-  const defaultModelId = defaults[firstConnected]
-  if (!defaultModelId) {
-    sessionLogger.log(`[MODEL] No default model for provider ${firstConnected}`)
-    return undefined
+  const defaultResponse = await getClient().model.default(
+    directory ? { location: { directory } } : undefined,
+  ).catch((e) => new OpenCodeSdkError({ operation: 'model.default', cause: e }))
+  if (!(defaultResponse instanceof Error) && defaultResponse.data) {
+    sessionLogger.log(
+      `[MODEL] Using provider default: ${defaultResponse.data.providerID}/${defaultResponse.data.modelID}`,
+    )
+    return {
+      providerID: defaultResponse.data.providerID,
+      modelID: defaultResponse.data.modelID,
+      source: 'opencode-provider-default',
+    }
   }
 
+  const first = connectedModels[0]
+  if (!first) {
+    return undefined
+  }
   sessionLogger.log(
-    `[MODEL] Using provider default: ${firstConnected}/${defaultModelId}`,
+    `[MODEL] Using first listed model: ${first.providerID}/${first.modelID}`,
   )
   return {
-    providerID: firstConnected,
-    modelID: defaultModelId,
+    providerID: first.providerID,
+    modelID: first.modelID,
     source: 'opencode-provider-default',
   }
 }

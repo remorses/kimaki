@@ -136,19 +136,14 @@ export async function cleanupTestSessions({
   })()
   if (!client) return
 
-  const listResult = await client.session.list({
-    directory: projectDirectory,
-    start: testStartTime,
-    limit: 1000,
-  }).catch(() => {
+  const listResult = await client.session.list().catch(() => {
     return null
   })
   const sessions = listResult?.data ?? []
   await Promise.all(
     sessions.map((s) => {
-      return client.session.delete({
+      return client.session.remove({
         sessionID: s.id,
-        directory: projectDirectory,
       }).catch(() => {
         return
       })

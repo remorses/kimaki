@@ -165,3 +165,23 @@ string option**, even if later string options exist. `/plan-agent fix the bug`
 fills `prompt` while `variant` stays a named option. Do not collapse extra
 options to keep leftover filling. Leftover filling fails when that first option
 is not free text (autocomplete, choices, or the user must pick an option).
+
+## v2 agent names vs slash commands
+
+v2 built-in agents use capitalized names (`Plan`, `Build`). Kimaki slash
+commands stay lowercase (`/plan-agent`). Match agents case-insensitively, then
+pass `agent.id` to `session.switchAgent`. Passing the display name `Plan` fails
+with `Agent not found`.
+
+## Do not wait for SSE inside dispatchAction
+
+`handleEvent` runs on the same action queue as `session.prompt`. Awaiting
+`waitForEvent` inside `dispatchAction` deadlocks: the interrupt never reaches
+the buffer. Append lifecycle events in the SSE listener before queueing
+`handleEvent`. Await abort HTTP and settled events outside `dispatchAction`.
+
+## v2 forms can be idle
+
+A pending v2 question form can leave `isSessionBusy` false. Do not drain the
+local queue while `pendingQuestionContexts` has an entry. On dismiss, cancel
+pending forms with `form.list` + `form.cancel` before the next prompt.
