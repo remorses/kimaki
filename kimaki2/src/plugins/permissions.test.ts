@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from 'vitest'
+import { canUseKimaki } from '../../opencode-plugins/permissions/access.ts'
 import {
   parsePermissionCustomId,
   permissionContextHash,
@@ -14,6 +15,29 @@ import {
 
 afterEach(() => {
   resetPermissions()
+})
+
+test('canUseKimaki fails closed without a member', () => {
+  expect(
+    canUseKimaki({
+      member: null,
+      user: { id: '1' },
+      guild: null,
+    }),
+  ).toBe(false)
+})
+
+test('canUseKimaki allows the guild owner', () => {
+  expect(
+    canUseKimaki({
+      member: { permissions: '0', roles: [] },
+      user: { id: 'owner' },
+      guild: {
+        ownerId: 'owner',
+        roles: { cache: { get() { return undefined } } },
+      },
+    }),
+  ).toBe(true)
 })
 
 test('custom ids stay under Discord 100 char limit', () => {
