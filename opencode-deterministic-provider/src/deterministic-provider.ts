@@ -1,7 +1,7 @@
 // Deterministic AI SDK provider for e2e tests with matcher-driven outputs.
 
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import type {
   LanguageModelV3,
@@ -190,40 +190,82 @@ export function buildDeterministicOpencodeConfig({
   model,
   smallModel,
   providerName,
-  providerNpm,
   settings,
 }: BuildDeterministicOpencodeConfigOptions) {
+  return buildDeterministicOpencode2Config({
+    model,
+    extraModels: smallModel ? [smallModel] : undefined,
+    providerName,
+    settings,
+    permissions: [
+      { action: 'shell', resource: '*', effect: 'allow' },
+      { action: 'edit', resource: '*', effect: 'allow' },
+    ],
+  })
+}
+
+export type DeterministicPermissionRule = {
+  action: string
+  resource: string
+  effect: 'allow' | 'deny' | 'ask'
+}
+
+export type BuildDeterministicOpencode2ConfigOptions = {
+  model: string
+  extraModels?: string[]
+  providerName?: string
+  providerPackage?: string
+  settings?: DeterministicProviderSettings
+  permissions?: DeterministicPermissionRule[]
+}
+
+// OpenCode v2 config shape (opencode-v2/packages/schema/src/config.ts):
+// `providers.<id>` (ConfigProvider.Info) with `package` + `settings` + `models`,
+// top-level `model` as "provider/model". There is no v2 `small_model`.
+//
+// Package spec route (verified against opencode-v2/packages/core):
+// - plain `package` (no prefix) goes through Provider.loadPackage → importPackage,
+//   which requires the module to export model(modelID, settings) returning an
+//   @opencode/ai route-based LanguageModel — not an AI SDK model. A standalone
+//   package cannot construct that without depending on opencode internals, so
+//   this route is out.
+// - a bare npm name would be resolved via import.meta.resolve inside the
+//   opencode2 binary (not the project's node_modules) and then npm-installed
+//   from the registry. Also out for a local workspace package.
+// - `aisdk:<file-url>` wins: model-resolver routes aisdk-prefixed packages to
+//   AISDK.Service; the builtin DynamicProviderPlugin (core/src/plugin/provider/
+//   dynamic.ts → sdk-factory.ts) imports file:// specifiers directly, calls the
+//   first `create*` export with the merged provider `settings` as options, then
+//   aisdk.ts calls sdk.languageModel(modelID) and expects a LanguageModelV3 —
+//   exactly what createDeterministicProvider().languageModel returns. No adapter
+//   needed; opencode2 is bun-based so importing src/index.ts works directly.
+export function buildDeterministicOpencode2Config({
+  model,
+  extraModels,
+  providerName,
+  providerPackage,
+  settings,
+  permissions,
+}: BuildDeterministicOpencode2ConfigOptions) {
   const chosenProviderName = providerName || 'deterministic-provider'
-  const packageRoot = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
+  const entrypointUrl = pathToFileURL(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'index.ts'),
+  ).toString()
+  const chosenPackage = providerPackage || `aisdk:${entrypointUrl}`
+  const models = Object.fromEntries(
+    [model, ...(extraModels || [])].map((modelId) => [modelId, { name: modelId }]),
   )
-  const chosenProviderNpm = providerNpm || packageRoot
   return {
-    $schema: 'https://opencode.ai/config.json',
-    provider: {
+    providers: {
       [chosenProviderName]: {
-        npm: chosenProviderNpm,
         name: 'Deterministic Provider',
-        options: settings || {},
-        models: {
-          [model]: {
-            name: model,
-          },
-          ...(smallModel
-            ? {
-                [smallModel]: {
-                  name: smallModel,
-                },
-              }
-            : {}),
-        },
+        package: chosenPackage,
+        settings: settings || {},
+        models,
       },
     },
     model: `${chosenProviderName}/${model}`,
-    ...(smallModel && {
-      small_model: `${chosenProviderName}/${smallModel}`,
-    }),
+    ...(permissions && { permissions }),
   }
 }
 
