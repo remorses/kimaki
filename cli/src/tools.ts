@@ -6,11 +6,7 @@ import { tool } from './ai-tool.js'
 import { z } from 'zod'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
-import {
-  type OpencodeClient,
-  type AssistantMessage,
-  type Provider,
-} from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from './opencode.js'
 import { createLogger, LogPrefix } from './logger.js'
 import * as errore from 'errore'
 
@@ -32,7 +28,7 @@ export async function getTools({
   onMessageCompleted?: (params: {
     sessionId: string
     messageId: string
-    data?: { info: AssistantMessage }
+    data?: { info: { role: string } }
     error?: unknown
     markdown?: string
   }) => void
@@ -45,23 +41,22 @@ export async function getTools({
 
   const markdownRenderer = new ShareMarkdown(client)
 
-  const providersResponse = await client.config.providers()
-  const providers: Provider[] = providersResponse.data?.providers || []
+  const modelsResponse = await client.model.list({
+    location: { directory },
+  })
+  const providers = [...new Set(modelsResponse.data.map((model) => model.providerID))]
 
   // Helper: get last assistant model for a session (non-summary)
   const getSessionModel = async (
     sessionId: string,
   ): Promise<{ providerID: string; modelID: string } | undefined> => {
-    const res = await getClient().session.messages({ sessionID: sessionId })
+    const res = await getClient().message.list({ sessionID: sessionId })
     const data = res.data
-    if (!data || data.length === 0) return undefined
+    if (data.length === 0) return undefined
     for (let i = data.length - 1; i >= 0; i--) {
-      const info = data?.[i]?.info
-      if (info?.role === 'assistant') {
-        const ai = info
-        if (!ai.summary && ai.providerID && ai.modelID) {
-          return { providerID: ai.providerID, modelID: ai.modelID }
-        }
+      const info = data[i]
+      if (info?.type === 'assistant' && info.model.providerID && info.model.id) {
+        return { providerID: info.model.providerID, modelID: info.model.id }
       }
     }
     return undefined
@@ -80,11 +75,9 @@ export async function getTools({
 
         // do not await
         getClient()
-          .session.promptAsync({
+          .session.prompt({
             sessionID: sessionId,
-            parts: [{ type: 'text', text: message }],
-            model: sessionModel,
-            system: getOpencodeSystemMessage({ sessionId }),
+            text: message,
           })
           .then(async (response) => {
             const markdownResult = await markdownRenderer.generate({
@@ -97,7 +90,7 @@ export async function getTools({
               markdown: errore.unwrapOr(markdownResult, ''),
             })
           })
-          .catch((error) => {
+          .catch((error: unknown) => {
             onMessageCompleted?.({
               sessionId,
               messageId: '',
@@ -142,33 +135,29 @@ export async function getTools({
         try {
           const session = await getClient().session.create({
             ...(title ? { title } : {}),
+            location: { directory },
           })
-
-          if (!session.data) {
-            throw new Error('Failed to create session')
-          }
 
           // do not await
           getClient()
-            .session.promptAsync({
-              sessionID: session.data.id,
-              parts: [{ type: 'text', text: message }],
-              system: getOpencodeSystemMessage({ sessionId: session.data.id }),
+            .session.prompt({
+              sessionID: session.id,
+              text: message,
             })
             .then(async (response) => {
               const markdownResult = await markdownRenderer.generate({
-                sessionID: session.data.id,
+                sessionID: session.id,
                 lastAssistantOnly: true,
               })
               onMessageCompleted?.({
-                sessionId: session.data.id,
+                sessionId: session.id,
                 messageId: '',
                 markdown: errore.unwrapOr(markdownResult, ''),
               })
             })
-            .catch((error) => {
+            .catch((error: unknown) => {
               onMessageCompleted?.({
-                sessionId: session.data.id,
+                sessionId: session.id,
                 messageId: '',
                 error,
               })
@@ -176,8 +165,8 @@ export async function getTools({
 
           return {
             success: true,
-            sessionId: session.data.id,
-            title: session.data.title,
+            sessionId: session.id,
+            title: session.title,
           }
         } catch (error) {
           return {
@@ -213,14 +202,14 @@ export async function getTools({
           const finishedAt = session.time.updated
           const status = await (async () => {
             if (session.revert) return 'error'
-            const messagesResponse = await getClient().session.messages({
+            const messagesResponse = await getClient().message.list({
               sessionID: session.id,
             })
-            const messages = messagesResponse.data || []
+            const messages = messagesResponse.data
             const lastMessage = messages[messages.length - 1]
             if (
-              lastMessage?.info.role === 'assistant' &&
-              !lastMessage.info.time.completed
+              lastMessage?.type === 'assistant' &&
+              !lastMessage.time.completed
             ) {
               return 'in_progress'
             }
@@ -229,7 +218,7 @@ export async function getTools({
 
           return {
             id: session.id,
-            folder: session.directory,
+            folder: session.location.directory,
             status,
             finishedAt: formatDistanceToNow(new Date(finishedAt)),
             title: session.title,
@@ -258,14 +247,14 @@ export async function getTools({
         query: z.string().describe('The search query for files'),
       }),
       execute: async ({ folder, query }) => {
-        const results = await getClient().find.files({
+        const results = await getClient().file.find({
           query,
-          directory: folder,
+          location: folder ? { directory: folder } : { directory },
         })
 
         return {
           success: true,
-          files: results.data || [],
+          files: results.data.map((entry) => entry.path),
         }
       },
     }),
@@ -281,7 +270,7 @@ export async function getTools({
       }),
       execute: async ({ sessionId, lastAssistantOnly = false }) => {
         if (lastAssistantOnly) {
-          const messages = await getClient().session.messages({
+          const messages = await getClient().message.list({
             sessionID: sessionId,
           })
 
@@ -290,7 +279,7 @@ export async function getTools({
           }
 
           const assistantMessages = messages.data.filter(
-            (m) => m.info.role === 'assistant',
+            (m) => m.type === 'assistant',
           )
 
           if (assistantMessages.length === 0) {
@@ -302,8 +291,7 @@ export async function getTools({
 
           const lastMessage = assistantMessages[assistantMessages.length - 1]
           const status =
-            'completed' in lastMessage!.info.time &&
-            lastMessage!.info.time.completed
+            lastMessage && lastMessage.type === 'assistant' && lastMessage.time.completed
               ? 'completed'
               : 'in_progress'
 
@@ -328,15 +316,12 @@ export async function getTools({
             throw new Error(markdownResult.message)
           }
 
-          const messages = await getClient().session.messages({
+          const messages = await getClient().message.list({
             sessionID: sessionId,
           })
-          const lastMessage = messages.data?.[messages.data.length - 1]
+          const lastMessage = messages.data[messages.data.length - 1]
           const status =
-            lastMessage?.info.role === 'assistant' &&
-            lastMessage?.info.time &&
-            'completed' in lastMessage.info.time &&
-            !lastMessage.info.time.completed
+            lastMessage?.type === 'assistant' && !lastMessage.time.completed
               ? 'in_progress'
               : 'completed'
 
@@ -359,16 +344,9 @@ export async function getTools({
           toolsLogger.log(
             `[ABORT] reason=voice-tool sessionId=${sessionId} - user requested abort via voice assistant tool`,
           )
-          const result = await getClient().session.abort({
+          await getClient().session.interrupt({
             sessionID: sessionId,
           })
-
-          if (!result.data) {
-            return {
-              success: false,
-              error: 'Failed to abort session',
-            }
-          }
 
           return {
             success: true,
@@ -390,21 +368,14 @@ export async function getTools({
       inputSchema: z.object({}),
       execute: async () => {
         try {
-          const providersResponse = await getClient().config.providers()
-          const providers: Provider[] = providersResponse.data?.providers || []
-
-          const models: Array<{ providerId: string; modelId: string }> = []
-
-          providers.forEach((provider) => {
-            if (provider.models && typeof provider.models === 'object') {
-              Object.entries(provider.models).forEach(([modelId, model]) => {
-                models.push({
-                  providerId: provider.id,
-                  modelId: modelId,
-                })
-              })
-            }
+          const listed = await getClient().model.list({
+            location: { directory },
           })
+
+          const models: Array<{ providerId: string; modelId: string }> = listed.data.map((model) => ({
+            providerId: model.providerID,
+            modelId: model.modelID,
+          }))
 
           return {
             success: true,

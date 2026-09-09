@@ -17,7 +17,7 @@ import type {
   ThreadChannel,
 } from 'discord.js'
 const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from './opencode.js'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
@@ -260,14 +260,14 @@ export async function archiveThread({
         const sessionResponse = await client.session.get({
           sessionID: sessionId,
         })
-        if (!sessionResponse.data) {
+        if (!sessionResponse.title) {
           return
         }
-        const currentTitle = sessionResponse.data.title || ''
+        const currentTitle = sessionResponse.title
         const newTitle = currentTitle.startsWith('📁')
           ? currentTitle
           : `📁 ${currentTitle}`.trim()
-        await client.session.update({
+        await client.session.rename({
           sessionID: sessionId,
           title: newTitle,
         })
