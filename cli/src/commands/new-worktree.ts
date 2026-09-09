@@ -11,6 +11,7 @@ import {
 } from 'discord.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import path from 'node:path'
 import { OpenCodeSdkError } from '../errors.js'
 import type { CommandContext } from './types.js'
 import {
@@ -237,15 +238,13 @@ export async function tryWorkspaceCreate({
     name: worktreeName,
   })
   const cleanupFailedWorkspace = async (worktreeDirectory: string) => {
-    const removeResponse = await client.experimental.workspace.remove({
-      id: workspaceId,
-      directory: projectDirectory,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.remove', cause: e }))
+    const removeResponse = await client.worktree.remove({
+      location: { directory: projectDirectory },
+      directory: worktreeDirectory,
+      force: true,
+    }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'worktree.remove', cause: e }))
     const sdkCleanupError = (() => {
       if (removeResponse instanceof Error) return removeResponse
-      if (removeResponse.error) {
-        return new Error(`Workspace cleanup failed: ${JSON.stringify(removeResponse.error)}`)
-      }
       return undefined
     })()
     const gitCleanupError = fs.existsSync(worktreeDirectory)
@@ -257,20 +256,15 @@ export async function tryWorkspaceCreate({
     return sdkCleanupError ?? gitCleanupError
   }
 
-  const response = await client.experimental.workspace.create({
-    id: workspaceId,
-    directory: projectDirectory,
-    type: KIMAKI_WORKTREE_ADAPTER_TYPE,
-    branch: worktreeName,
-    extra: {
-      projectDirectory,
-      baseCommit,
-    },
-  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.create', cause: e }))
-  if (response instanceof Error || response.error) {
-    const creationError = response instanceof Error
-      ? response
-      : new Error(`Workspace creation failed: ${JSON.stringify(response.error)}`)
+  const response = await client.worktree.create({
+    location: { directory: projectDirectory },
+    name: path.basename(managedDirectory),
+    branch: baseCommit,
+    from: projectDirectory,
+    directory: path.dirname(managedDirectory),
+  }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'worktree.create', cause: e }))
+  if (response instanceof Error) {
+    const creationError = response
     const cleanupError = await cleanupFailedWorkspace(managedDirectory)
     if (cleanupError instanceof Error) {
       return new Error(`${creationError.message}; cleanup failed: ${cleanupError.message}`, {
@@ -279,8 +273,8 @@ export async function tryWorkspaceCreate({
     }
     return creationError
   }
-  const workspace = response.data
-  if (!workspace?.directory || !workspace.id) {
+  const workspace = response
+  if (!workspace.directory) {
     const creationError = new Error('Workspace SDK returned no directory or ID')
     const cleanupError = await cleanupFailedWorkspace(managedDirectory)
     if (cleanupError instanceof Error) {
@@ -306,7 +300,7 @@ export async function tryWorkspaceCreate({
     }
     return identityResult
   }
-  return { directory: workspace.directory, workspaceId: workspace.id }
+  return { directory: workspace.directory, workspaceId }
 }
 
 /**
@@ -718,11 +712,26 @@ async function handleWorktreeInThread({
         return
       }
 
+      const sourceMessages = await getClient().message.list({
+        sessionID: sourceSessionId,
+        limit: 1,
+        order: 'desc',
+      }).catch(() => null)
+      const boundaryMessageID = sourceMessages?.data[0]?.id
+      if (!boundaryMessageID) {
+        const error = new Error('OpenCode did not return a forked session')
+        logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', error)
+        void notifyError(error, 'Failed to fork session into worktree')
+        await sendThreadMessage(
+          worktreeThread,
+          `✗ Worktree is ready, but failed to reuse session context there: ${error.message}`,
+        )
+        return
+      }
       const forkResponse = await getClient().session.fork({
         sessionID: sourceSessionId,
-        directory,
-        workspace: workspaceId,
-      }).catch((e) => new OpenCodeSdkError({ operation: 'session.fork', cause: e }))
+        boundary: { type: 'through' },
+      }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.fork', cause: e }))
       if (forkResponse instanceof Error) {
         logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', forkResponse)
         void notifyError(forkResponse, 'Failed to fork session into worktree')
@@ -733,7 +742,7 @@ async function handleWorktreeInThread({
         return
       }
 
-      const forkedSession = forkResponse.data
+      const forkedSession = forkResponse
       if (!forkedSession) {
         const error = new Error('OpenCode did not return a forked session')
         logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', error)
@@ -754,18 +763,13 @@ async function handleWorktreeInThread({
         directory: projectDirectory,
       })
 
-      const permissionResponse = await getClient().session.update({
+      const permissionResponse = await getClient().session.move({
         sessionID: forkedSession.id,
         directory,
-        permission: buildSessionPermissions({
-          directory,
-          originalRepoDirectory: projectDirectory,
-        }),
-      }).catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
-      if (permissionResponse instanceof Error || permissionResponse.error) {
-        const error = permissionResponse instanceof Error
-          ? permissionResponse
-          : new Error('OpenCode rejected forked session permission update')
+        workspaceID: workspaceId,
+      }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.move', cause: e }))
+      if (permissionResponse instanceof Error) {
+        const error = permissionResponse
         logger.error('[NEW-WORKTREE] Failed to update forked session permissions:', error)
         void notifyError(error, 'Failed to update forked session permissions')
         await sendThreadMessage(

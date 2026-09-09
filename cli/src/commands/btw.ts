@@ -74,11 +74,25 @@ export async function forkSessionToBtwThread({
   }
 
   // Fork must succeed before creating the Discord thread to avoid orphan threads
-  const forkResponse = await getClientResult().session.fork({ sessionID: sessionId, directory: sdkDirectory })
-  if (!forkResponse.data) {
-    return new Error('Failed to fork session')
+  const messages = await getClientResult().message.list({
+    sessionID: sessionId,
+    limit: 1,
+    order: 'desc',
+  }).catch((error: unknown) => {
+    return new Error('Failed to load session messages for fork', { cause: error })
+  })
+  if (messages instanceof Error) return messages
+  const boundaryMessageID = messages.data[0]?.id
+  if (!boundaryMessageID) {
+    return new Error('Failed to fork session: no messages to copy')
   }
-  const forkedSession = forkResponse.data
+  const forkedSession = await getClientResult().session.fork({
+    sessionID: sessionId,
+    boundary: { type: 'through' },
+  }).catch((error: unknown) => {
+    return new Error('Failed to fork session', { cause: error })
+  })
+  if (forkedSession instanceof Error) return forkedSession
   const channelId = sourceThread.parentId || sourceThread.id
 
   await copyCurrentSessionModel({
