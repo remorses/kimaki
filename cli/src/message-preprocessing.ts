@@ -136,8 +136,8 @@ async function fetchAvailableAgents(
   if (getClient instanceof Error) {
     return []
   }
-  const result = await getClient().app.agents({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e }))
+  const result = await getClient().agent.list({ location: { directory } })
+    .catch((e) => new OpenCodeSdkError({ operation: 'agent.list', cause: e }))
   if (result instanceof Error) {
     return []
   }

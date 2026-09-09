@@ -3,6 +3,7 @@
 // handles file attachments, and provides tool summary generation.
 
 import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
+import type { SessionMessageInfo } from '@opencode-ai/client'
 import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
 
 // Extended FilePartInput with original Discord URL for reference in prompts
@@ -19,9 +20,44 @@ import { parsePatchFileCounts } from './patch-text-parser.js'
 import { getDataDir } from './config.js'
 
 // Generic message type compatible with both v1 and v2 SDK
-type GenericSessionMessage = {
+export type GenericSessionMessage = {
   info: { role: string; id?: string; parentID?: string }
   parts: Part[]
+}
+
+export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): GenericSessionMessage[] {
+  return messages.map((message) => {
+    if (message.type === 'user') {
+      return {
+        info: { role: 'user', id: message.id },
+        parts: [{ type: 'text', text: message.text } as Part],
+      }
+    }
+    if (message.type === 'assistant') {
+      return {
+        info: { role: 'assistant', id: message.id },
+        parts: message.content.map((part, index) => {
+          if (part.type === 'tool') {
+            return {
+              id: part.id,
+              type: 'tool',
+              tool: part.name,
+              state: part.state,
+            } as Part
+          }
+          return {
+            id: `${message.id}:${index}`,
+            type: part.type,
+            text: part.text,
+          } as Part
+        }),
+      }
+    }
+    return {
+      info: { role: message.type, id: message.id },
+      parts: [],
+    }
+  })
 }
 
 const logger = createLogger(LogPrefix.FORMATTING)
@@ -745,7 +781,7 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'read') {
-    const filePath = (part.state.input?.filePath as string) || ''
+    const filePath = (part.state.input?.path as string) || ''
     const fileName = filePath.split('/').pop() || ''
     return fileName ? `*${escapeInlineMarkdown(fileName)}*` : ''
   }

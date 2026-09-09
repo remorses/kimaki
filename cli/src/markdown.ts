@@ -3,7 +3,8 @@
 // user messages, assistant responses, tool calls, and reasoning blocks.
 // Uses errore for type-safe error handling.
 
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from './opencode.js'
+import type { SessionMessageInfo } from '@opencode-ai/client'
 import * as errore from 'errore'
 import YAML from 'yaml'
 import { formatDateTime } from './utils.js'
@@ -19,6 +20,75 @@ class UnexpectedError extends errore.createTaggedError({
 const markdownLogger = createLogger(LogPrefix.MARKDOWN)
 
 const TOOL_OUTPUT_MAX_CHARS = 30_000
+
+function formatToolErrorText(error: unknown): string {
+  if (typeof error === 'string' && error) return error
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message
+  }
+  if (error === undefined || error === null) return 'Unknown error'
+  return JSON.stringify(error)
+}
+
+function toGenericSessionMessage(message: SessionMessageInfo) {
+  if (message.type === 'user') {
+    return {
+      info: { role: 'user' as const, id: message.id, time: message.time },
+      parts: [{ type: 'text' as const, text: message.text }],
+    }
+  }
+  if (message.type === 'assistant') {
+    return {
+      info: {
+        role: 'assistant' as const,
+        id: message.id,
+        time: message.time,
+        providerID: message.model.providerID,
+        modelID: message.model.id,
+      },
+      parts: message.content.map((part, index) => {
+        if (part.type === 'tool') {
+          const input = (() => {
+            if (!('input' in part.state)) return {}
+            if (typeof part.state.input === 'string') {
+              const raw = part.state.input
+              const parsed = errore.try(() => JSON.parse(raw) as Record<string, unknown>)
+              if (parsed instanceof Error || !parsed || typeof parsed !== 'object') return {}
+              return parsed
+            }
+            return part.state.input
+          })()
+          const output = part.state.status === 'completed'
+            ? part.state.content
+              .filter((item) => item.type === 'text')
+              .map((item) => item.text)
+              .join('\n')
+            : ''
+          return {
+            id: part.id,
+            type: 'tool' as const,
+            tool: part.name,
+            state: {
+              status: part.state.status === 'error' ? 'error' as const : part.state.status === 'completed' ? 'completed' as const : 'pending' as const,
+              input,
+              output,
+              error: part.state.status === 'error' ? part.state.error : undefined,
+            },
+          }
+        }
+        return {
+          id: `${message.id}:${index}`,
+          type: part.type,
+          text: part.text,
+        }
+      }),
+    }
+  }
+  return {
+    info: { role: message.type, id: message.id, time: message.time },
+    parts: [],
+  }
+}
 
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}
@@ -38,22 +108,24 @@ export class ShareMarkdown {
     const { sessionID, includeSystemInfo, lastAssistantOnly, compactTools = true } = options
 
     // Get session info
-    const sessionResponse = await this.client.session.get({
+    const session = await this.client.session.get({
       sessionID,
+    }).catch((error: unknown) => {
+      return new SessionNotFoundError({ sessionId: sessionID, cause: error })
     })
-    if (!sessionResponse.data) {
-      return new SessionNotFoundError({ sessionId: sessionID })
+    if (session instanceof Error) {
+      return session
     }
-    const session = sessionResponse.data
 
-    // Get all messages
-    const messagesResponse = await this.client.session.messages({
+    const messagesResponse = await this.client.message.list({
       sessionID,
+    }).catch((error: unknown) => {
+      return new MessagesNotFoundError({ sessionId: sessionID, cause: error })
     })
-    if (!messagesResponse.data) {
-      return new MessagesNotFoundError({ sessionId: sessionID })
+    if (messagesResponse instanceof Error) {
+      return messagesResponse
     }
-    const messages = messagesResponse.data
+    const messages = messagesResponse.data.map(toGenericSessionMessage)
 
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
@@ -86,9 +158,7 @@ export class ShareMarkdown {
         lines.push(
           `- **Updated**: ${formatDateTime(new Date(session.time.updated))}`,
         )
-        if (session.version) {
-          lines.push(`- **OpenCode Version**: v${session.version}`)
-        }
+
         lines.push('')
       }
 
@@ -243,7 +313,7 @@ export class ShareMarkdown {
           lines.push(`#### ❌ Tool Error: ${part.tool}`)
           lines.push('')
           lines.push('```')
-          lines.push(part.state.error || 'Unknown error')
+          lines.push(formatToolErrorText(part.state.error))
           lines.push('```')
           lines.push('')
         }
@@ -276,7 +346,7 @@ export class ShareMarkdown {
       lines.push(`> 🛠️ **${part.tool}**${parts ? ` ${parts}` : ''}`)
       lines.push('')
     } else if (part.state.status === 'error') {
-      const errorText = (part.state.error || 'Unknown error').split('\n')[0].slice(0, 120)
+      const errorText = (formatToolErrorText(part.state.error).split('\n')[0] ?? '').slice(0, 120)
       lines.push(`> ❌ **${part.tool}** — ${errorText}`)
       lines.push('')
     }
@@ -338,11 +408,11 @@ export async function getCompactSessionContext({
   includeSystemPrompt?: boolean
   maxMessages?: number
 }): Promise<UnexpectedError | string> {
-  const messagesResponse = await client.session
-    .messages({
+  const messagesResponse = await client.message
+    .list({
       sessionID: sessionId,
     })
-    .catch((e) => {
+    .catch((e: unknown) => {
       markdownLogger.error('Failed to get compact session context:', e)
       return new UnexpectedError({
         message: 'Failed to get compact session context',
@@ -350,7 +420,7 @@ export async function getCompactSessionContext({
       })
     })
   if (messagesResponse instanceof Error) return messagesResponse
-  const messages = messagesResponse.data || []
+  const messages = messagesResponse.data.map(toGenericSessionMessage)
 
   const lines: string[] = []
 
@@ -394,7 +464,7 @@ export async function getCompactSessionContext({
       // Get assistant text parts (non-synthetic, non-empty)
       const textParts = (msg.parts || [])
         .filter(
-          (p) => p.type === 'text' && !p.synthetic && p.text,
+          (p) => p.type === 'text' && Boolean(p.text),
         )
         .map((p) => (p.type === 'text' ? p.text : ''))
         .filter(Boolean)
@@ -448,7 +518,7 @@ export async function getLastSessionId({
   client: OpencodeClient
   excludeSessionId?: string
 }): Promise<UnexpectedError | (string | null)> {
-  const sessionsResponse = await client.session.list().catch((e) => {
+  const sessionsResponse = await client.session.list().catch((e: unknown) => {
     markdownLogger.error('Failed to get last session:', e)
     return new UnexpectedError({
       message: 'Failed to get last session',

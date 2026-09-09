@@ -6,10 +6,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type {
-  OpencodeClient,
-  Part,
-} from '@opencode-ai/sdk/v2'
+import type { Part } from '@opencode-ai/sdk/v2'
 import {
   getChannelVerbosity,
   getPartMessageIds,
@@ -27,10 +24,12 @@ import {
   batchChunksForDiscord,
   getLastTextPartIdsForAssistantTurns,
   QUEUE_PREFIX,
+  sessionMessagesToGeneric,
   type SessionChunk,
 } from './message-formatting.js'
 import {
   initializeOpencodeForDirectory,
+  type OpencodeClient,
 } from './opencode.js'
 import { isEssentialToolPart } from './session-handler/thread-session-runtime.js'
 import { notifyError } from './sentry.js'
@@ -54,10 +53,7 @@ type RenderableUserTextPart = {
   text: string
 }
 
-type SessionMessagesResponse = Awaited<
-  ReturnType<OpencodeClient['session']['messages']>
->
-type SessionMessage = NonNullable<SessionMessagesResponse['data']>[number]
+type SessionMessage = SessionMessageLike
 export type SessionMessageLike = {
   info: {
     role: string
@@ -494,10 +490,9 @@ async function syncSessionToThread({
   sessionTitle?: string | null
   signal: AbortSignal
 }): Promise<void> {
-  const messagesResponse = await client.session.messages({
+  const messagesResponse = await client.message.list({
     sessionID: sessionId,
-    directory,
-  }).catch((error) => {
+  }).catch((error: unknown) => {
     return new Error(`Failed to fetch messages for session ${sessionId}`, {
       cause: error,
     })
@@ -506,7 +501,7 @@ async function syncSessionToThread({
     throw messagesResponse
   }
   if (signal.aborted) return
-  const messages = messagesResponse.data || []
+  const messages = sessionMessagesToGeneric(messagesResponse.data)
 
   // Pure derivation from opencode events: if the latest user turn has
   // <discord-user /> metadata, kimaki's thread runtime owns this session.
@@ -570,7 +565,7 @@ async function pulseTypingForBusySessions({
   statuses: Record<string, { type: string }>
 }): Promise<void> {
   for (const [sessionId, status] of Object.entries(statuses)) {
-    if (status.type !== 'busy') {
+    if (status.type !== 'running') {
       continue
     }
     const threadId = await getThreadIdBySessionId(sessionId)
@@ -663,9 +658,8 @@ async function syncDirectoryInner({
   const client = clientResult()
   const sessionsResponse = await client.session.list({
     directory,
-    start: startMs,
     limit: EXTERNAL_SYNC_MAX_SESSIONS,
-  }).catch((error) => {
+  }).catch((error: unknown) => {
     return new Error(`Failed to list sessions for ${directory}`, {
       cause: error,
     })
@@ -676,15 +670,13 @@ async function syncDirectoryInner({
   }
   if (signal.aborted) return
 
-  const statusesResponse = await client.session.status({
-    directory,
-  }).catch(() => {
+  const statusesResponse = await client.session.active().catch(() => {
     return null
   })
-  if (statusesResponse?.data) {
+  if (statusesResponse) {
     await pulseTypingForBusySessions({
       discordClient,
-      statuses: statusesResponse.data as Record<string, { type: string }>,
+      statuses: statusesResponse,
     }).catch(() => {})
   }
   if (signal.aborted) return
