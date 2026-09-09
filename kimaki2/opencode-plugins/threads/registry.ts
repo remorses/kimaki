@@ -34,6 +34,10 @@ function threadsHost() {
 
 function remember(record: ThreadRecord) {
   const host = threadsHost()
+  const previous = host.byThread.get(record.threadId)
+  if (previous && previous.sessionId !== record.sessionId) {
+    host.bySession.delete(previous.sessionId)
+  }
   host.byThread.set(record.threadId, record)
   host.bySession.set(record.sessionId, record)
 }
@@ -83,6 +87,32 @@ export async function createThread(record: ThreadRecord) {
     username: record.username,
     startedAt: record.startedAt,
   })
+}
+
+export function forgetSession(sessionId: string) {
+  threadsHost().bySession.delete(sessionId)
+}
+
+export async function replaceThreadSession({
+  threadId,
+  sessionId,
+}: {
+  threadId: string
+  sessionId: string
+}) {
+  const existing = findByThreadId(threadId)
+  if (!existing) return null
+  forgetSession(existing.sessionId)
+  const record: ThreadRecord = {
+    threadId: existing.threadId,
+    sessionId,
+    directory: existing.directory,
+    userId: existing.userId,
+    username: existing.username,
+    startedAt: Date.now(),
+  }
+  await createThread(record)
+  return record
 }
 
 export function findByThreadId(threadId: string) {
