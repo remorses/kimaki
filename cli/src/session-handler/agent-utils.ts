@@ -17,28 +17,17 @@ import { type AgentInfo } from '../system-message.js'
 
 const agentLogger = createLogger('agent')
 
-/** Unvalidated agent preference: session agent, else channel agent unless a session model is pinned. */
-export async function resolveAgentPreference({
-  sessionId,
-  channelId,
+export function findAgentByName<T extends { id?: string; name: string }>({
+  agents,
+  name,
 }: {
-  sessionId: string
-  channelId?: string
-}): Promise<string | undefined> {
-  const sessionAgent = await getSessionAgent(sessionId)
-  if (sessionAgent) {
-    return sessionAgent
-  }
-
-  const sessionModel = await getSessionModel(sessionId)
-  if (sessionModel) {
-    return undefined
-  }
-
-  if (!channelId) {
-    return undefined
-  }
-  return getChannelAgent(channelId)
+  agents: T[]
+  name: string
+}) {
+  const needle = name.toLowerCase()
+  return agents.find((agent) => {
+    return agent.name.toLowerCase() === needle || agent.id?.toLowerCase() === needle
+  })
 }
 
 export async function resolveValidatedAgentPreference({
@@ -64,8 +53,10 @@ export async function resolveValidatedAgentPreference({
     return { agentPreference: undefined, agents: [] }
   }
 
-  const agentsResponse = await getClient().app.agents({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e }))
+  const agentsResponse = await getClient().agent.list(
+    directory ? { location: { directory } } : undefined,
+  )
+    .catch((e) => new OpenCodeSdkError({ operation: 'agent.list', cause: e }))
   if (agentsResponse instanceof Error) {
     if (agentPreference) {
       throw new Error(`Failed to validate agent "${agentPreference}"`, {
@@ -88,11 +79,12 @@ export async function resolveValidatedAgentPreference({
       return { name: a.name, description: a.description }
     })
 
-  const hasAgent = availableAgents.some((availableAgent) => {
-    return availableAgent.name === agentPreference
+  const matchedAgent = findAgentByName({
+    agents: availableAgents,
+    name: agentPreference,
   })
-  if (hasAgent) {
-    return { agentPreference, agents }
+  if (matchedAgent) {
+    return { agentPreference: matchedAgent.id || matchedAgent.name, agents }
   }
 
   // Fall back to default agent instead of erroring. This handles stale

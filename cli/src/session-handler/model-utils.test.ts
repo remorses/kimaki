@@ -366,26 +366,22 @@ function fakeGetClient(options?: {
 }) {
   let failed = false
   return () => ({
-    provider: {
+    model: {
       list: async () => {
         if (options?.calls) options.calls.count += 1
         if (options?.failOnce && !failed) {
           failed = true
-          throw new Error('provider.list failed')
+          throw new Error('model.list failed')
         }
         return {
-          data: {
-            all: [
-              {
-                id: 'anthropic',
-                models: {
-                  'claude-opus-4-6': { name: 'Claude Opus 4.6' },
-                },
-              },
-            ],
-            connected: ['anthropic'],
-            default: {},
-          },
+          data: [
+            {
+              providerID: 'anthropic',
+              modelID: 'claude-opus-4-6',
+              name: 'Claude Opus 4.6',
+              enabled: true,
+            },
+          ],
         }
       },
     },
@@ -445,23 +441,27 @@ describe('listModels', () => {
   test('does not restore a pending result after the cache is cleared', async () => {
     const calls = { count: 0 }
     const firstResponse = Promise.withResolvers<{
-      data: {
-        all: Array<{ id: string; models: Record<string, { name: string }> }>
-        connected: string[]
-        default: Record<string, string>
-      }
+      data: Array<{
+        providerID: string
+        modelID: string
+        name: string
+        enabled: boolean
+      }>
     }>()
     const getClient = (() => ({
-      provider: {
+      model: {
         list: () => {
           calls.count += 1
           if (calls.count === 1) return firstResponse.promise
           return Promise.resolve({
-            data: {
-              all: [{ id: 'openai', models: { 'gpt-5.5': { name: 'GPT-5.5' } } }],
-              connected: ['openai'],
-              default: {},
-            },
+            data: [
+              {
+                providerID: 'openai',
+                modelID: 'gpt-5.5',
+                name: 'GPT-5.5',
+                enabled: true,
+              },
+            ],
           })
         },
       },
@@ -470,16 +470,14 @@ describe('listModels', () => {
     const pending = listModels({ getClient, directory: '/tmp/project-a' })
     clearModelListCache()
     firstResponse.resolve({
-      data: {
-        all: [
-          {
-            id: 'anthropic',
-            models: { 'claude-opus-4-6': { name: 'Claude Opus 4.6' } },
-          },
-        ],
-        connected: ['anthropic'],
-        default: {},
-      },
+      data: [
+        {
+          providerID: 'anthropic',
+          modelID: 'claude-opus-4-6',
+          name: 'Claude Opus 4.6',
+          enabled: true,
+        },
+      ],
     })
     await pending
 
