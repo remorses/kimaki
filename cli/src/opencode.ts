@@ -45,12 +45,14 @@ import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+import { randomBytes } from 'node:crypto'
+import { OpenCode, type OpenCodeClient } from '@opencode-ai/client'
 import {
-  createOpencodeClient,
-  type OpencodeClient,
-  type Config as SdkConfig,
-  type PermissionRuleset,
-} from '@opencode-ai/sdk/v2'
+  resolveOpencode2Command,
+} from './opencode2.js'
+
+export type OpencodeClient = OpenCodeClient
+type PermissionRuleset = Array<{ permission: string; action: string; pattern: string }>
 
 import {
   restartGlobalEventListener,
@@ -79,18 +81,7 @@ export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
   return `@subrouter/opencode@${version}`
 }
 
-// SDK Config type is simplified; opencode accepts nested permission objects with path patterns
 type PermissionAction = 'ask' | 'allow' | 'deny'
-type PermissionRule = PermissionAction | Record<string, PermissionAction>
-type Config = Omit<SdkConfig, 'permission'> & {
-  permission?: {
-    edit?: PermissionRule
-    bash?: PermissionRule
-    external_directory?: PermissionRule
-    webfetch?: PermissionRule
-    [key: string]: PermissionRule | undefined
-  }
-}
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -117,7 +108,8 @@ const opencodeLogger = createLogger(LogPrefix.OPENCODE)
  * Returns empty object when no password is set.
  */
 export function getOpencodeServerAuthHeaders(): Record<string, string> {
-  const serverPassword = process.env.OPENCODE_SERVER_PASSWORD
+  const serverPassword =
+    process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD
   if (!serverPassword) return {}
   const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
   const encoded = Buffer.from(`${username}:${serverPassword}`).toString('base64')
@@ -151,9 +143,6 @@ export function buildOpencodeServeArgs({
     port.toString(),
     '--hostname',
     hostname || DEFAULT_OPENCODE_HOSTNAME,
-    '--print-logs',
-    '--log-level',
-    'WARN',
   ]
 }
 
@@ -359,6 +348,7 @@ type SingleServer = {
   process: ChildProcess | null
   port: number
   baseUrl: string
+  password?: string
   /** True when this server was discovered from the bot's hrana endpoint,
    *  not spawned by this process. We must not kill it on cleanup. */
   discovered?: boolean
@@ -518,48 +508,17 @@ export function resolveOpencodeCommand(): string {
     return resolvedOpencodeCommand
   }
 
-  const envPath = process.env.OPENCODE_PATH
+  const envPath = process.env.OPENCODE2_PATH || process.env.OPENCODE_PATH
   if (envPath) {
-    const resolvedFromEnv = selectResolvedCommand({
-      output: envPath,
-      isWindows: process.platform === 'win32',
-    })
-    if (resolvedFromEnv) {
-      resolvedOpencodeCommand = resolvedFromEnv
-      return resolvedFromEnv
-    }
+    resolvedOpencodeCommand = envPath
+    opencodeLogger.log(`Resolved opencode2 binary from env: ${envPath}`)
+    return envPath
   }
 
-  const isWindows = process.platform === 'win32'
-  const whichCmd = isWindows ? 'where' : 'which'
-  const result = errore.try(
-    () => {
-      const commandOutput = execFileSync(whichCmd, ['opencode'], {
-        encoding: 'utf8',
-        timeout: 5000,
-      })
-      const resolved = selectResolvedCommand({
-        output: commandOutput,
-        isWindows,
-      })
-      if (resolved) {
-        return resolved
-      }
-      throw new Error('opencode not found in PATH')
-    },
-    () => new Error('opencode not found in PATH'),
-  )
-
-  if (result instanceof Error) {
-    // Fall back to bare command name — spawn will fail with a clear error
-    // if it can't find the binary.
-    opencodeLogger.warn('Could not resolve opencode path via which, falling back to "opencode"')
-    return 'opencode'
-  }
-
-  resolvedOpencodeCommand = result
-  opencodeLogger.log(`Resolved opencode binary: ${result}`)
-  return result
+  const resolved = resolveOpencode2Command()
+  resolvedOpencodeCommand = resolved
+  opencodeLogger.log(`Resolved opencode2 binary: ${resolved}`)
+  return resolved
 }
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -590,7 +549,7 @@ async function waitForServer({
   maxAttempts?: number
   startupStderrTail: string[]
 }): Promise<ServerStartError | true> {
-  const endpoint = new URL(`http://127.0.0.1:${port}/api/health`)
+  const endpoint = new URL(`http://127.0.0.1:${port}/api/session/active`)
   if (directory) {
     endpoint.searchParams.set('directory', directory)
   }
@@ -665,7 +624,7 @@ async function discoverExistingServer(): Promise<SingleServer | null> {
 
     // Verify the OpenCode server is actually healthy
     const healthResponse = await requestHealthcheck({
-      url: `http://127.0.0.1:${port}/api/health`,
+      url: `http://127.0.0.1:${port}/api/session/active`,
       timeoutMs: 2000,
     })
     if (healthResponse.status >= 500) {
@@ -738,6 +697,7 @@ async function startSingleServer({
 
   if (
     publicOpencodeBindRequiresPassword({ hostname }) &&
+    !process.env.OPENCODE_PASSWORD &&
     !process.env.OPENCODE_SERVER_PASSWORD
   ) {
     return new ServerStartError({
@@ -745,6 +705,13 @@ async function startSingleServer({
       reason: `OPENCODE_SERVER_PASSWORD is required when --opencode-hostname is ${hostname}`,
     })
   }
+
+  const serverPassword =
+    process.env.OPENCODE_PASSWORD ||
+    process.env.OPENCODE_SERVER_PASSWORD ||
+    randomBytes(32).toString('base64url')
+  process.env.OPENCODE_PASSWORD = serverPassword
+  process.env.OPENCODE_SERVER_PASSWORD = serverPassword
 
   const serveArgs = buildOpencodeServeArgs({ port, hostname })
 
@@ -810,88 +777,34 @@ async function startSingleServer({
   // priority chain, so project-level opencode.json can override kimaki defaults.
   // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
   // causing issue #90 (project permissions not being respected).
-  const isDev = import.meta.url.endsWith('.ts') || import.meta.url.endsWith('.tsx')
-  // Skill whitelist/blacklist from --enable-skill / --disable-skill CLI flags.
-  // Applied as opencode permission.skill rules so every agent inherits the
-  // filter via Permission.merge(defaults, agentRules, user).
-  const skillPermission = computeSkillPermission({
-    enabledSkills: store.getState().enabledSkills,
-    disabledSkills: store.getState().disabledSkills,
-  })
+  // v2 plugin paths must be directories, not .ts files. The plugin dir is
+  // excluded from tsc, so dist builds fall back to src.
+  const kimakiPluginDirectory = (() => {
+    const besideThisFile = path.join(__dirname, 'kimaki-opencode-plugin')
+    if (fs.existsSync(besideThisFile)) {
+      return besideThisFile
+    }
+    return path.join(__dirname, '..', 'src', 'kimaki-opencode-plugin')
+  })()
   const opencodeConfig = {
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
     formatter: false,
-    plugin: [
-      new URL(
-        isDev ? './kimaki-opencode-plugin.ts' : './kimaki-opencode-plugin.js',
-        import.meta.url,
-      ).href,
-      // npm identity lets opencode dedupe a user-installed copy by package
-      // name. Development still loads this workspace's built package directly.
-      resolveSubrouterPluginSpec({ isDev }),
+    plugins: [kimakiPluginDirectory],
+    permissions: [
+      { action: 'edit', resource: '*', effect: 'allow' as const },
+      { action: 'shell', resource: '*', effect: 'allow' as const },
+      { action: 'read', resource: '*', effect: 'allow' as const },
+      { action: 'question', resource: '*', effect: 'allow' as const },
+      ...Object.entries(externalDirectoryPermissions).map(([resource, effect]) => {
+        return {
+          action: 'external_directory' as const,
+          resource,
+          effect,
+        }
+      }),
     ],
-    permission: {
-      edit: 'allow',
-      bash: 'allow',
-      external_directory: externalDirectoryPermissions,
-      webfetch: 'allow',
-      ...(skillPermission && { skill: skillPermission }),
-    },
-    agent: {
-      explore: {
-        permission: {
-          '*': 'deny',
-          grep: 'allow',
-          glob: 'allow',
-          list: 'allow',
-          read: {
-            '*': 'allow',
-            '*.env': 'deny',
-            '*.env.*': 'deny',
-            '*.env.example': 'allow',
-          },
-          webfetch: 'allow',
-          websearch: 'allow',
-          codesearch: 'allow',
-          // No external_directory here on purpose. opencode composes agents as
-          // merge(defaults, agentSpecific, userConfig) and then appends
-          // config.agent.<name>.permission LAST, so anything set here would beat
-          // the user's own top-level opencode.json rules. The top-level
-          // permission block above already covers this agent.
-        },
-      },
-    },
-    // When a permission prompt times out and is auto-rejected, the model sees
-    // the rejection as a tool error and continues working (tries alternatives
-    // or explains it couldn't proceed) instead of the session going dead.
-    experimental: {
-      continue_loop_on_deny: true,
-    },
-    provider: {
-      xai: {
-        models: {
-          'grok-composer-2.5-fast': {
-            name: 'Grok Composer 2.5 Fast',
-            attachment: true,
-            tool_call: true,
-            limit: {
-              context: 256000,
-              output: 256000,
-            },
-            cost: {
-              input: 0.50,
-              output: 2.50,
-              cache_read: 0.20,
-            },
-          },
-        },
-      },
-    },
-    skills: {
-      paths: [path.resolve(__dirname, '..', 'skills')],
-    },
-  } satisfies Config
+  }
   const opencodeConfigPath = path.join(getDataDir(), 'opencode-config.json')
   const opencodeConfigJson = JSON.stringify(opencodeConfig, null, 2)
   const existingContent = (() => {
@@ -918,6 +831,9 @@ async function startSingleServer({
       env: {
         ...process.env,
         OPENCODE_CONFIG: opencodeConfigPath,
+        OPENCODE_PASSWORD: serverPassword,
+        OPENCODE_SERVER_PASSWORD: serverPassword,
+        OPENCODE_CONFIG_CONTENT: undefined,
         OPENCODE_PORT: port.toString(),
         KIMAKI: '1',
         // The browser is not on this machine, so no localhost callback fires.
@@ -1060,6 +976,7 @@ async function startSingleServer({
     process: serverProcess,
     port,
     baseUrl: `http://127.0.0.1:${port}`,
+    password: serverPassword,
   }
   if (startingServerProcess === serverProcess) {
     startingServerProcess = null
@@ -1081,17 +998,12 @@ function getOrCreateClient({
     return cached
   }
 
-  const fetchWithTimeout = (request: Request) =>
-    fetch(request, {
-      // @ts-ignore
-      timeout: false,
-    })
-
-  const client = createOpencodeClient({
+  const client = OpenCode.make({
     baseUrl,
-    directory,
-    fetch: fetchWithTimeout as typeof fetch,
-    headers: getOpencodeServerAuthHeaders(),
+    headers: {
+      ...getOpencodeServerAuthHeaders(),
+      'x-opencode-directory': directory,
+    },
   })
   clientCache.set(directory, client)
   return client
