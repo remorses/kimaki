@@ -48,6 +48,7 @@ import {
 } from '../discord-utils.js'
 import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
 import {
+  asDiscordQuote,
   formatPart,
   formatTaskToolTitle,
   sessionPartKind,
@@ -4762,7 +4763,7 @@ export class ThreadSessionRuntime {
       : ''
     const result = await sendThreadMessage(
       this.thread,
-      `*using ${modelLabel}${agentLabel}*`,
+      asDiscordQuote(`*using ${modelLabel}${agentLabel}*`),
       { flags: SILENT_MESSAGE_FLAGS },
     ).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (result instanceof Error) {
@@ -4911,7 +4912,9 @@ export class ThreadSessionRuntime {
         })
       : undefined
     const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
-    const footerText = `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`
+    const footerText = asDiscordQuote(
+      `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`,
+    )
     this.stopTyping()
 
     await sendThreadMessage(this.thread, footerText, {

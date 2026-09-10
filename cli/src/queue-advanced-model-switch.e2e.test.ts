@@ -11,6 +11,7 @@ import {
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
 import {
+  isFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
   waitForFooterMessage,
@@ -320,17 +321,15 @@ describe('queue advanced: /model with interrupt recovery', () => {
       })
 
       const footer = [...finalMessages].reverse().find((message) => {
-        return message.author.id === ctx.discord.botUserId
-          && message.content.startsWith('*')
-          && message.content.includes('⋅')
+        return isFooterMessage({ message, botUserId: ctx.discord.botUserId })
       })
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-model-switch-tester)
         Reply with exactly: model-switcher-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         Model set for this session:
         **Deterministic Provider** / **deterministic-v3**
         \`deterministic-provider/deterministic-v3\`
@@ -345,7 +344,7 @@ describe('queue advanced: /model with interrupt recovery', () => {
         Reply with exactly: model-switcher-followup
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v3* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v3* <@200000000000000991>"
       `)
 
       expect(footer).toBeDefined()

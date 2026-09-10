@@ -9,6 +9,7 @@ import {
 import { store } from './store.js'
 import {
   getMessageVisibleText,
+  isFooterMessage,
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
@@ -54,12 +55,11 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       const foundFooter = footerMessages.some((m) => {
         return m.author.id === ctx.discord.botUserId
-          && m.content.startsWith('*')
-          && m.content.includes('⋅')
+          && isFooterMessage({ message: m, botUserId: ctx.discord.botUserId })
       })
       expect(foundFooter).toBe(true)
     },
@@ -96,7 +96,7 @@ e2eTest('queue advanced: footer emission', () => {
           --- from: assistant (TestBot)
           *using deterministic-provider/deterministic-v2*
           ok
-          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+          > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
         `)
       } finally {
         store.setState({ footerMentionsEnabled: true })
@@ -153,8 +153,7 @@ e2eTest('queue advanced: footer emission', () => {
       const msgs = await th.getMessages()
       const footerCount = msgs.filter((m) => {
         return m.author.id === ctx.discord.botUserId
-          && m.content.startsWith('*')
-          && m.content.includes('⋅')
+          && isFooterMessage({ message: m, botUserId: ctx.discord.botUserId })
       }).length
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-advanced-tester)
@@ -162,12 +161,12 @@ e2eTest('queue advanced: footer emission', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-second
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       if (footerCount >= 2) {
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -182,9 +181,7 @@ e2eTest('queue advanced: footer emission', () => {
         })
         const latestMsgs = await th.getMessages()
         const count = latestMsgs.filter((m) => {
-          return m.author.id === ctx.discord.botUserId
-            && m.content.startsWith('*')
-            && m.content.includes('⋅')
+          return isFooterMessage({ message: m, botUserId: ctx.discord.botUserId })
         }).length
         if (count >= 2) {
           found = true
@@ -274,9 +271,9 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: interrupt-footer-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -285,7 +282,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: interrupt-footer-followup
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(followupUserIdx).toBeGreaterThanOrEqual(0)
       expect(okReplyIdx).toBeGreaterThan(followupUserIdx)
@@ -295,8 +292,7 @@ e2eTest('queue advanced: footer emission', () => {
           return false
         }
         return m.author.id === ctx.discord.botUserId
-          && m.content.startsWith('*')
-          && m.content.includes('⋅')
+          && isFooterMessage({ message: m, botUserId: ctx.discord.botUserId })
       })
       expect(footerBetween).toBe(false)
     },
@@ -347,12 +343,12 @@ e2eTest('queue advanced: footer emission', () => {
         TOOL_CALL_FOOTER_MARKER
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
-        running tool
+        > running tool
 
         ┣ bash _echo tool-call-footer-test_
 
         tool call completed
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
     10_000,

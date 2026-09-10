@@ -39,6 +39,7 @@ import {
   chooseLockPort,
   cleanupTestSessions,
   initTestGitRepo,
+  isFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
 } from './test-utils.js'
@@ -327,14 +328,14 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
       `)
       expect(runtimeAfterB).toBe(runtimeAfterA)
     },
@@ -367,10 +368,7 @@ describe('runtime lifecycle', () => {
       const messages = await discord.thread(thread.id).getMessages()
 
       const footerMessage = messages.find((message) => {
-        if (message.author.id !== discord.botUserId) {
-          return false
-        }
-        if (!message.content.startsWith('*')) {
+        if (!isFooterMessage({ message, botUserId: discord.botUserId })) {
           return false
         }
         return message.content.includes('deterministic-v2') && message.content.includes('%')
@@ -380,9 +378,9 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -452,14 +450,14 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: reconnect-alpha
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)
@@ -500,7 +498,7 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-high-usage
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*"
+        > *using deterministic-provider/deterministic-v2*"
       `)
 
       const threadText = await discord.thread(thread.id).text()

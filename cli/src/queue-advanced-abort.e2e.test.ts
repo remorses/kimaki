@@ -12,6 +12,7 @@ import {
 import { getThreadState } from './session-handler/thread-runtime-state.js'
 import { setSessionModel } from './database.js'
 import {
+  isFooterMessage,
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
@@ -191,9 +192,7 @@ e2eTest('queue advanced: abort and retry', () => {
         const msgs = await th.getMessages()
         const newMsgs = msgs.slice(baselineCount)
         const hasFooter = newMsgs.some((m) => {
-          return m.author.id === ctx.discord.botUserId
-            && m.content.startsWith('*')
-            && m.content.includes('⋅')
+          return isFooterMessage({ message: m, botUserId: ctx.discord.botUserId })
         })
         expect(hasFooter).toBe(false)
       }
@@ -204,7 +203,7 @@ e2eTest('queue advanced: abort and retry', () => {
         --- from: assistant (TestBot)
         *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
       `)

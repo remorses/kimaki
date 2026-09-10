@@ -89,7 +89,7 @@ describe('voice routing preserves source questions', () => {
           "--- from: user (voice-question-tester)
           QUESTION_SELECT_QUEUE_MARKER voice btw
           --- from: assistant (TestBot)
-          *using deterministic-provider/deterministic-v2*
+          > *using deterministic-provider/deterministic-v2*
           **Select action**
           How to proceed?
           ✓ _Alpha_
@@ -102,14 +102,14 @@ describe('voice routing preserves source questions', () => {
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
           tool done
-          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+          > *project ⋅ main ⋅ 1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
         `)
       } else {
         expect(transcript).toMatchInlineSnapshot(`
           "--- from: user (voice-question-tester)
           QUESTION_SELECT_QUEUE_MARKER voice new-session
           --- from: assistant (TestBot)
-          *using deterministic-provider/deterministic-v2*
+          > *using deterministic-provider/deterministic-v2*
           **Select action**
           How to proceed?
           ✓ _Alpha_
@@ -122,7 +122,7 @@ describe('voice routing preserves source questions', () => {
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
           tool done
-          *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+          > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
         `)
       }
       expect(transcript).not.toContain('expired')

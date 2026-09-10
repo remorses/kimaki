@@ -487,9 +487,9 @@ e2eTest('voice message handling', () => {
               "source": "--- from: user (voice-tester)
             Source history for voice btw
             --- from: assistant (TestBot)
-            *using deterministic-provider/deterministic-v2*
+            > *using deterministic-provider/deterministic-v2*
             session-reply
-            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+            > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>
             --- from: user (voice-tester)
             [attachment: voice-message.ogg]
             --- from: assistant (TestBot)
@@ -500,7 +500,7 @@ e2eTest('voice message handling', () => {
             Reusing context from <#SOURCE_THREAD> to answer prompt...
             Explain voice routing btw
             session-reply
-            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>",
+            > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>",
             }
           `)
         } else {
@@ -509,9 +509,9 @@ e2eTest('voice message handling', () => {
               "source": "--- from: user (voice-tester)
             Source history for voice new-session
             --- from: assistant (TestBot)
-            *using deterministic-provider/deterministic-v2*
+            > *using deterministic-provider/deterministic-v2*
             session-reply
-            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+            > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>
             --- from: user (voice-tester)
             [attachment: voice-message.ogg]
             --- from: assistant (TestBot)
@@ -521,9 +521,9 @@ e2eTest('voice message handling', () => {
               "target": "--- from: assistant (TestBot)
             **Starting OpenCode session**
             Explain voice routing new-session
-            *using deterministic-provider/deterministic-v2*
+            > *using deterministic-provider/deterministic-v2*
             session-reply
-            *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>",
+            > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>",
             }
           `)
         }
@@ -623,9 +623,9 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Fix the login bug in auth.ts
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.sessionId).toBeDefined()
 
@@ -727,9 +727,9 @@ e2eTest('voice message handling', () => {
         Voice transcription requires an API key (OpenAI or Gemini). Set one to enable voice message transcription.
         Gemini API key saved. Retrying the original voice message.
         📝 **Transcribed message:** Resume the original voice note
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
       `)
 
       const finalState = getThreadState(thread.id)
@@ -805,9 +805,9 @@ e2eTest('voice message handling', () => {
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Investigate the missing content type path
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
       `)
 
       const messages = await waitForSessionMessages({
@@ -914,16 +914,16 @@ e2eTest('voice message handling', () => {
         "--- from: user (voice-tester)
         FAST_RESPONSE_MARKER initial setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Add error handling to the parser
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState?.sessionId).toBeDefined()
       if (!finalState?.sessionId) {
@@ -1173,7 +1173,7 @@ e2eTest('voice message handling', () => {
         "--- from: user (voice-tester)
         SLOW_RESPONSE_MARKER start queued task
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
@@ -1181,11 +1181,11 @@ e2eTest('voice message handling', () => {
         📝 **Transcribed message:** Queue this task for later
         Queued at position 1. Edit or delete your message to update the queue
         slow-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2*
         » **voice-tester:** Voice message transcription from Discord user:
         Queue this task for later
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.queueItems.length).toBe(0)
 
@@ -1301,16 +1301,16 @@ e2eTest('voice message handling', () => {
         "--- from: user (voice-tester)
         FAST_RESPONSE_MARKER quick task
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Delayed transcription result
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)
@@ -1439,16 +1439,16 @@ e2eTest('voice message handling', () => {
         "--- from: user (voice-tester)
         FAST_RESPONSE_MARKER fast before queued voice
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         fast-response-done
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>
         --- from: user (voice-tester)
         [attachment: voice-message.ogg]
         --- from: assistant (TestBot)
         🎤 Transcribing voice message...
         📝 **Transcribed message:** Queued voice after idle
         session-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
       `)
       expect(finalState.sessionId).toBeDefined()
       expect(finalState.queueItems.length).toBe(0)

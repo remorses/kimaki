@@ -165,15 +165,15 @@ describe('queue advanced: action buttons', () => {
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         **Action Required**
         _Selected: Continue action-buttons flow_
         [user clicks button]
         » **queue-action-tester:** Continue action-buttons flow
         action-buttons-click-continued
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(timeline).toContain('action-buttons-click-continued')
     },
@@ -255,9 +255,9 @@ describe('queue advanced: action buttons', () => {
         "--- from: user (queue-action-tester)
         Reply with exactly: action-button-dismiss-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         **Action Required**
         _Buttons dismissed._
         --- from: user (queue-action-tester)

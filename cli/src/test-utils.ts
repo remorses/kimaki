@@ -344,7 +344,7 @@ export async function waitForMessageById({
   )
 }
 
-function isFooterMessage({
+export function isFooterMessage({
   message,
   botUserId,
 }: {
@@ -354,10 +354,16 @@ function isFooterMessage({
   if (message.author.id !== botUserId) {
     return false
   }
-  if (!message.content.startsWith('*')) {
+  const content = message.content.startsWith('> ')
+    ? message.content.slice(2)
+    : message.content
+  if (!content.startsWith('*')) {
     return false
   }
-  return message.content.includes('⋅')
+  if (content.startsWith('*using ')) {
+    return false
+  }
+  return content.includes('⋅')
 }
 
 /**
