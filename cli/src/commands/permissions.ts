@@ -17,26 +17,12 @@ import {
 } from 'discord.js'
 import crypto from 'node:crypto'
 import type { PermissionRequest } from '@opencode-ai/sdk/v2'
-import type { OpencodeClient } from '../opencode.js'
 import { getOpencodeClient } from '../opencode.js'
 import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
-
-async function resumeSessionIfIdleAfterPermission({
-  sessionId,
-}: {
-  client: OpencodeClient
-  sessionId: string
-  directory: string
-}): Promise<Error | boolean> {
-  // v2 continues the drain after permission.reply. Empty promptAsync resume
-  // is a v1 pattern and is not on the v2 client.
-  void sessionId
-  return false
-}
 
 function wildcardMatch({
   value,
@@ -371,20 +357,6 @@ export async function handlePermissionButton(
         })
       }),
     )
-
-    if (response !== 'reject') {
-      const resumed = await resumeSessionIfIdleAfterPermission({
-        client: permClient,
-        sessionId: context.permission.sessionID,
-        directory: context.directory,
-      })
-      if (resumed instanceof Error) {
-        logger.error('Failed to resume idle session after permission:', resumed)
-      }
-      if (resumed === true) {
-        logger.log(`Resumed idle session after permission ${context.permission.id}`)
-      }
-    }
 
     // Context already removed by takePendingPermissionContext above.
 
