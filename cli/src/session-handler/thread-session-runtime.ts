@@ -4291,6 +4291,18 @@ export class ThreadSessionRuntime {
       }
       threadState.enqueueItem(this.threadId, item)
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
+      const position = stateAfterEnqueue?.queueItems.length ?? 0
+      const willDrainNow = stateAfterEnqueue
+        ? (
+          stateAfterEnqueue.queueItems.length > 0
+          && !this.isBusy()
+          && !this.hasPendingQuestionUi()
+          && (pendingPermissions.get(this.thread.id)?.size ?? 0) === 0
+        )
+        : false
+      result = !willDrainNow && position > 0
+        ? { queued: true, position, queueId }
+        : { queued: false, queueId }
 
       if (this.hasPendingQuestionUi()) {
         this.maybeHandoffQueuedItemForPendingQuestion({
