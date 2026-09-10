@@ -35,8 +35,8 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
-import type { Part, Message } from '@opencode-ai/sdk/v2'
-import { sessionMessagesToGeneric } from './message-formatting.js'
+import type { Message } from '@opencode-ai/sdk/v2'
+import { sessionMessagesToGeneric, type DiscordSessionPart } from './message-formatting.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
@@ -96,7 +96,7 @@ function setDeterministicTranscription(config: DeterministicTranscriptionConfig 
 // These verify what actually happened in the OpenCode session (prompts
 // sent, aborts, responses) beyond just Discord messages and thread state.
 
-type SessionMessage = { info: Message; parts: Part[] }
+type SessionMessage = { info: Message; parts: DiscordSessionPart[] }
 
 function getOpencodeClientForTest(projectDirectory: string) {
   const client = getOpencodeClient(projectDirectory)
@@ -107,7 +107,7 @@ function getOpencodeClientForTest(projectDirectory: string) {
 }
 
 /** Extract text content from an array of parts (filters to TextPart only). */
-function getTextFromParts(parts: Part[]): string[] {
+function getTextFromParts(parts: DiscordSessionPart[]): string[] {
   return parts.flatMap((part) => {
     if (part.type === 'text') {
       return [part.text]

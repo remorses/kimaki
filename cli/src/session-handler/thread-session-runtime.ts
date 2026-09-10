@@ -10,7 +10,6 @@ import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
 import type {
-  Part,
   PermissionRequest,
   QuestionRequest,
   Message as OpenCodeMessage,
@@ -49,9 +48,16 @@ import {
   resolveThreadFooterMentionUserId,
   resolveWorkingDirectory,
 } from '../discord-utils.js'
-import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
+import type {
+  DiscordFileAttachment,
+  DiscordSessionPart,
+  SessionPartKind,
+} from '../message-formatting.js'
 import {
   asDiscordQuote,
+  discordReasoningPartId,
+  discordTextPartId,
+  discordToolPartId,
   formatPart,
   formatTaskToolTitle,
   planAssistantTurnFlush,
@@ -624,14 +630,18 @@ export function isEssentialToolName(toolName: string): boolean {
   })
 }
 
-export function isEssentialToolPart(part: Part): boolean {
+export function isShellToolName(toolName: string): boolean {
+  return toolName === 'shell' || toolName === 'bash'
+}
+
+export function isEssentialToolPart(part: DiscordSessionPart): boolean {
   if (part.type !== 'tool') {
     return false
   }
   if (!isEssentialToolName(part.tool)) {
     return false
   }
-  if (part.tool === 'bash') {
+  if (isShellToolName(part.tool)) {
     const hasSideEffect = part.state.input?.hasSideEffect
     return hasSideEffect !== false
   }
@@ -943,7 +953,7 @@ export class ThreadSessionRuntime {
   private appliedOpencodeTitle: string | undefined
 
   // Part output buffering (write-side cache, not domain state)
-  private partBuffer = new Map<string, Map<string, Part>>()
+  private partBuffer = new Map<string, Map<string, DiscordSessionPart>>()
   private shownQuestionRequestIds = new Set<string>()
   private v2ToolNames = new Map<string, string>()
   private v2InboxItems = new Map<string, { delivery: string; text: string }>
@@ -1700,21 +1710,15 @@ export class ThreadSessionRuntime {
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
     // session.diff can carry repeated full-file before/after snapshots and is
     // not used by event-derived runtime state, queueing, typing, or UI routing.
-    // Drop it at ingress so large diff payloads never hit memory buffers.
-    if (event.type === 'session.text.delta') {
-      this.applyV2TextDelta(event)
-      return
-    }
-    if (isEphemeralV2StreamEvent(event)) {
-      return
-    }
-
+    const sessionId = this.state?.sessionId
     const eventSessionId = getOpencodeEventSessionId(event)
     const toastSessionId = event.type === 'tui.toast.show'
       ? extractToastSessionId({
           message: event.data.message,
         })
       : undefined
+    const isGlobalEvent = event.type === 'tui.toast.show'
+    const isScopedToastEvent = Boolean(toastSessionId)
 
     if (shouldLogSessionEvents) {
       logger.log(
@@ -1722,20 +1726,27 @@ export class ThreadSessionRuntime {
       )
     }
 
-    const isGlobalEvent = event.type === 'tui.toast.show'
-    const isScopedToastEvent = Boolean(toastSessionId)
-
-    // Drop events that don't match current session (stale events from
-    // previous sessions), unless it's a global event or a subtask session.
     if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
       if (!this.getSubtaskInfoForSession(eventSessionId)) {
-        return // stale event from previous session
+        return
       }
     }
     if (isScopedToastEvent && toastSessionId !== sessionId) {
       if (!this.getSubtaskInfoForSession(toastSessionId!)) {
         return
       }
+    }
+
+    if (event.type === 'session.text.delta') {
+      this.applyV2TextDelta(event)
+      return
+    }
+    if (event.type === 'session.reasoning.delta') {
+      this.applyV2ReasoningDelta(event)
+      return
+    }
+    if (isEphemeralV2StreamEvent(event)) {
+      return
     }
 
     if (isOpencodeSessionEventLogEnabled()) {
@@ -1759,8 +1770,20 @@ export class ThreadSessionRuntime {
       case 'session.text.ended':
         await this.handleV2TextEnded(event)
         break
+      case 'session.reasoning.started':
+        this.handleV2ReasoningStarted(event)
+        break
+      case 'session.reasoning.ended':
+        await this.handleV2ReasoningEnded(event)
+        break
       case 'session.tool.input.started':
-        this.v2ToolNames.set(event.data.id, event.data.name)
+        this.v2ToolNames.set(
+          discordToolPartId({
+            messageID: event.data.assistantMessageID,
+            toolId: event.data.id,
+          }),
+          event.data.name,
+        )
         break
       case 'session.tool.called':
         await this.handleV2ToolCalled(event)
@@ -1861,17 +1884,23 @@ export class ThreadSessionRuntime {
   private handleV2TextStarted(event: Extract<V2Event, { type: 'session.text.started' }>): void {
     this.v2OpenTextMessageIds.add(event.data.assistantMessageID)
     this.storePart({
-      id: `${event.data.assistantMessageID}:${event.data.ordinal}`,
+      id: discordTextPartId({
+        messageID: event.data.assistantMessageID,
+        ordinal: event.data.ordinal,
+      }),
       type: 'text',
       sessionID: event.data.sessionID,
       messageID: event.data.assistantMessageID,
       text: '',
       time: { start: Date.now() },
-    } as unknown as Part)
+    })
   }
 
   private applyV2TextDelta(event: Extract<V2Event, { type: 'session.text.delta' }>): void {
-    const partId = `${event.data.assistantMessageID}:${event.data.ordinal}`
+    const partId = discordTextPartId({
+      messageID: event.data.assistantMessageID,
+      ordinal: event.data.ordinal,
+    })
     const existing = this.partBuffer.get(event.data.assistantMessageID)?.get(partId)
     if (!existing || existing.type !== 'text') {
       this.v2OpenTextMessageIds.add(event.data.assistantMessageID)
@@ -1882,7 +1911,7 @@ export class ThreadSessionRuntime {
         messageID: event.data.assistantMessageID,
         text: event.data.delta,
         time: { start: Date.now() },
-      } as unknown as Part)
+      })
       return
     }
     this.storePart({
@@ -1892,80 +1921,160 @@ export class ThreadSessionRuntime {
   }
 
   private async handleV2TextEnded(event: Extract<V2Event, { type: 'session.text.ended' }>): Promise<void> {
-    const partId = `${event.data.assistantMessageID}:${event.data.ordinal}`
     this.v2OpenTextMessageIds.delete(event.data.assistantMessageID)
-    const part = {
-      id: partId,
-      type: 'text' as const,
+    const part: DiscordSessionPart = {
+      id: discordTextPartId({
+        messageID: event.data.assistantMessageID,
+        ordinal: event.data.ordinal,
+      }),
+      type: 'text',
       sessionID: event.data.sessionID,
       messageID: event.data.assistantMessageID,
       text: event.data.text,
       time: { start: Date.now(), end: Date.now() },
-    } as unknown as Part
+    }
     this.storePart(part)
-    await this.sendPartMessage({ part, repulseTyping: true })
+    await this.routeFoldedPart(part)
     await this.tryShowPendingV2Question()
   }
 
+  private handleV2ReasoningStarted(event: Extract<V2Event, { type: 'session.reasoning.started' }>): void {
+    this.storePart({
+      id: discordReasoningPartId({
+        messageID: event.data.assistantMessageID,
+        ordinal: event.data.ordinal,
+      }),
+      type: 'reasoning',
+      sessionID: event.data.sessionID,
+      messageID: event.data.assistantMessageID,
+      text: '',
+      time: { start: Date.now() },
+    })
+  }
+
+  private applyV2ReasoningDelta(event: Extract<V2Event, { type: 'session.reasoning.delta' }>): void {
+    const partId = discordReasoningPartId({
+      messageID: event.data.assistantMessageID,
+      ordinal: event.data.ordinal,
+    })
+    const existing = this.partBuffer.get(event.data.assistantMessageID)?.get(partId)
+    if (!existing || existing.type !== 'reasoning') {
+      this.storePart({
+        id: partId,
+        type: 'reasoning',
+        sessionID: event.data.sessionID,
+        messageID: event.data.assistantMessageID,
+        text: event.data.delta,
+        time: { start: Date.now() },
+      })
+      return
+    }
+    this.storePart({
+      ...existing,
+      text: `${existing.text || ''}${event.data.delta}`,
+    })
+  }
+
+  private async handleV2ReasoningEnded(event: Extract<V2Event, { type: 'session.reasoning.ended' }>): Promise<void> {
+    const part: DiscordSessionPart = {
+      id: discordReasoningPartId({
+        messageID: event.data.assistantMessageID,
+        ordinal: event.data.ordinal,
+      }),
+      type: 'reasoning',
+      sessionID: event.data.sessionID,
+      messageID: event.data.assistantMessageID,
+      text: event.data.text,
+      time: { start: Date.now(), end: Date.now() },
+    }
+    this.storePart(part)
+    await this.routeFoldedPart(part)
+  }
+
+  private toolPartId(event: { data: { id: string; assistantMessageID: string } }) {
+    return discordToolPartId({
+      messageID: event.data.assistantMessageID,
+      toolId: event.data.id,
+    })
+  }
+
   private async handleV2ToolCalled(event: Extract<V2Event, { type: 'session.tool.called' }>): Promise<void> {
-    const toolName = this.v2ToolNames.get(event.data.id) || 'tool'
-    const part = {
-      id: event.data.id,
-      type: 'tool' as const,
+    const partId = this.toolPartId(event)
+    const toolName = this.v2ToolNames.get(partId) || 'tool'
+    const part: DiscordSessionPart = {
+      id: partId,
+      type: 'tool',
       sessionID: event.data.sessionID,
       messageID: event.data.assistantMessageID,
       tool: toolName,
       state: {
-        status: 'running' as const,
-        input: event.data.input,
+        status: 'running',
+        input: event.data.input as Record<string, unknown>,
         raw: '',
       },
-    } as unknown as Part
+    }
     this.storePart(part)
-    await this.sendPartMessage({ part, repulseTyping: true })
+    await this.routeFoldedPart(part)
   }
 
   private async handleV2ToolSuccess(event: Extract<V2Event, { type: 'session.tool.success' }>): Promise<void> {
-    const toolName = this.v2ToolNames.get(event.data.id) || 'tool'
+    const partId = this.toolPartId(event)
+    const existing = this.partBuffer.get(event.data.assistantMessageID)?.get(partId)
+    const toolName = existing && existing.type === 'tool'
+      ? existing.tool
+      : this.v2ToolNames.get(partId) || 'tool'
     const output = event.data.content
       .filter((item) => item.type === 'text')
       .map((item) => item.text)
       .join('\n')
-    const part = {
-      id: `${event.data.id}:done`,
-      type: 'tool' as const,
+    const part: DiscordSessionPart = {
+      id: partId,
+      type: 'tool',
       sessionID: event.data.sessionID,
       messageID: event.data.assistantMessageID,
       tool: toolName,
       state: {
-        status: 'completed' as const,
-        input: {},
+        status: 'completed',
+        input: existing && existing.type === 'tool' ? existing.state.input : {},
         output,
-        title: toolName,
         metadata: event.data.metadata ?? {},
         time: { start: Date.now(), end: Date.now() },
       },
-    } as unknown as Part
+    }
     this.storePart(part)
+    await this.routeFoldedPart(part)
   }
 
   private async handleV2ToolFailed(event: Extract<V2Event, { type: 'session.tool.failed' }>): Promise<void> {
-    const toolName = this.v2ToolNames.get(event.data.id) || 'tool'
-    const part = {
-      id: `${event.data.id}:fail`,
-      type: 'tool' as const,
+    const partId = this.toolPartId(event)
+    const existing = this.partBuffer.get(event.data.assistantMessageID)?.get(partId)
+    const toolName = existing && existing.type === 'tool'
+      ? existing.tool
+      : this.v2ToolNames.get(partId) || 'tool'
+    const part: DiscordSessionPart = {
+      id: partId,
+      type: 'tool',
       sessionID: event.data.sessionID,
       messageID: event.data.assistantMessageID,
       tool: toolName,
       state: {
-        status: 'error' as const,
-        input: {},
+        status: 'error',
+        input: existing && existing.type === 'tool' ? existing.state.input : {},
         error: event.data.error.message || 'Tool failed',
         time: { start: Date.now(), end: Date.now() },
       },
-    } as unknown as Part
+    }
     this.storePart(part)
-    await this.sendPartMessage({ part, repulseTyping: true })
+    await this.routeFoldedPart(part)
+  }
+
+  private async routeFoldedPart(part: DiscordSessionPart): Promise<void> {
+    const subtaskInfo = this.getSubtaskInfoForSession(part.sessionID)
+    if (subtaskInfo) {
+      await this.handleSubtaskPart(part, subtaskInfo)
+      return
+    }
+    await this.handleMainPart(part)
   }
 
   private async handleV2ExecutionSucceeded(event: Extract<V2Event, { type: 'session.execution.succeeded' }>): Promise<void> {
@@ -2316,14 +2425,14 @@ export class ThreadSessionRuntime {
     return getChannelVerbosity(this.getVerbosityChannelId())
   }
 
-  private storePart(part: Part): void {
+  private storePart(part: DiscordSessionPart): void {
     const messageParts =
-      this.partBuffer.get(part.messageID) || new Map<string, Part>()
+      this.partBuffer.get(part.messageID) || new Map<string, DiscordSessionPart>()
     messageParts.set(part.id, part)
     this.partBuffer.set(part.messageID, messageParts)
   }
 
-  private getBufferedParts(messageID: string): Part[] {
+  private getBufferedParts(messageID: string): DiscordSessionPart[] {
     return Array.from(this.partBuffer.get(messageID)?.values() ?? [])
   }
 
@@ -2334,22 +2443,13 @@ export class ThreadSessionRuntime {
     })
   }
 
-  private hasBufferedStepFinish(messageID: string): boolean {
-    return this.getBufferedParts(messageID).some((part) => {
-      return part.type === 'step-finish'
-    })
-  }
-
   private shouldSendPlannedPart({
     part,
     mode,
   }: {
-    part: Part
+    part: DiscordSessionPart
     mode: AssistantTurnFlushMode
   }): boolean {
-    if (part.type === 'step-start' || part.type === 'step-finish') {
-      return false
-    }
     if (part.type === 'tool' && part.state.status === 'pending') {
       return false
     }
@@ -2420,7 +2520,7 @@ export class ThreadSessionRuntime {
     repulseTyping = true,
     quoteText = false,
   }: {
-    part: Part
+    part: DiscordSessionPart
     repulseTyping?: boolean
     quoteText?: boolean
   }): Promise<void> {
@@ -2445,14 +2545,17 @@ export class ThreadSessionRuntime {
     if (!content.trim() || content.length === 0) {
       return
     }
-    if (this.state?.sentPartIds.has(part.id)) {
+    const deliveryId = part.type === 'tool'
+      ? `${part.id}:${part.state.status}`
+      : part.id
+    if (this.state?.sentPartIds.has(deliveryId)) {
       return
     }
     // Mark as sent BEFORE the async send to prevent concurrent flushes
     // from sending the same part while this await is in-flight.
     threadState.updateThread(this.threadId, (t) => {
       const newIds = new Set(t.sentPartIds)
-      newIds.add(part.id)
+      newIds.add(deliveryId)
       return { ...t, sentPartIds: newIds }
     })
 
@@ -2467,17 +2570,17 @@ export class ThreadSessionRuntime {
     if (sendResult instanceof Error) {
       threadState.updateThread(this.threadId, (t) => {
         const newIds = new Set(t.sentPartIds)
-        newIds.delete(part.id)
+        newIds.delete(deliveryId)
         return { ...t, sentPartIds: newIds }
       })
       discordLogger.error(
-        `ERROR: Failed to send part ${part.id}:`,
+        `ERROR: Failed to send part ${deliveryId}:`,
         sendResult,
       )
       return
     }
     this.lastSentPartKind = kind
-    await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
+    await setPartMessage({ partId: deliveryId, messageId: sendResult.id, threadId: this.thread.id })
     if (repulseTyping) {
       this.requestTypingRepulse()
     }
@@ -2635,7 +2738,10 @@ export class ThreadSessionRuntime {
     // message.updated arrives, the final text part has already ended and the
     // buffered parts usually include step-finish, so a notice here would land
     // immediately above the footer and add noise.
-    if (this.hasBufferedStepFinish(msg.id)) {
+    if (!isSessionBusy({
+      events: this.eventBuffer,
+      sessionId,
+    })) {
       return
     }
     const latestRunInfo = getLatestRunInfo({
@@ -2675,7 +2781,7 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private async handlePartUpdated(part: Part): Promise<void> {
+  private async handlePartUpdated(part: DiscordSessionPart): Promise<void> {
     const sessionId = this.state?.sessionId
     const messageKind = getAssistantMessageKind({
       events: this.eventBuffer,
@@ -2719,13 +2825,8 @@ export class ThreadSessionRuntime {
     await this.handleMainPart(part)
   }
 
-  private async handleMainPart(part: Part): Promise<void> {
+  private async handleMainPart(part: DiscordSessionPart): Promise<void> {
     const sessionId = this.state?.sessionId
-
-    if (part.type === 'step-start') {
-      this.ensureTypingNow()
-      return
-    }
 
     if (part.type === 'tool' && part.state.status === 'running') {
       await this.flushCurrentTurnParts({
@@ -2742,12 +2843,12 @@ export class ThreadSessionRuntime {
         await this.sendPartMessage({ part })
       }
 
-      if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
+      if (part.tool === 'task' && !this.state?.sentPartIds.has(`${part.id}:running`)) {
         const taskDisplay = formatTaskToolTitle(part)
         if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
           threadState.updateThread(this.threadId, (t) => {
             const newIds = new Set(t.sentPartIds)
-            newIds.add(part.id)
+            newIds.add(`${part.id}:running`)
             return { ...t, sentPartIds: newIds }
           })
           const sendResult = await sendSessionPartMessage(this.thread, taskDisplay, {
@@ -2760,7 +2861,7 @@ export class ThreadSessionRuntime {
           if (sendResult instanceof Error) {
             threadState.updateThread(this.threadId, (t) => {
               const newIds = new Set(t.sentPartIds)
-              newIds.delete(part.id)
+              newIds.delete(`${part.id}:running`)
               return { ...t, sentPartIds: newIds }
             })
             discordLogger.error(
@@ -2770,9 +2871,14 @@ export class ThreadSessionRuntime {
             return
           }
           this.lastSentPartKind = 'tool'
-          await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
+          await setPartMessage({ partId: `${part.id}:running`, messageId: sendResult.id, threadId: this.thread.id })
         }
       }
+      return
+    }
+
+    if (part.type === 'tool' && part.state.status === 'error') {
+      await this.sendPartMessage({ part, repulseTyping: true })
       return
     }
 
@@ -2909,13 +3015,10 @@ export class ThreadSessionRuntime {
       return
     }
 
-    if (part.type === 'step-finish') {
-      this.ensureTypingKeepalive()
-    }
   }
 
   private async handleSubtaskPart(
-    part: Part,
+    part: DiscordSessionPart,
     subtaskInfo: { label: string; assistantMessageId?: string },
   ): Promise<void> {
     const verbosity = await this.getVerbosity()
@@ -2926,9 +3029,6 @@ export class ThreadSessionRuntime {
       if (!isEssentialToolPart(part)) {
         return
       }
-    }
-    if (part.type === 'step-start' || part.type === 'step-finish') {
-      return
     }
     if (part.type === 'tool' && part.state.status === 'pending') {
       return
@@ -3104,10 +3204,7 @@ export class ThreadSessionRuntime {
     // just step-start/step-finish lifecycle parts). This happens when the model
     // decides not to respond.
     const hasVisibleOutput = assistantMessageIds.some((msgId) => {
-      const parts = this.getBufferedParts(msgId)
-      return parts.some(
-        (part) => part.type !== 'step-start' && part.type !== 'step-finish',
-      )
+      return this.getBufferedParts(msgId).length > 0
     })
     if (!hasVisibleOutput) {
       this.stopTyping()
@@ -5647,6 +5744,8 @@ export class ThreadSessionRuntime {
     this.lastRateLimitDisplayTime = 0
     this.lastSentPartKind = undefined
     this.v2OpenTextMessageIds.clear()
+    this.partBuffer.clear()
+    this.v2ToolNames.clear()
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────

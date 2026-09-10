@@ -2,8 +2,46 @@
 // Converts SDK message parts (text, tools, reasoning) to Discord-friendly format,
 // handles file attachments, and provides tool summary generation.
 
-import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
+import type { FilePartInput } from '@opencode-ai/sdk/v2'
 import type { SessionMessageInfo } from '@opencode-ai/client'
+import * as errore from 'errore'
+
+export type DiscordSessionPart =
+  | {
+      id: string
+      type: 'text'
+      sessionID: string
+      messageID: string
+      text: string
+      time?: { start?: number; end?: number }
+      ignored?: boolean
+      synthetic?: boolean
+    }
+  | {
+      id: string
+      type: 'reasoning'
+      sessionID: string
+      messageID: string
+      text: string
+      time?: { start?: number; end?: number }
+    }
+  | {
+      id: string
+      type: 'tool'
+      sessionID: string
+      messageID: string
+      tool: string
+      state: {
+        status: 'pending' | 'running' | 'completed' | 'error'
+        input?: Record<string, unknown>
+        raw?: string
+        output?: string
+        title?: string
+        error?: string
+        metadata?: Record<string, unknown>
+        time?: { start?: number; end?: number }
+      }
+    }
 import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
 
 // Extended FilePartInput with original Discord URL for reference in prompts
@@ -19,10 +57,49 @@ import { processImage } from './image-utils.js'
 import { parsePatchFileCounts } from './patch-text-parser.js'
 import { getDataDir } from './config.js'
 
-// Generic message type compatible with both v1 and v2 SDK
 export type GenericSessionMessage = {
   info: { role: string; id?: string; parentID?: string }
-  parts: Part[]
+  parts: DiscordSessionPart[]
+}
+
+export function discordTextPartId({
+  messageID,
+  ordinal,
+}: {
+  messageID: string
+  ordinal: number
+}) {
+  return `${messageID}:text:${ordinal}`
+}
+
+export function discordReasoningPartId({
+  messageID,
+  ordinal,
+}: {
+  messageID: string
+  ordinal: number
+}) {
+  return `${messageID}:reasoning:${ordinal}`
+}
+
+export function discordToolPartId({
+  messageID,
+  toolId,
+}: {
+  messageID: string
+  toolId: string
+}) {
+  return `${messageID}:tool:${toolId}`
+}
+
+function parseToolInput(input: unknown): Record<string, unknown> {
+  if (typeof input === 'string') {
+    const parsed = errore.try(() => JSON.parse(input) as Record<string, unknown>)
+    if (parsed instanceof Error || !parsed || typeof parsed !== 'object') return {}
+    return parsed
+  }
+  if (input && typeof input === 'object') return input as Record<string, unknown>
+  return {}
 }
 
 export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): GenericSessionMessage[] {
@@ -30,27 +107,73 @@ export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): Generi
     if (message.type === 'user') {
       return {
         info: { role: 'user', id: message.id },
-        parts: [{ type: 'text', text: message.text } as Part],
+        parts: [{
+          id: message.id,
+          type: 'text',
+          sessionID: '',
+          messageID: message.id,
+          text: message.text,
+        }],
       }
     }
     if (message.type === 'assistant') {
       return {
         info: { role: 'assistant', id: message.id },
-        parts: message.content.map((part, index) => {
-          if (part.type === 'tool') {
-            return {
-              id: part.id,
-              type: 'tool',
-              tool: part.name,
-              state: part.state,
-            } as Part
-          }
-          return {
-            id: `${message.id}:${index}`,
-            type: part.type,
-            text: part.text,
-          } as Part
-        }),
+        parts: (() => {
+          const ordinals = { text: 0, reasoning: 0 }
+          return message.content.flatMap((part): DiscordSessionPart[] => {
+            if (part.type === 'tool') {
+              const output = part.state.status === 'completed'
+                ? part.state.content
+                  .filter((item) => item.type === 'text')
+                  .map((item) => item.text)
+                  .join('\n')
+                : ''
+              return [{
+                id: discordToolPartId({ messageID: message.id, toolId: part.id }),
+                type: 'tool',
+                sessionID: '',
+                messageID: message.id,
+                tool: part.name,
+                state: {
+                  status: part.state.status === 'error'
+                    ? 'error'
+                    : part.state.status === 'completed'
+                      ? 'completed'
+                      : 'running',
+                  input: parseToolInput('input' in part.state ? part.state.input : {}),
+                  output,
+                  error: part.state.status === 'error' ? formatToolError(part.state.error) : undefined,
+                },
+              }]
+            }
+            if (part.type === 'reasoning') {
+              return [{
+                id: discordReasoningPartId({
+                  messageID: message.id,
+                  ordinal: ordinals.reasoning++,
+                }),
+                type: 'reasoning',
+                sessionID: '',
+                messageID: message.id,
+                text: part.text,
+              }]
+            }
+            if (part.type === 'text') {
+              return [{
+                id: discordTextPartId({
+                  messageID: message.id,
+                  ordinal: ordinals.text++,
+                }),
+                type: 'text',
+                sessionID: '',
+                messageID: message.id,
+                text: part.text,
+              }]
+            }
+            return []
+          })
+        })(),
       }
     }
     return {
@@ -58,6 +181,14 @@ export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): Generi
       parts: [],
     }
   })
+}
+
+function formatToolError(error: unknown): string {
+  if (typeof error === 'string' && error) return error
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message
+  }
+  return 'Tool failed'
 }
 
 const logger = createLogger(LogPrefix.FORMATTING)
@@ -683,7 +814,7 @@ export function formatBashToolTitle({
   return ''
 }
 
-export function getToolSummaryText(part: Part): string {
+export function getToolSummaryText(part: DiscordSessionPart): string {
   if (part.type !== 'tool') return ''
 
   if (part.tool === 'edit') {
@@ -757,6 +888,7 @@ export function getToolSummaryText(part: Part): string {
 
   if (
     part.tool === 'bash' ||
+    part.tool === 'shell' ||
     part.tool === 'todoread' ||
     part.tool === 'todowrite'
   ) {
@@ -814,7 +946,7 @@ export function getToolSummaryText(part: Part): string {
   return `(${inputFields.join(', ')})`
 }
 
-export function formatTodoList(part: Part): string {
+export function formatTodoList(part: DiscordSessionPart): string {
   if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
   const todos =
     (part.state.input?.todos as {
@@ -832,7 +964,9 @@ export function formatTodoList(part: Part): string {
   return `${todoNumber}.  **${escapeInlineMarkdown(content)}**`
 }
 
-export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
+export function formatTaskToolTitle(
+  part: Extract<DiscordSessionPart, { type: 'tool' }>,
+): string {
   // Running only. The child session can be created later when many tasks queue.
   if (part.tool !== 'task' || part.state.status !== 'running') return ''
 
@@ -850,7 +984,7 @@ export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): stri
   return `${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`
 }
 
-export function formatPart(part: Part, prefix?: string): string {
+export function formatPart(part: DiscordSessionPart, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
@@ -866,29 +1000,6 @@ export function formatPart(part: Part, prefix?: string): string {
   if (part.type === 'reasoning') {
     if (!part.text?.trim()) return ''
     return `${THINKING_PREFIX}${pfx}thinking`
-  }
-
-  if (part.type === 'file') {
-    return prefix
-      ? `📄 ${pfx}${part.filename || 'File'}`
-      : `📄 ${part.filename || 'File'}`
-  }
-
-  if (
-    part.type === 'step-start' ||
-    part.type === 'step-finish' ||
-    part.type === 'patch' ||
-    part.type === 'compaction'
-  ) {
-    return ''
-  }
-
-  if (part.type === 'agent') {
-    return `${TOOL_PREFIX}${pfx}agent ${part.id}`
-  }
-
-  if (part.type === 'snapshot') {
-    return `${TOOL_PREFIX}${pfx}snapshot ${part.snapshot}`
   }
 
   if (part.type === 'tool') {
@@ -918,7 +1029,7 @@ export function formatPart(part: Part, prefix?: string): string {
     }
 
     if (part.state.status === 'pending') {
-      if (part.tool !== 'bash') {
+      if (part.tool !== 'bash' && part.tool !== 'shell') {
         return ''
       }
       const command = (part.state.input?.command as string) || ''
@@ -929,7 +1040,7 @@ export function formatPart(part: Part, prefix?: string): string {
         description,
         summary,
       })
-      return `${TOOL_PREFIX}${pfx}bash${toolTitle}`
+      return `${TOOL_PREFIX}${pfx}${part.tool}${toolTitle}`
     }
 
     const summaryText = getToolSummaryText(part)
@@ -938,7 +1049,7 @@ export function formatPart(part: Part, prefix?: string): string {
     let toolTitle = ''
     if (part.state.status === 'error') {
       toolTitle = part.state.error || 'error'
-    } else if (part.tool === 'bash') {
+    } else if (part.tool === 'bash' || part.tool === 'shell') {
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
       const summary = (part.state.input?.summary as string) || ''

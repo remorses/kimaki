@@ -4,11 +4,11 @@ import { afterEach, describe, test, expect } from 'vitest'
 import { asDiscordQuote, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
-import type { Part } from '@opencode-ai/sdk/v2'
+import type { DiscordSessionPart } from './message-formatting.js'
 
 describe('formatPart', () => {
   test('callout text is returned without a diamond prefix', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'text',
       sessionID: 'ses_test',
@@ -24,7 +24,7 @@ describe('formatPart', () => {
   })
 
   test('regular text has no diamond prefix', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'text',
       sessionID: 'ses_test',
@@ -35,7 +35,7 @@ describe('formatPart', () => {
   })
 
   test('heading text has no diamond prefix', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'text',
       sessionID: 'ses_test',
@@ -704,12 +704,11 @@ describe('formatTaskToolTitle', () => {
     input?: { description?: string; subagent_type?: string }
     title?: string
     sessionId?: string
-  }): Extract<Part, { type: 'tool' }> {
+  }): Extract<DiscordSessionPart, { type: 'tool' }> {
     const base = {
       id: 'prt_task',
       type: 'tool' as const,
       tool: 'task',
-      callID: 'call_task',
       sessionID: 'ses_parent',
       messageID: 'msg_assistant',
     }
@@ -888,13 +887,12 @@ describe('formatBashToolTitle', () => {
 
 describe('formatTodoList', () => {
   test('formats active todo with number, dot, and two spaces', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'tool',
       tool: 'todowrite',
       sessionID: 'ses_test',
       messageID: 'msg_test',
-      callID: 'call_test',
       state: {
         status: 'completed',
         input: {
@@ -920,13 +918,12 @@ describe('formatTodoList', () => {
       status: i === 11 ? 'in_progress' : 'completed',
     }))
 
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'tool',
       tool: 'todowrite',
       sessionID: 'ses_test',
       messageID: 'msg_test',
-      callID: 'call_test',
       state: {
         status: 'completed',
         input: { todos },
@@ -941,13 +938,12 @@ describe('formatTodoList', () => {
   })
 
   test('lowercases first letter of content', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'tool',
       tool: 'todowrite',
       sessionID: 'ses_test',
       messageID: 'msg_test',
-      callID: 'call_test',
       state: {
         status: 'completed',
         input: {
