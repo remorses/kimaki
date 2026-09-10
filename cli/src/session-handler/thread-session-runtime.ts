@@ -87,11 +87,7 @@ import {
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
   cancelSessionSleepForThread,
-  insertThreadQueueItem,
-  listAllThreadQueueItems,
-  deleteThreadQueueItem,
-  deleteThreadQueueItems,
-  updateThreadQueueItemPayload,
+  upsertSessionSystemContext,
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
@@ -129,10 +125,6 @@ import {
 } from './model-utils.js'
 import {
   getOpencodePromptContext,
-  getOpencodeSystemMessage,
-  isSystemPromptForSession,
-  resolveSessionSystemPrompt,
-  systemPromptHasParentSession,
   type AgentInfo,
   type RepliedMessageContext,
   type WorktreeInfo,
@@ -269,7 +261,7 @@ const runtimes = new Map<string, ThreadSessionRuntime>()
 
 // Per-thread FIFO for Discord arrival order of one-shot slash calls vs messages.
 // Covers /plan-agent (no prompt) and /foo-cmd /foo-skill. OpenCode already
-// queues promptAsync. /model, /agent, and /compact are not on this queue.
+// queues session.prompt. /model, /agent, and /compact are not on this queue.
 const threadIngressChains = new Map<string, Promise<void>>()
 const threadIngressSlotAls = new AsyncLocalStorage<ThreadIngressSlot | undefined>()
 
@@ -760,7 +752,7 @@ export type IngressInput = {
   appId?: string
   command?: { name: string; arguments: string }
   /**
-   * `opencode` (default): send via session.promptAsync and let opencode
+   * `opencode` (default): send via session.prompt and let opencode
    * serialize pending user turns internally.
    * `local-queue`: keep in kimaki's local queue (used by /queue flows).
    */
@@ -2648,16 +2640,15 @@ export class ThreadSessionRuntime {
 
     const knownMessage = this.partBuffer.has(msg.id)
 
-    // promptAsync paths can deliver complete parts via message.updated even when
-    // message.part.updated events are sparse or absent. Seed the part buffer
-    // from message.parts when we have not seen per-part events for this message.
+    // Seed the part buffer from message.parts when we have not seen per-part
+    // events for this message.
     if (!knownMessage) {
       const messageParts = (() => {
         const candidate: { parts?: unknown } = msg as { parts?: unknown }
         if (!Array.isArray(candidate.parts)) {
-          return [] as Part[]
+          return [] as DiscordSessionPart[]
         }
-        return candidate.parts.filter((part): part is Part => {
+        return candidate.parts.filter((part): part is DiscordSessionPart => {
           if (!part || typeof part !== 'object') {
             return false
           }
@@ -3719,7 +3710,7 @@ export class ThreadSessionRuntime {
    * This is the default path for normal Discord messages.
    *
    * Mirrors dispatchPrompt's preference resolution, abort handling, and error
-   * recovery so that promptAsync receives the same agent/model/variant/system
+   * recovery so that session.prompt receives the same agent/model/variant/system
    * fields that the local-queue path provides.
    */
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
@@ -3743,7 +3734,7 @@ export class ThreadSessionRuntime {
         this.state?.sessionId !== input.expectedSessionId
       ) {
         logger.log(
-          `[ENQUEUE] Skipping stale promptAsync enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
+          `[ENQUEUE] Skipping stale session.prompt enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
         )
         skippedBySessionGuard = true
         return
@@ -3841,6 +3832,10 @@ export class ThreadSessionRuntime {
       }
       const resolvedAgent = agentResult.agentPreference
       const availableAgents = agentResult.agents
+      await this.persistSessionSystemContext({
+        sessionId: session.id,
+        agents: availableAgents,
+      })
       releaseCurrentThreadIngress()
 
       await this.persistIngressVariant({
@@ -4040,15 +4035,23 @@ export class ThreadSessionRuntime {
         ...(files.length > 0 ? { files } : {}),
         delivery,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.prompt', cause: e }))
+      // V2 steer admits the prompt but does not always wake a busy drain.
+      // interrupt(continue) forces the current step to yield so the new steer
+      // can run. Queue-interrupt e2e fails without this.
       if (
         !(promptResult instanceof Error) &&
         delivery === 'steer' &&
         wasBusy
       ) {
-        await getClient().session.interrupt({
+        const interruptResult = await getClient().session.interrupt({
           sessionID: session.id,
           continue: true,
         }).catch((e) => new OpenCodeSdkError({ operation: 'session.interrupt', cause: e }))
+        if (interruptResult instanceof Error) {
+          logger.warn(
+            `[INGRESS] session.interrupt continue failed sessionId=${session.id} message=${interruptResult.message}`,
+          )
+        }
       }
       if (promptResult instanceof Error) {
         if (!input.noReply) {
@@ -4068,7 +4071,7 @@ export class ThreadSessionRuntime {
       }
 
       logger.log(
-        `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
+        `[INGRESS] session.prompt accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
       )
 
       if (!input.noReply) {
@@ -4323,7 +4326,7 @@ export class ThreadSessionRuntime {
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.
         // noReply messages always go through the opencode path so the flag
-        // reaches promptAsync; local queue doesn't support noReply.
+        // reaches session.prompt; local queue doesn't support noReply.
         const enqueueResult = resolvedInput.noReply
           ? await this.submitViaOpencodeQueue({
               ...resolvedInput,
@@ -4344,7 +4347,7 @@ export class ThreadSessionRuntime {
 
   /**
    * Abort the currently active run. Does NOT kill the listener.
-   * Calls session.abort best-effort and lets event-stream idle settle the run.
+    * Calls session.interrupt best-effort and lets event-stream idle settle the run.
    */
   private async abortSessionViaApi({
     abortId,
@@ -4958,6 +4961,10 @@ export class ThreadSessionRuntime {
     }
     const earlyAgentPreference = earlyAgentResult.agentPreference
     const earlyAvailableAgents = earlyAgentResult.agents
+    await this.persistSessionSystemContext({
+      sessionId: session.id,
+      agents: earlyAvailableAgents,
+    })
 
     await this.persistIngressVariant({
       sessionId: session.id,
@@ -5172,7 +5179,7 @@ export class ThreadSessionRuntime {
       const commandSignal = AbortSignal.timeout(30_000)
       // session.command() only accepts FilePart in parts, not text parts.
       // Append <discord-user /> tag to arguments so external sync can
-      // detect this message came from Discord (same tag as promptAsync).
+      // detect this message came from Discord (same tag as session.prompt).
       const discordTag = getOpencodePromptContext({
         sessionId: session.id,
         threadId: this.thread.id,
@@ -5185,6 +5192,27 @@ export class ThreadSessionRuntime {
         systemPromptFromSourceSession,
         parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
+      const systemWriteResult = await this.persistSessionSystemContext({
+        sessionId: session.id,
+        agents: earlyAvailableAgents,
+        channelTopic,
+      })
+      if (systemWriteResult instanceof Error) {
+        logger.error(
+          `[DISPATCH] Failed to persist system context for command session ${session.id}: ${systemWriteResult.message}`,
+        )
+        void notifyError(
+          systemWriteResult,
+          'Failed to persist system context before session.command',
+        )
+        this.stopTyping()
+        await sendThreadMessage(
+          this.thread,
+          `✗ Failed to prepare command system prompt: ${systemWriteResult.message}`,
+          { flags: NOTIFY_MESSAGE_FLAGS },
+        )
+        return false
+      }
       const commandResponse = await getClient().session.command(
         {
           sessionID: session.id,
@@ -5301,7 +5329,7 @@ export class ThreadSessionRuntime {
     }
 
     logger.log(
-      `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
+      `[DISPATCH] session.prompt accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
     )
     trackTurnStarted({
       inputKind: 'prompt',
@@ -5361,52 +5389,46 @@ export class ThreadSessionRuntime {
     return context
   }
 
-  /**
-   * Pinned system prompt for this turn. Generated only on the first turn of a
-   * session; forks start with the source session's pinned prompt.
-   */
-  private async resolveTurnSystemPrompt({
+  private async persistSessionSystemContext({
     sessionId,
-    channelTopic,
     agents,
-    input,
+    channelTopic,
   }: {
     sessionId: string
-    channelTopic: string | undefined
     agents: AgentInfo[]
-    input: { username?: string; userId?: string; parentSessionId?: string }
+    channelTopic?: string
   }) {
-    return resolveSessionSystemPrompt({
+    const topic = channelTopic ?? await (async () => {
+      if (this.thread.parent?.type === ChannelType.GuildText) {
+        return this.thread.parent.topic?.trim() || undefined
+      }
+      return undefined
+    })()
+    const result = await upsertSessionSystemContext({
       sessionId,
-      generate: async () => {
-        return getOpencodeSystemMessage({
-          sessionId,
-          channelId: this.channelId,
-          guildId: this.thread.guildId,
-          threadId: this.thread.id,
-          channelTopic,
-          agents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-          parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-          scheduledTask: await this.resolveScheduledTaskContext(sessionId),
-        })
+      payload: {
+        channelId: this.channelId,
+        guildId: this.thread.guildId,
+        threadId: this.thread.id,
+        channelTopic: topic,
+        agents,
+        userId: this.state?.sessionUserId,
+        parentSessionId: this.state?.parentSessionId,
+        scheduledTask: await this.resolveScheduledTaskContext(sessionId),
+        dataDir: getDataDir(),
+        critiqueEnabled: store.getState().critiqueEnabled,
       },
+    }).catch((cause) => {
+      return cause instanceof Error
+        ? cause
+        : new Error(String(cause), { cause })
     })
-  }
-
-  /** Parent set after the first turn is not in the pinned prompt; send it per turn. */
-  private getParentSessionIdMissingFromSystem({
-    system,
-    input,
-  }: {
-    system: string
-    input: { parentSessionId?: string }
-  }) {
-    const parentSessionId = this.state?.parentSessionId || input.parentSessionId
-    if (!parentSessionId) return undefined
-    if (systemPromptHasParentSession({ system, parentSessionId })) return undefined
-    return parentSessionId
+    if (result instanceof Error) {
+      logger.warn(
+        `[SYSTEM CONTEXT] Failed to persist for session ${sessionId}: ${result.message}`,
+      )
+    }
+    return result
   }
 
   private async updateExistingSessionPermissions({
