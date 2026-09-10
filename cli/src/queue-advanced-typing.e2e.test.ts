@@ -8,6 +8,7 @@ import {
 } from './queue-advanced-e2e-setup.js'
 import {
   getMessageVisibleText,
+  isFooterMessage,
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
@@ -67,9 +68,7 @@ e2eTest('queue advanced: typing lifecycle', () => {
         if (index <= replyIndex) {
           return false
         }
-        return message.author.id === ctx.discord.botUserId
-          && message.content.startsWith('*')
-          && message.content.includes('⋅')
+        return isFooterMessage({ message, botUserId: ctx.discord.botUserId })
       })
 
       const timeline = await th.text({ showTyping: true })

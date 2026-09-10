@@ -25,6 +25,8 @@ import {
   formatPart,
   collectSessionChunks,
   batchChunksForDiscord,
+  getLastTextPartIdsForAssistantTurns,
+  QUEUE_PREFIX,
   type SessionChunk,
 } from './message-formatting.js'
 import {
@@ -191,7 +193,7 @@ function getExternalUserMirrorText({
   username: string
   prompt: string
 }): string {
-  return `» **${username}:** ${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
+  return `${QUEUE_PREFIX}**${username}:** ${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
 }
 
 // Pure derivation: is the latest user turn from Discord?
@@ -394,6 +396,7 @@ function collectUnsyncedChunks({
 }): { chunks: SessionChunk[]; directMappings: DirectPartMapping[] } {
   const chunks: SessionChunk[] = []
   const directMappings: DirectPartMapping[] = []
+  const lastTextPartIds = getLastTextPartIdsForAssistantTurns(messages)
 
   for (const message of messages) {
     if (message.info.role === 'user') {
@@ -457,6 +460,7 @@ function collectUnsyncedChunks({
     const { chunks: assistantChunks } = collectSessionChunks({
       messages: [{ info: message.info, parts: filteredParts }],
       skipPartIds: syncedPartIds,
+      lastTextPartIds,
     })
     // Mark empty-content parts as synced (collectSessionChunks skips them)
     for (const part of filteredParts) {

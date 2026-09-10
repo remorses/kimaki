@@ -138,7 +138,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
         --- from: assistant (TestBot)
@@ -148,10 +148,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: continue-after-archive
         --- from: assistant (TestBot)
         ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: archived-queue-survives
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        ⺩**interrupt-tester:** Reply with exactly: archived-queue-survives
         ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
     20_000,
@@ -257,7 +257,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: queued-behind-slow
+        ⺩**interrupt-tester:** Reply with exactly: queued-behind-slow
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
@@ -273,7 +273,7 @@ e2eTest('queue + interrupt drain ordering', () => {
       expect(interruptUserLine).toBeGreaterThan(-1)
 
       const queueDispatchLine = lines.findIndex((line) => {
-        return line.includes('» **interrupt-tester:** Reply with exactly: queued-behind-slow')
+        return line.includes('⺩**interrupt-tester:** Reply with exactly: queued-behind-slow')
       })
       expect(queueDispatchLine).toBeGreaterThan(-1)
 

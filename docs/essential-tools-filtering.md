@@ -151,7 +151,7 @@ if (part.tool === 'skill') {
 
 Example Discord output:
 
-- Tool summary line: `┣ _skill-name_`
+- Tool summary line: `▏_skill-name_`
 - The skill name is italicized
 
 ## Skill Tool Configuration

@@ -92,7 +92,7 @@ const CHANNELS: {
           {
             author: 'kimaki',
             time: 'Today at 2:14 PM',
-            text: '┣ bash playwriter open https://www.midjourney.com/imagine',
+            text: '▏bash playwriter open https://www.midjourney.com/imagine',
           },
           {
             author: 'kimaki',
@@ -122,12 +122,12 @@ const CHANNELS: {
           {
             author: 'kimaki',
             time: 'Today at 3:02 PM',
-            text: '◼︎ write cli/src/session-footer.ts',
+            text: '▎write cli/src/session-footer.ts',
           },
           {
             author: 'kimaki',
             time: 'Today at 3:02 PM',
-            text: '◼︎ edit cli/src/session-handler/thread-session-runtime.ts',
+            text: '▎edit cli/src/session-handler/thread-session-runtime.ts',
           },
           {
             author: 'user',
@@ -149,13 +149,13 @@ const CHANNELS: {
           {
             author: 'kimaki',
             time: 'Today at 3:03 PM',
-            text: '» **Tommy:** commit this when you are done',
+            text: '⺩**Tommy:** commit this when you are done',
             reveal: 'queue-kept',
           },
           {
             author: 'kimaki',
             time: 'Today at 3:03 PM',
-            text: '┣ bash git commit',
+            text: '▏bash git commit',
             reveal: 'queue-kept',
           },
           {
@@ -194,7 +194,7 @@ const CHANNELS: {
           {
             author: 'kimaki',
             time: 'Today at 11:41 AM',
-            text: '┣ bash pnpm db:migrate --prod',
+            text: '▏bash pnpm db:migrate --prod',
             reveal: 'permission-accept',
           },
           {
@@ -257,13 +257,13 @@ const CHANNELS: {
           {
             author: 'kimaki',
             time: 'Today at 4:18 PM',
-            text: '» **Tommy:** {select}',
+            text: '⺩**Tommy:** {select}',
             reveal: 'select',
           },
           {
             author: 'kimaki',
             time: 'Today at 4:18 PM',
-            text: '◼︎ write docs/getting-started.mdx',
+            text: '▎write docs/getting-started.mdx',
             reveal: 'select',
           },
           {
@@ -331,7 +331,7 @@ const CHANNELS: {
           {
             author: 'kimaki',
             time: 'Today at 5:08 PM',
-            text: '◼︎ edit src/components/hero-section.tsx',
+            text: '▎edit src/components/hero-section.tsx',
           },
           {
             author: 'kimaki',

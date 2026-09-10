@@ -502,7 +502,7 @@ describe('runtime lifecycle', () => {
       `)
 
       const threadText = await discord.thread(thread.id).text()
-      expect(threadText).not.toContain('⬦ context usage')
+      expect(threadText).not.toContain('⻟context usage')
     },
     10_000,
   )

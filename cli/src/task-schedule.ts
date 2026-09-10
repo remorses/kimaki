@@ -2,6 +2,7 @@
 
 import { CronExpressionParser } from 'cron-parser'
 import * as errore from 'errore'
+import { STATUS_PREFIX } from './message-formatting.js'
 
 export type ScheduledTaskPayload = {
   preRunCommand: string | null
@@ -193,7 +194,7 @@ export function formatSessionSleepWakePrompt({
 }): string {
   const until = formatSessionSleepWakeAt(wakeAt)
   const reasonLine = reason?.trim() ? `\nReason: ${reason.trim()}` : ''
-  return `⬦ Woke after sleeping until ${until}${reasonLine}\nContinue the work you were waiting for.`
+  return `${STATUS_PREFIX}Woke after sleeping until ${until}${reasonLine}\nContinue the work you were waiting for.`
 }
 
 // Tool result after persist. Keep "Sleeping until" first so e2e matchers still hit.

@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { batchChunksForDiscord, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, isLastTextPartInAssistantTurn, planAssistantTurnFlush, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
@@ -47,6 +47,309 @@ describe('formatPart', () => {
       Done."
     `)
   })
+
+})
+
+describe('asDiscordQuote', () => {
+  test('prefixes every line', () => {
+    expect(asDiscordQuote('hello\nworld')).toMatchInlineSnapshot(`
+      "> hello
+      > world"
+    `)
+  })
+
+  test('does not double-quote already quoted text', () => {
+    expect(asDiscordQuote('> already quoted')).toMatchInlineSnapshot(`"> already quoted"`)
+  })
+
+  test('prefixes blank lines and later lines, not only the first', () => {
+    expect(asDiscordQuote('I will open that file\n\nthen reply')).toMatchInlineSnapshot(`
+      "> I will open that file
+      > 
+      > then reply"
+    `)
+  })
+})
+
+describe('isLastTextPartInAssistantTurn', () => {
+  test('tools after a single text part still count as last', () => {
+    expect(
+      isLastTextPartInAssistantTurn({
+        parts: [
+          { id: 't1', type: 'text', text: 'I will read it' },
+          { id: 'tool1', type: 'tool' },
+        ],
+        partId: 't1',
+      }),
+    ).toBe(true)
+  })
+
+  test('unknown or empty parts count as last', () => {
+    expect(
+      isLastTextPartInAssistantTurn({
+        parts: [],
+        partId: 't1',
+      }),
+    ).toBe(true)
+    expect(
+      isLastTextPartInAssistantTurn({
+        parts: [{ id: 't2', type: 'text', text: 'done' }],
+        partId: 't1',
+      }),
+    ).toBe(true)
+  })
+
+  test('earlier text is not last when another text follows', () => {
+    expect(
+      isLastTextPartInAssistantTurn({
+        parts: [
+          { id: 't1', type: 'text', text: 'I will read it' },
+          { id: 'tool1', type: 'tool' },
+          { id: 't2', type: 'text', text: 'done' },
+        ],
+        partId: 't1',
+      }),
+    ).toBe(false)
+    expect(
+      isLastTextPartInAssistantTurn({
+        parts: [
+          { id: 't1', type: 'text', text: 'I will read it' },
+          { id: 'tool1', type: 'tool' },
+          { id: 't2', type: 'text', text: 'done' },
+        ],
+        partId: 't2',
+      }),
+    ).toBe(true)
+  })
+})
+
+describe('planAssistantTurnFlush', () => {
+  function text(id: string, body: string, ended = true) {
+    return { id, type: 'text', text: body, time: ended ? { end: 1 } : undefined }
+  }
+  function tool(id: string, name?: string) {
+    return { id, type: 'tool', tool: name }
+  }
+
+  function plan(parts: Array<{ id: string; type: string; text?: string }>, mode: 'progress' | 'interactive' | 'final', throughPartId?: string) {
+    const result = planAssistantTurnFlush({ parts, mode, throughPartId })
+    return { send: result.send, hold: result.hold }
+  }
+
+  test('progress sends last completed text when nothing follows it', () => {
+    expect(
+      plan([text('t1', 'status'), tool('tool1'), text('t2', 'answer')], 'progress'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": true,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+          {
+            "id": "t2",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('progress holds a lone text plus following tools', () => {
+    expect(
+      plan([text('t1', 'status'), tool('tool1')], 'progress'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [
+          {
+            "id": "t1",
+            "quoteText": false,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+        ],
+        "send": [],
+      }
+    `)
+  })
+
+  test('progress holds unfinished last text until it ends', () => {
+    expect(
+      plan([text('t1', 'first'), text('t2', 'second', false)], 'progress'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [
+          {
+            "id": "t2",
+            "quoteText": false,
+          },
+        ],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": true,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('final quotes earlier text and leaves the last text plain', () => {
+    expect(
+      plan([text('t1', 'status'), tool('tool1'), text('t2', 'done')], 'final'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": true,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+          {
+            "id": "t2",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('final leaves a lone text plus tools unquoted', () => {
+    expect(
+      plan([text('t1', 'status'), tool('tool1')], 'final'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": false,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('interactive without throughPartId sends the last text unquoted', () => {
+    expect(
+      plan([text('t1', 'ask'), tool('question1', 'question')], 'interactive'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": false,
+          },
+          {
+            "id": "question1",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('interactive leaves preceding text unquoted and flushes through the interactive tool', () => {
+    expect(
+      plan([text('t1', 'ask'), tool('question1', 'question'), text('t2', 'later')], 'interactive', 'question1'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [
+          {
+            "id": "t2",
+            "quoteText": false,
+          },
+        ],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": false,
+          },
+          {
+            "id": "question1",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('progress does not quote earlier text longer than two lines', () => {
+    expect(
+      plan(
+        [
+          text('t1', 'line one\nline two\nline three'),
+          tool('tool1'),
+          text('t2', 'answer'),
+        ],
+        'progress',
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": false,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+          {
+            "id": "t2",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('progress still quotes two-line earlier text', () => {
+    expect(
+      plan(
+        [text('t1', 'line one\nline two'), tool('tool1'), text('t2', 'answer')],
+        'progress',
+      ).send.find((entry) => entry.id === 't1'),
+    ).toEqual({ id: 't1', quoteText: true })
+  })
+
+  test('progress does not quote earlier text before an interactive tool', () => {
+    expect(
+      plan(
+        [text('t1', 'ask'), tool('question1', 'question'), text('t2', 'later')],
+        'progress',
+      ).send.find((entry) => entry.id === 't1'),
+    ).toEqual({ id: 't1', quoteText: false })
+    expect(
+      plan(
+        [text('t1', 'wait'), tool('sleep1', 'kimaki_sleep'), text('t2', 'later')],
+        'progress',
+      ).send.find((entry) => entry.id === 't1'),
+    ).toEqual({ id: 't1', quoteText: false })
+    expect(
+      plan(
+        [text('t1', 'choose'), tool('buttons1', 'kimaki_action_buttons'), text('t2', 'later')],
+        'progress',
+      ).send.find((entry) => entry.id === 't1'),
+    ).toEqual({ id: 't1', quoteText: false })
+  })
 })
 
 describe('shouldLeadWithBlankLine', () => {
@@ -84,10 +387,10 @@ describe('sessionPartContent', () => {
 
   test('prepends a newline on text and tool transitions', () => {
     expect(
-      sessionPartContent({ content: '┣ bash ls', leadWithBlankLine: true }),
+      sessionPartContent({ content: '▏bash ls', leadWithBlankLine: true }),
     ).toMatchInlineSnapshot(`
       "
-      ┣ bash ls"
+      ▏bash ls"
     `)
     expect(
       sessionPartContent({ content: 'done', leadWithBlankLine: true }),
@@ -98,12 +401,144 @@ describe('sessionPartContent', () => {
   })
 })
 
+describe('collectSessionChunks', () => {
+  function textPart({
+    id,
+    text,
+    messageID,
+  }: {
+    id: string
+    text: string
+    messageID: string
+  }): Part {
+    return {
+      id,
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID,
+      text,
+    }
+  }
+
+  test('quotes earlier text in a turn and leaves the last text plain', () => {
+    const { chunks } = collectSessionChunks({
+      messages: [
+        {
+          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          parts: [textPart({ id: 't1', text: 'I will read it', messageID: 'msg_1' })],
+        },
+        {
+          info: { role: 'assistant', id: 'msg_2', parentID: 'msg_user' },
+          parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
+        },
+      ],
+    })
+    expect(chunks.map((chunk) => chunk.content)).toMatchInlineSnapshot(`
+      [
+        "> I will read it",
+        "done",
+      ]
+    `)
+  })
+
+  test('does not quote a lone text part that only has tools after it', () => {
+    const { chunks } = collectSessionChunks({
+      messages: [
+        {
+          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          parts: [textPart({ id: 't1', text: 'I will read it', messageID: 'msg_1' })],
+        },
+      ],
+    })
+    expect(chunks.map((chunk) => chunk.content)).toEqual(['I will read it'])
+  })
+
+  test('does not quote earlier text longer than two lines', () => {
+    const { chunks } = collectSessionChunks({
+      messages: [
+        {
+          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          parts: [
+            textPart({
+              id: 't1',
+              text: 'line one\nline two\nline three',
+              messageID: 'msg_1',
+            }),
+          ],
+        },
+        {
+          info: { role: 'assistant', id: 'msg_2', parentID: 'msg_user' },
+          parts: [textPart({ id: 't2', text: 'done', messageID: 'msg_2' })],
+        },
+      ],
+    })
+    expect(chunks.map((chunk) => chunk.content)).toEqual([
+      'line one\nline two\nline three',
+      'done',
+    ])
+  })
+
+  test('does not quote text flushed before a question tool', () => {
+    const { chunks } = collectSessionChunks({
+      messages: [
+        {
+          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          parts: [
+            textPart({ id: 't1', text: 'Pick one', messageID: 'msg_1' }),
+            {
+              id: 'q1',
+              type: 'tool',
+              sessionID: 'ses_test',
+              messageID: 'msg_1',
+              tool: 'question',
+              callID: 'call_q1',
+              state: { status: 'completed', input: {}, output: '', title: '', metadata: {}, time: { start: 0, end: 0 } },
+            },
+            textPart({ id: 't2', text: 'thanks', messageID: 'msg_1' }),
+          ],
+        },
+      ],
+    })
+    expect(chunks.map((chunk) => chunk.content)).toEqual(['Pick one', 'thanks'])
+  })
+
+  test('quotes within each user turn separately', () => {
+    const { chunks } = collectSessionChunks({
+      messages: [
+        {
+          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user_1' },
+          parts: [textPart({ id: 't1', text: 'first turn', messageID: 'msg_1' })],
+        },
+        {
+          info: { role: 'user', id: 'msg_user_2' },
+          parts: [],
+        },
+        {
+          info: { role: 'assistant', id: 'msg_2', parentID: 'msg_user_2' },
+          parts: [textPart({ id: 't2', text: 'looking', messageID: 'msg_2' })],
+        },
+        {
+          info: { role: 'assistant', id: 'msg_3', parentID: 'msg_user_2' },
+          parts: [textPart({ id: 't3', text: 'second turn done', messageID: 'msg_3' })],
+        },
+      ],
+    })
+    expect(chunks.map((chunk) => chunk.content)).toMatchInlineSnapshot(`
+      [
+        "first turn",
+        "> looking",
+        "second turn done",
+      ]
+    `)
+  })
+})
+
 describe('batchChunksForDiscord', () => {
   test('does not merge text chunks with tool chunks', () => {
     expect(
       batchChunksForDiscord([
         { partIds: ['t1'], content: 'hello', kind: 'text' },
-        { partIds: ['b1'], content: '┣ bash ls', kind: 'tool' },
+        { partIds: ['b1'], content: '▏bash ls', kind: 'tool' },
         { partIds: ['t2'], content: 'done', kind: 'text' },
       ]),
     ).toMatchInlineSnapshot(`
@@ -116,7 +551,7 @@ describe('batchChunksForDiscord', () => {
           ],
         },
         {
-          "content": "┣ bash ls",
+          "content": "▏bash ls",
           "kind": "tool",
           "partIds": [
             "b1",
@@ -189,7 +624,7 @@ describe('formatTaskToolTitle', () => {
           sessionId: 'ses_child',
         }),
       ),
-    ).toMatchInlineSnapshot(`"┣ general **Classify pending changes**"`)
+    ).toMatchInlineSnapshot(`"▏general **Classify pending changes**"`)
   })
 
   test('prefers input description on running parts', () => {
@@ -202,7 +637,7 @@ describe('formatTaskToolTitle', () => {
           sessionId: 'ses_child',
         }),
       ),
-    ).toMatchInlineSnapshot(`"┣ explore **inspect repo**"`)
+    ).toMatchInlineSnapshot(`"▏explore **inspect repo**"`)
   })
 
   test('does not format completed parts so Discord does not post the line at the end', () => {
@@ -229,7 +664,7 @@ describe('formatTaskToolTitle', () => {
           },
         }),
       ),
-    ).toMatchInlineSnapshot(`"┣ general **audit customer pages**"`)
+    ).toMatchInlineSnapshot(`"▏general **audit customer pages**"`)
   })
 })
 
@@ -319,7 +754,7 @@ describe('formatBashToolTitle', () => {
 
   test('no description field (new opencode) with multiline command', () => {
     // This is the exact scenario that was broken: opencode removed `description`
-    // from the bash tool schema, so multiline commands rendered as just "┣ bash"
+    // from the bash tool schema, so multiline commands rendered as just "▏bash"
     const command = 'git diff HEAD~1 --stat && git log --oneline -5'
     expect(formatBashToolTitle({ command: command + '\n' + 'echo done' })).toMatchInlineSnapshot(
       `" _git diff HEAD\\~1 --stat && git log --oneline -5…_"`,
@@ -328,7 +763,7 @@ describe('formatBashToolTitle', () => {
 })
 
 describe('formatTodoList', () => {
-  test('formats active todo with monospace numbers', () => {
+  test('formats active todo with number, dot, and two spaces', () => {
     const part: Part = {
       id: 'test',
       type: 'tool',
@@ -352,7 +787,7 @@ describe('formatTodoList', () => {
       },
     }
 
-    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒉ **second task**"`)
+    expect(formatTodoList(part)).toMatchInlineSnapshot(`"2.  **second task**"`)
   })
 
   test('formats double digit todo numbers', () => {
@@ -378,7 +813,7 @@ describe('formatTodoList', () => {
       },
     }
 
-    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒓ **task 12**"`)
+    expect(formatTodoList(part)).toMatchInlineSnapshot(`"12.  **task 12**"`)
   })
 
   test('lowercases first letter of content', () => {
@@ -401,7 +836,7 @@ describe('formatTodoList', () => {
       },
     }
 
-    expect(formatTodoList(part)).toMatchInlineSnapshot(`"⒈ **fix the bug**"`)
+    expect(formatTodoList(part)).toMatchInlineSnapshot(`"1.  **fix the bug**"`)
   })
 })
 

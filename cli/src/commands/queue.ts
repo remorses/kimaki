@@ -24,6 +24,7 @@ import {
   registerHtmlAction,
 } from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
@@ -157,7 +158,7 @@ export async function handleQueueCommand({
     return
   }
 
-  const responseText = `» **${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`
+  const responseText = `${QUEUE_PREFIX}**${command.user.displayName}:** ${message.slice(0, 1000)}${message.length > 1000 ? '...' : ''}`
   await command.reply({
     content: responseText,
     flags: SILENT_MESSAGE_FLAGS,
@@ -352,7 +353,7 @@ export async function handleQueueCommandCommand({
     return
   }
 
-  const responseText = `» **${command.user.displayName}:** ${displayText}`
+  const responseText = `${QUEUE_PREFIX}**${command.user.displayName}:** ${displayText}`
   await command.reply({
     content: responseText,
     flags: SILENT_MESSAGE_FLAGS,

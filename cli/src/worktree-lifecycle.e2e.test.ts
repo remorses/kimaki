@@ -430,7 +430,7 @@ describe('worktree lifecycle', () => {
             return false
           }
           return t.id !== thread.id
-            && t.name.startsWith('⬦ worktree: opencode/kimaki-')
+            && t.name.startsWith('⻟worktree: opencode/kimaki-')
             && t.name.includes(WORKTREE_NAME)
         },
       })
@@ -545,7 +545,7 @@ describe('worktree lifecycle', () => {
         "--- from: user (worktree-tester)
         Reply with exactly: before-worktree
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
         Creating worktree in <#THREAD_ID>
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000901>
@@ -604,7 +604,7 @@ describe('worktree lifecycle', () => {
         predicate: (t) => {
           return Boolean(
             t.name
-            && t.name.startsWith('⬦ worktree: opencode/kimaki-')
+            && t.name.startsWith('⻟worktree: opencode/kimaki-')
             && t.name.includes(CHANNEL_WORKTREE_NAME),
           )
         },
@@ -666,7 +666,7 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok"
       `)
       expect(worktreeText).toContain('Branch:')
@@ -688,11 +688,11 @@ describe('worktree lifecycle', () => {
         content: autoMsg,
       })
 
-      // The thread should have the ⬦ prefix indicating a worktree thread
+      // The thread should have the ⻟ prefix indicating a worktree thread
       const thread = await discord.channel(AUTO_WORKTREE_CHANNEL_ID).waitForThread({
         timeout: 4_000,
         predicate: (t) => {
-          return Boolean(t.name?.startsWith('⬦ '))
+          return Boolean(t.name?.startsWith('⻟'))
         },
       })
       const th = discord.thread(thread.id)
@@ -797,13 +797,13 @@ describe('worktree lifecycle', () => {
         "--- from: user (worktree-tester)
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        > *non-git-project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000901>
-        ok"
+        ok
+        > *non-git-project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000901>"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
       expect(text).toContain('Reply with exactly: non-git-second')
@@ -832,7 +832,7 @@ describe('worktree lifecycle', () => {
         .channel(AUTO_WORKTREE_CHANNEL_ID)
         .bot()
         .sendMessage({
-          content: `» **kimaki-cli:**\n${prompt}`,
+          content: `⺩**kimaki-cli:**\n${prompt}`,
           embeds: [
             { color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } },
           ],
@@ -874,13 +874,13 @@ describe('worktree lifecycle', () => {
         normalizeWorktreeLifecycleText(await th.text()),
       ).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        » **kimaki-cli:**
+        ⺩**kimaki-cli:**
         Reply with exactly: send-auto-wt-SUFFIX
         [embed]
         🌳 **Worktree: AUTO_WORKTREE_BRANCH**
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok"
       `)
 

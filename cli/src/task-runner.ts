@@ -27,6 +27,7 @@ import {
   markSessionSleepFailed,
 } from './database.js'
 import { execAsync } from './exec-async.js'
+import { QUEUE_PREFIX } from './message-formatting.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -99,7 +100,7 @@ async function executeThreadScheduledTask({
   const embed = [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
-  const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
+  const prefixedPrompt = `${QUEUE_PREFIX}**kimaki-cli:**\n${prompt}`
 
   // Re-join the user before posting, so the message they get notified about is
   // in a thread they are already a member of. Works on archived threads too;

@@ -9,12 +9,12 @@ centralized injection point for any cross-cutting prompt transformation
 
 1. Discord chat messages → `discord-bot.ts` MessageCreate → `preprocess*Message` → `enqueueWithPreprocess`
 2. `/new-session` slash → `commands/session.ts` → `enqueueIncoming` directly
-3. `/queue` slash → posts Discord message with `» **user:** ...` prefix → path #1
-4. `kimaki send --thread` (existing thread) → posts `» **kimaki-cli:** <prompt>` → path #1
+3. `/queue` slash → posts Discord message with `⺩**user:** ...` prefix → path #1
+4. `kimaki send --thread` (existing thread) → posts `⺩**kimaki-cli:** <prompt>` → path #1
 5. `kimaki send --channel` (new thread) → raw starter message → bot `ThreadCreate` handler → `enqueueIncoming` with preprocess callback
 6. Scheduled tasks (`task-runner.ts`) → posts Discord messages like #4/#5
 
-Prefix conventions: `» **<username>:** ` is used for queued reposts and
+Prefix conventions: `⺩**<username>:** ` is used for queued reposts and
 CLI-injected messages in existing threads. New-thread flows (channel-level
 `kimaki send` and channel scheduled tasks) post the raw prompt without
 prefix and rely on an embed marker (`ThreadStartMarker` YAML) for metadata.
@@ -44,8 +44,8 @@ skip the wrapping when detection succeeds.
 ## Prefer line-based detection over prefix stripping
 
 When adding a transformation that needs to match a user-intent pattern in
-prompts that sometimes carry programmatic prefixes (`» **kimaki-cli:** ...`,
-`» **user:** ...`, `Context from thread: ...`), do NOT try to regex-strip
+prompts that sometimes carry programmatic prefixes (`⺩**kimaki-cli:** ...`,
+`⺩**user:** ...`, `Context from thread: ...`), do NOT try to regex-strip
 every possible prefix before matching. That creates maintenance burden
 (new prefix formats silently break detection) and gets the semantics
 wrong when usernames contain regex metacharacters.

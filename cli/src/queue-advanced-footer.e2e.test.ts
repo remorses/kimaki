@@ -53,7 +53,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
@@ -94,7 +94,7 @@ e2eTest('queue advanced: footer emission', () => {
           "--- from: user (queue-advanced-tester)
           Reply with exactly: footer-without-mention
           --- from: assistant (TestBot)
-          *using deterministic-provider/deterministic-v2*
+          > *using deterministic-provider/deterministic-v2*
           ok
           > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
         `)
@@ -159,7 +159,7 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
@@ -342,10 +342,10 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         TOOL_CALL_FOOTER_MARKER
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
-        > running tool
+        > *using deterministic-provider/deterministic-v2*
+        running tool
 
-        ┣ bash _echo tool-call-footer-test_
+        ▏bash _echo tool-call-footer-test_
 
         tool call completed
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"

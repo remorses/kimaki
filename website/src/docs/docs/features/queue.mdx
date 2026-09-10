@@ -50,10 +50,10 @@ No need to clear and re-add. Just edit in place while it's still waiting.
 Once the run finishes, Kimaki dispatches the queued message and shows it in the thread as:
 
 ```
-» Tommy: commit everything with a descriptive message
+⺩Tommy: commit everything with a descriptive message
 ```
 
-The `»` marker only appears when the message actually had to wait behind a running request. If it dispatched immediately (idle session), it's sent without the marker.
+The `⺩` marker only appears when the message actually had to wait behind a running request. If it dispatched immediately (idle session), it's sent without the marker.
 
 ## Queueing a command
 
@@ -63,7 +63,7 @@ You can queue a registered slash command, not just text:
 /queue-command <command> [arguments]
 ```
 
-This validates that the command exists and queues it. When sent, it shows as `» Tommy: /command-name`.
+This validates that the command exists and queues it. When sent, it shows as `⺩Tommy: /command-name`.
 
 ## Removing a queued message
 

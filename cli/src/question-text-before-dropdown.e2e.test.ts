@@ -47,6 +47,7 @@ describe('question text before dropdown', () => {
         QUESTION_AFTER_TEXT_MARKER
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
+        PLAN_TEXT_BEFORE_QUESTION
         **Next step**
         What next?"
       `)

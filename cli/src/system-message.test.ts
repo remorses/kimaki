@@ -69,6 +69,18 @@ describe('system-message', () => {
     expect(message).not.toContain('After wake, continue the wait reason')
   })
 
+  test('tells the model to stay quiet between tool calls', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('## Discord output')
+    expect(message).toContain('Be concise')
+    expect(message).toContain('Do not narrate between tool calls')
+    expect(message).toContain(
+      'Do not output text until you are ready to give the user the final answer for this turn',
+    )
+  })
+
   test('requires interactive tools after all text, using exact tool names', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
@@ -289,6 +301,12 @@ describe('system-message', () => {
       "
       The user is reading your messages from inside Discord, via kimaki.dev
 
+      ## Discord output
+
+      Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
+      Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
+      Exceptions: when a tool requires user-visible text first (\`question\`, \`kimaki_action_buttons\`, \`kimaki_file_upload\`, \`kimaki_sleep\`), write that required text, then call the tool.
+
       ## bash tool
 
       When calling the bash tool, always include these extra fields alongside \`command\`:
@@ -403,7 +421,7 @@ describe('system-message', () => {
       The current Discord thread title is in the per-turn \`<discord-user thread-name="..." />\` metadata.
       This updates the OpenCode title. Discord follows automatically.
       Do not retitle every turn. Discord rate-limits thread renames.
-      Keep titles short. Do not add emoji. Do not copy ⬦, btw:, or Fork: prefixes.
+      Keep titles short. Do not add emoji. Do not copy ⻟, btw:, or Fork: prefixes.
 
       ## discord user mentions
 

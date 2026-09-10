@@ -19,6 +19,7 @@ import {
   sendThreadMessage,
 } from '../discord-utils.js'
 import { createLogger } from '../logger.js'
+import { QUEUE_PREFIX } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
 import {
   getOrCreateRuntime,
@@ -331,7 +332,7 @@ export async function handleActionButton(
 
   await sendThreadMessage(
     thread,
-    `» **${username}:** ${button.label}`,
+    `${QUEUE_PREFIX}**${username}:** ${button.label}`,
   )
 
   try {

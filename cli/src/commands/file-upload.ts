@@ -25,6 +25,7 @@ import path from 'node:path'
 import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import { NOTIFY_MESSAGE_FLAGS, sendThreadMessage } from '../discord-utils.js'
+import { QUEUE_PREFIX } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.FILE_UPLOAD)
 
@@ -325,7 +326,7 @@ export async function handleFileUploadModalSubmit(
       const username = interaction.user.globalName || interaction.user.username
       await sendThreadMessage(
         context.thread,
-        `» **${username}:** Uploaded ${fileNames.join(', ')}`,
+        `${QUEUE_PREFIX}**${username}:** Uploaded ${fileNames.join(', ')}`,
       )
     }
 

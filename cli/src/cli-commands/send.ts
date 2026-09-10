@@ -26,6 +26,7 @@ import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
+import { QUEUE_PREFIX } from '../message-formatting.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
@@ -574,7 +575,7 @@ cli
           // Prefix the prompt so it's clear who sent it (matches /queue format).
           // Use a newline between prefix and prompt so leading /command
           // detection can find the command on its own line.
-          const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
+          const prefixedPrompt = `${QUEUE_PREFIX}**kimaki-cli:**\n${prompt}`
 
           if (threadTargetUser) {
             cliLogger.log(

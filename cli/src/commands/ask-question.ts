@@ -14,6 +14,7 @@ import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '.
 import { getOpencodeClient } from '../opencode.js'
 import { DiscordOperationError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { QUEUE_PREFIX } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -294,7 +295,7 @@ export async function handleAskQuestionSelectMenu(
   const username = interaction.user.globalName || interaction.user.username
   await sendThreadMessage(
     context.thread,
-    `» **${username}:** ${answeredText}`,
+    `${QUEUE_PREFIX}**${username}:** ${answeredText}`,
   )
 
   // Check if all questions are answered

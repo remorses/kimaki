@@ -993,7 +993,7 @@ describe('agent model resolution', () => {
       expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('test-agent')
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
+        ⺩**agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
         > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
@@ -1038,7 +1038,7 @@ describe('agent model resolution', () => {
       expect(sessionId).toBeDefined()
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
+        ⺩**agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
         > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
@@ -1159,7 +1159,7 @@ describe('agent model resolution', () => {
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
-        » **agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
+        ⺩**agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
         ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)

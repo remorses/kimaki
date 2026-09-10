@@ -20,11 +20,19 @@ import { getDataDir } from './config.js'
 
 // Generic message type compatible with both v1 and v2 SDK
 type GenericSessionMessage = {
-  info: { role: string; id?: string }
+  info: { role: string; id?: string; parentID?: string }
   parts: Part[]
 }
 
 const logger = createLogger(LogPrefix.FORMATTING)
+
+export const TOOL_PREFIX = '▏'
+export const FILE_EDIT_PREFIX = '▎'
+export const THINKING_PREFIX = '⺪'
+export const STATUS_PREFIX = '⻟'
+export const QUEUE_PREFIX = '⺩'
+export const WORKTREE_PREFIX = STATUS_PREFIX
+export const LEGACY_WORKTREE_PREFIX = '⬦ '
 
 /**
  * Serialize Discord embeds into plain text so the AI model can read them.
@@ -194,6 +202,170 @@ export function sessionPartContent({
   return `\n${content}`
 }
 
+export function asDiscordQuote(text: string): string {
+  const lead = text.startsWith('\n') ? '\n' : ''
+  const body = lead ? text.slice(1) : text
+  return lead + body.split('\n').map((line) => {
+    if (line.startsWith('>')) return line
+    return `> ${line}`
+  }).join('\n')
+}
+
+function isNonEmptyTextPart(part: { type: string; text?: string }): boolean {
+  return part.type === 'text' && Boolean(part.text?.trim())
+}
+
+function nextToolNameAfter({
+  parts,
+  fromIndex,
+}: {
+  parts: Array<{ type: string; tool?: string; text?: string }>
+  fromIndex: number
+}): string | undefined {
+  for (const part of parts.slice(fromIndex + 1)) {
+    if (isNonEmptyTextPart(part)) return undefined
+    if (part.type === 'tool' && part.tool) return part.tool
+  }
+}
+
+export function shouldQuoteIntermediateTextPart({
+  part,
+  isLastInTurn,
+  nextToolName,
+}: {
+  part: { type: string; text?: string }
+  isLastInTurn: boolean
+  nextToolName?: string
+}): boolean {
+  if (!isNonEmptyTextPart(part) || isLastInTurn) return false
+  const text = part.text ?? ''
+  if (text.includes('<callout')) return false
+  if (text.trim().split('\n').length > 2) return false
+  if (
+    nextToolName === 'question'
+    || nextToolName?.endsWith('kimaki_sleep')
+    || nextToolName?.endsWith('kimaki_action_buttons')
+  ) {
+    return false
+  }
+  return true
+}
+
+export function isLastTextPartInAssistantTurn({
+  parts,
+  partId,
+}: {
+  parts: Array<{ id: string; type: string; text?: string }>
+  partId: string
+}): boolean {
+  const textParts = parts.filter(isNonEmptyTextPart)
+  if (textParts.length === 0) return true
+  if (!textParts.some((part) => part.id === partId)) return true
+  return textParts[textParts.length - 1]?.id === partId
+}
+
+export type AssistantTurnFlushMode = 'progress' | 'interactive' | 'final'
+
+export type PlannedAssistantTurnPart<T extends { id: string; type: string; text?: string }> = {
+  part: T
+  quoteText: boolean
+}
+
+export function planAssistantTurnFlush<T extends {
+  id: string
+  type: string
+  text?: string
+  tool?: string
+  time?: { end?: number }
+}>({
+  parts,
+  mode,
+  throughPartId,
+}: {
+  parts: T[]
+  mode: AssistantTurnFlushMode
+  throughPartId?: string
+}): {
+  send: Array<{ id: string; quoteText: boolean }>
+  hold: Array<{ id: string; quoteText: boolean }>
+  sendParts: Array<PlannedAssistantTurnPart<T>>
+} {
+  const lastText = parts.filter(isNonEmptyTextPart).at(-1)
+  const lastTextIndex = lastText
+    ? parts.findLastIndex((part) => part.id === lastText.id)
+    : -1
+  const throughIndex = throughPartId
+    ? parts.findIndex((part) => part.id === throughPartId)
+    : -1
+
+  const sendUntil = (() => {
+    if (mode === 'final') return parts.length
+    if (mode === 'interactive') {
+      if (throughIndex >= 0) return throughIndex + 1
+      return parts.length
+    }
+    if (!lastText) return parts.length
+    const lastTextIsComplete = Boolean(lastText.time?.end)
+    const lastTextIsLastPart = lastTextIndex === parts.length - 1
+    if (lastTextIsComplete && lastTextIsLastPart) return parts.length
+    if (lastTextIndex <= 0) return 0
+    return lastTextIndex
+  })()
+
+  const sendParts: Array<PlannedAssistantTurnPart<T>> = []
+  const holdParts: T[] = []
+  for (const [index, part] of parts.entries()) {
+    if (index < sendUntil) {
+      sendParts.push({
+        part,
+        quoteText: shouldQuoteIntermediateTextPart({
+          part,
+          isLastInTurn: part.id === lastText?.id,
+          nextToolName: nextToolNameAfter({ parts, fromIndex: index }),
+        }),
+      })
+      continue
+    }
+    holdParts.push(part)
+  }
+
+  return {
+    send: sendParts.map((entry) => ({ id: entry.part.id, quoteText: entry.quoteText })),
+    hold: holdParts.map((part) => ({ id: part.id, quoteText: false })),
+    sendParts,
+  }
+}
+
+export function getLastTextPartIdsForAssistantTurns(
+  messages: GenericSessionMessage[],
+): Set<string> {
+  const lastIds = new Set<string>()
+  let turnParts: Array<{ id: string; type: string; text?: string }> = []
+  let currentParent: string | undefined
+
+  const flush = () => {
+    const last = turnParts.filter(isNonEmptyTextPart).at(-1)
+    if (last) lastIds.add(last.id)
+    turnParts = []
+  }
+
+  for (const message of messages) {
+    if (message.info.role !== 'assistant') {
+      flush()
+      currentParent = undefined
+      continue
+    }
+    const parentID = message.info.parentID
+    if (turnParts.length > 0 && parentID && currentParent && parentID !== currentParent) {
+      flush()
+    }
+    if (parentID) currentParent = parentID
+    turnParts.push(...message.parts)
+  }
+  flush()
+  return lastIds
+}
+
 // A chunk of formatted content with associated part IDs, ready to be
 // batched into as few Discord messages as possible.
 export type SessionChunk = {
@@ -215,13 +387,16 @@ export type SessionChunk = {
 export function collectSessionChunks({
   messages,
   skipPartIds,
+  lastTextPartIds,
   limit,
 }: {
   messages: GenericSessionMessage[]
   skipPartIds?: Set<string>
+  lastTextPartIds?: Set<string>
   limit?: number
 }): { chunks: SessionChunk[]; skippedCount: number } {
   const allChunks: SessionChunk[] = []
+  const lastTextIds = lastTextPartIds ?? getLastTextPartIdsForAssistantTurns(messages)
 
   for (const message of messages) {
     if (message.info.role !== 'assistant') {
@@ -235,9 +410,17 @@ export function collectSessionChunks({
       if (!content.trim()) {
         continue
       }
+      const quote = shouldQuoteIntermediateTextPart({
+        part,
+        isLastInTurn: lastTextIds.has(part.id),
+        nextToolName: nextToolNameAfter({
+          parts: message.parts,
+          fromIndex: message.parts.indexOf(part),
+        }),
+      })
       allChunks.push({
         partIds: [part.id],
-        content: content.trimEnd(),
+        content: (quote ? asDiscordQuote(content) : content).trimEnd(),
         kind: sessionPartKind(part),
       })
     }
@@ -656,14 +839,10 @@ export function formatTodoList(part: Part): string {
   })
   const activeTodo = todos[activeIndex]
   if (activeIndex === -1 || !activeTodo) return ''
-  // digit-with-period ⒈-⒛ for 1-20, fallback to regular number for 21+
-  const digitWithPeriod = '⒈⒉⒊⒋⒌⒍⒎⒏⒐⒑⒒⒓⒔⒕⒖⒗⒘⒙⒚⒛'
   const todoNumber = activeIndex + 1
-  const num =
-    todoNumber <= 20 ? digitWithPeriod[todoNumber - 1] : `${todoNumber}.`
   const content =
     activeTodo.content.charAt(0).toLowerCase() + activeTodo.content.slice(1)
-  return `${num} **${escapeInlineMarkdown(content)}**`
+  return `${todoNumber}.  **${escapeInlineMarkdown(content)}**`
 }
 
 export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
@@ -681,7 +860,7 @@ export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): stri
 
   const subagentType = part.state.input?.subagent_type
   const agent = typeof subagentType === 'string' ? subagentType : 'task'
-  return `┣ ${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`
+  return `${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`
 }
 
 export function formatPart(part: Part, prefix?: string): string {
@@ -698,7 +877,7 @@ export function formatPart(part: Part, prefix?: string): string {
 
   if (part.type === 'reasoning') {
     if (!part.text?.trim()) return ''
-    return `┣ ${pfx}thinking`
+    return `${THINKING_PREFIX}${pfx}thinking`
   }
 
   if (part.type === 'file') {
@@ -716,17 +895,17 @@ export function formatPart(part: Part, prefix?: string): string {
   }
 
   if (part.type === 'agent') {
-    return `┣ ${pfx}agent ${part.id}`
+    return `${TOOL_PREFIX}${pfx}agent ${part.id}`
   }
 
   if (part.type === 'snapshot') {
-    return `┣ ${pfx}snapshot ${part.snapshot}`
+    return `${TOOL_PREFIX}${pfx}snapshot ${part.snapshot}`
   }
 
   if (part.type === 'tool') {
     if (part.tool === 'todowrite') {
       const formatted = formatTodoList(part)
-      return prefix && formatted ? `┣ ${pfx}${formatted}` : formatted
+      return prefix && formatted ? `${TOOL_PREFIX}${pfx}${formatted}` : formatted
     }
 
     // Question tool is handled via Discord dropdowns, not text
@@ -761,7 +940,7 @@ export function formatPart(part: Part, prefix?: string): string {
         description,
         summary,
       })
-      return `┣ ${pfx}bash${toolTitle}`
+      return `${TOOL_PREFIX}${pfx}bash${toolTitle}`
     }
 
     const summaryText = getToolSummaryText(part)
@@ -794,14 +973,17 @@ export function formatPart(part: Part, prefix?: string): string {
         part.tool === 'write' ||
         part.tool === 'apply_patch'
       ) {
-        return '◼︎'
+        return FILE_EDIT_PREFIX
       }
-      return '┣'
+      return TOOL_PREFIX
     })()
     const toolParts = [part.tool, toolTitle, summaryText]
       .filter(Boolean)
       .join(' ')
-    return `${icon} ${pfx}${toolParts}`
+    if (icon === '⨯') {
+      return `${icon} ${pfx}${toolParts}`
+    }
+    return `${icon}${pfx}${toolParts}`
   }
 
   logger.warn('Unknown part type:', part)

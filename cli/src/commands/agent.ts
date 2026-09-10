@@ -54,6 +54,7 @@ import {
   worktreeCreatingMessage,
 } from './new-worktree.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
+import { QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
 import {
   getThinkingValuesForModel,
@@ -722,7 +723,7 @@ async function handleQuickAgentWithPrompt({
 
     // Visible reply showing the one-shot prompt (not ephemeral, so it appears in thread).
     await command.reply({
-      content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
+      content: `${QUEUE_PREFIX}**${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
@@ -770,7 +771,7 @@ async function handleQuickAgentWithPrompt({
       : baseThreadName
 
     const starterMessage = await channel.send({
-      content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
+      content: `${QUEUE_PREFIX}**${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 

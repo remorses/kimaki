@@ -51,8 +51,15 @@ import {
   asDiscordQuote,
   formatPart,
   formatTaskToolTitle,
+  planAssistantTurnFlush,
+  QUEUE_PREFIX,
   sessionPartKind,
   shouldLeadWithBlankLine,
+  shouldQuoteIntermediateTextPart,
+  STATUS_PREFIX,
+  WORKTREE_PREFIX,
+  LEGACY_WORKTREE_PREFIX,
+  type AssistantTurnFlushMode,
 } from '../message-formatting.js'
 import {
   getChannelVerbosity,
@@ -506,12 +513,9 @@ export function isEssentialToolPart(part: Part): boolean {
 // ── Thread title derivation ──────────────────────────────────────
 
 const DISCORD_THREAD_NAME_MAX = 100
-const WORKTREE_THREAD_PREFIX = '⬦ '
-
-// Prefixes that should survive OpenCode session title renames.
-// When a thread starts with one of these, the rename preserves it.
 const PRESERVED_THREAD_PREFIXES: string[] = [
-  WORKTREE_THREAD_PREFIX,
+  WORKTREE_PREFIX,
+  LEGACY_WORKTREE_PREFIX,
   'btw: ',
   'Fork: ',
 ]
@@ -1843,12 +1847,12 @@ export class ThreadSessionRuntime {
     })
   }
 
-  private shouldSendPart({
+  private shouldSendPlannedPart({
     part,
-    force,
+    mode,
   }: {
     part: Part
-    force: boolean
+    mode: AssistantTurnFlushMode
   }): boolean {
     if (part.type === 'step-start' || part.type === 'step-finish') {
       return false
@@ -1856,21 +1860,72 @@ export class ThreadSessionRuntime {
     if (part.type === 'tool' && part.state.status === 'pending') {
       return false
     }
-    if (!force && part.type === 'text' && !part.time?.end) {
-      return false
-    }
-    if (!force && part.type === 'tool' && part.state.status === 'completed') {
+    if (part.type === 'text' && !part.time?.end && mode === 'progress') {
       return false
     }
     return true
   }
 
+  private getCurrentTurnParts(): Part[] {
+    const sessionId = this.state?.sessionId
+    const messageIds = sessionId
+      ? [...this.getAssistantMessageIdsForCurrentTurn({ sessionId })]
+      : []
+    if (messageIds.length > 0) {
+      return messageIds.flatMap((id) => this.getBufferedParts(id))
+    }
+    return [...this.partBuffer.keys()].flatMap((id) => this.getBufferedParts(id))
+  }
+
+  private async flushCurrentTurnParts({
+    mode,
+    throughPartId,
+    skipPartId,
+    repulseTyping = true,
+  }: {
+    mode: AssistantTurnFlushMode
+    throughPartId?: string
+    skipPartId?: string
+    repulseTyping?: boolean
+  }): Promise<void> {
+    const parts = this.getCurrentTurnParts().filter((part) => {
+      return !this.state?.sentPartIds.has(part.id)
+    })
+    const planned = planAssistantTurnFlush({
+      parts,
+      mode,
+      throughPartId,
+    })
+    for (const { part, quoteText } of planned.sendParts) {
+      if (skipPartId && part.id === skipPartId) {
+        continue
+      }
+      if (!this.shouldSendPlannedPart({ part, mode })) {
+        continue
+      }
+      if (part.type === 'tool' && part.tool === 'task') {
+        continue
+      }
+      const pulseTyping =
+        part.type === 'text' && part.ignored === true
+          ? false
+          : repulseTyping
+      await this.sendPartMessage({
+        part,
+        quoteText,
+        repulseTyping: pulseTyping,
+      })
+    }
+  }
+
   private async sendPartMessage({
     part,
     repulseTyping = true,
+    quoteText = false,
   }: {
     part: Part
     repulseTyping?: boolean
+    quoteText?: boolean
   }): Promise<void> {
     const verbosity = await this.getVerbosity()
     if (verbosity === 'text_only' && part.type !== 'text') {
@@ -1882,7 +1937,14 @@ export class ThreadSessionRuntime {
       }
     }
 
-    const content = formatPart(part)
+    const formatted = formatPart(part)
+    const quote =
+      quoteText
+      && shouldQuoteIntermediateTextPart({
+        part,
+        isLastInTurn: false,
+      })
+    const content = quote ? asDiscordQuote(formatted) : formatted
     if (!content.trim() || content.length === 0) {
       return
     }
@@ -1924,57 +1986,8 @@ export class ThreadSessionRuntime {
     }
   }
 
-  private async flushBufferedParts({
-    messageID,
-    force,
-    skipPartId,
-    repulseTyping = true,
-  }: {
-    messageID: string | undefined
-    force: boolean
-    skipPartId?: string
-    repulseTyping?: boolean
-  }): Promise<void> {
-    if (!messageID) {
-      return
-    }
-    const parts = this.getBufferedParts(messageID)
-    for (const part of parts) {
-      if (skipPartId && part.id === skipPartId) {
-        continue
-      }
-      if (!this.shouldSendPart({ part, force })) {
-        continue
-      }
-      await this.sendPartMessage({ part, repulseTyping })
-    }
-  }
-
-  private async flushBufferedPartsForMessages({
-    messageIDs,
-    force,
-    skipPartId,
-    repulseTyping = true,
-  }: {
-    messageIDs: ReadonlyArray<string>
-    force: boolean
-    skipPartId?: string
-    repulseTyping?: boolean
-  }): Promise<void> {
-    const uniqueMessageIDs = [...new Set(messageIDs)]
-    for (const messageID of uniqueMessageIDs) {
-      await this.flushBufferedParts({
-        messageID,
-        force,
-        skipPartId,
-        repulseTyping,
-      })
-    }
-  }
-
   private async showInteractiveUi({
     skipPartId,
-    flushMessageId,
     show,
   }: {
     skipPartId?: string
@@ -1982,32 +1995,11 @@ export class ThreadSessionRuntime {
     show: () => Promise<void>
   }): Promise<void> {
     this.stopTyping()
-    const sessionId = this.state?.sessionId
-    const targetMessageId = (() => {
-      if (flushMessageId) {
-        return flushMessageId
-      }
-      if (!sessionId) {
-        return undefined
-      }
-      return this.getLatestAssistantMessageIdForCurrentTurn({ sessionId })
-    })()
-    if (targetMessageId) {
-      await this.flushBufferedParts({
-        messageID: targetMessageId,
-        force: true,
-        skipPartId,
-      })
-    } else {
-      const assistantMessageIds = sessionId
-        ? [...this.getAssistantMessageIdsForCurrentTurn({ sessionId })]
-        : []
-      await this.flushBufferedPartsForMessages({
-        messageIDs: assistantMessageIds,
-        force: true,
-        skipPartId,
-      })
-    }
+    await this.flushCurrentTurnParts({
+      mode: 'interactive',
+      throughPartId: skipPartId,
+      skipPartId,
+    })
     await show()
   }
 
@@ -2120,9 +2112,8 @@ export class ThreadSessionRuntime {
       })
     }
 
-    await this.flushBufferedParts({
-      messageID: msg.id,
-      force: false,
+    await this.flushCurrentTurnParts({
+      mode: 'progress',
     })
 
     const wasAlreadyCompleted = hasAssistantMessageCompletedBefore({
@@ -2181,7 +2172,7 @@ export class ThreadSessionRuntime {
       return
     }
     this.lastDisplayedContextPercentage = thresholdCrossed
-    const chunk = `⬦ context usage ${currentPercentage}%`
+    const chunk = `${STATUS_PREFIX}context usage ${currentPercentage}%`
     const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
@@ -2233,12 +2224,22 @@ export class ThreadSessionRuntime {
     }
 
     if (part.type === 'tool' && part.state.status === 'running') {
-      await this.flushBufferedParts({
-        messageID: part.messageID,
-        force: true,
-        skipPartId: part.id,
+      await this.flushCurrentTurnParts({
+        mode: 'progress',
       })
-      await this.sendPartMessage({ part })
+      const unsent = this.getCurrentTurnParts().filter((candidate) => {
+        return !this.state?.sentPartIds.has(candidate.id)
+      })
+      const held = planAssistantTurnFlush({
+        parts: unsent,
+        mode: 'progress',
+      }).hold.some((entry) => entry.id === part.id)
+      if (held) {
+        return
+      }
+      if (!this.state?.sentPartIds.has(part.id) && part.tool !== 'task') {
+        await this.sendPartMessage({ part })
+      }
 
       if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
         const taskDisplay = formatTaskToolTitle(part)
@@ -2382,7 +2383,7 @@ export class ThreadSessionRuntime {
             }
             return ` (${pct.toFixed(1)}%)`
           })()
-          const chunk = `⬦ ${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
+          const chunk = `${STATUS_PREFIX}${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
           const largeOutputResult = await this.thread.send({
             content: chunk,
             flags: SILENT_MESSAGE_FLAGS,
@@ -2395,26 +2396,19 @@ export class ThreadSessionRuntime {
     }
 
     if (part.type === 'reasoning') {
-      await this.sendPartMessage({ part })
+      await this.flushCurrentTurnParts({ mode: 'progress' })
       return
     }
 
-    if (part.type === 'text' && part.ignored === true) {
-      await this.sendPartMessage({ part, repulseTyping: false })
-      return
-    }
-
-    if (part.type === 'text' && part.time?.end) {
-      await this.sendPartMessage({ part })
-      await this.tryShowPendingQuestion()
+    if (part.type === 'text') {
+      await this.flushCurrentTurnParts({ mode: 'progress' })
+      if (part.time?.end) {
+        await this.tryShowPendingQuestion()
+      }
       return
     }
 
     if (part.type === 'step-finish') {
-      await this.flushBufferedParts({
-        messageID: part.messageID,
-        force: true,
-      })
       this.ensureTypingKeepalive()
     }
   }
@@ -2600,9 +2594,8 @@ export class ThreadSessionRuntime {
       return
     }
 
-    await this.flushBufferedPartsForMessages({
-      messageIDs: assistantMessageIds,
-      force: true,
+    await this.flushCurrentTurnParts({
+      mode: 'final',
       repulseTyping: false,
     })
 
@@ -2838,7 +2831,7 @@ export class ThreadSessionRuntime {
   // OpenCode emits question.asked when the tool starts, often before the
   // preceding text part gets time.end. Showing the dropdown on that event
   // holds the action queue while Discord posts, so the later text-end cannot
-  // send and dumps after the queued » user: indicator. Wait for text-end.
+  // send and dumps after the queued ⺩ user: indicator. Wait for text-end.
   private async tryShowPendingQuestion({
     ignoreUnfinishedText = false,
   } = {}): Promise<boolean> {
@@ -2925,7 +2918,7 @@ export class ThreadSessionRuntime {
     // When a question is answered and the local queue has items, the model may
     // continue the same run without ever reaching the local-queue idle gate.
     // Hand off only the next queued item to OpenCode immediately so the queue
-    // resumes, but keep later items local so their `» user:` indicators still
+    // resumes, but keep later items local so their `⺩ user:` indicators still
     // appear one-by-one when they actually become active.
     this.maybeHandoffQueuedItemForPendingQuestion({
       sessionId,
@@ -3001,7 +2994,7 @@ export class ThreadSessionRuntime {
     if (displayText.trim()) {
       await sendThreadMessage(
         this.thread,
-        `» **${next.username}:** ${displayText}`,
+        `${QUEUE_PREFIX}**${next.username}:** ${displayText}`,
       )
     }
 
@@ -3054,7 +3047,7 @@ export class ThreadSessionRuntime {
       return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
     })()
 
-    const chunk = `⬦ ${message} - retrying in ${duration} (attempt #${attempt})`
+    const chunk = `${STATUS_PREFIX}${message} - retrying in ${duration} (attempt #${attempt})`
     const retryResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (retryResult instanceof Error) {
@@ -3140,7 +3133,7 @@ export class ThreadSessionRuntime {
     const titlePrefix = properties.title
       ? `${properties.title.trim()}: `
       : ''
-    const chunk = `⬦ ${properties.variant}: ${titlePrefix}${toastMessage}`
+    const chunk = `${STATUS_PREFIX}${properties.variant}: ${titlePrefix}${toastMessage}`
     const toastResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (toastResult instanceof Error) {
@@ -3920,7 +3913,7 @@ export class ThreadSessionRuntime {
    * start dispatchPrompt (detached — does not block the action queue).
    * Called after enqueue, after run finishes, or after a blocker resolves.
    *
-   * @param showIndicator - When true, shows "» username: prompt" in Discord.
+   * @param showIndicator - When true, shows "⺩ username: prompt" in Discord.
    *   Only set to true when draining after a previous run finishes or a
    *   blocker resolves — not on the immediate first dispatch from enqueueIncoming.
    */
@@ -3963,7 +3956,7 @@ export class ThreadSessionRuntime {
       if (displayText.trim()) {
         await sendThreadMessage(
           this.thread,
-          `» **${next.username}:** ${displayText}`,
+          `${QUEUE_PREFIX}**${next.username}:** ${displayText}`,
         )
       }
     }

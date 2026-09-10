@@ -654,13 +654,13 @@ sometimes we need to interrupt the opencode session and restart it. for example 
 
 Kimaki works by creating threads on the first user message. The bot then replies in that thread. New sessions start with a quoted silent banner like `> *using anthropic/claude-sonnet-4 ⋅ plan*`. Text parts have no prefix and use classic Discord content so they stay full width. Short earlier text in a turn (at most two lines, no callout) can be quoted when a later text part arrives. Longer text, callouts, and text flushed because of a question, sleep, or action-button tool stay full width. Tool parts use classic Discord content too. When the displayed part kind changes between text and tool, Kimaki starts the next part with a blank line. Consecutive same-kind parts have no extra blank line.
 
-tool parts are also displayed in Discord as messages, either prefixed with ┣ or ◼︎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⬦. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking`, file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
+tool parts are also displayed in Discord as messages, either prefixed with ▏ or ▎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⻟. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking` (prefixed ⺪), file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
 
 at assistant message normal completion we also display a quoted footer message like `> *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*`. with folder, branch, time, context used, model id. we should not show this message on interruptions or aborts.
 
 we also support voice user messages, these are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
 
-we also support a /queue command to queue user messages to be sent at current session end. each queue confirmation has a Remove button to drop that item. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
+we also support a /queue command to queue user messages to be sent at current session end. each queue confirmation has a Remove button to drop that item. when the message ends we will display a message by the bot with content like `⺩Tommy: content` for the queued user message being sent.
 
 this information is useful for your tests. you can use this knowledge to write tests, tests should use expect and find messages that match a specific pattern.
 

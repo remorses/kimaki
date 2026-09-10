@@ -1121,7 +1121,7 @@ e2eTest('voice message handling', () => {
         throw new Error('Expected queue ack message')
       }
 
-      const dispatchPrefix = '» **voice-tester:** Voice message transcription from Discord user:'
+      const dispatchPrefix = '⺩**voice-tester:** Voice message transcription from Discord user:'
       const messagesWithDispatch = await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
@@ -1182,7 +1182,7 @@ e2eTest('voice message handling', () => {
         Queued at position 1. Edit or delete your message to update the queue
         slow-response-done
         > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2*
-        » **voice-tester:** Voice message transcription from Discord user:
+        ⺩**voice-tester:** Voice message transcription from Discord user:
         Queue this task for later
         session-reply
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@300000000000000777>"
@@ -1398,7 +1398,7 @@ e2eTest('voice message handling', () => {
 
       // 3. The transcription should complete, and even though queueMessage=true
       // routes through the local queue, the item should be drained immediately
-      // because the session is idle. No dispatch indicator (» prefix) appears
+      // because the session is idle. No dispatch indicator (⺩prefix) appears
       // because the message is dispatched immediately by enqueueViaLocalQueue's
       // tryDrainQueue (showIndicator=false for first drain).
       await waitForBotMessageContaining({

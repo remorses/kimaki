@@ -123,7 +123,7 @@ describe('extractLeadingOpencodeCommand', () => {
   test('kimaki-cli prefix on its own line', () => {
     expect(
       extractLeadingOpencodeCommand(
-        '» **kimaki-cli:**\n/build foo bar',
+        '⺩**kimaki-cli:**\n/build foo bar',
         fixtures,
       ),
     ).toMatchInlineSnapshot(`
@@ -138,7 +138,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('queue-style user prefix on its own line', () => {
     expect(
-      extractLeadingOpencodeCommand('» **Tommy:**\n/build hey', fixtures),
+      extractLeadingOpencodeCommand('⺩**Tommy:**\n/build hey', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {
@@ -151,7 +151,7 @@ describe('extractLeadingOpencodeCommand', () => {
 
   test('username containing asterisk on its own line', () => {
     expect(
-      extractLeadingOpencodeCommand('» **A*B:**\n/build hi', fixtures),
+      extractLeadingOpencodeCommand('⺩**A*B:**\n/build hi', fixtures),
     ).toMatchInlineSnapshot(`
       {
         "command": {

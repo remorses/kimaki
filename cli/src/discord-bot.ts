@@ -34,6 +34,7 @@ import {
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
+import { STATUS_PREFIX } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -1190,7 +1191,7 @@ export async function startDiscordBot({
           )
           await sendThreadMessage(
             channel,
-            `⬦ **${displayName}** removed message from queue`,
+            `${STATUS_PREFIX}**${displayName}** removed message from queue`,
           )
         } else {
           discordLogger.log(
@@ -1198,7 +1199,7 @@ export async function startDiscordBot({
           )
           await sendThreadMessage(
             channel,
-            `⬦ **${displayName}** edited queued message`,
+            `${STATUS_PREFIX}**${displayName}** edited queued message`,
           )
         }
       }
@@ -1229,7 +1230,7 @@ export async function startDiscordBot({
       )
       await sendThreadMessage(
         channel,
-        `⬦ **${removed.username}** removed message from queue`,
+        `${STATUS_PREFIX}**${removed.username}** removed message from queue`,
       )
     } catch (error) {
       discordLogger.error(

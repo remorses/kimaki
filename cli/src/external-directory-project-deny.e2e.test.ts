@@ -68,9 +68,9 @@ describe('external directory project deny', () => {
       EXTERNAL_DIRECTORY_PROBE_MARKER denied
       --- from: assistant (TestBot)
       > *using deterministic-provider/deterministic-v2*
-      > reading external directory
+      reading external directory
 
-      ┣ read *probe.txt*
+      ▏read *probe.txt*
 
       external-directory-probe-denied"
     `)
