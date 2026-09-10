@@ -6,7 +6,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type { Part } from '@opencode-ai/sdk/v2'
+import type { DiscordSessionPart } from './message-formatting.js'
 import {
   getChannelVerbosity,
   getPartMessageIds,
@@ -60,7 +60,7 @@ export type SessionMessageLike = {
     mode?: string
     agent?: string
   }
-  parts: Part[]
+  parts: DiscordSessionPart[]
 }
 
 type DiscordOriginMetadata = {
@@ -79,7 +79,7 @@ type DirectorySyncTarget = {
 
 let externalSyncInterval: ReturnType<typeof setInterval> | null = null
 
-function isSyntheticTextPart(part: Extract<Part, { type: 'text' }>): boolean {
+function isSyntheticTextPart(part: Extract<DiscordSessionPart, { type: 'text' }>): boolean {
   return part.synthetic === true
 }
 
@@ -260,7 +260,7 @@ function shouldMirrorAssistantPart({
   part,
   verbosity,
 }: {
-  part: Part
+  part: DiscordSessionPart
   verbosity: 'tools_and_text' | 'text_and_essential_tools' | 'text_only'
 }): boolean {
   if (verbosity === 'text_only') {
