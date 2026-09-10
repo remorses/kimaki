@@ -46,7 +46,6 @@ import {
   cleanupTestSessions,
   waitForBotMessageContaining,
   waitForFooterMessage,
-  warmUpOpencodeServer,
 } from './test-utils.js'
 import { execAsync } from './worktrees.js'
 
@@ -767,13 +766,11 @@ describe('worktree lifecycle', () => {
         afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
       })
-      await waitForBotMessageContaining({
+      await waitForFooterMessage({
         discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'deterministic-v2',
-        afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
+        afterMessageIncludes: 'non-git-first',
       })
 
       await th.user(TEST_USER_ID).sendMessage({
@@ -788,13 +785,11 @@ describe('worktree lifecycle', () => {
         afterUserMessageIncludes: 'non-git-second',
         timeout: 4_000,
       })
-
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 4_000,
         afterMessageIncludes: 'non-git-second',
-        afterAuthorId: TEST_USER_ID,
       })
 
       const text = await th.text()
