@@ -101,8 +101,7 @@ import {
   prependPathEntry,
   selectResolvedCommand,
 } from './opencode-command.js'
-import { execAsync } from './exec-async.js'
-import { computeSkillPermission } from './skill-filter.js'
+import { skillPermissionRules } from './skill-filter.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -836,6 +835,10 @@ async function startSingleServer({
           resource,
           effect,
         }
+      }),
+      ...skillPermissionRules({
+        enabledSkills: store.getState().enabledSkills,
+        disabledSkills: store.getState().disabledSkills,
       }),
     ],
   }
