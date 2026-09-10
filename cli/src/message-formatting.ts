@@ -305,11 +305,9 @@ export function planAssistantTurnFlush<T extends {
       return parts.length
     }
     if (!lastText) return parts.length
-    const lastTextIsComplete = Boolean(lastText.time?.end)
-    const lastTextIsLastPart = lastTextIndex === parts.length - 1
-    if (lastTextIsComplete && lastTextIsLastPart) return parts.length
-    if (lastTextIndex <= 0) return 0
-    return lastTextIndex
+    // Hold unfinished last text and anything after it so tool order stays intact.
+    if (!lastText.time?.end) return lastTextIndex
+    return parts.length
   })()
 
   const sendParts: Array<PlannedAssistantTurnPart<T>> = []

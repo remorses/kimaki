@@ -160,9 +160,53 @@ describe('planAssistantTurnFlush', () => {
     `)
   })
 
-  test('progress holds a lone text plus following tools', () => {
+  test('progress sends completed last text plus following tools', () => {
     expect(
       plan([text('t1', 'status'), tool('tool1')], 'progress'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": false,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('progress sends tools after a later completed text', () => {
+    expect(
+      plan([text('t1', 'status'), text('t2', 'next'), tool('tool1')], 'progress'),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": true,
+          },
+          {
+            "id": "t2",
+            "quoteText": false,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+        ],
+      }
+    `)
+  })
+
+  test('progress holds unfinished last text and following tools', () => {
+    expect(
+      plan([text('t1', 'status', false), tool('tool1')], 'progress'),
     ).toMatchInlineSnapshot(`
       {
         "hold": [
