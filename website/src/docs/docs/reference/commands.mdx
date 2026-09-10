@@ -115,7 +115,8 @@ kimaki task delete <id>
 # Sessions
 kimaki session list
 kimaki session list --active
-kimaki session search 'query'
+kimaki session search 'query'          # last 14 days
+kimaki session search 'query' --days 0 # all time
 kimaki session search 'query' --all
 kimaki session read <session-id>
 kimaki session export-events-jsonl --session <session-id> --out ./tmp/session.jsonl

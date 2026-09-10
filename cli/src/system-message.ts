@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getDataDir } from './config.js'
 import { store } from './store.js'
+import { SESSION_SEARCH_DEFAULT_DAYS } from './session-search.js'
 
 /** Subfolder under the kimaki data dir for session system prompt side-channel files. */
 export const SESSION_SYSTEM_PROMPT_DIR = 'session-system'
@@ -869,10 +870,11 @@ kimaki session list --active
 
 Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
 
-To search past sessions (supports plain text or /regex/flags). Defaults to this project. Use \`--all\` to search every locally registered project:
+To search past sessions (supports plain text or /regex/flags). Defaults to this project and the last ${SESSION_SEARCH_DEFAULT_DAYS} days. Use \`--days 0\` for all time. Use \`--all\` to search every locally registered project:
 
 \`\`\`bash
 kimaki session search "auth timeout"
+kimaki session search "auth timeout" --days 0
 kimaki session search "/error\\s+42/i"
 kimaki session search "rate limit" --project /path/to/project
 kimaki session search "/panic|crash/i" --channel <channel_id>

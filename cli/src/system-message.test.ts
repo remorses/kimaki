@@ -149,8 +149,9 @@ describe('system-message', () => {
       channelId: 'chan_123',
     })
     expect(message).toContain('kimaki session search "auth timeout" --all')
+    expect(message).toContain('kimaki session search "auth timeout" --days 0')
     expect(message).toContain(
-      'Use `--all` to search every locally registered project',
+      'Defaults to this project and the last 14 days. Use `--days 0` for all time. Use `--all` to search every locally registered project',
     )
   })
 
@@ -661,10 +662,11 @@ describe('system-message', () => {
 
       Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
 
-      To search past sessions (supports plain text or /regex/flags). Defaults to this project. Use \`--all\` to search every locally registered project:
+      To search past sessions (supports plain text or /regex/flags). Defaults to this project and the last 14 days. Use \`--days 0\` for all time. Use \`--all\` to search every locally registered project:
 
       \`\`\`bash
       kimaki session search "auth timeout"
+      kimaki session search "auth timeout" --days 0
       kimaki session search "/error\\s+42/i"
       kimaki session search "rate limit" --project /path/to/project
       kimaki session search "/panic|crash/i" --channel <channel_id>

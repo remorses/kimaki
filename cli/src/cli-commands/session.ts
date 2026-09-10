@@ -15,7 +15,7 @@ import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktreeOrWorkspace, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
-import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories } from '../session-search.js'
+import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
 import { formatTimeAgo } from '../commands/worktrees.js'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
@@ -404,14 +404,19 @@ cli
 cli
   .command(
     'session search <query>',
-    'Search past sessions for text or /regex/flags in one project, or all registered projects with `--all`',
+    `Search past sessions for text or /regex/flags. Defaults to the last ${SESSION_SEARCH_DEFAULT_DAYS} days; use --days 0 for all time. Add --all for every locally registered project.`,
   )
   .option('--project <path>', 'Project directory (defaults to cwd)')
   .option('--channel <channelId>', 'Resolve project from a Discord channel ID')
   .option('--all', 'Search every locally registered project')
+  .option(
+    '--days <n>',
+    `Only search sessions updated in the last n days (default: ${SESSION_SEARCH_DEFAULT_DAYS}; 0 = all time)`,
+  )
   .option('--limit <n>', 'Maximum matched sessions to return (default: 20)')
   .option('--json', 'Output as JSON')
   .example('kimaki session search "auth timeout"')
+  .example('kimaki session search "auth timeout" --days 0')
   .example('kimaki session search "auth timeout" --all')
   .action(async (query, options) => {
     try {
@@ -441,6 +446,15 @@ cli
         cliLogger.error(limit.message)
         process.exit(EXIT_NO_RESTART)
       }
+
+      const days = parseSessionSearchDays(
+        typeof options.days === 'string' ? options.days : undefined,
+      )
+      if (days instanceof Error) {
+        cliLogger.error(days.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+      const minUpdated = sessionSearchMinUpdated({ days })
 
       const explicitDirectory = await (async (): Promise<string | Error | undefined> => {
         if (options.all) {
@@ -521,29 +535,42 @@ cli
         updated: number
       }> = []
 
-      for (const projectDirectory of existingDirectories) {
-        cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
-        const getClient = await initializeOpencodeForDirectory(projectDirectory)
-        if (getClient instanceof Error) {
+      const listedDirectories = await Promise.all(
+        existingDirectories.map(async (projectDirectory) => {
+          cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
+          const getClient = await initializeOpencodeForDirectory(projectDirectory)
+          if (getClient instanceof Error) {
+            return { projectDirectory, getClient, sessions: [] }
+          }
+          const sessionsResponse = await getClient().session.list()
+          return {
+            projectDirectory,
+            getClient,
+            sessions: sessionsResponse.data || [],
+          }
+        }),
+      )
+      for (const listed of listedDirectories) {
+        if (listed.getClient instanceof Error) {
           if (options.all) {
             cliLogger.warn(
-              `Skipping ${projectDirectory}: failed to connect to OpenCode: ${getClient.message}`,
+              `Skipping ${listed.projectDirectory}: failed to connect to OpenCode: ${listed.getClient.message}`,
             )
             continue
           }
-          cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+          cliLogger.error(
+            'Failed to connect to OpenCode:',
+            listed.getClient.message,
+          )
           process.exit(EXIT_NO_RESTART)
         }
-        searchedDirectories.push(projectDirectory)
-
-        const sessionsResponse = await getClient().session.list()
-        const sessions = sessionsResponse.data || []
-        for (const session of sessions) {
-          clientsBySessionId.set(session.id, getClient)
+        searchedDirectories.push(listed.projectDirectory)
+        for (const session of listed.sessions) {
+          clientsBySessionId.set(session.id, listed.getClient)
           searchableSessions.push({
             id: session.id,
             title: session.title || 'Untitled Session',
-            directory: session.directory || projectDirectory,
+            directory: session.directory || listed.projectDirectory,
             updated: session.time.updated,
           })
         }
@@ -564,12 +591,41 @@ cli
           .map((row) => [row.session_id, row.thread_id]),
       )
 
+      const scopeLabel = options.all
+        ? `${searchedDirectories.length} project(s)`
+        : searchedDirectories[0] || path.resolve('.')
+      const daysLabel =
+        days === 0 ? 'all time' : `the last ${days} day${days === 1 ? '' : 's'}`
+      const printMatch = (match: SessionSearchMatch) => {
+        const threadInfo = match.threadId ? ` | thread: ${match.threadId}` : ''
+        console.log(
+          `${match.id} | ${match.title} | ${match.updated} | ${match.source}${threadInfo}`,
+        )
+        console.log(`  Directory: ${match.directory}`)
+        match.snippets.forEach((snippet) => {
+          console.log(`  - ${snippet}`)
+        })
+      }
+
+      let printedHeader = false
       const { matches: matchedSessions, scannedSessions } =
         await collectSessionSearchMatches({
           sessions: searchableSessions,
           searchPattern,
           sessionToThread,
           limit,
+          minUpdated,
+          onMatch: options.json
+            ? undefined
+            : (match) => {
+                if (!printedHeader) {
+                  printedHeader = true
+                  cliLogger.log(
+                    `Found matching session(s) for ${searchPattern.raw} in ${scopeLabel} (${daysLabel})`,
+                  )
+                }
+                printMatch(match)
+              },
           loadMessages: async (session) => {
             const getClient = clientsBySessionId.get(session.id)
             if (!getClient) {
@@ -582,10 +638,6 @@ cli
           },
         })
 
-      const scopeLabel = options.all
-        ? `${searchedDirectories.length} project(s)`
-        : searchedDirectories[0] || path.resolve('.')
-
       if (options.json) {
         console.log(
           JSON.stringify(
@@ -593,6 +645,7 @@ cli
               query: searchPattern.raw,
               mode: searchPattern.mode,
               all: Boolean(options.all),
+              days,
               projectDirectories: searchedDirectories,
               scannedSessions,
               matches: matchedSessions,
@@ -605,25 +658,12 @@ cli
       }
 
       if (matchedSessions.length === 0) {
+        const cutoffHint =
+          days === 0 ? '' : '. Use --days 0 to search all time'
         cliLogger.log(
-          `No matches found for ${searchPattern.raw} in ${scopeLabel} (${scannedSessions} sessions scanned)`,
+          `No matches found for ${searchPattern.raw} in ${scopeLabel} (${scannedSessions} sessions scanned, ${daysLabel})${cutoffHint}`,
         )
         process.exit(0)
-      }
-
-      cliLogger.log(
-        `Found ${matchedSessions.length} matching session(s) for ${searchPattern.raw} in ${scopeLabel}`,
-      )
-
-      for (const match of matchedSessions) {
-        const threadInfo = match.threadId ? ` | thread: ${match.threadId}` : ''
-        console.log(
-          `${match.id} | ${match.title} | ${match.updated} | ${match.source}${threadInfo}`,
-        )
-        console.log(`  Directory: ${match.directory}`)
-        match.snippets.forEach((snippet) => {
-          console.log(`  - ${snippet}`)
-        })
       }
 
       process.exit(0)

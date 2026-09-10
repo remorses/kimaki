@@ -46,6 +46,10 @@ export type SessionSearchableSession = {
   messages: SessionSearchableMessage[]
 }
 
+// Default window so search does not load years of old session messages.
+export const SESSION_SEARCH_DEFAULT_DAYS = 14
+export const SESSION_SEARCH_MESSAGE_CONCURRENCY = 4
+
 export type SessionSearchMatch = {
   id: string
   title: string
@@ -203,6 +207,32 @@ export function validateSessionSearchScope({
   return null
 }
 
+export function parseSessionSearchDays(raw: string | undefined): number | Error {
+  if (raw === undefined) {
+    return SESSION_SEARCH_DEFAULT_DAYS
+  }
+  const parsed = Number.parseInt(raw, 10)
+  if (Number.isNaN(parsed) || parsed < 0 || String(parsed) !== raw.trim()) {
+    return new Error(
+      `Invalid --days value: ${raw}. Use a whole number of days, or 0 for all time.`,
+    )
+  }
+  return parsed
+}
+
+export function sessionSearchMinUpdated({
+  days,
+  now = Date.now(),
+}: {
+  days: number
+  now?: number
+}): number | undefined {
+  if (days === 0) {
+    return undefined
+  }
+  return now - days * 24 * 60 * 60 * 1000
+}
+
 export function resolveSessionSearchDirectories({
   all,
   registeredDirectories,
@@ -270,7 +300,10 @@ export async function collectSessionSearchMatches({
   searchPattern,
   sessionToThread,
   limit,
+  minUpdated,
+  concurrency = SESSION_SEARCH_MESSAGE_CONCURRENCY,
   loadMessages,
+  onMatch,
 }: {
   sessions: Array<
     Omit<SessionSearchableSession, 'messages'> & {
@@ -280,48 +313,68 @@ export async function collectSessionSearchMatches({
   searchPattern: SessionSearchPattern
   sessionToThread: Map<string, string>
   limit: number
+  minUpdated?: number
+  concurrency?: number
   loadMessages?: (session: {
     id: string
     directory: string
   }) => Promise<SessionSearchableMessage[]>
+  onMatch?: (match: SessionSearchMatch) => void
 }): Promise<{
   matches: SessionSearchMatch[]
   scannedSessions: number
 }> {
-  const sortedSessions = [...sessions].sort((a, b) => {
-    return b.updated - a.updated
-  })
+  const sortedSessions = [...sessions]
+    .sort((a, b) => {
+      return b.updated - a.updated
+    })
+    .filter((session) => {
+      return minUpdated === undefined || session.updated >= minUpdated
+    })
   const matches: SessionSearchMatch[] = []
   let scannedSessions = 0
+  const batchSize = Math.max(1, concurrency)
 
-  for (const session of sortedSessions) {
-    scannedSessions++
-    const messages = session.messages
-      ? session.messages
-      : loadMessages
-        ? await loadMessages(session)
-        : []
-    const snippets = getSessionSearchSnippets({
-      messages,
-      searchPattern,
-    })
-    if (snippets.length === 0) {
-      continue
-    }
-
-    const threadId = sessionToThread.get(session.id)
-    matches.push({
-      id: session.id,
-      title: session.title || 'Untitled Session',
-      directory: session.directory,
-      updated: new Date(session.updated).toISOString(),
-      source: threadId ? 'kimaki' : 'opencode',
-      threadId: threadId || null,
-      snippets,
-    })
-
+  for (let offset = 0; offset < sortedSessions.length; offset += batchSize) {
     if (matches.length >= limit) {
       break
+    }
+    const batch = sortedSessions.slice(offset, offset + batchSize)
+    scannedSessions += batch.length
+    const loadedBatch = await Promise.all(
+      batch.map(async (session) => {
+        const messages = session.messages
+          ? session.messages
+          : loadMessages
+            ? await loadMessages(session)
+            : []
+        return { session, messages }
+      }),
+    )
+    for (const { session, messages } of loadedBatch) {
+      if (matches.length >= limit) {
+        break
+      }
+      const snippets = getSessionSearchSnippets({
+        messages,
+        searchPattern,
+      })
+      if (snippets.length === 0) {
+        continue
+      }
+
+      const threadId = sessionToThread.get(session.id)
+      const match: SessionSearchMatch = {
+        id: session.id,
+        title: session.title || 'Untitled Session',
+        directory: session.directory,
+        updated: new Date(session.updated).toISOString(),
+        source: threadId ? 'kimaki' : 'opencode',
+        threadId: threadId || null,
+        snippets,
+      }
+      matches.push(match)
+      onMatch?.(match)
     }
   }
 
