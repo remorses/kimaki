@@ -4002,6 +4002,8 @@ export class ThreadSessionRuntime {
         ? (
           stateAfterEnqueue.queueItems.length > 0
           && !this.isMainSessionBusy()
+          && !this.hasPendingQuestionUi()
+          && (pendingPermissions.get(this.thread.id)?.size ?? 0) === 0
         )
         : false
       result = !willDrainNow && position > 0
