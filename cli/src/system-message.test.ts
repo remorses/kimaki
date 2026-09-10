@@ -1,28 +1,11 @@
 // Tests for session-stable system prompt generation and per-turn prompt context.
 
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import {
-  deleteSessionSystemPrompt,
   getOpencodePromptContext,
   getOpencodeSystemMessage,
-  getSessionSystemPromptPath,
   KIMAKI_SYSTEM_PROMPT_MARKER,
-  readSessionSystemPrompt,
-  writeSessionSystemPrompt,
 } from './system-message.js'
-
-const tempDirs: string[] = []
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => {
-      return fs.promises.rm(dir, { recursive: true, force: true })
-    }),
-  )
-})
 
 describe('system-message', () => {
   test('requires kimaki upload for Discord images, not markdown', () => {
@@ -93,54 +76,21 @@ describe('system-message', () => {
     expect(message).toContain('`kimaki_sleep`')
   })
 
-  test('persists and reads session system prompt for command path', async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
-    tempDirs.push(dataDir)
-    const sessionId = 'ses_command_system'
-    const system = getOpencodeSystemMessage({ sessionId })
-
-    await writeSessionSystemPrompt({ sessionId, system, dataDir })
-
-    const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
-    expect(filePath).toBe(
-      path.join(dataDir, 'session-system', `${sessionId}.txt`),
-    )
-    await expect(
-      readSessionSystemPrompt({ sessionId, dataDir }),
-    ).resolves.toBe(system)
-    expect(system).toContain(KIMAKI_SYSTEM_PROMPT_MARKER)
-    expect(system).toContain('kimaki upload-to-discord --session')
-
-    const fileMode = (await fs.promises.stat(filePath)).mode & 0o777
-    const dirMode = (await fs.promises.stat(path.dirname(filePath))).mode & 0o777
-    expect(fileMode).toBe(0o600)
-    expect(dirMode).toBe(0o700)
-
-    await deleteSessionSystemPrompt({ sessionId, dataDir })
-    await expect(
-      readSessionSystemPrompt({ sessionId, dataDir }),
-    ).resolves.toBeNull()
-  })
-
-  test('readSessionSystemPrompt returns null when missing', async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
-    tempDirs.push(dataDir)
-    await expect(
-      readSessionSystemPrompt({ sessionId: 'ses_missing', dataDir }),
-    ).resolves.toBeNull()
-  })
-
-  test('readSessionSystemPrompt rethrows non-ENOENT errors', async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
-    tempDirs.push(dataDir)
-    const sessionId = 'ses_blocked'
-    const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
-    // Path exists as a directory so readFile fails with EISDIR, not ENOENT.
-    await fs.promises.mkdir(filePath)
-    await expect(
-      readSessionSystemPrompt({ sessionId, dataDir }),
-    ).rejects.toMatchObject({ code: 'EISDIR' })
+  test('includes Discord ids from plugin context args', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_plugin',
+      channelId: 'chan_1',
+      threadId: 'thr_1',
+      guildId: 'guild_1',
+      dataDir: '/tmp/kimaki-data',
+    })
+    expect(message).toContain(KIMAKI_SYSTEM_PROMPT_MARKER)
+    expect(message).toContain('ses_plugin')
+    expect(message).toContain('chan_1')
+    expect(message).toContain('thr_1')
+    expect(message).toContain('guild_1')
+    expect(message).toContain('/tmp/kimaki-data/kimaki.log')
+    expect(message).toContain('kimaki upload-to-discord --session')
   })
 
   test('includes all-projects session search example', () => {
@@ -283,7 +233,6 @@ describe('system-message', () => {
       channelId: 'chan_123',
       guildId: 'guild_123',
       threadId: 'thread_123',
-      username: 'Tommy',
       channelTopic: 'Investigate prompt cache behavior',
       agents: [
         { name: 'plan', description: 'planning only' },
@@ -308,12 +257,12 @@ describe('system-message', () => {
       Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
       Exceptions: when a tool requires user-visible text first (\`question\`, \`kimaki_action_buttons\`, \`kimaki_file_upload\`, \`kimaki_sleep\`), write that required text, then call the tool.
 
-      ## bash tool
+      ## shell tool
 
-      When calling the bash tool, always include these extra fields alongside \`command\`:
+      When calling the shell tool, always include these extra fields alongside \`command\`:
 
       \`\`\`ts
-      interface BashToolInput {
+      interface ShellToolInput {
         command: string
         /** Short 5-10 word summary of what this command does */
         description: string
@@ -324,8 +273,8 @@ describe('system-message', () => {
       }
       \`\`\`
 
-      \`description\` is shown in Discord when the bash command is longer than 50 characters.
-      \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
+      \`description\` is shown in Discord when the shell command is longer than 50 characters.
+      \`hasSideEffect\` distinguishes essential shell calls from read-only ones in low-verbosity mode.
 
       Your current OpenCode session ID is: ses_123
       Your current Discord channel ID is: chan_123
