@@ -104,9 +104,11 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
-const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
+  const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
 const COMMAND_SYSTEM_CHECK_TEMPLATE =
   'Reply with exactly: command-system-check'
+const CHAT_SYSTEM_CHECK_TEMPLATE =
+  'Reply with exactly: chat-system-check'
 
 function createDeterministicMatchers(): DeterministicMatcher[] {
   const systemContextMatcher: DeterministicMatcher = {
@@ -141,6 +143,34 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   // instruction (upload helper) so we know the real session system prompt was
   // injected — not just any string that happens to mention kimaki.dev.
   // Without the fix this never fires and the bot replies "ok" from the fallback.
+  const chatSystemMatcher: DeterministicMatcher = {
+    id: 'chat-system-check',
+    priority: 26,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: CHAT_SYSTEM_CHECK_TEMPLATE,
+      promptTextIncludes: 'kimaki upload-to-discord --session',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'chat-system-reply' },
+        {
+          type: 'text-delta',
+          id: 'chat-system-reply',
+          delta: 'chat-system-ok',
+        },
+        { type: 'text-end', id: 'chat-system-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 0],
+    },
+  }
+
   const commandSystemMatcher: DeterministicMatcher = {
     id: 'command-system-check',
     priority: 25,
@@ -222,6 +252,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   return [
+    chatSystemMatcher,
     commandSystemMatcher,
     systemContextMatcher,
     replyContextMatcher,
@@ -612,6 +643,33 @@ describe('agent model resolution', () => {
         > system-context-ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
       `)
+    },
+    15_000,
+  )
+
+  test(
+    'chat prompt path includes kimaki system prompt',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: CHAT_SYSTEM_CHECK_TEMPLATE,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === CHAT_SYSTEM_CHECK_TEMPLATE
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'chat-system-ok',
+        timeout: 4_000,
+      })
+
+      expect(await discord.thread(thread.id).text()).toContain('chat-system-ok')
     },
     15_000,
   )
