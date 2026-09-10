@@ -75,8 +75,7 @@ export async function handleAbortCommand({
   // wake would still fire later and restart a session the user just stopped.
   await cancelSessionSleepForThread({ threadId: channel.id })
 
-  // abortActiveRun delegates to session.abort() and clears the /queue, so
-  // queued messages are not sent after abort or restored after a restart.
+  // abortActiveRun delegates to session.interrupt(); run settlement stays event-driven.
   const runtime = getRuntime(channel.id)
   let clearedCount = 0
   if (runtime) {

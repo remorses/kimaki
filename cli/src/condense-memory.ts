@@ -1,8 +1,5 @@
 // Utility to condense MEMORY.md into a line-numbered table of contents.
-// Separated from kimaki-opencode-plugin.ts because OpenCode's plugin loader calls
-// every exported function in the module as a plugin initializer — exporting
-// this utility from the plugin entry file caused it to be invoked with a
-// PluginInput object instead of a string, crashing inside marked's Lexer.
+// Keep this out of plugin entry files. OpenCode calls every export as a plugin.
 
 import { Lexer } from 'marked'
 
