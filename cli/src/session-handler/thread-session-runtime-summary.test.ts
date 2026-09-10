@@ -1,8 +1,8 @@
 import type {
   Event as OpenCodeEvent,
   Message as OpenCodeMessage,
-  Part,
 } from '@opencode-ai/sdk/v2'
+import type { DiscordSessionPart } from '../message-formatting.js'
 import { describe, expect, test } from 'vitest'
 import type { EventBufferEntry, EventBufferEvent } from './event-stream-state.js'
 import { ThreadSessionRuntime } from './thread-session-runtime.js'
@@ -10,14 +10,14 @@ import { ThreadSessionRuntime } from './thread-session-runtime.js'
 type RuntimeInternals = {
   state?: { sessionId: string }
   eventBuffer: EventBufferEntry[]
-  partBuffer: Map<string, Map<string, Part>>
+  partBuffer: Map<string, Map<string, DiscordSessionPart>>
   compactEventForEventBuffer: (event: EventBufferEvent) => EventBufferEvent | undefined
   flushBufferedParts: () => Promise<void>
   handleMessageUpdated: (message: OpenCodeMessage) => Promise<void>
-  handlePartUpdated: (part: Part) => Promise<void>
+  handlePartUpdated: (part: DiscordSessionPart) => Promise<void>
   handleNaturalAssistantCompletion: () => Promise<void>
-  handleMainPart: (part: Part) => Promise<void>
-  handleSubtaskPart: (part: Part) => Promise<void>
+  handleMainPart: (part: DiscordSessionPart) => Promise<void>
+  handleSubtaskPart: (part: DiscordSessionPart) => Promise<void>
 }
 
 function summaryMessageEvent({
@@ -63,7 +63,7 @@ function summaryTextPart({
 }: {
   sessionId: string
   messageId: string
-}): Part {
+}): DiscordSessionPart {
   return {
     id: `prt_${messageId}`,
     sessionID: sessionId,
