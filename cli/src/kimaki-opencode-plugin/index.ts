@@ -1,6 +1,6 @@
-// v2 OpenCode plugin directory for Kimaki IPC tools.
-// OpenCode v2 loads plugins from a directory, not a .ts file. This plugin
-// registers kimaki_file_upload, kimaki_action_buttons, and kimaki_sleep.
+// v2 OpenCode plugin directory for Kimaki.
+// Registers IPC tools, shell schema extras, MEMORY.md overview, and
+// branch/pwd/tutorial context. OpenCode v2 loads a directory, not a .ts file.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -11,8 +11,10 @@ import dedent from 'string-dedent'
 import type {
   createIpcRequest,
   getIpcRequestById,
+  getSessionSystemContext,
   getThreadIdBySessionId,
   upsertSessionSleep,
+  deleteSessionSystemContext,
 } from '../database.ts'
 import type { setDataDir } from '../config.ts'
 import type { setPluginLogFilePath } from '../plugin-logger.ts'
@@ -21,6 +23,11 @@ import type {
   formatSessionSleepWakeAt,
   parseSleepWakeAt,
 } from '../task-schedule.ts'
+import {
+  ONBOARDING_TUTORIAL_INSTRUCTIONS,
+  TUTORIAL_WELCOME_TEXT,
+} from '../onboarding-tutorial.ts'
+import { condenseMemoryMd } from '../condense-memory.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -40,6 +47,8 @@ type DatabaseModule = {
   createIpcRequest: typeof createIpcRequest
   getIpcRequestById: typeof getIpcRequestById
   upsertSessionSleep: typeof upsertSessionSleep
+  getSessionSystemContext: typeof getSessionSystemContext
+  deleteSessionSystemContext: typeof deleteSessionSystemContext
 }
 
 type TaskScheduleModule = {
@@ -54,6 +63,9 @@ type ConfigModule = {
 
 type PluginLoggerModule = {
   setPluginLogFilePath: typeof setPluginLogFilePath
+  createPluginLogger: (prefix: string) => {
+    warn: (...args: unknown[]) => void
+  }
 }
 
 function getProcessState(): ProcessState {
@@ -88,6 +100,181 @@ function toolText(text: string) {
   return { output: { text }, content: text }
 }
 
+type GitState = {
+  key: string
+  kind: 'branch' | 'detached-head' | 'detached-submodule'
+  label: string
+  warning: string | null
+}
+
+type ContextSessionState = {
+  announcedDirectory: string | undefined
+  frozenMemoryOverview: string | null | undefined
+}
+
+const CONTEXT_KEY = Symbol.for('kimaki.opencode-plugin.context')
+
+function getContextSessions() {
+  const globalState = globalThis as typeof globalThis & {
+    [CONTEXT_KEY]?: Map<string, ContextSessionState>
+  }
+  const existing = globalState[CONTEXT_KEY]
+  if (existing) return existing
+  const created = new Map<string, ContextSessionState>()
+  globalState[CONTEXT_KEY] = created
+  return created
+}
+
+function getContextSession(sessionID: string) {
+  const sessions = getContextSessions()
+  const existing = sessions.get(sessionID)
+  if (existing) return existing
+  const created: ContextSessionState = {
+    announcedDirectory: undefined,
+    frozenMemoryOverview: undefined,
+  }
+  sessions.set(sessionID, created)
+  return created
+}
+
+function pushSystemText(
+  event: { system: Array<{ type: string; text: string }> },
+  text: string,
+) {
+  if (!text.trim()) return
+  event.system.push({ type: 'text', text })
+}
+
+function latestUserText(messages: Array<{ role: string; content: unknown }>) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (!message || message.role !== 'user') continue
+    if (!Array.isArray(message.content)) continue
+    const texts = message.content.flatMap((part) => {
+      if (!part || typeof part !== 'object' || !('type' in part)) return []
+      if (part.type !== 'text' || !('text' in part) || typeof part.text !== 'string') {
+        return []
+      }
+      return [part.text]
+    })
+    if (texts.length > 0) return texts.join('\n')
+  }
+  return ''
+}
+
+async function resolveGitState(directory: string): Promise<GitState | null> {
+  const { execAsync } = (await import(siblingModuleHref('exec-async'))) as {
+    execAsync: (
+      command: string,
+      options?: { cwd?: string },
+    ) => Promise<{ stdout: string; stderr: string }>
+  }
+  const branchResult = await execAsync('git symbolic-ref --short HEAD', {
+    cwd: directory,
+  }).catch(() => null)
+  if (branchResult && !(branchResult instanceof Error)) {
+    const branch = branchResult.stdout.trim()
+    if (branch) {
+      return {
+        key: `branch:${branch}`,
+        kind: 'branch',
+        label: branch,
+        warning: null,
+      }
+    }
+  }
+  const shaResult = await execAsync('git rev-parse --short HEAD', {
+    cwd: directory,
+  }).catch(() => null)
+  if (!shaResult || shaResult instanceof Error) return null
+  const shortSha = shaResult.stdout.trim()
+  if (!shortSha) return null
+  const superprojectResult = await execAsync(
+    'git rev-parse --show-superproject-working-tree',
+    { cwd: directory },
+  ).catch(() => null)
+  const superproject =
+    superprojectResult && !(superprojectResult instanceof Error)
+      ? superprojectResult.stdout.trim()
+      : ''
+  if (superproject) {
+    return {
+      key: `detached-submodule:${shortSha}`,
+      kind: 'detached-submodule',
+      label: `detached submodule @ ${shortSha}`,
+      warning:
+        `\n[warning: submodule is in detached HEAD at ${shortSha}. ` +
+        'create or switch to a branch before committing.]',
+    }
+  }
+  return {
+    key: `detached-head:${shortSha}`,
+    kind: 'detached-head',
+    label: `detached HEAD @ ${shortSha}`,
+    warning:
+      `\n[warning: repository is in detached HEAD at ${shortSha}. ` +
+      'create or switch to a branch before committing.]',
+  }
+}
+
+async function readTextFile(filePath: string) {
+  const result = await fs.promises.readFile(filePath, 'utf8').catch(() => null)
+  if (!result || !result.trim()) return null
+  return result
+}
+
+function pwdChangeText({
+  currentDir,
+  previousDir,
+}: {
+  currentDir: string
+  previousDir: string
+}) {
+  return (
+    `\n[working directory changed (cwd / pwd has changed). ` +
+    `The user expects you to edit files in the new cwd. ` +
+    `Previous folder (DO NOT TOUCH): ${previousDir}. ` +
+    `New folder (new cwd / pwd, edit files here): ${currentDir}. ` +
+    `You MUST read, write, and edit files only under the new folder ${currentDir}. ` +
+    `You MUST NOT read, write, or edit any files under the previous folder ${previousDir} — ` +
+    `that folder is a separate checkout and the user or another agent may be actively working there, ` +
+    `so writing to it would override their unrelated changes.]\n`
+  )
+}
+
+async function freezeMemoryOverview(directory: string) {
+  const memoryContent = await readTextFile(path.join(directory, 'MEMORY.md'))
+  if (!memoryContent) return null
+  const condensed = condenseMemoryMd(memoryContent)
+  return `<system-reminder>Project memory from MEMORY.md (condensed table of contents, line numbers shown):\n${condensed}\nOnly headings are shown above — section bodies are hidden. Use Grep to search MEMORY.md for specific topics, or Read with offset and limit to read a section's content. When writing to MEMORY.md, keep titles concise (under 10 words) and content brief (2-3 sentences max). Only track non-obvious learnings that prevent future mistakes and are not already documented in code comments or AGENTS.md. Do not duplicate information that is self-evident from the code.</system-reminder>\n`
+}
+
+const SHELL_INPUT = Schema.Struct({
+  command: Schema.String.annotate({
+    description: 'Shell command string to execute',
+  }),
+  description: Schema.optional(Schema.String).annotate({
+    description:
+      'Short 5-10 word summary shown in Discord when the command is longer than 50 characters',
+  }),
+  hasSideEffect: Schema.optional(Schema.Boolean).annotate({
+    description:
+      'True if the command writes files, modifies state, installs packages, or triggers external effects',
+  }),
+  workdir: Schema.optional(Schema.String).annotate({
+    description:
+      'Working directory to execute the command in. Defaults to the current working directory.',
+  }),
+  timeout: Schema.optional(Schema.Number).annotate({
+    description:
+      'Timeout in milliseconds. Set to 0 to disable the timeout.',
+  }),
+  background: Schema.optional(Schema.Boolean).annotate({
+    description:
+      'Run the command in the background and return immediately.',
+  }),
+})
+
 async function configureProcessDataDir() {
   const processState = getProcessState()
   if (processState.dataDirConfigured) return
@@ -104,26 +291,128 @@ async function configureProcessDataDir() {
 }
 
 export default Plugin.define({
-  id: 'kimaki.ipc-tools',
+  id: 'kimaki',
   setup: async (ctx) => {
     await configureProcessDataDir()
     const directory = ctx.location.directory
+    const pluginLogger = (await import(
+      siblingModuleHref('plugin-logger')
+    )) as PluginLoggerModule
+    const logger = pluginLogger.createPluginLogger('PLUGIN')
+    const sessions = getContextSessions()
+    const eventAbort = new AbortController()
 
-    await ctx.session.hook('context', (event) => {
-      const dataDir = process.env.KIMAKI_DATA_DIR
-      if (!dataDir) return
-      const filePath = path.join(dataDir, 'session-system', `${event.sessionID}.txt`)
-      if (!fs.existsSync(filePath)) return
-      const persisted = fs.readFileSync(filePath, 'utf8')
-      if (!persisted.trim()) return
-      const alreadyInjected = event.system.some((part) => {
-        return part.type === 'text' && part.text.includes('via kimaki.dev')
-      })
-      if (alreadyInjected) return
-      event.system.push({ type: 'text', text: persisted })
+    void (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({
+          signal: eventAbort.signal,
+        })) {
+          if (event.type !== 'session.deleted') continue
+          sessions.delete(event.data.sessionID)
+          const database = await loadDatabaseModule()
+          await database.deleteSessionSystemContext(event.data.sessionID)
+        }
+      } catch {
+        // aborted on plugin unload
+      }
+    })()
+
+    await ctx.session.hook('context', async (event) => {
+      const { getOpencodeSystemMessage } = (await import(
+        siblingModuleHref('system-message')
+      )) as {
+        getOpencodeSystemMessage: (input: {
+          sessionId: string
+          channelId?: string
+          guildId?: string
+          threadId?: string
+          channelTopic?: string
+          agents?: Array<{ name: string; description?: string }>
+          userId?: string
+          parentSessionId?: string
+          scheduledTask?: {
+            taskId?: number
+            scheduleKind: 'at' | 'cron'
+            cronExpr?: string | null
+            timezone?: string | null
+          }
+          dataDir?: string
+          critiqueEnabled?: boolean
+        }) => string
+      }
+      const database = await loadDatabaseModule()
+      const stored = await database.getSessionSystemContext(event.sessionID)
+      if (stored instanceof Error) {
+        logger.warn('session system context read failed', stored)
+      }
+      const context = stored instanceof Error || stored === null ? undefined : stored
+      pushSystemText(
+        event,
+        getOpencodeSystemMessage({
+          sessionId: event.sessionID,
+          channelId: context?.channelId,
+          guildId: context?.guildId,
+          threadId: context?.threadId,
+          channelTopic: context?.channelTopic,
+          agents: context?.agents,
+          userId: context?.userId,
+          parentSessionId: context?.parentSessionId,
+          scheduledTask: context?.scheduledTask,
+          dataDir: context?.dataDir || process.env.KIMAKI_DATA_DIR,
+          critiqueEnabled: context?.critiqueEnabled,
+        }),
+      )
+
+      const state = getContextSession(event.sessionID)
+      const userText = latestUserText(event.messages)
+      if (userText.includes(TUTORIAL_WELCOME_TEXT)) {
+        pushSystemText(
+          event,
+          `<system-reminder>\n${ONBOARDING_TUTORIAL_INSTRUCTIONS}\n</system-reminder>\n`,
+        )
+      }
+
+      if (state.announcedDirectory && state.announcedDirectory !== directory) {
+        pushSystemText(
+          event,
+          pwdChangeText({
+            currentDir: directory,
+            previousDir: state.announcedDirectory,
+          }),
+        )
+      }
+      state.announcedDirectory = directory
+
+      const gitState = await resolveGitState(directory)
+      if (gitState) {
+        const branchText = gitState.warning || `\n[current git branch is ${gitState.label}]`
+        pushSystemText(event, `${branchText}\n`)
+      }
+
+      if (state.frozenMemoryOverview === undefined) {
+        const overview = await freezeMemoryOverview(directory).catch((error) => {
+          logger.warn('MEMORY.md overview failed', error)
+          return null
+        })
+        state.frozenMemoryOverview = overview
+      }
+      if (state.frozenMemoryOverview) {
+        pushSystemText(event, state.frozenMemoryOverview)
+      }
     })
 
     await ctx.tool.transform((tools) => {
+      const shell = tools.get('shell') || tools.get('bash')
+      if (shell) {
+        tools.update(shell.id, (tool) => {
+          tool.input = SHELL_INPUT
+          const current = tool.description || ''
+          if (!current.includes('hasSideEffect')) {
+            tool.description =
+              `${current} Pass description (short Discord summary) and hasSideEffect (true if the command writes files or has external effects).`.trim()
+          }
+        })
+      }
       tools.add({
         name: 'kimaki_file_upload',
         options: { codemode: false },
@@ -333,5 +622,9 @@ export default Plugin.define({
         },
       })
     })
+
+    return () => {
+      eventAbort.abort()
+    }
   },
 })
