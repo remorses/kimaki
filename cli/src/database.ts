@@ -1428,6 +1428,60 @@ export async function deleteStaleForumSyncConfigs({ appId, forumChannelId, outpu
   ))
 }
 
+export type SessionSystemContextPayload = {
+  channelId?: string
+  guildId?: string
+  threadId?: string
+  channelTopic?: string
+  agents?: Array<{ name: string; description?: string }>
+  userId?: string
+  parentSessionId?: string
+  scheduledTask?: {
+    taskId?: number
+    scheduleKind: 'at' | 'cron'
+    cronExpr?: string | null
+    timezone?: string | null
+  }
+  dataDir?: string
+  critiqueEnabled?: boolean
+}
+
+export async function upsertSessionSystemContext({
+  sessionId,
+  payload,
+}: {
+  sessionId: string
+  payload: SessionSystemContextPayload
+}) {
+  const db = await getDb()
+  const encoded = JSON.stringify(payload)
+  await db.insert(schema.session_system_contexts)
+    .values({ session_id: sessionId, payload: encoded })
+    .onConflictDoUpdate({
+      target: schema.session_system_contexts.session_id,
+      set: { payload: encoded, updated_at: new Date() },
+    })
+}
+
+export async function getSessionSystemContext(sessionId: string) {
+  const db = await getDb()
+  const row = await db.query.session_system_contexts.findFirst({
+    where: { session_id: sessionId },
+  })
+  if (!row) return null
+  try {
+    return JSON.parse(row.payload) as SessionSystemContextPayload
+  } catch (cause) {
+    return new Error('Invalid session system context payload', { cause })
+  }
+}
+
+export async function deleteSessionSystemContext(sessionId: string) {
+  const db = await getDb()
+  await db.delete(schema.session_system_contexts)
+    .where(orm.eq(schema.session_system_contexts.session_id, sessionId))
+}
+
 export async function createIpcRequest({ type, sessionId, threadId, payload }: { type: IpcRequestType; sessionId: string; threadId: string; payload: string }) {
   const db = await getDb()
   const [row] = await db.insert(schema.ipc_requests).values({ type, session_id: sessionId, thread_id: threadId, payload }).returning()
