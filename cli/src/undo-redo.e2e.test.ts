@@ -199,7 +199,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         > *using deterministic-provider/deterministic-v2*
         creating undo file
 
-        ▏shell (command: mkdir -p tmp && printf created > tmp/undo-marker.t…, description: Create undo marker file)
+        ▏shell _Create undo marker file_
 
         undo file created
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
