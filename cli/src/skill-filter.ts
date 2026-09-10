@@ -41,6 +41,25 @@ export function computeSkillPermission({
   return undefined
 }
 
+export function skillPermissionRules({
+  enabledSkills,
+  disabledSkills,
+}: {
+  enabledSkills: string[]
+  disabledSkills: string[]
+}): Array<{ action: 'skill'; resource: string; effect: 'allow' | 'deny' }> {
+  const rule = computeSkillPermission({ enabledSkills, disabledSkills })
+  if (!rule) return []
+  return Object.entries(rule).flatMap(([resource, effect]) => {
+    if (effect === 'ask') return []
+    return [{
+      action: 'skill' as const,
+      resource,
+      effect,
+    }]
+  })
+}
+
 // Checks whether a skill name is allowed by the current whitelist/blacklist.
 // Used by registerCommands() to filter skill-sourced slash commands so they
 // don't count toward Discord's 100-command limit when disabled.
