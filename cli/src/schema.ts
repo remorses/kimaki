@@ -258,6 +258,12 @@ export const session_sleeps = sqliteCore.sqliteTable('session_sleeps', {
   sqliteCore.index('session_sleeps_status_wake_at_idx').on(table.status, table.wake_at),
 ])
 
+export const session_system_contexts = sqliteCore.sqliteTable('session_system_contexts', {
+  session_id: sqliteCore.text('session_id').primaryKey().notNull(),
+  payload: sqliteCore.text('payload').notNull(),
+  updated_at: datetime('updated_at').notNull().default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
+})
+
 export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
   id: sqliteCore.text('id').primaryKey().notNull().$defaultFn(() => crypto.randomUUID()),
   type: sqliteCore.text('type', { enum: ['file_upload', 'action_buttons'] }).notNull(),
@@ -294,6 +300,7 @@ export const relations = defineRelations({
   session_start_sources,
   forum_sync_configs,
   session_sleeps,
+  session_system_contexts,
   ipc_requests,
 }, (r) => ({
   thread_sessions: {
