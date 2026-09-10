@@ -1,5 +1,9 @@
 import { describe, test, expect } from 'vitest'
-import { computeSkillPermission, isSkillAllowed } from './skill-filter.js'
+import {
+  computeSkillPermission,
+  isSkillAllowed,
+  skillPermissionRules,
+} from './skill-filter.js'
 
 describe('computeSkillPermission', () => {
   test('empty inputs returns undefined (no filtering)', () => {
@@ -78,6 +82,41 @@ describe('computeSkillPermission', () => {
         "*": "deny",
         "npm-package": "allow",
       }
+    `)
+  })
+})
+
+describe('skillPermissionRules', () => {
+  test('empty inputs returns no v2 rules', () => {
+    expect(
+      skillPermissionRules({ enabledSkills: [], disabledSkills: [] }),
+    ).toMatchInlineSnapshot(`[]`)
+  })
+
+  test('whitelist becomes deny-all then allow named skills', () => {
+    expect(
+      skillPermissionRules({
+        enabledSkills: ['npm-package', 'errore'],
+        disabledSkills: [],
+      }),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "action": "skill",
+          "effect": "deny",
+          "resource": "*",
+        },
+        {
+          "action": "skill",
+          "effect": "allow",
+          "resource": "npm-package",
+        },
+        {
+          "action": "skill",
+          "effect": "allow",
+          "resource": "errore",
+        },
+      ]
     `)
   })
 })
