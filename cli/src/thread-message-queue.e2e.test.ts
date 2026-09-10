@@ -719,7 +719,7 @@ e2eTest('thread message queue ordering', () => {
         > running create file
         > creating marker
 
-        ▏shell (command: mkdir -p tmp && printf "created" > tmp/bash-tool-e…)
+        ▏shell _mkdir -p tmp && printf "created" > tmp/bash-tool-e…_
 
         file created
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
