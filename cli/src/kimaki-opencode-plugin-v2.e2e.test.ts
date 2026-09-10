@@ -173,9 +173,9 @@ test('v2 plugin directory is active', async () => {
   const listed = await client.plugin.list({
     location: { directory: tempDir },
   })
-  const kimaki = listed.data.find((plugin) => plugin.id === 'kimaki.ipc-tools')
+  const kimaki = listed.data.find((plugin) => plugin.id === 'kimaki')
   expect(kimaki).toMatchObject({
-    id: 'kimaki.ipc-tools',
+    id: 'kimaki',
     state: { status: 'active' },
   })
 })

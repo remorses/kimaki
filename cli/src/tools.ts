@@ -17,7 +17,6 @@ import { formatDistanceToNow } from './utils.js'
 import pc from 'picocolors'
 import {
   initializeOpencodeForDirectory,
-  getOpencodeSystemMessage,
 } from './discord-bot.js'
 
 export async function getTools({

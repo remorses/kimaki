@@ -4,105 +4,29 @@
 // Keep per-message data out of the system prompt so prompt caching can reuse
 // the same session prefix across turns.
 //
-// The system prompt is pinned per session under
-// <dataDir>/session-system-pinned/<sessionId>.txt on the first turn and sent
-// unchanged on every later turn, so the provider prompt cache prefix stays
-// valid. Channel topic, agent list and kimaki prompt text changes therefore
-// reach new sessions only; data that must change mid-session goes into the
-// per-turn synthetic context. session.command has no `system` field, so the
-// context-awareness plugin copies the pinned file onto command user messages.
+// v2 session.prompt / session.command have no `system` field. The plugin
+// builds this prompt in ctx.session.hook('context') from a sqlite row of
+// Discord IDs. Keep this file free of config.ts / store.ts so the plugin
+// can import it.
 
-import fs from 'node:fs'
-import path from 'node:path'
-import { getDataDir } from './config.js'
-import { store } from './store.js'
 import { SESSION_SEARCH_DEFAULT_DAYS } from './session-search.js'
 import { FilesystemOperationError } from './errors.js'
-
-/**
- * Subfolder for pinned session system prompts. Not `session-system`: the old
- * command path rewrote those files on every command, so they may differ from
- * the prompt last sent and must not be trusted as pinned.
- */
-export const SESSION_SYSTEM_PROMPT_DIR = 'session-system-pinned'
 
 /** Stable marker present in every kimaki system prompt; used by tests and plugins. */
 export const KIMAKI_SYSTEM_PROMPT_MARKER = 'via kimaki.dev'
 
-export function getSessionSystemPromptPath({
-  sessionId,
-  dataDir = getDataDir(),
-}: {
+export type KimakiSystemPromptContext = {
   sessionId: string
+  channelId?: string
+  guildId?: string
+  threadId?: string
+  channelTopic?: string
+  agents?: AgentInfo[]
+  userId?: string
+  parentSessionId?: string
+  scheduledTask?: ScheduledTaskSystemContext
   dataDir?: string
-}) {
-  return path.join(dataDir, SESSION_SYSTEM_PROMPT_DIR, `${sessionId}.txt`)
-}
-
-/**
- * Persist the kimaki system prompt for a session so the OpenCode plugin can
- * attach it when session.command creates a user message without a system field.
- * Fails loudly on I/O errors so callers do not run session.command without system.
- */
-export async function writeSessionSystemPrompt({
-  sessionId,
-  system,
-  dataDir = getDataDir(),
-}: {
-  sessionId: string
-  system: string
-  dataDir?: string
-}) {
-  const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
-  const dirPath = path.dirname(filePath)
-  await fs.promises.mkdir(dirPath, { recursive: true, mode: 0o700 })
-  // mkdir recursive ignores mode on existing dirs; tighten permissions explicitly.
-  await fs.promises.chmod(dirPath, 0o700).catch(() => undefined)
-  await fs.promises.writeFile(filePath, system, { encoding: 'utf8', mode: 0o600 })
-  await fs.promises.chmod(filePath, 0o600).catch(() => undefined)
-}
-
-/**
- * Read a previously persisted session system prompt.
- * Returns null only when the file is missing (ENOENT) or empty.
- * Other I/O errors are rethrown so the plugin can surface them instead of
- * silently dropping kimaki system context.
- */
-export async function readSessionSystemPrompt({
-  sessionId,
-  dataDir,
-}: {
-  sessionId: string
-  dataDir: string
-}): Promise<string | null> {
-  const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
-  const content = await fs.promises.readFile(filePath, 'utf8').catch((error: NodeJS.ErrnoException) => {
-    if (error?.code === 'ENOENT') {
-      return null
-    }
-    throw error
-  })
-  if (!content?.trim()) {
-    return null
-  }
-  return content
-}
-
-/** Remove the side-channel system prompt file for a deleted OpenCode session. */
-export async function deleteSessionSystemPrompt({
-  sessionId,
-  dataDir,
-}: {
-  sessionId: string
-  dataDir: string
-}) {
-  const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
-  await fs.promises.unlink(filePath).catch((error: NodeJS.ErrnoException) => {
-    if (error?.code === 'ENOENT') {
-      return
-    }
-    throw error
-  })
+  critiqueEnabled?: boolean
 }
 
 /**
@@ -491,30 +415,9 @@ export function getOpencodeSystemMessage({
   userId,
   parentSessionId,
   scheduledTask,
-}: {
-  sessionId: string
-  channelId?: string
-  /** Discord server/guild ID for discord_list_users tool */
-  guildId?: string
-  /** Discord thread ID (the thread this session runs in) */
-  threadId?: string
-  channelTopic?: string
-  agents?: AgentInfo[]
-  username?: string
-  userId?: string
-  /**
-   * Parent OpenCode session from explicit `kimaki send --parent-session` only.
-   * Must stay undefined for /btw forks, /fork, task/subagent children, and
-   * normal threads so the shared system prompt cache is not busted by a
-   * per-parent block. Never auto-derive this from OpenCode parent session IDs.
-   */
-  parentSessionId?: string
-  /**
-   * Set only when the session was started by a scheduled task. Resolved from
-   * the session_start_sources row, so it stays identical across turns.
-   */
-  scheduledTask?: ScheduledTaskSystemContext
-}) {
+  dataDir,
+  critiqueEnabled = true,
+}: KimakiSystemPromptContext) {
   const userArg = ` --user '${userId || '<discord-user-id>'}'`
   const parentSessionArg = ` --parent-session ${sessionId}`
   // Prefer thread ID for cross-machine compatibility. Keep commands copyable.
@@ -547,12 +450,12 @@ Be concise. Do not narrate between tool calls. Discord posts every text part, so
 Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
 Exceptions: when a tool requires user-visible text first (\`question\`, \`kimaki_action_buttons\`, \`kimaki_file_upload\`, \`kimaki_sleep\`), write that required text, then call the tool.
 
-## bash tool
+## shell tool
 
-When calling the bash tool, always include these extra fields alongside \`command\`:
+When calling the shell tool, always include these extra fields alongside \`command\`:
 
 \`\`\`ts
-interface BashToolInput {
+interface ShellToolInput {
   command: string
   /** Short 5-10 word summary of what this command does */
   description: string
@@ -563,8 +466,8 @@ interface BashToolInput {
 }
 \`\`\`
 
-\`description\` is shown in Discord when the bash command is longer than 50 characters.
-\`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
+\`description\` is shown in Discord when the shell command is longer than 50 characters.
+\`hasSideEffect\` distinguishes essential shell calls from read-only ones in low-verbosity mode.
 
 ${SESSION_ID_LINE_PREFIX}${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${parentSessionContext}
 
@@ -592,7 +495,7 @@ Do not restart the bot unless the user explicitly asks for it.
 ## debugging kimaki issues
 
 ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Kimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
-If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${getDataDir()}/kimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
+If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${dataDir || '~/.kimaki'}/kimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
 
 ## uploading files to discord
 
@@ -968,7 +871,7 @@ When pulling submodules and they jump to a new commit, commit that submodule poi
 `
     : ''
 }
-${store.getState().critiqueEnabled ? KIMAKI_CRITIQUE_INSTRUCTIONS : ''}
+${critiqueEnabled ? getCritiqueInstructions(sessionId) : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
 
