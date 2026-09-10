@@ -13,8 +13,8 @@ import {
 import { store, type DeterministicTranscriptionConfig } from './store.js'
 import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
-import type { Message, Part } from '@opencode-ai/sdk/v2'
-import { sessionMessagesToGeneric } from './message-formatting.js'
+import type { Message } from '@opencode-ai/sdk/v2'
+import { sessionMessagesToGeneric, type DiscordSessionPart } from './message-formatting.js'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
 
@@ -24,7 +24,7 @@ function setDeterministicTranscription(config: DeterministicTranscriptionConfig 
   })
 }
 
-type SessionMessage = { info: Message; parts: Part[] }
+type SessionMessage = { info: Message; parts: DiscordSessionPart[] }
 
 function getOpencodeClientForTest(projectDirectory: string) {
   const client = getOpencodeClient(projectDirectory)
@@ -34,7 +34,7 @@ function getOpencodeClientForTest(projectDirectory: string) {
   return client
 }
 
-function getTextFromParts(parts: Part[]): string[] {
+function getTextFromParts(parts: DiscordSessionPart[]): string[] {
   return parts.flatMap((part) => {
     if (part.type === 'text') {
       return [part.text]
