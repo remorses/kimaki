@@ -77,7 +77,7 @@ describe('external directory project deny', () => {
       > reading external directory
 
       ▏read *probe.txt*
-      ⨯ read Permission denied: external_directory
+      ⨯ read Permission denied: external_directory *probe.txt*
 
       external-directory-probe-denied
       > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
