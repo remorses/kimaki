@@ -123,13 +123,6 @@ import {
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
 
-/** Setup commands that should reply with guidance when used in
- * non-project channels, instead of silently ignoring. */
-const SETUP_COMMANDS = new Set([
-  'add-project',
-  'create-new-project',
-])
-
 function serialIngressChannelId(interaction: Interaction): string | undefined {
   if (!interaction.isChatInputCommand()) {
     return undefined
@@ -216,14 +209,9 @@ export function registerInteractionHandler({
         // Multi-machine routing: only handle interactions for channels owned
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
-        // Setup commands (create-new-project, add-project) bypass this check
-        // because they are designed to run from any channel — they create new
-        // project channels rather than requiring one to already exist.
-        const isSetupCommand =
-          interaction.isChatInputCommand() &&
-          SETUP_COMMANDS.has(interaction.commandName)
+        // Setup commands must not let an unconfigured server grant itself host access.
         const owned = await isInteractionOwnedByThisMachine(interaction)
-        if (!owned && !isSetupCommand) {
+        if (!owned) {
           interactionLogger.log(
             `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
           )

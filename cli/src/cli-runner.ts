@@ -1104,7 +1104,7 @@ export function showReadyMessage({
 }
 
 /**
- * Create the default kimaki channel in each guild and send a welcome message.
+ * Create default channels in locally configured guilds, or proxy-authorized gateway guilds.
  * Idempotent: skips guilds that already have the channel.
  * Extracted so both the interactive and headless startup paths share the same logic.
  */
@@ -1123,9 +1123,15 @@ export async function ensureDefaultChannelsWithWelcome({
 }): Promise<{ name: string; id: string; guildId: string }[]> {
   if (process.env['KIMAKI_NO_DEFAULT_CHANNEL'] === '1') return []
 
+  const localMappings = isGatewayMode ? [] : await findChannelsByDirectory({})
   const created: { name: string; id: string; guildId: string }[] = []
   for (const guild of guilds) {
     try {
+      if (!isGatewayMode) {
+        // Match live channel IDs: older local mappings have no guild_id.
+        const channels = await guild.channels.fetch()
+        if (!localMappings.some((row) => channels.has(row.channel_id))) continue
+      }
       const result = await createDefaultKimakiChannel({
         guild,
         botName: discordClient.user?.username,
@@ -1847,7 +1853,7 @@ export async function run({
         )
       }
 
-      // Create default kimaki channel + welcome message in each guild.
+      // Create default channels only in locally configured or gateway-authorized guilds.
       // Runs after channel sync so existing channels are detected correctly.
       try {
         await ensureDefaultChannelsWithWelcome({
@@ -2054,7 +2060,7 @@ export async function run({
     }
 
     // Create default kimaki channel for general-purpose tasks.
-    // Runs for every guild the bot is in, idempotent (skips if already exists).
+    // Only locally configured or gateway-authorized guilds are eligible.
     const defaultChannelResults = await ensureDefaultChannelsWithWelcome({
       guilds,
       discordClient,
