@@ -14,7 +14,7 @@ import type {
   QuestionRequest,
   Message as OpenCodeMessage,
 } from '@opencode-ai/sdk/v2'
-import type { V2Event } from '@opencode-ai/client'
+import type { V2Event } from '@opencode/client'
 import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
