@@ -763,11 +763,25 @@ async function handleWorktreeInThread({
         directory: projectDirectory,
       })
 
-      const permissionResponse = await getClient().session.move({
+      const moveResponse = await getClient().session.move({
         sessionID: forkedSession.id,
         directory,
         workspaceID: workspaceId,
       }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.move', cause: e }))
+      if (moveResponse instanceof Error) {
+        logger.error('[NEW-WORKTREE] Failed to move forked session:', moveResponse)
+        void notifyError(moveResponse, 'Failed to move forked session')
+        await sendThreadMessage(worktreeThread, `Worktree is ready, but failed to move the forked session: ${moveResponse.message}`)
+        return
+      }
+
+      const permissionResponse = await getClient().permission.rules({
+        sessionID: forkedSession.id,
+        permissions: [
+          ...(forkedSession.permissions ?? []),
+          ...buildSessionPermissions({ directory, originalRepoDirectory: projectDirectory }),
+        ],
+      }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'permission.rules', cause }))
       if (permissionResponse instanceof Error) {
         const error = permissionResponse
         logger.error('[NEW-WORKTREE] Failed to update forked session permissions:', error)
