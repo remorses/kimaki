@@ -10,11 +10,10 @@ import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
 import type {
-  PermissionRequest,
   QuestionRequest,
   Message as OpenCodeMessage,
 } from '@opencode-ai/sdk/v2'
-import type { V2Event } from '@opencode/client'
+import type { PermissionRequest, V2Event } from '@opencode/client'
 import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
@@ -99,7 +98,7 @@ import * as schema from '../schema.js'
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
-  arePatternsCoveredBy,
+  canGroupPermissionRequests,
   pendingPermissionContexts,
 } from '../commands/permissions.js'
 import {
@@ -190,7 +189,6 @@ export const pendingPermissions = new Map<
       messageId: string
       directory: string
       contextHash: string
-      dedupeKey: string
     }
   > // permissionId -> data
 >()
@@ -775,8 +773,8 @@ export type IngressInput = {
    * Raw permission rule strings from --permission flag ("tool:action" or
    * "tool:pattern:action"). Parsed into PermissionRuleset entries by
    * parsePermissionRules() and appended after buildSessionPermissions()
-   * so they win via opencode's findLast() evaluation. Only used on
-   * session creation (first dispatch).
+   * so they win via opencode's findLast() evaluation. Explicit input also
+   * replaces existing session rules; omitted input preserves them.
    */
   permissions?: string[]
   injectionGuardPatterns?: string[]
@@ -1820,7 +1818,7 @@ export class ThreadSessionRuntime {
         }
         break
       case 'permission.asked':
-        await this.handlePermissionAsked(this.mapV2PermissionAsked(event.data))
+        await this.handlePermissionAsked(event.data)
         break
       case 'permission.replied':
         this.handlePermissionReplied({
@@ -1863,22 +1861,6 @@ export class ThreadSessionRuntime {
       default:
         break
     }
-  }
-
-  private mapV2PermissionAsked(data: {
-    id: string
-    sessionID: string
-    action: string
-    resources: readonly string[]
-    message?: string
-  }): PermissionRequest {
-    return {
-      id: data.id,
-      sessionID: data.sessionID,
-      permission: data.action,
-      patterns: [...data.resources],
-      metadata: { message: data.message },
-    } as unknown as PermissionRequest
   }
 
   private handleV2TextStarted(event: Extract<V2Event, { type: 'session.text.started' }>): void {
@@ -3311,26 +3293,13 @@ export class ThreadSessionRuntime {
 
     const subtaskLabel = subtaskInfo?.label
 
-    const dedupeKey = buildPermissionDedupeKey({
-      permission,
-      directory: this.sdkDirectory,
-    })
     const threadPermissions = pendingPermissions.get(this.thread.id)
     const existingPending = threadPermissions
       ? Array.from(threadPermissions.values()).find((pending) => {
-          if (pending.dedupeKey === dedupeKey) {
-            return true
-          }
           if (pending.directory !== this.sdkDirectory) {
             return false
           }
-          if (pending.permission.permission !== permission.permission) {
-            return false
-          }
-          return arePatternsCoveredBy({
-            patterns: permission.patterns,
-            coveringPatterns: pending.permission.patterns,
-          })
+          return canGroupPermissionRequests({ permission, existing: pending.permission })
         })
       : undefined
 
@@ -3347,11 +3316,10 @@ export class ThreadSessionRuntime {
         messageId: existingPending.messageId,
         directory: this.sdkDirectory,
         contextHash: existingPending.contextHash,
-        dedupeKey,
       })
       const added = addPermissionRequestToContext({
         contextHash: existingPending.contextHash,
-        requestId: permission.id,
+        permission,
       })
       if (!added) {
         logger.log(
@@ -3362,7 +3330,7 @@ export class ThreadSessionRuntime {
     }
 
     logger.log(
-      `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}${subtaskLabel ? `, subtask=${subtaskLabel}` : ''}`,
+      `Permission requested: action=${permission.action}, resources=${permission.resources.join(', ')}${subtaskLabel ? `, subtask=${subtaskLabel}` : ''}`,
     )
 
     this.stopTyping()
@@ -3382,7 +3350,6 @@ export class ThreadSessionRuntime {
       messageId,
       directory: this.sdkDirectory,
       contextHash,
-      dedupeKey,
     })
   }
 
@@ -3812,13 +3779,6 @@ export class ThreadSessionRuntime {
       }
 
       const { session, getClient, createdNewSession } = sessionResult
-
-      void this.updateExistingSessionPermissions({
-        client: getClient(),
-        sessionId: session.id,
-        createdNewSession,
-        permissions: input.permissions,
-      })
 
       // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
       const channelId = this.channelId
@@ -4862,13 +4822,6 @@ export class ThreadSessionRuntime {
     }
     const { session, getClient, createdNewSession } = sessionResult
 
-    void this.updateExistingSessionPermissions({
-      client: getClient(),
-      sessionId: session.id,
-      createdNewSession,
-      permissions: input.permissions,
-    })
-
     // ── Resolve model + agent preferences ─────────────────────
     const channelId = this.channelId
     const resolvedAppId = input.appId
@@ -5370,19 +5323,6 @@ export class ThreadSessionRuntime {
     return result
   }
 
-  private async updateExistingSessionPermissions({
-    createdNewSession,
-  }: {
-    client: OpencodeClient
-    sessionId: string
-    createdNewSession: boolean
-    permissions?: string[]
-  }) {
-    // v2 session.create has no permission field and session.update is gone.
-    void createdNewSession
-    return null
-  }
-
   private async ensureSession({
     prompt,
     agent,
@@ -5453,22 +5393,23 @@ export class ThreadSessionRuntime {
       }
     }
 
+    const sessionPermissions = [
+      ...buildSessionPermissions({ directory: this.sdkDirectory, originalRepoDirectory }),
+      ...parsePermissionRules(permissions ?? []),
+    ]
+    // Omitted permissions preserve existing/forked rules; explicit input replaces them.
+    if (session && permissions !== undefined) {
+      const result = await getClient().permission.rules({
+        sessionID: session.id,
+        permissions: sessionPermissions,
+      }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'permission.rules', cause }))
+      if (result instanceof Error) return result
+    }
     if (!session) {
-      // Pass per-session external_directory permissions. By default this is a
-      // single allow-everything rule plus the worktree-origin deny rule.
-      // CLI --permission rules are appended after base rules so they win
-      // via opencode's findLast() evaluation.
-      const sessionPermissions = [
-        ...buildSessionPermissions({
-          directory: this.sdkDirectory,
-          originalRepoDirectory,
-        }),
-        ...parsePermissionRules(permissions ?? []),
-      ]
       // Omit title so OpenCode auto-generates a summary from the conversation
-      void sessionPermissions
       const createResult = await getClient().session.create({
         location: { directory: this.sdkDirectory },
+        permissions: sessionPermissions,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.create', cause: e }))
       if (createResult instanceof Error) {
         const causeMessage = createResult.cause instanceof Error
@@ -5858,19 +5799,6 @@ export class ThreadSessionRuntime {
 }
 
 // ── Module-level helpers ──────────────────────────────────────────
-
-function buildPermissionDedupeKey({
-  permission,
-  directory,
-}: {
-  permission: PermissionRequest
-  directory: string
-}): string {
-  const normalizedPatterns = [...permission.patterns].sort((a, b) => {
-    return a.localeCompare(b)
-  })
-  return `${directory}::${permission.permission}::${normalizedPatterns.join('|')}`
-}
 
 function getFallbackContextLimit({
   providerID,

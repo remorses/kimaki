@@ -5,32 +5,11 @@
 // specific project. The server lazily creates and caches an Instance per unique
 // directory path internally.
 //
-// Permission layering — READ THIS BEFORE ADDING A PERMISSION RULE.
-//
-// opencode evaluates permissions with findLast() over a flattened list, so the
-// last matching rule wins. The order is:
-//
-//   opencode built-in defaults
-//     ▼
-//   merged config files  ── kimaki's generated config, THEN the user's
-//     ▼                     project opencode.json (deep-merged on top)
-//   config.agent.<name>.permission
-//     ▼
-//   session.permission   ── buildSessionPermissions(), always wins
-//
-// Directory ALLOW rules therefore belong in the generated server config, never
-// in session rules or an agent block: a project opencode.json must still be
-// able to `deny` or `ask` for specific folders. Anything placed in
-// session.permission silently overrides the user.
-//
-// external_directory is `{ '*': 'allow' }` by default. opencode's own default
-// is `ask`, which meant the agent had to interrupt the user for ordinary reads
-// outside the project, and an unanswered prompt was auto-rejected on TTL. Users
-// who want stricter behaviour add `deny`/`ask` rules to their own
-// opencode.json, or start kimaki with --restrict-directories.
-//
-// session.permission carries exactly one thing: the worktree original-checkout
-// deny, which must beat user config on purpose.
+// Native V2 permissions: agent rules, then session overrides (last match wins).
+// A configured deny blocks before saved approvals; saved allows can satisfy ask.
+// Broad directory allows stay in generated config so project policy can win.
+// Session overrides carry original-checkout file restrictions and explicit CLI
+// rules, not defaults. File-tool permissions do not sandbox shell execution.
 //
 // Uses errore for type-safe error handling.
 
@@ -46,13 +25,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import { randomBytes } from 'node:crypto'
-import { OpenCode, type OpenCodeClient } from '@opencode/client'
+import { OpenCode, type OpenCodeClient, type PermissionRuleset } from '@opencode/client'
 import {
   resolveOpencode2Command,
 } from './opencode2.js'
 
 export type OpencodeClient = OpenCodeClient
-type PermissionRuleset = Array<{ permission: string; action: string; pattern: string }>
 
 import {
   restartGlobalEventListener,
@@ -1157,25 +1135,9 @@ function buildServerExternalDirectoryPermissions(): Record<
 }
 
 /**
- * Build the per-session permission ruleset passed to session.create/update.
- *
- * Keep this list minimal. Session rules are the LAST ruleset opencode
- * evaluates — `Permission.merge(agent.permission, session.permission)` in
- * session/tools.ts, then `findLast()` in permission/index.ts — so every rule
- * here silently overrides the user's own opencode.json. Only rules that must
- * beat user config belong here.
- *
- * In particular, directory *allow* rules must NOT go here. They live in the
- * server config so a project opencode.json can still deny or ask for specific
- * folders. Putting an `external_directory: '*' allow` rule here would make
- * every user `deny` rule a no-op.
- *
- * The session's own working directory never needs a rule either: opencode skips
- * the external_directory gate entirely for paths inside the active instance
- * (`containsPath` in tool/external-directory.ts).
- *
- * That leaves one rule: worktree isolation. Once a thread moves to a managed
- * worktree, deny the original checkout so the agent stops editing the main repo.
+ * Session overrides beat agent/project rules; keep broad allows in server config.
+ * FileAccess uses relative read/edit resources inside the project, skipping the
+ * external_directory gate. Cover both forms; shell execution is not sandboxed.
  */
 export function buildSessionPermissions({
   directory,
@@ -1184,61 +1146,36 @@ export function buildSessionPermissions({
   directory: string
   originalRepoDirectory?: string
 }): PermissionRuleset {
-  // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
-  const normalizedDirectory = directory.replaceAll('\\', '/')
-  const originalRepo = originalRepoDirectory?.replaceAll('\\', '/')
-
-  if (!originalRepo || originalRepo === normalizedDirectory) {
-    return []
-  }
-
-  return buildExternalDirectoryPermissionRules({
-    resolvedPattern: originalRepo,
-    action: 'deny',
+  if (!originalRepoDirectory) return []
+  const paths = path.win32.isAbsolute(directory) && !path.posix.isAbsolute(directory)
+    ? path.win32
+    : path.posix
+  const originalRepo = paths.resolve(originalRepoDirectory).replaceAll('\\', '/')
+  const relative = paths.relative(directory, originalRepoDirectory).replaceAll('\\', '/')
+  if (!relative) return []
+  // A nested worktree has original-checkout siblings at every ancestor level.
+  const relativeRoot = relative.split('/').every((part) => part === '..') ? '..' : relative
+  const resources = [...new Set([originalRepo, relativeRoot])].flatMap((root) => {
+    return [root, `${root.replace(/\/$/, '')}/*`]
   })
+  return [
+    { action: 'external_directory', resource: `${originalRepo.replace(/\/$/, '')}/*`, effect: 'deny' },
+    ...['read', 'edit'].flatMap((action) => {
+      return resources.map((resource) => ({ action, resource, effect: 'deny' as const }))
+    }),
+  ]
 }
 
 const ALL_EXTERNAL_DIRECTORIES_PATTERN = '*'
-
-function buildExternalDirectoryPermissionRules({
-  resolvedPattern,
-  action,
-}: {
-  resolvedPattern: string
-  action: 'allow' | 'deny' | 'ask'
-}): PermissionRuleset {
-  if (resolvedPattern === ALL_EXTERNAL_DIRECTORIES_PATTERN) {
-    return [
-      {
-        permission: 'external_directory',
-        pattern: ALL_EXTERNAL_DIRECTORIES_PATTERN,
-        action,
-      },
-    ]
-  }
-
-  return [
-    {
-      permission: 'external_directory',
-      pattern: resolvedPattern,
-      action,
-    },
-    {
-      permission: 'external_directory',
-      pattern: `${resolvedPattern}/*`,
-      action,
-    },
-  ]
-}
 
 /**
  * Parse raw permission strings into PermissionRuleset entries.
  *
  * Accepted formats:
- *   "tool:action"           → { permission: tool, pattern: "*", action }
- *   "tool:pattern:action"   → { permission: tool, pattern,      action }
+ *   "tool:effect"          -> { action: tool, resource: "*", effect }
+ *   "tool:resource:effect" -> { action: tool, resource, effect }
  *
- * The action must be one of "allow", "deny", "ask" (case-insensitive).
+ * The effect must be one of "allow", "deny", "ask" (case-insensitive).
  * Parts are trimmed to tolerate whitespace from YAML deserialization.
  * Invalid entries are silently skipped (bad user input shouldn't crash the bot).
  * If `raw` is not an array, returns empty (defensive against malformed YAML markers).
@@ -1247,7 +1184,6 @@ export function parsePermissionRules(raw: unknown): PermissionRuleset {
   if (!Array.isArray(raw)) {
     return []
   }
-  const validActions = new Set(['allow', 'deny', 'ask'])
   return raw.flatMap((entry) => {
     if (typeof entry !== 'string') {
       return []
@@ -1255,28 +1191,12 @@ export function parsePermissionRules(raw: unknown): PermissionRuleset {
     const parts = entry.split(':').map((s) => {
       return s.trim()
     })
-    if (parts.length === 2) {
-      const [permission, rawAction] = parts
-      const action = rawAction!.toLowerCase()
-      if (!permission || !validActions.has(action)) {
-        return []
-      }
-      return [{ permission, pattern: '*', action: action as 'allow' | 'deny' | 'ask' }]
-    }
-    if (parts.length >= 3) {
-      // Last segment is the action, first segment is the permission,
-      // everything in between is the pattern (may contain colons in theory,
-      // but unlikely for tool patterns).
-      const permission = parts[0]!
-      const rawAction = parts[parts.length - 1]!
-      const action = rawAction.toLowerCase()
-      const pattern = parts.slice(1, -1).join(':')
-      if (!permission || !pattern || !validActions.has(action)) {
-        return []
-      }
-      return [{ permission, pattern, action: action as 'allow' | 'deny' | 'ask' }]
-    }
-    return []
+    if (parts.length < 2) return []
+    const action = parts[0]!
+    const effect = parts[parts.length - 1]!.toLowerCase()
+    const resource = parts.length === 2 ? '*' : parts.slice(1, -1).join(':')
+    if (!action || !resource || (effect !== 'allow' && effect !== 'deny' && effect !== 'ask')) return []
+    return [{ action, resource, effect }]
   })
 }
 

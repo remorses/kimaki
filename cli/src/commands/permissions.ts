@@ -16,7 +16,7 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import type { PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { PermissionRequest } from '@opencode/client'
 import { getOpencodeClient } from '../opencode.js'
 import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
@@ -67,6 +67,20 @@ export function compactPermissionPatterns(patterns: string[]): string[] {
       return wildcardMatch({ value: pattern, pattern: candidate })
     })
   })
+}
+
+export function canGroupPermissionRequests({
+  permission,
+  existing,
+}: {
+  permission: PermissionRequest
+  existing: PermissionRequest
+}): boolean {
+  // Replies are session-scoped, and "always" saves the first request's save list.
+  return permission.sessionID === existing.sessionID
+    && permission.action === existing.action
+    && JSON.stringify([...new Set(permission.save ?? [])].sort()) === JSON.stringify([...new Set(existing.save ?? [])].sort())
+    && arePatternsCoveredBy({ patterns: permission.resources, coveringPatterns: existing.resources })
 }
 
 type PendingPermissionContext = {
@@ -165,7 +179,7 @@ export async function showPermissionButtons({
     }
   }, ttlMs).unref()
 
-  const patternStr = compactPermissionPatterns(permission.patterns).join(', ')
+  const patternStr = compactPermissionPatterns(permission.resources).join(', ')
 
   // Build 3 buttons for permission actions
   const acceptButton = new ButtonBuilder()
@@ -177,6 +191,7 @@ export async function showPermissionButtons({
     .setCustomId(`permission_always:${contextHash}`)
     .setLabel('Accept Always')
     .setStyle(ButtonStyle.Success)
+    .setDisabled(!permission.save?.length)
 
   const denyButton = new ButtonBuilder()
     .setCustomId(`permission_reject:${contextHash}`)
@@ -191,13 +206,13 @@ export async function showPermissionButtons({
 
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const externalDirLine =
-    permission.permission === 'external_directory'
+    permission.action === 'external_directory'
       ? `Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n`
       : ''
   const fullContent =
     `⚠️ **Permission Required**\n` +
     subtaskLine +
-    `**Type:** \`${permission.permission}\`\n` +
+    `**Type:** \`${permission.action}\`\n` +
     externalDirLine +
     (patternStr ? `**Pattern:** \`${patternStr}\`` : '')
   const permissionMessage = await thread.send({
@@ -226,15 +241,15 @@ function updatePermissionMessage({
   context.thread.messages
     .fetch(context.messageId)
     .then((message) => {
-      const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
+      const patternStr = compactPermissionPatterns(context.permission.resources).join(', ')
       const externalDirLine =
-        context.permission.permission === 'external_directory'
+        context.permission.action === 'external_directory'
           ? 'Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n'
           : ''
       return message.edit({
         content:
           `⚠️ **Permission Required**\n` +
-          `**Type:** \`${context.permission.permission}\`\n` +
+          `**Type:** \`${context.permission.action}\`\n` +
           externalDirLine +
           (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
           status,
@@ -391,19 +406,22 @@ export async function handlePermissionButton(
 
 export function addPermissionRequestToContext({
   contextHash,
-  requestId,
+  permission,
 }: {
   contextHash: string
-  requestId: string
+  permission: PermissionRequest
 }): boolean {
   const context = pendingPermissionContexts.get(contextHash)
   if (!context) {
     return false
   }
-  if (context.requestIds.includes(requestId)) {
+  if (!canGroupPermissionRequests({ permission, existing: context.permission })) {
     return false
   }
-  context.requestIds = [...context.requestIds, requestId]
+  if (context.requestIds.includes(permission.id)) {
+    return false
+  }
+  context.requestIds = [...context.requestIds, permission.id]
   pendingPermissionContexts.set(contextHash, context)
   return true
 }
