@@ -46,8 +46,8 @@ This document summarizes the Discord bot interaction patterns that the slack-dig
 - **What happens:**
   - Each part formatted as separate Discord message
   - Text parts prefixed with `⬥ ` (bullet)
-  - Tool parts prefixed with `▏` or `▎` (for file edits/writes)
-  - Context usage shown with `⻟` prefix at ~10% windows
+  - Tool parts prefixed with `┣` or `◼︎` (for file edits/writes)
+  - Context usage shown with `⬦` prefix at ~10% windows
   - Footer message sent at run completion: `*project ⋅ branch ⋅ 2m 30s ⋅ 71% ⋅ model-name*`
 - **Key Discord APIs:**
   - `ThreadChannel.send({ content })`
@@ -137,7 +137,7 @@ This document summarizes the Discord bot interaction patterns that the slack-dig
   - Message enqueued to `ThreadSessionRuntime.enqueueIncoming(mode: 'local-queue')`
   - Stores in `threadState.queuedMessages` array
   - When session becomes idle, messages processed one-by-one
-  - Bot posts `⺩username: queued_message` format
+  - Bot posts `» username: queued_message` format
 - **Key:** Messages are buffered in memory during active session
 
 ### Pattern 5b: Direct Channel Message

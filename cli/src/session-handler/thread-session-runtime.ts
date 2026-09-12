@@ -58,7 +58,6 @@ import {
   shouldQuoteIntermediateTextPart,
   STATUS_PREFIX,
   WORKTREE_PREFIX,
-  LEGACY_WORKTREE_PREFIX,
   type AssistantTurnFlushMode,
 } from '../message-formatting.js'
 import {
@@ -516,7 +515,6 @@ export function isEssentialToolPart(part: Part): boolean {
 const DISCORD_THREAD_NAME_MAX = 100
 const PRESERVED_THREAD_PREFIXES: string[] = [
   WORKTREE_PREFIX,
-  LEGACY_WORKTREE_PREFIX,
   'btw: ',
   'Fork: ',
 ]
@@ -2832,7 +2830,7 @@ export class ThreadSessionRuntime {
   // OpenCode emits question.asked when the tool starts, often before the
   // preceding text part gets time.end. Showing the dropdown on that event
   // holds the action queue while Discord posts, so the later text-end cannot
-  // send and dumps after the queued ⺩ user: indicator. Wait for text-end.
+  // send and dumps after the queued » user: indicator. Wait for text-end.
   private async tryShowPendingQuestion({
     ignoreUnfinishedText = false,
   } = {}): Promise<boolean> {
@@ -2919,7 +2917,7 @@ export class ThreadSessionRuntime {
     // When a question is answered and the local queue has items, the model may
     // continue the same run without ever reaching the local-queue idle gate.
     // Hand off only the next queued item to OpenCode immediately so the queue
-    // resumes, but keep later items local so their `⺩ user:` indicators still
+    // resumes, but keep later items local so their `» user:` indicators still
     // appear one-by-one when they actually become active.
     this.maybeHandoffQueuedItemForPendingQuestion({
       sessionId,
@@ -3914,7 +3912,7 @@ export class ThreadSessionRuntime {
    * start dispatchPrompt (detached — does not block the action queue).
    * Called after enqueue, after run finishes, or after a blocker resolves.
    *
-   * @param showIndicator - When true, shows "⺩ username: prompt" in Discord.
+   * @param showIndicator - When true, shows "» username: prompt" in Discord.
    *   Only set to true when draining after a previous run finishes or a
    *   blocker resolves — not on the immediate first dispatch from enqueueIncoming.
    */

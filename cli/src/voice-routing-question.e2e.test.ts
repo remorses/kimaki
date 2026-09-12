@@ -76,7 +76,7 @@ describe('voice routing preserves source questions', () => {
       await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: source.id,
-        text: '⺩**voice-question-tester:** Alpha',
+        text: '» **voice-question-tester:** Alpha',
         timeout: 4_000,
       })
       await waitForFooterMessage({ discord: ctx.discord, threadId: source.id, timeout: 4_000 })
@@ -100,8 +100,8 @@ describe('voice routing preserves source questions', () => {
           📝 **Transcribed message:** Explain routing without changing the source btw
           Session forked! Continue in <#TARGET_THREAD>
           [user selects dropdown: 0]
-          ⺩**voice-question-tester:** Alpha
-          tool done
+          » **voice-question-tester:** Alpha
+          > tool done
           > *project ⋅ main ⋅ 1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
         `)
       } else {
@@ -120,8 +120,8 @@ describe('voice routing preserves source questions', () => {
           📝 **Transcribed message:** Explain routing without changing the source new-session
           Created new session in <#TARGET_THREAD>
           [user selects dropdown: 0]
-          ⺩**voice-question-tester:** Alpha
-          tool done
+          » **voice-question-tester:** Alpha
+          > tool done
           > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
         `)
       }

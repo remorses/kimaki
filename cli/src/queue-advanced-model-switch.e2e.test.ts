@@ -328,7 +328,7 @@ describe('queue advanced: /model with interrupt recovery', () => {
         Reply with exactly: model-switcher-setup
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         Model set for this session:
         **Deterministic Provider** / **deterministic-v3**
@@ -338,12 +338,12 @@ describe('queue advanced: /model with interrupt recovery', () => {
         --- from: user (queue-model-switch-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        ok
-        starting sleep 100
+        > ok
+        > starting sleep 100
         --- from: user (queue-model-switch-tester)
         Reply with exactly: model-switcher-followup
         --- from: assistant (TestBot)
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v3* <@200000000000000991>"
       `)
 

@@ -30,10 +30,7 @@ import {
   TargetDirtyWorktreeError,
   NothingToMergeError,
 } from '../errors.js'
-import {
-  LEGACY_WORKTREE_PREFIX,
-  WORKTREE_PREFIX,
-} from '../message-formatting.js'
+import { WORKTREE_PREFIX } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
@@ -45,9 +42,6 @@ export { WORKTREE_PREFIX }
 
 function worktreePrefixLength(name: string) {
   if (name.startsWith(WORKTREE_PREFIX)) return WORKTREE_PREFIX.length
-  if (name.startsWith(LEGACY_WORKTREE_PREFIX)) {
-    return LEGACY_WORKTREE_PREFIX.length
-  }
   return 0
 }
 

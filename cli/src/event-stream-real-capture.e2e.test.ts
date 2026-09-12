@@ -443,7 +443,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '▏task',
+        text: '┣ task',
         timeout: 300_000,
       })
 
@@ -489,7 +489,7 @@ describe('real event stream capture fixtures (cached provider)', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '▏task',
+        text: '┣ task',
         timeout: 300_000,
       })
 

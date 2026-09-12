@@ -27,7 +27,7 @@ icon: lucide:git-branch
 
 Run **`/new-worktree`**:
 
-- **From a project channel**, pass a `name`. Kimaki creates a thread immediately (so you can start typing) and builds the worktree in the background. The branch is named `opencode/kimaki-<name>` and the thread is prefixed with `⻟worktree:`.
+- **From a project channel**, pass a `name`. Kimaki creates a thread immediately (so you can start typing) and builds the worktree in the background. The branch is named `opencode/kimaki-<name>` and the thread is prefixed with `⬦ worktree:`.
 - **From an existing thread**, the `name` is optional; Kimaki derives it from the thread name.
 - **`base-branch`** is optional and defaults to `HEAD` (your current local HEAD), so you can branch from unpushed commits.
 
@@ -50,7 +50,7 @@ When the worktree work is ready, run **`/merge-worktree`**. The `strategy` selec
 - **Keep commits (rebase)** is the default. It rebases the worktree commits onto the target and preserves every commit.
 - **Squash into one commit** rebases the same changes, then creates one commit on the target named `Merge worktree <branch>`.
 - The worktree and target must have **no uncommitted changes**.
-- On success the `⻟worktree:` prefix is removed from the thread title and Kimaki reports the source commit count.
+- On success the `⬦ worktree:` prefix is removed from the thread title and Kimaki reports the source commit count.
 
 ## Conflict resolution by the agent
 

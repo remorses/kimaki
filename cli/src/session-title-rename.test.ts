@@ -21,9 +21,9 @@ describe('deriveThreadNameFromSessionTitle', () => {
     expect(
       deriveThreadNameFromSessionTitle({
         sessionTitle: 'Refactor queue',
-        currentName: '⻟refactor queue old',
+        currentName: '⬦ refactor queue old',
       }),
-    ).toMatchInlineSnapshot(`"⻟Refactor queue"`)
+    ).toMatchInlineSnapshot(`"⬦ Refactor queue"`)
   })
 
   test('ignores placeholder "New Session -" titles', () => {
@@ -57,7 +57,7 @@ describe('deriveThreadNameFromSessionTitle', () => {
     expect(
       deriveThreadNameFromSessionTitle({
         sessionTitle: 'Refactor queue',
-        currentName: '⻟Refactor queue',
+        currentName: '⬦ Refactor queue',
       }),
     ).toMatchInlineSnapshot(`undefined`)
   })
@@ -65,10 +65,10 @@ describe('deriveThreadNameFromSessionTitle', () => {
   test('truncates to 100 chars including worktree prefix', () => {
     const result = deriveThreadNameFromSessionTitle({
       sessionTitle: 'x'.repeat(200),
-      currentName: '⻟seed',
+      currentName: '⬦ seed',
     })
     expect(result?.length).toMatchInlineSnapshot(`100`)
-    expect(result?.startsWith('⻟')).toMatchInlineSnapshot(`true`)
+    expect(result?.startsWith('⬦ ')).toMatchInlineSnapshot(`true`)
   })
 
   test('truncates to 100 chars without prefix', () => {
@@ -154,13 +154,13 @@ describe('deriveThreadNameFromSessionTitle', () => {
   test('does not double a worktree prefix copied from the Discord thread name', () => {
     expect(
       deriveThreadNameFromSessionTitle({
-        sessionTitle: '⻟Fix queue draining',
-        currentName: '⻟Old name',
+        sessionTitle: '⬦ Fix queue draining',
+        currentName: '⬦ Old name',
       }),
-    ).toMatchInlineSnapshot(`"⻟Fix queue draining"`)
+    ).toMatchInlineSnapshot(`"⬦ Fix queue draining"`)
   })
 
-  test('preserves the legacy diamond worktree prefix', () => {
+  test('preserves the worktree prefix', () => {
     expect(
       deriveThreadNameFromSessionTitle({
         sessionTitle: 'Refactor queue',

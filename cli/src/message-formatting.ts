@@ -26,13 +26,12 @@ type GenericSessionMessage = {
 
 const logger = createLogger(LogPrefix.FORMATTING)
 
-export const TOOL_PREFIX = '▏'
-export const FILE_EDIT_PREFIX = '▎'
-export const THINKING_PREFIX = '⺪'
-export const STATUS_PREFIX = '⻟'
-export const QUEUE_PREFIX = '⺩'
+export const TOOL_PREFIX = '┣ '
+export const FILE_EDIT_PREFIX = '◼︎ '
+export const THINKING_PREFIX = '┣ '
+export const STATUS_PREFIX = '⬦ '
+export const QUEUE_PREFIX = '» '
 export const WORKTREE_PREFIX = STATUS_PREFIX
-export const LEGACY_WORKTREE_PREFIX = '⬦ '
 
 /**
  * Serialize Discord embeds into plain text so the AI model can read them.
@@ -215,6 +214,10 @@ function isNonEmptyTextPart(part: { type: string; text?: string }): boolean {
   return part.type === 'text' && Boolean(part.text?.trim())
 }
 
+function isRenderableTurnPart(part: { type: string; text?: string }): boolean {
+  return isNonEmptyTextPart(part) || part.type === 'tool'
+}
+
 function nextToolNameAfter({
   parts,
   fromIndex,
@@ -251,19 +254,6 @@ export function shouldQuoteIntermediateTextPart({
   return true
 }
 
-export function isLastTextPartInAssistantTurn({
-  parts,
-  partId,
-}: {
-  parts: Array<{ id: string; type: string; text?: string }>
-  partId: string
-}): boolean {
-  const textParts = parts.filter(isNonEmptyTextPart)
-  if (textParts.length === 0) return true
-  if (!textParts.some((part) => part.id === partId)) return true
-  return textParts[textParts.length - 1]?.id === partId
-}
-
 export type AssistantTurnFlushMode = 'progress' | 'interactive' | 'final'
 
 export type PlannedAssistantTurnPart<T extends { id: string; type: string; text?: string }> = {
@@ -276,7 +266,7 @@ export function planAssistantTurnFlush<T extends {
   type: string
   text?: string
   tool?: string
-  time?: { end?: number }
+  time?: { end?: number; created?: number }
 }>({
   parts,
   mode,
@@ -318,7 +308,9 @@ export function planAssistantTurnFlush<T extends {
         part,
         quoteText: shouldQuoteIntermediateTextPart({
           part,
-          isLastInTurn: part.id === lastText?.id,
+          isLastInTurn:
+            mode !== 'progress'
+            && parts.filter(isRenderableTurnPart).at(-1)?.id === part.id,
           nextToolName: nextToolNameAfter({ parts, fromIndex: index }),
         }),
       })
@@ -332,36 +324,6 @@ export function planAssistantTurnFlush<T extends {
     hold: holdParts.map((part) => ({ id: part.id, quoteText: false })),
     sendParts,
   }
-}
-
-export function getLastTextPartIdsForAssistantTurns(
-  messages: GenericSessionMessage[],
-): Set<string> {
-  const lastIds = new Set<string>()
-  let turnParts: Array<{ id: string; type: string; text?: string }> = []
-  let currentParent: string | undefined
-
-  const flush = () => {
-    const last = turnParts.filter(isNonEmptyTextPart).at(-1)
-    if (last) lastIds.add(last.id)
-    turnParts = []
-  }
-
-  for (const message of messages) {
-    if (message.info.role !== 'assistant') {
-      flush()
-      currentParent = undefined
-      continue
-    }
-    const parentID = message.info.parentID
-    if (turnParts.length > 0 && parentID && currentParent && parentID !== currentParent) {
-      flush()
-    }
-    if (parentID) currentParent = parentID
-    turnParts.push(...message.parts)
-  }
-  flush()
-  return lastIds
 }
 
 // A chunk of formatted content with associated part IDs, ready to be
@@ -385,16 +347,13 @@ export type SessionChunk = {
 export function collectSessionChunks({
   messages,
   skipPartIds,
-  lastTextPartIds,
   limit,
 }: {
   messages: GenericSessionMessage[]
   skipPartIds?: Set<string>
-  lastTextPartIds?: Set<string>
   limit?: number
 }): { chunks: SessionChunk[]; skippedCount: number } {
   const allChunks: SessionChunk[] = []
-  const lastTextIds = lastTextPartIds ?? getLastTextPartIdsForAssistantTurns(messages)
 
   for (const message of messages) {
     if (message.info.role !== 'assistant') {
@@ -410,7 +369,7 @@ export function collectSessionChunks({
       }
       const quote = shouldQuoteIntermediateTextPart({
         part,
-        isLastInTurn: lastTextIds.has(part.id),
+        isLastInTurn: false,
         nextToolName: nextToolNameAfter({
           parts: message.parts,
           fromIndex: message.parts.indexOf(part),

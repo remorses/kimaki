@@ -227,7 +227,7 @@ Port `cli/src/session-handler/event-stream-state.ts` here. Rewrite types to v2 f
 - No `queueItems` array
 - `/queue` and queue-suffix → `session.prompt({ delivery: "queue" })`
 - Discord Remove button → inbox cancel
-- Drain line `⺩Tommy: …` from `session.inbox.delivered`
+- Drain line `» Tommy: …` from `session.inbox.delivered`
 - Tests: hook sets delivery; fake inbox events → Discord DTOs
 
 ### `kimaki.btw`

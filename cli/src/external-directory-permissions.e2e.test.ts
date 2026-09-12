@@ -82,20 +82,20 @@ describe('external directory permissions', () => {
       EXTERNAL_DIRECTORY_PROBE_MARKER first
       --- from: assistant (TestBot)
       > *using deterministic-provider/deterministic-v2*
-      reading external directory
+      > reading external directory
 
-      ▏read *probe.txt*
+      ┣ read *probe.txt*
 
-      external-directory-probe-done
+      > external-directory-probe-done
       > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
       --- from: user (external-directory-tester)
       EXTERNAL_DIRECTORY_PROBE_MARKER followup
       --- from: assistant (TestBot)
-      reading external directory
+      > reading external directory
 
-      ▏read *probe.txt*
+      ┣ read *probe.txt*
 
-      external-directory-probe-done
+      > external-directory-probe-done
       > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
     `)
     expect(text).not.toContain('Permission Required')

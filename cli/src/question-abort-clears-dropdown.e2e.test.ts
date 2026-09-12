@@ -81,7 +81,7 @@ describe('abort clears pending question dropdown', () => {
       for (let i = 0; i < 10; i++) {
         const messages = await th.getMessages()
         const answered = messages.find((message) => {
-          return message.content.includes('⺩**question-abort-tester:** Alpha')
+          return message.content.includes('» **question-abort-tester:** Alpha')
         })
         if (answered) {
           throw new Error('Dropdown was still answerable after abort')

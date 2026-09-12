@@ -69,8 +69,8 @@ describe('voice routing input boundaries', () => {
         Long voice request [DETAILS]
         [DETAILS] END_OF_REQUEST
         > *using deterministic-provider/deterministic-v2*
-        ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+        > ok
+      > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     const channelMessages = await ctx.discord.channel(TEXT_CHANNEL_ID).getMessages()
     expect(channelMessages).toHaveLength(1)
@@ -196,7 +196,7 @@ describe('voice routing input boundaries', () => {
       **Starting OpenCode session**
       Slash fresh request
       > *using deterministic-provider/deterministic-v2*
-      ok
+      > ok
       > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
     `)
   })

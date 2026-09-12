@@ -7,7 +7,7 @@
 //
 // Detection is line-based: we scan each line and return the first one whose
 // first non-whitespace token is `/<registered-command>`. This keeps the
-// detector oblivious to prefix lines (`⺩**kimaki-cli:**`, `Context from
+// detector oblivious to prefix lines (`» **kimaki-cli:**`, `Context from
 // thread:`, etc). Producers that add such prefixes must put them on their
 // own line so the user's content starts on a fresh line.
 

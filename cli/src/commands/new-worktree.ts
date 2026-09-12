@@ -172,11 +172,11 @@ export function formatAutoWorktreeName(name: string): string {
 
 /**
  * Derive worktree name from thread name.
- * Handles existing "⻟worktree: opencode/kimaki-name" format or uses thread name directly.
+ * Handles existing "⬦ worktree: opencode/kimaki-name" format or uses thread name directly.
  * Uses formatAutoWorktreeName so long thread titles get vowel-compressed.
  */
 function deriveWorktreeNameFromThread(threadName: string): string {
-  // Handle existing "⻟worktree: opencode/kimaki-name" format
+  // Handle existing "⬦ worktree: opencode/kimaki-name" format
   const worktreeMatch = threadName.match(/worktree:\s*(.+)$/i)
   const extractedName = worktreeMatch?.[1]?.trim()
   if (extractedName) {

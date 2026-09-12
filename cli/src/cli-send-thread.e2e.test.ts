@@ -411,7 +411,7 @@ describe('kimaki send --channel thread creation', () => {
         thread empty content seed
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        caught-by-model
+        > caught-by-model
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000830>
         --- from: user (cli-send-tester)
         --- from: assistant (TestBot)

@@ -78,10 +78,10 @@ describe('bot workflows - thread creation and messaging', () => {
 
     const messages: string[] = [
       'I will read the file first.',
-      '▏bash: cat src/main.ts',
+      '┣ bash: cat src/main.ts',
       'The file contains a simple function. Let me edit it.',
-      '▎edit: src/main.ts',
-      '⻟15% context used',
+      '◼︎ edit: src/main.ts',
+      '⬦ 15% context used',
       'kimakivoice ⋅ main ⋅ 0m 30s ⋅ 15% ⋅ claude-opus-4-6',
     ]
 
@@ -139,14 +139,14 @@ describe('bot workflows - thread creation and messaging', () => {
 
     const toolMsg = await client.chat.postMessage({
       channel: channelId,
-      text: '▏bash: running tests... (pending)',
+      text: '┣ bash: running tests... (pending)',
       thread_ts: parent.ts!,
     })
 
     await client.chat.update({
       channel: channelId,
       ts: toolMsg.ts!,
-      text: '▏bash: running tests... (done, exit 0)',
+      text: '┣ bash: running tests... (done, exit 0)',
     })
 
     const replies = await client.conversations.replies({
@@ -155,7 +155,7 @@ describe('bot workflows - thread creation and messaging', () => {
     })
 
     const editedMsg = replies.messages?.find((m) => m.ts === toolMsg.ts)
-    expect(editedMsg?.text).toBe('▏bash: running tests... (done, exit 0)')
+    expect(editedMsg?.text).toBe('┣ bash: running tests... (done, exit 0)')
     expect(editedMsg?.edited).toBeTruthy()
   })
 
@@ -664,13 +664,13 @@ describe('bot workflows - user message then bot reply pattern', () => {
 
     await client.chat.postMessage({
       channel: channelId,
-      text: '▏read: src/auth/login.ts',
+      text: '┣ read: src/auth/login.ts',
       thread_ts: userMsg.ts,
     })
 
     await client.chat.postMessage({
       channel: channelId,
-      text: '▎edit: src/auth/login.ts',
+      text: '◼︎ edit: src/auth/login.ts',
       thread_ts: userMsg.ts,
     })
 
@@ -698,8 +698,8 @@ describe('bot workflows - user message then bot reply pattern', () => {
     expect(snapshot).toMatchInlineSnapshot(`
       "alice: fix the login bug
         ↳ test-bot: Looking at the login code...
-        ↳ test-bot: ▏read: src/auth/login.ts
-        ↳ test-bot: ▎edit: src/auth/login.ts
+        ↳ test-bot: ┣ read: src/auth/login.ts
+        ↳ test-bot: ◼︎ edit: src/auth/login.ts
         ↳ test-bot: Fixed the null check in the login handler.
         ↳ test-bot: kimakivoice ⋅ main ⋅ 0m 15s ⋅ 8% ⋅ claude-opus-4-6"
     `)
@@ -733,7 +733,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
     // Bot handles the queued message
     await client.chat.postMessage({
       channel: channelId,
-      text: '⺩alice: also add docs',
+      text: '» alice: also add docs',
       thread_ts: userMsg.ts,
     })
 
@@ -748,7 +748,7 @@ describe('bot workflows - user message then bot reply pattern', () => {
       "alice: add tests
         ↳ test-bot: Adding tests...
         ↳ alice: also add docs
-        ↳ test-bot: ⺩alice: also add docs
+        ↳ test-bot: » alice: also add docs
         ↳ test-bot: Adding documentation..."
     `)
   })

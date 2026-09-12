@@ -126,9 +126,9 @@ describe('queue advanced: typing around permissions', () => {
         PERMISSION_TYPING_MARKER
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        requesting external read permission
+        > requesting external read permission
 
-        ▏read *.zprofile*
+        ┣ read *.zprofile*
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
         Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)
@@ -136,7 +136,7 @@ describe('queue advanced: typing around permissions', () => {
         ✅ Permission **accepted**
         [user clicks button]
 
-        permission-flow-done
+        > permission-flow-done
         > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 

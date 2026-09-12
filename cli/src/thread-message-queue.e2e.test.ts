@@ -462,7 +462,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },
@@ -622,13 +622,13 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: one
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        ok"
+        > ok"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -711,12 +711,12 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: BASH_TOOL_FILE_MARKER
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        running create file
-        creating marker
+        > running create file
+        > creating marker
 
-        ▏bash _Create marker file for e2e test_
+        ┣ bash _Create marker file for e2e test_
 
-        file created
+        > file created
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
@@ -774,7 +774,7 @@ e2eTest('thread message queue ordering', () => {
         messageId: firstQueueAck.messageId,
         timeout: 4_000,
       })
-      expect(firstQueueAckMessage.content).toContain('⺩**queue-tester:** Reply with exactly: race-final')
+      expect(firstQueueAckMessage.content).toContain('» **queue-tester:** Reply with exactly: race-final')
 
       const queuedPrompt = 'Reply with exactly: queued-from-slash'
       const { id: interactionId } = await th.user(TEST_USER_ID).runSlashCommand({
@@ -795,7 +795,7 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(queuedStatusMessage.content.startsWith('Queued message')).toBe(true)
 
-      const expectedDispatchIndicator = `⺩**queue-tester:** ${queuedPrompt}`
+      const expectedDispatchIndicator = `» **queue-tester:** ${queuedPrompt}`
       const messagesWithDispatch = await waitForBotMessageContaining({
         discord,
         threadId: thread.id,
@@ -843,14 +843,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
-        ⺩**queue-tester:** Reply with exactly: race-final
+        » **queue-tester:** Reply with exactly: race-final
         Queued message (position 1)
-        race-final
+        > race-final
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
-        ⺩**queue-tester:** Reply with exactly: queued-from-slash
-        ok
+        » **queue-tester:** Reply with exactly: queued-from-slash
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },
@@ -957,7 +957,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⺩**queue-tester:** Reply with exactly: kept-queued-message',
+        text: '» **queue-tester:** Reply with exactly: kept-queued-message',
         afterMessageId: removeAckMessage.id,
         timeout: 8_000,
       })
@@ -976,16 +976,16 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: clear-queue-setup
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
-        ⺩**queue-tester:** Reply with exactly: race-final
+        » **queue-tester:** Reply with exactly: race-final
         Removed queued message (was position 1): Reply with exactly: removed-queued-message
         Queued message (position 2)
-        race-final
+        > race-final
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
-        ⺩**queue-tester:** Reply with exactly: kept-queued-message"
+        » **queue-tester:** Reply with exactly: kept-queued-message"
       `)
-      expect(threadText).not.toContain('⺩**queue-tester:** Reply with exactly: removed-queued-message')
+      expect(threadText).not.toContain('» **queue-tester:** Reply with exactly: removed-queued-message')
       expect(threadText).toContain('kept-queued-message')
     },
     12_000,
@@ -1058,7 +1058,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: golf
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
         --- from: user (queue-tester)
         Reply with exactly: hotel
@@ -1169,10 +1169,11 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: lima
         Reply with exactly: mike
         --- from: assistant (TestBot)
+        > ok
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)
-        ok"
+        > ok"
       `)
       // E's user message appears before the final bot response
       const userNovemberIndex = afterE.findIndex((m) => {
@@ -1255,7 +1256,7 @@ e2eTest('thread message queue ordering', () => {
         discord,
         threadId: thread.id,
         userId: TEST_USER_ID,
-        text: '⺩**queue-tester:** Reply with exactly: edited-queued',
+        text: '» **queue-tester:** Reply with exactly: edited-queued',
         timeout: 8_000,
       })
 
@@ -1276,11 +1277,11 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: edited-queued. queue
         --- from: assistant (TestBot)
         Queued at position 1. Edit or delete your message to update the queue
-        ⻟**queue-tester** edited queued message
-        slow-busy-reply
+        ⬦ **queue-tester** edited queued message
+        > slow-busy-reply
         > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2*
-        ⺩**queue-tester:** Reply with exactly: edited-queued
-        ok
+        » **queue-tester:** Reply with exactly: edited-queued
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
       `)
 
@@ -1363,7 +1364,7 @@ e2eTest('thread message queue ordering', () => {
       expect(removedItem).toBeUndefined()
 
       // 6. Wait for the slow session to finish and verify the removed
-      // message was never dispatched as a queue drain (no ⺩indicator).
+      // message was never dispatched as a queue drain (no » indicator).
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
@@ -1372,9 +1373,9 @@ e2eTest('thread message queue ordering', () => {
 
       const finalText = await th.text()
       // The user message text appears in the thread, but the queue dispatch
-      // indicator (⺩**username:** ...) should NOT appear because the item
+      // indicator (» **username:** ...) should NOT appear because the item
       // was removed from the queue before drain.
-      expect(finalText).not.toContain('⺩**queue-tester:** Reply with exactly: will-be-removed')
+      expect(finalText).not.toContain('» **queue-tester:** Reply with exactly: will-be-removed')
       expect(finalText).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup
@@ -1384,8 +1385,8 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: will-be-removed
         --- from: assistant (TestBot)
         Queued at position 1. Edit or delete your message to update the queue
-        ⻟**queue-tester** removed message from queue
-        slow-busy-reply
+        ⬦ **queue-tester** removed message from queue
+        > slow-busy-reply
         > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
       `)
     },

@@ -119,7 +119,7 @@ describe('queue drain with pending interactive UI', () => {
       await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
-        text: '⺩**drain-ui-tester:** Reply with exactly: post-button-drain',
+        text: '» **drain-ui-tester:** Reply with exactly: post-button-drain',
         timeout: 4_000,
       })
 
@@ -128,7 +128,7 @@ describe('queue drain with pending interactive UI', () => {
         discord: ctx.discord,
         threadId: thread.id,
         timeout: 4_000,
-        afterMessageIncludes: '⺩**drain-ui-tester:**',
+        afterMessageIncludes: '» **drain-ui-tester:**',
         afterAuthorId: ctx.discord.botUserId,
       })
 
@@ -138,12 +138,12 @@ describe('queue drain with pending interactive UI', () => {
         Reply with exactly: drain-button-setup
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         **Action Required**
         [user interaction]
-        ⺩**drain-ui-tester:** Reply with exactly: post-button-drain
-        ok
+        » **drain-ui-tester:** Reply with exactly: post-button-drain
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },

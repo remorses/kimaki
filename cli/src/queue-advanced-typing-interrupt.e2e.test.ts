@@ -107,16 +107,16 @@ e2eTest('queue advanced: typing interrupt', () => {
         Reply with exactly: typing-stop-interrupt-setup
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        starting sleep 100
+        > starting sleep 100
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
         --- from: assistant (TestBot)
-        ok
+        > ok
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 
@@ -129,7 +129,7 @@ e2eTest('queue advanced: typing interrupt', () => {
       const finalPromptPosition = timeline.indexOf(
         'Reply with exactly: typing-stop-interrupt-final',
       )
-      const finalReplyPosition = timeline.indexOf('--- from: assistant (TestBot)\nok', finalPromptPosition)
+      const finalReplyPosition = timeline.indexOf('--- from: assistant (TestBot)\n> ok', finalPromptPosition)
       const lastFooterPosition = timeline.lastIndexOf('*project ⋅')
       expect(finalPromptPosition).toBeGreaterThanOrEqual(0)
       expect(finalReplyPosition).toBeGreaterThan(finalPromptPosition)

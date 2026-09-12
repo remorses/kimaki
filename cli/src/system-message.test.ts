@@ -422,7 +422,7 @@ describe('system-message', () => {
       The current Discord thread title is in the per-turn \`<discord-user thread-name="..." />\` metadata.
       This updates the OpenCode title. Discord follows automatically.
       Do not retitle every turn. Discord rate-limits thread renames.
-      Keep titles short. Do not add emoji. Do not copy ⻟, btw:, or Fork: prefixes.
+      Keep titles short. Do not add emoji. Do not copy ⬦, btw:, or Fork: prefixes.
 
       ## discord user mentions
 
