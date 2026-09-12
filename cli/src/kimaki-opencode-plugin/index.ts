@@ -11,10 +11,8 @@ import dedent from 'string-dedent'
 import type {
   createIpcRequest,
   getIpcRequestById,
-  getSessionSystemContext,
   getThreadIdBySessionId,
   upsertSessionSleep,
-  deleteSessionSystemContext,
 } from '../database.ts'
 import type { setDataDir } from '../config.ts'
 import type { setPluginLogFilePath } from '../plugin-logger.ts'
@@ -47,8 +45,6 @@ type DatabaseModule = {
   createIpcRequest: typeof createIpcRequest
   getIpcRequestById: typeof getIpcRequestById
   upsertSessionSleep: typeof upsertSessionSleep
-  getSessionSystemContext: typeof getSessionSystemContext
-  deleteSessionSystemContext: typeof deleteSessionSystemContext
 }
 
 type TaskScheduleModule = {
@@ -309,8 +305,6 @@ export default Plugin.define({
         })) {
           if (event.type !== 'session.deleted') continue
           sessions.delete(event.data.sessionID)
-          const database = await loadDatabaseModule()
-          await database.deleteSessionSystemContext(event.data.sessionID)
         }
       } catch {
         // aborted on plugin unload
@@ -318,51 +312,6 @@ export default Plugin.define({
     })()
 
     await ctx.session.hook('context', async (event) => {
-      const { getOpencodeSystemMessage } = (await import(
-        siblingModuleHref('system-message')
-      )) as {
-        getOpencodeSystemMessage: (input: {
-          sessionId: string
-          channelId?: string
-          guildId?: string
-          threadId?: string
-          channelTopic?: string
-          agents?: Array<{ name: string; description?: string }>
-          userId?: string
-          parentSessionId?: string
-          scheduledTask?: {
-            taskId?: number
-            scheduleKind: 'at' | 'cron'
-            cronExpr?: string | null
-            timezone?: string | null
-          }
-          dataDir?: string
-          critiqueEnabled?: boolean
-        }) => string
-      }
-      const database = await loadDatabaseModule()
-      const stored = await database.getSessionSystemContext(event.sessionID)
-      if (stored instanceof Error) {
-        logger.warn('session system context read failed', stored)
-      }
-      const context = stored instanceof Error || stored === null ? undefined : stored
-      pushSystemText(
-        event,
-        getOpencodeSystemMessage({
-          sessionId: event.sessionID,
-          channelId: context?.channelId,
-          guildId: context?.guildId,
-          threadId: context?.threadId,
-          channelTopic: context?.channelTopic,
-          agents: context?.agents,
-          userId: context?.userId,
-          parentSessionId: context?.parentSessionId,
-          scheduledTask: context?.scheduledTask,
-          dataDir: context?.dataDir || process.env.KIMAKI_DATA_DIR,
-          critiqueEnabled: context?.critiqueEnabled,
-        }),
-      )
-
       const state = getContextSession(event.sessionID)
       const userText = latestUserText(event.messages)
       if (userText.includes(TUTORIAL_WELCOME_TEXT)) {

@@ -92,7 +92,6 @@ import {
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
   cancelSessionSleepForThread,
-  upsertSessionSystemContext,
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
@@ -130,6 +129,8 @@ import {
 } from './model-utils.js'
 import {
   getOpencodePromptContext,
+  getOpencodeSystemMessage,
+  KIMAKI_INSTRUCTION_ENTRY_KEY,
   type AgentInfo,
   type RepliedMessageContext,
   type WorktreeInfo,
@@ -3875,10 +3876,17 @@ export class ThreadSessionRuntime {
       }
       const resolvedAgent = agentResult.agentPreference
       const availableAgents = agentResult.agents
-      await this.persistSessionSystemContext({
+      const systemWriteResult = await this.persistSessionSystemInstructions({
+        client: getClient(),
         sessionId: session.id,
         agents: availableAgents,
       })
+      if (systemWriteResult instanceof Error) {
+        await cleanupOnError(
+          `✗ Failed to prepare session system prompt: ${systemWriteResult.message}`,
+        )
+        return
+      }
       releaseCurrentThreadIngress()
 
       await this.persistIngressVariant({
@@ -4028,6 +4036,7 @@ export class ThreadSessionRuntime {
         ...images,
       ]
 
+      // TODO(anomalyco/opencode#48356): Pass agent/model/variant on prompt instead of switching session-wide selection here.
       if (resolvedAgent) {
         await getClient().session.switchAgent({
           sessionID: session.id,
@@ -4933,10 +4942,6 @@ export class ThreadSessionRuntime {
     }
     const earlyAgentPreference = earlyAgentResult.agentPreference
     const earlyAvailableAgents = earlyAgentResult.agents
-    await this.persistSessionSystemContext({
-      sessionId: session.id,
-      agents: earlyAvailableAgents,
-    })
 
     await this.persistIngressVariant({
       sessionId: session.id,
@@ -5073,6 +5078,31 @@ export class ThreadSessionRuntime {
       }
       return fetched.topic?.trim() || undefined
     })()
+    const systemWriteResult = await this.persistSessionSystemInstructions({
+      client: getClient(),
+      sessionId: session.id,
+      agents: earlyAvailableAgents,
+      channelTopic,
+    })
+    if (systemWriteResult instanceof Error) {
+      logger.error(
+        `[DISPATCH] Failed to persist system instructions for session ${session.id}: ${systemWriteResult.message}`,
+      )
+      void notifyError(
+        systemWriteResult,
+        'Failed to persist system instructions before prompt',
+      )
+      this.stopTyping()
+      await sendThreadMessage(
+        this.thread,
+        `✗ Failed to prepare session system prompt: ${systemWriteResult.message}`,
+        { flags: NOTIFY_MESSAGE_FLAGS },
+      )
+      await this.dispatchAction(() => {
+        return this.tryDrainQueue({ showIndicator: true })
+      })
+      return
+    }
     const worktreeChanged = this.consumeWorktreePromptChange(worktree)
     const syntheticContext = getOpencodePromptContext({
       sessionId: session.id,
@@ -5137,27 +5167,6 @@ export class ThreadSessionRuntime {
         threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
       })
-      const systemWriteResult = await this.persistSessionSystemContext({
-        sessionId: session.id,
-        agents: earlyAvailableAgents,
-        channelTopic,
-      })
-      if (systemWriteResult instanceof Error) {
-        logger.error(
-          `[DISPATCH] Failed to persist system context for command session ${session.id}: ${systemWriteResult.message}`,
-        )
-        void notifyError(
-          systemWriteResult,
-          'Failed to persist system context before session.command',
-        )
-        this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `✗ Failed to prepare command system prompt: ${systemWriteResult.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
-        )
-        return false
-      }
       const commandResponse = await getClient().session.command(
         {
           sessionID: session.id,
@@ -5253,6 +5262,7 @@ export class ThreadSessionRuntime {
       .filter((part) => part.type === 'text')
       .map((part) => part.text)
       .join('\n')
+    // TODO(anomalyco/opencode#48356): Share prompt-option submission with direct ingress once selection is bound to queued input.
     const promptResponse = await getClient().session.prompt({
       sessionID: session.id,
       text: promptText,
@@ -5287,6 +5297,9 @@ export class ThreadSessionRuntime {
 
   // ── Session Ensure ──────────────────────────────────────────
   // Creates or reuses the OpenCode session for this thread.
+
+  /** Session IDs that already have the Kimaki instruction entry. */
+  private sessionSystemInstructionsWritten = new Set<string>()
 
   /** Cached per-session scheduled task info for the system message. */
   private scheduledTaskContextCache = new Map<
@@ -5334,45 +5347,52 @@ export class ThreadSessionRuntime {
     return context
   }
 
-  private async persistSessionSystemContext({
+  private async persistSessionSystemInstructions({
+    client,
     sessionId,
     agents,
     channelTopic,
   }: {
+    client: OpencodeClient
     sessionId: string
     agents: AgentInfo[]
     channelTopic?: string
   }) {
+    if (this.sessionSystemInstructionsWritten.has(sessionId)) return null
     const topic = channelTopic ?? await (async () => {
       if (this.thread.parent?.type === ChannelType.GuildText) {
         return this.thread.parent.topic?.trim() || undefined
       }
       return undefined
     })()
-    const result = await upsertSessionSystemContext({
+    const value = getOpencodeSystemMessage({
       sessionId,
-      payload: {
-        channelId: this.channelId,
-        guildId: this.thread.guildId,
-        threadId: this.thread.id,
-        channelTopic: topic,
-        agents,
-        userId: this.state?.sessionUserId,
-        parentSessionId: this.state?.parentSessionId,
-        scheduledTask: await this.resolveScheduledTaskContext(sessionId),
-        dataDir: getDataDir(),
-        critiqueEnabled: store.getState().critiqueEnabled,
-      },
-    }).catch((cause) => {
-      return cause instanceof Error
-        ? cause
-        : new Error(String(cause), { cause })
+      channelId: this.channelId,
+      guildId: this.thread.guildId,
+      threadId: this.thread.id,
+      channelTopic: topic,
+      agents,
+      userId: this.state?.sessionUserId,
+      parentSessionId: this.state?.parentSessionId,
+      scheduledTask: await this.resolveScheduledTaskContext(sessionId),
+      dataDir: getDataDir(),
+      critiqueEnabled: store.getState().critiqueEnabled,
     })
+    const result = await client.session.instructions.entry.put({
+      sessionID: sessionId,
+      key: KIMAKI_INSTRUCTION_ENTRY_KEY,
+      value,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'session.instructions.entry.put',
+      cause,
+    }))
     if (result instanceof Error) {
       logger.warn(
-        `[SYSTEM CONTEXT] Failed to persist for session ${sessionId}: ${result.message}`,
+        `[SYSTEM INSTRUCTIONS] Failed to persist for session ${sessionId}: ${result.message}`,
       )
+      return result
     }
+    this.sessionSystemInstructionsWritten.add(sessionId)
     return result
   }
 
