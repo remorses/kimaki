@@ -582,9 +582,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: agent-model-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -639,9 +639,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         system-context-ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
       `)
     },
     15_000,
@@ -809,9 +809,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/channel-model-v2*
+        > *using deterministic-provider/channel-model-v2*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2* <@200000000000000920>"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -863,9 +863,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/channel-model-v2*
+        > *using deterministic-provider/channel-model-v2*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2* <@200000000000000920>"
       `)
       expect(footer?.content).toContain(CHANNEL_MODEL)
       expect(footer?.content).not.toContain(DEFAULT_MODEL)
@@ -960,7 +960,7 @@ describe('agent model resolution', () => {
         Reusing context from <#SOURCE_THREAD> to answer prompt...
         Reply with exactly: btw-model-check
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2* <@200000000000000920>"
       `)
       expect(forkedSessionModel).toMatchInlineSnapshot(`
         {
@@ -1039,14 +1039,14 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: first-thread-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         --- from: user (agent-model-tester)
         Reply with exactly: second-thread-msg
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
       `)
 
       const secondMessages = await discord.thread(thread.id).getMessages()
@@ -1107,9 +1107,9 @@ describe('agent model resolution', () => {
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
     },
     20_000,
@@ -1152,9 +1152,9 @@ describe('agent model resolution', () => {
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
       expect(sessionId ? await getSessionModel(sessionId) : undefined).toMatchInlineSnapshot(`
         {
@@ -1269,12 +1269,12 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: inline-existing-first-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
-        » **agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        ⺩**agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
     },
     20_000,
@@ -1341,9 +1341,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: switch-in-thread-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
@@ -1351,7 +1351,7 @@ describe('agent model resolution', () => {
         Reply with exactly: after-switch-msg
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
 
       const secondFooter = [...(await discord.thread(thread.id).getMessages())]
@@ -1415,9 +1415,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: race-switch-first-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         --- from: user (agent-model-tester)
         Reply with exactly: race-switch-follow-up
         --- from: assistant (TestBot)
@@ -1425,7 +1425,7 @@ describe('agent model resolution', () => {
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
 
       const secondFooter = [...(await discord.thread(thread.id).getMessages())]
@@ -1478,9 +1478,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: race-channel-follow-up
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
 
       const footer = [...(await discord.thread(thread.id).getMessages())]
@@ -1539,9 +1539,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: refresh-agent-model-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/plan-model-v2 ⋅ plan*
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>
         Using **plan** agent for this session
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message."
@@ -1592,9 +1592,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: channel-vs-agent-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message."
@@ -1647,9 +1647,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: plain-agent-override-msg
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/channel-model-v2*
+        > *using deterministic-provider/channel-model-v2*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2* <@200000000000000920>
         Switched to **plain** agent for this session
         Model: *deterministic-provider/channel-model-v2* (channel override)
         This model comes from a channel override. Use /model and press Clear override if you want this agent's model.
