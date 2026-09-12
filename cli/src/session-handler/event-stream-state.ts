@@ -8,7 +8,7 @@ import type {
   Message as OpenCodeMessage,
   Part,
 } from '@opencode-ai/sdk/v2'
-import type { V2Event } from '@opencode-ai/client'
+import type { V2Event } from '@opencode/client'
 import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 
 type QueueQuestionHandoffStartedEvent = {

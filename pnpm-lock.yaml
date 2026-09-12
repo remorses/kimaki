@@ -65,21 +65,21 @@ importers:
       '@libsql/client':
         specifier: ^0.17.2
         version: 0.17.4
-      '@opencode-ai/cli':
-        specifier: 0.0.0-beta-19271
-        version: 0.0.0-beta-19271
-      '@opencode-ai/client':
-        specifier: 0.0.0-beta-19271
-        version: 0.0.0-beta-19271(effect@4.0.0-rc.112)
       '@opencode-ai/plugin':
         specifier: ^1.16.2
         version: 1.17.8
       '@opencode-ai/sdk':
         specifier: ^1.16.2
         version: 1.17.8
+      '@opencode/cli':
+        specifier: 2.0.2
+        version: 2.0.2
+      '@opencode/client':
+        specifier: 2.0.2
+        version: 2.0.2(effect@4.0.0-rc.112)
       '@opencode/plugin':
-        specifier: npm:@opencode-ai/plugin@0.0.0-beta-19271
-        version: '@opencode-ai/plugin@0.0.0-beta-19271(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))'
+        specifier: 2.0.2
+        version: 2.0.2(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -271,7 +271,7 @@ importers:
         version: 0.38.49
       spiceflow:
         specifier: 1.26.0-rsc.3
-        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4)
+        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.6.2))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2)
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -308,7 +308,7 @@ importers:
         version: 0.38.49
       spiceflow:
         specifier: 1.26.0-rsc.3
-        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4)
+        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.6.2))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2)
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -446,7 +446,7 @@ importers:
         version: 3.1.0
       spiceflow:
         specifier: 1.26.0-rsc.3
-        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4)
+        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.6.2))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2)
     devDependencies:
       '@opencode-ai/sdk':
         specifier: ^1.15.11
@@ -527,7 +527,7 @@ importers:
         version: 7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3)
       spiceflow:
         specifier: 1.26.0-rsc.3
-        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4)
+        version: 1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.6.2))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2)
     devDependencies:
       '@slack/types':
         specifier: ^2.20.0
@@ -2438,102 +2438,6 @@ packages:
     resolution: {integrity: sha512-mGUWr1uMnf0le2TwfOZY4SFxZGXGfm4Jtay/nwAa2FLNAKXUoUwaGwBMNH36UHPtinWfTSJ3nqFQr0091CxVGg==}
     engines: {node: ^20.17.0 || >=22.9.0}
 
-  '@opencode-ai/ai@0.0.0-beta-19271':
-    resolution: {integrity: sha512-FEnuPy7U4JCVjFAu9cjGyRYvSzglfTpqf8gX8o3XBfzw+ly9qpkjXUaOpayNKMbW5D6BfhOKfoWsmktwzRAf4w==}
-
-  '@opencode-ai/cli-darwin-arm64@0.0.0-beta-19271':
-    resolution: {integrity: sha512-CHfMY/7pPq4Andvrif34tC/N9mFppSujjscVISVOSMc/twAvkIGGfDUZgU65qHDsifSnt6+IJr3NZ2AbPzWOfA==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@opencode-ai/cli-darwin-x64-baseline@0.0.0-beta-19271':
-    resolution: {integrity: sha512-lhxjdTMnly2zb88/yOQHJwaDgvKH8kyCrmHIBnOiYexYW394EGwmxHjHkQRWfrgXXRk9vqzKHw8ldx0ust0Msw==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@opencode-ai/cli-darwin-x64@0.0.0-beta-19271':
-    resolution: {integrity: sha512-ZHQWqTBnDpyg78pMPYPBECEm6Qj8HpFKl3exSFPwbUDt8Gi1ixxsaggVIRpvOAOR/XdtbUj6eXwEtRHMZ2EmUw==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@opencode-ai/cli-linux-arm64-musl@0.0.0-beta-19271':
-    resolution: {integrity: sha512-YntKMzxo9lAQXdMZ+faChBWIV5D2fIfSdw7nXvMI78/7JHgQE4aOpFhY+Vbc0hluJpy81VhtRsYAjlUA2d6B3Q==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@opencode-ai/cli-linux-arm64@0.0.0-beta-19271':
-    resolution: {integrity: sha512-0WIzqvdgTUwUaQK5cXibZauGbRW7NZcuXGrA8dMsRWmAyONKDCnI9LbSXigGwc1RkGeRJrLtP/Xwmc8UCeXoJA==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@opencode-ai/cli-linux-x64-baseline-musl@0.0.0-beta-19271':
-    resolution: {integrity: sha512-l81mUfb7SgEr/EylzuBVPfM0GAXc8+FdSZteYTLDoqc1ha7QFY1YpjdPAklxDyDI4lXejaFP8TIP+A+PuEeN7A==}
-    cpu: [x64]
-    os: [linux]
-
-  '@opencode-ai/cli-linux-x64-baseline@0.0.0-beta-19271':
-    resolution: {integrity: sha512-o0rfUrWksGpmUw7lsN208wT79jb9oBeiMVVtYPNKqhCRvkPuSYOiDv8aYjX7OPW2xtcxUpz8eS78mjvGDjKw0g==}
-    cpu: [x64]
-    os: [linux]
-
-  '@opencode-ai/cli-linux-x64-musl@0.0.0-beta-19271':
-    resolution: {integrity: sha512-iwCgcAWWPmSu7cWyF+WJeT+w5UizfAV7vljUvow9AHlB+GrN8pU8YunMqSoXG/gbfkfulvAmqmT8DFHU4dvegg==}
-    cpu: [x64]
-    os: [linux]
-
-  '@opencode-ai/cli-linux-x64@0.0.0-beta-19271':
-    resolution: {integrity: sha512-eZxNRstEUCxYk+L6PqtZ8GdLnCi6076N490QAi2pY93qqD6+qg99OF5B1jRBF2mI/ysfCzXlrQtLNE+JfyuXRQ==}
-    cpu: [x64]
-    os: [linux]
-
-  '@opencode-ai/cli-windows-arm64@0.0.0-beta-19271':
-    resolution: {integrity: sha512-F6QdhjWxORYAjK0vFeYAYgiiSedCxdsxUrqfiUPGxE59odc1IVBamcQ+/yJUsqy9wf11CSB/YnOT8FPIy8Nxww==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@opencode-ai/cli-windows-x64-baseline@0.0.0-beta-19271':
-    resolution: {integrity: sha512-8g0h69T2SvaLljSCZmIRzb5GK+3xv9I9a2vYjVfZK2lQmWs9QaXNqkOwsO1msogQNKlLII4omtSaEUt3DnX7gA==}
-    cpu: [x64]
-    os: [win32]
-
-  '@opencode-ai/cli-windows-x64@0.0.0-beta-19271':
-    resolution: {integrity: sha512-tmKBQTkXOY4dsLdK3vUxVmVt62y9/cn9L5uo/wjglCENlZ55Z+NacC9bUI7i9JBj3DyOwqbmDkari+qO79tong==}
-    cpu: [x64]
-    os: [win32]
-
-  '@opencode-ai/cli@0.0.0-beta-19271':
-    resolution: {integrity: sha512-n1QkNyeDOTroOn0UOftJKFTdg7sLruqSS7wKGT5YB6qCqZiZE7udFs8fL8JcFAFs4ZYQoneQlnSJho7ABQKWAg==}
-    os: [darwin, linux, win32]
-    hasBin: true
-
-  '@opencode-ai/client@0.0.0-beta-19271':
-    resolution: {integrity: sha512-hx9aWS6B6CptcQvasmEjfYzSKcl1XsWNQIA2g53MKXVfmx9jdk7+sQWR3FunxMXvFSUSTPNAUTt0RDzO8O8Ylg==}
-    peerDependencies:
-      effect: 4.0.0-rc.112
-      solid-js: '>=1.9.0'
-    peerDependenciesMeta:
-      effect:
-        optional: true
-      solid-js:
-        optional: true
-
-  '@opencode-ai/plugin@0.0.0-beta-19271':
-    resolution: {integrity: sha512-pRkBkfmQcs5SFAeJo3yKaaCn9hd9BySvRix5sqAaV0dUQGfqGMClBZGvamoJRdYbDN1oZ1QzAosp+LSV1O03MQ==}
-    peerDependencies:
-      '@opencode-ai/theme': 0.0.0-beta-19271
-      '@opentui/core': '>=0.5.10'
-      '@opentui/solid': '>=0.5.10'
-      solid-js: '>=1.9.0'
-    peerDependenciesMeta:
-      '@opencode-ai/theme':
-        optional: true
-      '@opentui/core':
-        optional: true
-      '@opentui/solid':
-        optional: true
-      solid-js:
-        optional: true
-
   '@opencode-ai/plugin@1.17.8':
     resolution: {integrity: sha512-pkmnYQz5d+xf0h6fAjgplSSJKLqgYKOXr+x6y40GRPdW+/IfndFkMGq7CDsG2SieGD84qv4zYDMyolGo06IMpw==}
     peerDependencies:
@@ -2562,12 +2466,6 @@ packages:
       '@opentui/solid':
         optional: true
 
-  '@opencode-ai/protocol@0.0.0-beta-19271':
-    resolution: {integrity: sha512-pmOrj34z1wK+EwWDI27ymtUR1sDDGvWTYRyl4m66yllQuqsohW1webLIi6J4+UwNqnjKsGVeXIgZJBqblqR2tQ==}
-
-  '@opencode-ai/schema@0.0.0-beta-19271':
-    resolution: {integrity: sha512-5i2EnveTUMB277O5JrMxdVLDi8K8JnSYm6rn1KdBrgJEAQmy182nOQBkZ3X7eBQTK6FDxz+byuiXksz0pmQptQ==}
-
   '@opencode-ai/sdk@1.17.8':
     resolution: {integrity: sha512-6MKmsj2ujZyL44jy+12dpwWYDYKPS9fUr+0wVQxaIlPYQ/eAt8T8T3QrybplJ5ZtHfZUX+esXZ02x2UYYm7oEw==}
 
@@ -2577,8 +2475,111 @@ packages:
   '@opencode-ai/sdk@1.18.5':
     resolution: {integrity: sha512-7KgMvP5/1oxbhHj6kYBtPSTEdFKYpUeEYOzBTKdzSaRpapUpFFdn6Hkus3rr0rljO0kukWZIgRd3DrVBwTULGA==}
 
-  '@opencode-ai/util@0.0.0-beta-19271':
-    resolution: {integrity: sha512-7QYgjPtnNH5Nn4OS8tsb5Tcn9XnrRJHOyzMdry6ss0VkjNz9OB0A+dnEhG05SzSTSXOO2wHhzxBVV3v02b2siw==}
+  '@opencode/ai@2.0.2':
+    resolution: {integrity: sha512-Byq9c3kRdIl+AfGidPkd3JUC6DnjaNXGem77sAFRSxYwA0AMJMImPm+ua6ibnRqJ+6HlEq9JSh+Z1nQ8s8xzrQ==}
+
+  '@opencode/cli-darwin-arm64@2.0.2':
+    resolution: {integrity: sha512-JgCEsOQ/GxrhXFB5UG3nVw43iuFKiCc3LMDvck6T42e2X1MGP/tH3bdaPYQdtKHdh6kXr82qD0uYVvNYaIxGtw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@opencode/cli-darwin-x64-baseline@2.0.2':
+    resolution: {integrity: sha512-sQmjh9r3Lbkx7adlGcSFsNOQrMMqWpnkYipsUjOj5P40iiN8uetTHl6LrnpaGDEQI+mVChfffRL5DZO5y0amqg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@opencode/cli-darwin-x64@2.0.2':
+    resolution: {integrity: sha512-GF3SjNVJwdYhwEJHdlw6mIrezmuaaoy4Ol+7bg5fSKZ/u2Cd/SPKE/wGNOgsyjPEW7GPhjWd39pxcCzgvl6aYw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@opencode/cli-linux-arm64-musl@2.0.2':
+    resolution: {integrity: sha512-hwCrSEMQMr/ABkVZb2pzP7oMpFwllhPLQxKprIv/0zd6766LhY1pIw4W2o0Q4G9hBCpKzTk9Hx88ThE1burMGA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@opencode/cli-linux-arm64@2.0.2':
+    resolution: {integrity: sha512-9NUcKcihSNRd4ofy/lRamaOop6A/REQPyGEvfV/1OsyiRR9WGkAiJoyZ0fO0gS9RonQlxDyI9IBxlF7HRQwHNA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@opencode/cli-linux-x64-baseline-musl@2.0.2':
+    resolution: {integrity: sha512-LjHsVgO5Py/0oDCIYPD3tN6V4Cuv1SGM+oPEt9aoFDMft5/+rCxwf9RN1w053OoF8UpdE70Ed6jtK0AYcqpICQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@opencode/cli-linux-x64-baseline@2.0.2':
+    resolution: {integrity: sha512-QnxTyLDrIWbKDnHO1q8glguu/neWaPSTBMQNsNN9cspswZ3m4cMy+ZGaR4lbOyaSlBdkQIQB2SJUwqmSAH7vZg==}
+    cpu: [x64]
+    os: [linux]
+
+  '@opencode/cli-linux-x64-musl@2.0.2':
+    resolution: {integrity: sha512-AHcFjD57HJgJ+dZCxt1aahnIOgWw6kbUbnzjoKM/X60UlGdXt7hfAN8fF8SsFxbh3TKLi952UJemn1M6cjh1YA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@opencode/cli-linux-x64@2.0.2':
+    resolution: {integrity: sha512-huhUQIpjj7g+ZMnjTNa4PApZ3cFEAno8F0OXv3KQbZZVP9Xa7JgSg0iOZ8H8iiNkaPUZpmzwX4DXyuyRCQhO4A==}
+    cpu: [x64]
+    os: [linux]
+
+  '@opencode/cli-windows-arm64@2.0.2':
+    resolution: {integrity: sha512-AzpKajNpEmQu9ziGhpJlmrXTMwHshwE7e/q/YVWHbg1cFmEOPcneBbpBfoa98+ohRNRL7Nn9IecgHsX6+eKRSQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@opencode/cli-windows-x64-baseline@2.0.2':
+    resolution: {integrity: sha512-ZpmS0Odywn3qoDSYXJEVUX0gjlVgGGICRKttV8tKUwKkyS3OrZcdbPQ7Y0cvXN+tb/YX2qL2QHGwJSBNj1LpNw==}
+    cpu: [x64]
+    os: [win32]
+
+  '@opencode/cli-windows-x64@2.0.2':
+    resolution: {integrity: sha512-ddOKVlEQP8OY7rjIAPYVUcdAWljaAqogTysDIcb35PnLYcnTE6xzcPN+yBr+8xOtqXuEnq3z+y2glrxm2PEudg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@opencode/cli@2.0.2':
+    resolution: {integrity: sha512-O18TgC5bpNkJHNrGYxXEAi7Qw4y1j2XYLYqyV9YnkLyaZRfuxeCM3QBGTfbJc0GHbJIjQKDvOxo9yEBkohfYLA==}
+    cpu: [arm64, x64]
+    os: [darwin, linux, win32]
+    hasBin: true
+
+  '@opencode/client@2.0.2':
+    resolution: {integrity: sha512-w8rrSsxY9qnuFrsQAHdLDE6mrEqUKQeo7fNsw2i/tFtimgspT53/8/3ckEVRuRUM5k6v68KiU2deG0W2gEIVDQ==}
+    peerDependencies:
+      effect: 4.0.0-rc.112
+      solid-js: '>=1.9.0'
+    peerDependenciesMeta:
+      effect:
+        optional: true
+      solid-js:
+        optional: true
+
+  '@opencode/plugin@2.0.2':
+    resolution: {integrity: sha512-lFXcsyg1fhzCpzuMqBhb2yNddMeynXZwXL3aHs1T9ftbFu4buFAdtE9ox09Q+CL/r7yGbbX4mdtjKYdnt0dn5Q==}
+    peerDependencies:
+      '@opencode/theme': 2.0.2
+      '@opentui/core': '>=0.5.10'
+      '@opentui/solid': '>=0.5.10'
+      solid-js: '>=1.9.0'
+    peerDependenciesMeta:
+      '@opencode/theme':
+        optional: true
+      '@opentui/core':
+        optional: true
+      '@opentui/solid':
+        optional: true
+      solid-js:
+        optional: true
+
+  '@opencode/protocol@2.0.2':
+    resolution: {integrity: sha512-FxTxdHPNz46NkG8ZBB2S60QzXbZDlVEyZ6KeYTt2G7hcWB5JlMYBh8jeqHlsLbquKinvMKA2iuEsA1NaccN+YQ==}
+
+  '@opencode/schema@2.0.2':
+    resolution: {integrity: sha512-jF23H41j6zM2Az1pYLD6NFfzpoQ79CX0AxRkfNxTZFbPfjGGc+EPSOzVQP/r4Y/5bkSSqVga0Vn7MyoP8QhwDQ==}
+
+  '@opencode/util@2.0.2':
+    resolution: {integrity: sha512-AKnFr44s1Q7/Ud+Pl4QMCEJoIp33xyDiTi693BofXn+HBDHdJmKrwq87YpG+Kwt9t48gVv6Cx1glmqJ4lVJpHg==}
 
   '@opentelemetry/api-logs@0.214.0':
     resolution: {integrity: sha512-40lSJeqYO8Uz2Yj7u94/SJWE/wONa7rmMKjI1ZcIjgf3MHNHv1OZUCrCETGuaRF62d5pQD1wKIW+L4lmSMTzZA==}
@@ -5651,10 +5652,6 @@ packages:
     resolution: {integrity: sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==}
     engines: {node: '>=0.10.0'}
 
-  iconv-lite@0.7.2:
-    resolution: {integrity: sha512-im9DjEDQ55s9fL4EYzOAv0yMqmMBSZp6G0VvFyTMPKWxiSBHUj9NW/qqLmXUwXrrM7AvqSlTCfvqRb0cM8yYqw==}
-    engines: {node: '>=0.10.0'}
-
   iconv-lite@0.7.3:
     resolution: {integrity: sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==}
     engines: {node: '>=0.10.0'}
@@ -5855,6 +5852,7 @@ packages:
 
   libsql@0.5.29:
     resolution: {integrity: sha512-8lMP8iMgiBzzoNbAPQ59qdVcj6UaE/Vnm+fiwX4doX4Narook0a4GPKWBEv+CR8a1OwbfkgL18uBfBjWdF0Fzg==}
+    cpu: [x64, arm64, wasm32, arm]
     os: [darwin, linux, win32]
 
   lightningcss-android-arm64@1.32.0:
@@ -6545,6 +6543,7 @@ packages:
 
   opencode-ai@1.18.5:
     resolution: {integrity: sha512-Q0jlX4ihn7veMeYsLX3c4PYFAKIURU3GIpXt1FnhNxNn3v8+RpIZ8z9umG5D0r8g8Smp9fZLGjgLe/9mJ4NyYw==}
+    cpu: [arm64, x64]
     os: [darwin, linux, win32]
     hasBin: true
 
@@ -7916,6 +7915,9 @@ packages:
   zod@4.5.4:
     resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
 
+  zod@4.6.2:
+    resolution: {integrity: sha512-lh5RCAGFa1Cm2hjtNwLQhSs/AsqdWnTQaBER9fEwN/88pSh7KOtJavtBx/0VlkN/uFd61SwYmljLMDAsHlvzBQ==}
+
   zustand@5.0.14:
     resolution: {integrity: sha512-/8tAspM5LMPr28b3fwLYrtdj77ECpfZviaP75CMTnwO8ISyaE4GDIG/9rDDYq/cH9D2Xw2A2RXglLInmVBQB/g==}
     engines: {node: '>=12.20.0'}
@@ -9112,11 +9114,11 @@ snapshots:
       remark-frontmatter: 5.0.0
       remark-gfm: 4.0.1
       remark-mdx: 3.1.1
-      spiceflow: 1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4)
+      spiceflow: 1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2)
       string-dedent: 3.0.2
       unist-util-visit: 5.1.0
       yaml: 2.9.0
-      zod: 4.5.4
+      zod: 4.6.2
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - '@types/react'
@@ -9142,11 +9144,11 @@ snapshots:
       remark-frontmatter: 5.0.0
       remark-gfm: 4.0.1
       remark-mdx: 3.1.1
-      spiceflow: 1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4)
+      spiceflow: 1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2)
       string-dedent: 3.0.2
       unist-util-visit: 5.1.0
       yaml: 2.9.0
-      zod: 4.5.4
+      zod: 4.6.2
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - '@types/react'
@@ -9208,7 +9210,7 @@ snapshots:
       zod: 4.4.3
       zustand: 5.0.15(@types/react@19.2.17)(react@19.2.8)
     optionalDependencies:
-      dialkit: 1.4.3(motion@12.43.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      dialkit: 1.4.3(motion@12.43.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - '@emotion/is-prop-valid'
@@ -9285,7 +9287,7 @@ snapshots:
       zod: 4.4.3
       zustand: 5.0.15(@types/react@19.2.17)(react@19.2.8)
     optionalDependencies:
-      dialkit: 1.4.3(motion@12.43.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      dialkit: 1.4.3(motion@12.43.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - '@emotion/is-prop-valid'
@@ -9565,7 +9567,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@modelcontextprotocol/sdk@1.30.0(zod@4.5.4)':
+  '@modelcontextprotocol/sdk@1.30.0(zod@4.6.2)':
     dependencies:
       '@hono/node-server': 2.1.1(hono@4.13.7)
       ajv: 8.20.0
@@ -9582,8 +9584,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.5.4
-      zod-to-json-schema: 3.25.2(zod@4.5.4)
+      zod: 4.6.2
+      zod-to-json-schema: 3.25.2(zod@4.6.2)
     transitivePeerDependencies:
       - supports-color
     optional: true
@@ -9761,10 +9763,35 @@ snapshots:
       node-gyp: 12.4.0
       proc-log: 6.1.0
 
-  '@opencode-ai/ai@0.0.0-beta-19271':
+  '@opencode-ai/plugin@1.17.8':
+    dependencies:
+      '@opencode-ai/sdk': 1.17.8
+      effect: 4.0.0-beta.74
+      zod: 4.1.8
+
+  '@opencode-ai/plugin@1.18.23':
+    dependencies:
+      '@ai-sdk/provider': 3.0.8
+      '@opencode-ai/sdk': 1.18.23
+      effect: 4.0.0-beta.83
+      zod: 4.1.8
+
+  '@opencode-ai/sdk@1.17.8':
+    dependencies:
+      cross-spawn: 7.0.6
+
+  '@opencode-ai/sdk@1.18.23':
+    dependencies:
+      cross-spawn: 7.0.6
+
+  '@opencode-ai/sdk@1.18.5':
+    dependencies:
+      cross-spawn: 7.0.6
+
+  '@opencode/ai@2.0.2':
     dependencies:
       '@aws-sdk/credential-providers': 3.1057.0
-      '@opencode-ai/schema': 0.0.0-beta-19271
+      '@opencode/schema': 2.0.2
       '@smithy/eventstream-codec': 4.2.14
       '@smithy/util-utf8': 4.2.2
       aws4fetch: 1.0.20
@@ -9773,72 +9800,72 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@opencode-ai/cli-darwin-arm64@0.0.0-beta-19271':
+  '@opencode/cli-darwin-arm64@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-darwin-x64-baseline@0.0.0-beta-19271':
+  '@opencode/cli-darwin-x64-baseline@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-darwin-x64@0.0.0-beta-19271':
+  '@opencode/cli-darwin-x64@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-linux-arm64-musl@0.0.0-beta-19271':
+  '@opencode/cli-linux-arm64-musl@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-linux-arm64@0.0.0-beta-19271':
+  '@opencode/cli-linux-arm64@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-linux-x64-baseline-musl@0.0.0-beta-19271':
+  '@opencode/cli-linux-x64-baseline-musl@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-linux-x64-baseline@0.0.0-beta-19271':
+  '@opencode/cli-linux-x64-baseline@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-linux-x64-musl@0.0.0-beta-19271':
+  '@opencode/cli-linux-x64-musl@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-linux-x64@0.0.0-beta-19271':
+  '@opencode/cli-linux-x64@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-windows-arm64@0.0.0-beta-19271':
+  '@opencode/cli-windows-arm64@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-windows-x64-baseline@0.0.0-beta-19271':
+  '@opencode/cli-windows-x64-baseline@2.0.2':
     optional: true
 
-  '@opencode-ai/cli-windows-x64@0.0.0-beta-19271':
+  '@opencode/cli-windows-x64@2.0.2':
     optional: true
 
-  '@opencode-ai/cli@0.0.0-beta-19271':
+  '@opencode/cli@2.0.2':
     optionalDependencies:
-      '@opencode-ai/cli-darwin-arm64': 0.0.0-beta-19271
-      '@opencode-ai/cli-darwin-x64': 0.0.0-beta-19271
-      '@opencode-ai/cli-darwin-x64-baseline': 0.0.0-beta-19271
-      '@opencode-ai/cli-linux-arm64': 0.0.0-beta-19271
-      '@opencode-ai/cli-linux-arm64-musl': 0.0.0-beta-19271
-      '@opencode-ai/cli-linux-x64': 0.0.0-beta-19271
-      '@opencode-ai/cli-linux-x64-baseline': 0.0.0-beta-19271
-      '@opencode-ai/cli-linux-x64-baseline-musl': 0.0.0-beta-19271
-      '@opencode-ai/cli-linux-x64-musl': 0.0.0-beta-19271
-      '@opencode-ai/cli-windows-arm64': 0.0.0-beta-19271
-      '@opencode-ai/cli-windows-x64': 0.0.0-beta-19271
-      '@opencode-ai/cli-windows-x64-baseline': 0.0.0-beta-19271
+      '@opencode/cli-darwin-arm64': 2.0.2
+      '@opencode/cli-darwin-x64': 2.0.2
+      '@opencode/cli-darwin-x64-baseline': 2.0.2
+      '@opencode/cli-linux-arm64': 2.0.2
+      '@opencode/cli-linux-arm64-musl': 2.0.2
+      '@opencode/cli-linux-x64': 2.0.2
+      '@opencode/cli-linux-x64-baseline': 2.0.2
+      '@opencode/cli-linux-x64-baseline-musl': 2.0.2
+      '@opencode/cli-linux-x64-musl': 2.0.2
+      '@opencode/cli-windows-arm64': 2.0.2
+      '@opencode/cli-windows-x64': 2.0.2
+      '@opencode/cli-windows-x64-baseline': 2.0.2
 
-  '@opencode-ai/client@0.0.0-beta-19271(effect@4.0.0-rc.112)':
+  '@opencode/client@2.0.2(effect@4.0.0-rc.112)':
     dependencies:
-      '@opencode-ai/protocol': 0.0.0-beta-19271
-      '@opencode-ai/schema': 0.0.0-beta-19271
+      '@opencode/protocol': 2.0.2
+      '@opencode/schema': 2.0.2
     optionalDependencies:
       effect: 4.0.0-rc.112
 
-  '@opencode-ai/plugin@0.0.0-beta-19271(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))':
+  '@opencode/plugin@2.0.2(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))':
     dependencies:
       '@ai-sdk/provider': 3.0.8
-      '@opencode-ai/ai': 0.0.0-beta-19271
-      '@opencode-ai/client': 0.0.0-beta-19271(effect@4.0.0-rc.112)
-      '@opencode-ai/protocol': 0.0.0-beta-19271
-      '@opencode-ai/schema': 0.0.0-beta-19271
-      '@opencode-ai/util': 0.0.0-beta-19271(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))
+      '@opencode/ai': 2.0.2
+      '@opencode/client': 2.0.2(effect@4.0.0-rc.112)
+      '@opencode/protocol': 2.0.2
+      '@opencode/schema': 2.0.2
+      '@opencode/util': 2.0.2(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))
       '@standard-schema/spec': 1.1.0
       effect: 4.0.0-rc.112
       zod: 4.1.8
@@ -9854,42 +9881,17 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@opencode-ai/plugin@1.17.8':
+  '@opencode/protocol@2.0.2':
     dependencies:
-      '@opencode-ai/sdk': 1.17.8
-      effect: 4.0.0-beta.74
-      zod: 4.1.8
-
-  '@opencode-ai/plugin@1.18.23':
-    dependencies:
-      '@ai-sdk/provider': 3.0.8
-      '@opencode-ai/sdk': 1.18.23
-      effect: 4.0.0-beta.83
-      zod: 4.1.8
-
-  '@opencode-ai/protocol@0.0.0-beta-19271':
-    dependencies:
-      '@opencode-ai/schema': 0.0.0-beta-19271
+      '@opencode/schema': 2.0.2
       effect: 4.0.0-rc.112
 
-  '@opencode-ai/schema@0.0.0-beta-19271':
+  '@opencode/schema@2.0.2':
     dependencies:
       '@standard-schema/spec': 1.1.0
       effect: 4.0.0-rc.112
 
-  '@opencode-ai/sdk@1.17.8':
-    dependencies:
-      cross-spawn: 7.0.6
-
-  '@opencode-ai/sdk@1.18.23':
-    dependencies:
-      cross-spawn: 7.0.6
-
-  '@opencode-ai/sdk@1.18.5':
-    dependencies:
-      cross-spawn: 7.0.6
-
-  '@opencode-ai/util@0.0.0-beta-19271(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))':
+  '@opencode/util@2.0.2(@opentelemetry/api-logs@0.214.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))':
     dependencies:
       '@effect/opentelemetry': 4.0.0-rc.112(@opentelemetry/api-logs@0.214.0)(@opentelemetry/api@1.9.0)(@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.214.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-node@2.6.1(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(effect@4.0.0-rc.112)
       '@effect/platform-node': 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1(@opentelemetry/api@1.9.1))
@@ -11448,21 +11450,6 @@ snapshots:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  '@vitejs/plugin-rsc@0.5.21(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))':
-    dependencies:
-      '@rolldown/pluginutils': 1.0.0-rc.5
-      es-module-lexer: 2.1.0
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-      periscopic: 4.0.3
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
-      srvx: 0.11.17
-      strip-literal: 3.1.0
-      turbo-stream: 3.2.0
-      vite: 7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
-      vitefu: 1.1.3(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))
-
   '@vitejs/plugin-rsc@0.5.21(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.0-rc.5
@@ -12221,7 +12208,7 @@ snapshots:
     dependencies:
       dequal: 2.0.3
 
-  dialkit@1.4.3(motion@12.43.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  dialkit@1.4.3(motion@12.43.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       motion: 12.43.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     optionalDependencies:
@@ -13057,10 +13044,6 @@ snapshots:
       safer-buffer: 2.1.2
 
   iconv-lite@0.6.3:
-    dependencies:
-      safer-buffer: 2.1.2
-
-  iconv-lite@0.7.2:
     dependencies:
       safer-buffer: 2.1.2
 
@@ -14054,7 +14037,7 @@ snapshots:
       aws-ssl-profiles: 1.1.2
       denque: 2.1.0
       generate-function: 2.3.1
-      iconv-lite: 0.7.2
+      iconv-lite: 0.7.3
       long: 5.3.2
       lru.min: 1.1.4
       named-placeholders: 1.1.6
@@ -15035,14 +15018,14 @@ snapshots:
       - '@types/react'
       - react-server-dom-webpack
 
-  spiceflow@1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4):
+  spiceflow@1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2):
     dependencies:
       '@vitejs/plugin-rsc': 0.5.34(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       eventsource-parser: 3.1.1
       its-fine: 2.0.0(@types/react@19.2.17)(react@19.2.8)
       nf3: 0.3.16
       vite: 8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
-      zod: 4.5.4
+      zod: 4.6.2
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)
       hono: 4.13.7
@@ -15069,14 +15052,14 @@ snapshots:
       - '@types/react'
       - react-server-dom-webpack
 
-  spiceflow@1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4):
+  spiceflow@1.26.0-rsc.18(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@types/react@19.2.17)(hono@4.13.7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2):
     dependencies:
       '@vitejs/plugin-rsc': 0.5.34(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       eventsource-parser: 3.1.1
       its-fine: 2.0.0(@types/react@19.2.17)(react@19.2.8)
       nf3: 0.3.16
       vite: 8.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
-      zod: 4.5.4
+      zod: 4.6.2
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)
       hono: 4.13.7
@@ -15086,32 +15069,16 @@ snapshots:
       - '@types/react'
       - react-server-dom-webpack
 
-  spiceflow@1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4):
-    dependencies:
-      '@vitejs/plugin-rsc': 0.5.21(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))
-      eventsource-parser: 3.1.0
-      its-fine: 2.0.0(@types/react@19.2.17)(react@19.2.8)
-      nf3: 0.3.16
-      vite: 7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
-      zod: 4.5.4
-    optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.30.0(zod@4.5.4)
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
-    transitivePeerDependencies:
-      - '@types/react'
-      - react-server-dom-webpack
-
-  spiceflow@1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.5.4))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.5.4):
+  spiceflow@1.26.0-rsc.3(@modelcontextprotocol/sdk@1.30.0(zod@4.6.2))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(zod@4.6.2):
     dependencies:
       '@vitejs/plugin-rsc': 0.5.21(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       eventsource-parser: 3.1.0
       its-fine: 2.0.0(@types/react@19.2.17)(react@19.2.8)
       nf3: 0.3.16
       vite: 8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
-      zod: 4.5.4
+      zod: 4.6.2
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.30.0(zod@4.5.4)
+      '@modelcontextprotocol/sdk': 1.30.0(zod@4.6.2)
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
     transitivePeerDependencies:
@@ -15548,10 +15515,6 @@ snapshots:
       tsx: 4.22.4
       yaml: 2.9.0
 
-  vitefu@1.1.3(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)):
-    optionalDependencies:
-      vite: 7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
-
   vitefu@1.1.3(vite@8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)):
     optionalDependencies:
       vite: 8.0.16(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
@@ -15824,9 +15787,9 @@ snapshots:
     dependencies:
       zod: 4.4.3
 
-  zod-to-json-schema@3.25.2(zod@4.5.4):
+  zod-to-json-schema@3.25.2(zod@4.6.2):
     dependencies:
-      zod: 4.5.4
+      zod: 4.6.2
     optional: true
 
   zod@4.1.8: {}
@@ -15834,6 +15797,8 @@ snapshots:
   zod@4.4.3: {}
 
   zod@4.5.4: {}
+
+  zod@4.6.2: {}
 
   zustand@5.0.14(@types/react@19.2.17)(react@19.2.8):
     optionalDependencies:
