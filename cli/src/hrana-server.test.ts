@@ -10,12 +10,10 @@ import Database from 'libsql'
 import { createClient, type Client } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
 import * as orm from 'drizzle-orm'
-import {
-  createLibsqlHandler,
-  createLibsqlNodeHandler,
-  libsqlExecutor,
-} from 'libsqlproxy'
+import { createLibsqlHandler, createLibsqlNodeHandler, libsqlExecutor } from 'libsqlproxy'
 import * as schema from './schema.js'
+import { isAuthorizedRequest } from './hrana-server.js'
+import { store } from './store.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -32,17 +30,10 @@ async function migrateSchema(client: Client) {
         .join('\n')
         .trim(),
     )
-    .filter(
-      (s) =>
-        s.length > 0 &&
-        !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s),
-    )
+    .filter((s) => s.length > 0 && !/^CREATE\s+TABLE\s+["']?sqlite_sequence["']?\s*\(/i.test(s))
     .map((s) =>
       s
-        .replace(
-          /^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i,
-          'CREATE UNIQUE INDEX IF NOT EXISTS',
-        )
+        .replace(/^CREATE\s+UNIQUE\s+INDEX\b(?!\s+IF)/i, 'CREATE UNIQUE INDEX IF NOT EXISTS')
         .replace(/^CREATE\s+INDEX\b(?!\s+IF)/i, 'CREATE INDEX IF NOT EXISTS'),
     )
   for (const statement of statements) {
@@ -54,10 +45,7 @@ describe('hrana-server', () => {
   let testServer: http.Server | null = null
   let testDb: Database.Database | null = null
   let client: Client | null = null
-  const dbPath = path.join(
-    process.cwd(),
-    `tmp/test-hrana-${crypto.randomUUID().slice(0, 8)}.db`,
-  )
+  const dbPath = path.join(process.cwd(), `tmp/test-hrana-${crypto.randomUUID().slice(0, 8)}.db`)
 
   afterAll(async () => {
     client?.close()
@@ -100,7 +88,8 @@ describe('hrana-server', () => {
     const db = drizzle({ client, schema, relations: schema.relations })
     await migrateSchema(client)
 
-    const [created] = await db.insert(schema.thread_sessions)
+    const [created] = await db
+      .insert(schema.thread_sessions)
       .values({ thread_id: 'hrana-test-thread', session_id: 'hrana-test-session' })
       .returning()
     expect(created?.thread_id).toMatchInlineSnapshot(`"hrana-test-thread"`)
@@ -111,7 +100,8 @@ describe('hrana-server', () => {
     })
     expect(found?.session_id).toMatchInlineSnapshot(`"hrana-test-session"`)
 
-    await db.update(schema.thread_sessions)
+    await db
+      .update(schema.thread_sessions)
       .set({ session_id: 'updated-session' })
       .where(orm.eq(schema.thread_sessions.thread_id, 'hrana-test-thread'))
     const updated = await db.query.thread_sessions.findFirst({
@@ -119,12 +109,34 @@ describe('hrana-server', () => {
     })
     expect(updated?.session_id).toMatchInlineSnapshot(`"updated-session"`)
 
-    await db.delete(schema.thread_sessions).where(
-      orm.eq(schema.thread_sessions.thread_id, 'hrana-test-thread'),
-    )
+    await db
+      .delete(schema.thread_sessions)
+      .where(orm.eq(schema.thread_sessions.thread_id, 'hrana-test-thread'))
     const deleted = await db.query.thread_sessions.findFirst({
       where: { thread_id: 'hrana-test-thread' },
     })
     expect(deleted).toBeUndefined()
   }, 30_000)
+})
+
+describe('OpenCode discovery authentication', () => {
+  test('requires the private service bearer token', () => {
+    const previous = store.getState().gatewayToken
+    store.setState({ gatewayToken: 'service-secret' })
+    try {
+      expect(isAuthorizedRequest({ headers: {} })).toBe(false)
+      expect(
+        isAuthorizedRequest({
+          headers: { authorization: 'Bearer wrong-secret' },
+        }),
+      ).toBe(false)
+      expect(
+        isAuthorizedRequest({
+          headers: { authorization: 'Bearer service-secret' },
+        }),
+      ).toBe(true)
+    } finally {
+      store.setState({ gatewayToken: previous })
+    }
+  })
 })

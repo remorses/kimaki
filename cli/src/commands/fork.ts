@@ -169,6 +169,7 @@ export async function handleForkCommand(
   try {
     const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
+      order: 'asc',
     })
 
     if (!messagesResponse.data) {
@@ -340,6 +341,7 @@ export async function handleForkSelectMenu(
     // Fetch and display the last assistant messages from the forked session
     const messagesResponse = await getClient().message.list({
       sessionID: forkedSession.id,
+      order: 'asc',
     })
 
     if (messagesResponse.data) {

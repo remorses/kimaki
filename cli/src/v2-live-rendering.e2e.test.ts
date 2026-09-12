@@ -68,12 +68,18 @@ test('shows tools before completion, sends one tool line, and renames from nativ
     > *using deterministic-provider/deterministic-v2*
     Checking the project
 
-    ▏shell _echo live-render_"
+    ▏shell _echo live-render_
+    ⻟context usage 10%"
   `)
   expect(liveMessages.some((message) => isFooterMessage({ message, botUserId: ctx.discord.botUserId }))).toBe(false)
   expect(liveText).not.toContain('Live rendering complete')
 
-  await waitForFooterMessage({ discord: ctx.discord, threadId: thread.id, timeout: 4_000 })
+  await waitForFooterMessage({
+    discord: ctx.discord,
+    threadId: thread.id,
+    timeout: 4_000,
+    clamp: false,
+  })
   const finishedText = await th.text()
   expect(finishedText).toMatchInlineSnapshot(`
     "--- from: user (render-tester)

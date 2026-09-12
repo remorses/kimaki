@@ -2,8 +2,7 @@
 // Converts SDK message parts (text, tools, reasoning) to Discord-friendly format,
 // handles file attachments, and provides tool summary generation.
 
-import type { FilePartInput } from '@opencode-ai/sdk/v2'
-import type { SessionMessageInfo } from '@opencode/client'
+import type { SessionMessageInfo, SessionStructuredError } from '@opencode/client'
 import * as errore from 'errore'
 
 export type DiscordSessionPart =
@@ -42,10 +41,48 @@ export type DiscordSessionPart =
         time?: { start?: number; end?: number }
       }
     }
-import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
+import type { Message, TextChannel } from 'discord.js'
 
-// Extended FilePartInput with original Discord URL for reference in prompts
-export type DiscordFileAttachment = FilePartInput & {
+export type SerializableEmbed = {
+  title?: string | null
+  description?: string | null
+  url?: string | null
+  author?: { name: string } | null
+  footer?: { text: string } | null
+  fields: Array<{ name: string; value: string; inline?: boolean }>
+}
+
+export type SerializablePoll = {
+  question: { text: string | null }
+  answers: Iterable<[unknown, { text: string | null }]>
+}
+
+export type SerializableMessageSnapshot = {
+  content?: string | null
+  embeds: SerializableEmbed[]
+}
+
+export type SerializableSnapshotCollection = {
+  size: number
+} & Iterable<[unknown, SerializableMessageSnapshot]>
+
+export type TextAttachmentMessage = {
+  attachments: {
+    values(): Iterable<{
+      id?: string
+      name: string
+      contentType: string | null
+      url: string
+      size: number
+    }>
+  }
+}
+
+export type DiscordFileAttachment = {
+  type: 'file'
+  mime: string
+  filename: string
+  url: string
   sourceUrl?: string
 }
 
@@ -58,8 +95,26 @@ import { parsePatchFileCounts } from './patch-text-parser.js'
 import { getDataDir } from './config.js'
 
 export type GenericSessionMessage = {
-  info: { role: string; id?: string; parentID?: string }
+  info: {
+    role: string
+    id?: string
+    parentID?: string
+    time?: { created: number }
+    error?: SessionStructuredError
+  }
   parts: DiscordSessionPart[]
+}
+
+export function sessionMessagesAscending<T extends { time: { created: number } }>(
+  messages: readonly T[],
+): T[] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      return left.message.time.created - right.message.time.created
+        || left.index - right.index
+    })
+    .map(({ message }) => message)
 }
 
 export function discordTextPartId({
@@ -103,10 +158,10 @@ function parseToolInput(input: unknown): Record<string, unknown> {
 }
 
 export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): GenericSessionMessage[] {
-  return messages.map((message) => {
+  return sessionMessagesAscending(messages).map((message) => {
     if (message.type === 'user') {
       return {
-        info: { role: 'user', id: message.id },
+        info: { role: 'user', id: message.id, time: message.time },
         parts: [{
           id: message.id,
           type: 'text',
@@ -118,7 +173,12 @@ export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): Generi
     }
     if (message.type === 'assistant') {
       return {
-        info: { role: 'assistant', id: message.id },
+        info: {
+          role: 'assistant',
+          id: message.id,
+          time: message.time,
+          error: message.error,
+        },
         parts: (() => {
           const ordinals = { text: 0, reasoning: 0 }
           return message.content.flatMap((part): DiscordSessionPart[] => {
@@ -141,7 +201,7 @@ export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): Generi
                     : part.state.status === 'completed'
                       ? 'completed'
                       : 'running',
-                  input: parseToolInput('input' in part.state ? part.state.input : {}),
+                  input: parseToolInput(part.state.input),
                   output,
                   error: part.state.status === 'error' ? formatToolError(part.state.error) : undefined,
                 },
@@ -177,7 +237,7 @@ export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): Generi
       }
     }
     return {
-      info: { role: message.type, id: message.id },
+      info: { role: message.type, id: message.id, time: message.time },
       parts: [],
     }
   })
@@ -205,7 +265,7 @@ export const WORKTREE_PREFIX = STATUS_PREFIX
  * Each embed becomes an <embed> XML block with title, author, description,
  * fields, footer, and URL when present.
  */
-export function serializeEmbeds(embeds: Embed[]): string {
+export function serializeEmbeds(embeds: SerializableEmbed[]): string {
   if (embeds.length === 0) return ''
   const parts: string[] = []
   for (const embed of embeds) {
@@ -239,7 +299,7 @@ export function serializeEmbeds(embeds: Embed[]): string {
  * Serialize a Discord poll into plain text so the AI model can read the
  * question and answer options.
  */
-export function serializePoll(poll: Poll | null): string {
+export function serializePoll(poll: SerializablePoll | null): string {
   if (!poll) return ''
   const lines: string[] = []
   if (poll.question.text) {
@@ -259,7 +319,7 @@ export function serializePoll(poll: Poll | null): string {
  * partial Message with content and embeds.
  */
 export function serializeMessageSnapshots(
-  snapshots: Message['messageSnapshots'],
+  snapshots: SerializableSnapshotCollection,
 ): string {
   if (snapshots.size === 0) return ''
   const parts: string[] = []
@@ -662,7 +722,7 @@ function localAttachmentPath(attachment: { id?: string; name: string; url: strin
   return path.join(getDataDir(), 'attachments', `${id}-${safeAttachmentBasename(attachment.name)}`)
 }
 
-export async function getTextAttachments(message: Message): Promise<string> {
+export async function getTextAttachments(message: TextAttachmentMessage): Promise<string> {
   const textAttachments = Array.from(message.attachments.values()).filter(
     (attachment) => isTextMimeType(attachment.contentType),
   )

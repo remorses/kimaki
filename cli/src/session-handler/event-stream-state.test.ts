@@ -1,2448 +1,433 @@
-// Fixture-driven tests for pure event-stream derivation helpers.
-// Focuses on assistant message completion boundaries instead of session.idle.
+// Tests native OpenCode v2 and Kimaki-local event-stream derivations.
 
-import fs from 'node:fs'
-import path from 'node:path'
-import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
+import type { V2Event } from '@opencode/client'
 import { describe, expect, test } from 'vitest'
-import { type OpencodeEventLogEntry } from './opencode-session-event-log.js'
 import {
   derivePendingPermissionRequests,
-  getAssistantMessageIdsForLatestUserTurn,
+  didQuestionQueueHandoffSinceLatestQuestionAsked,
+  getAssistantMessageIdsForLatestExecution,
   getDerivedSubagentSessions,
-  getEventBufferSessionId,
-  getCurrentTurnStartTime,
   getDerivedSubtaskIndex,
-  getLatestAssistantMessageIdForLatestUserTurn,
+  getEventBufferSessionId,
+  getLatestAssistantMessageIdForLatestExecution,
+  getLatestExecutionStartedTimestamp,
   getLatestRunInfo,
-  getLatestTurnTokenUsage,
-  getIdleTokenUsageDelta,
-  getTokenUsageSessionIdsForIdle,
-  isDerivedChildSession,
-  hasAssistantMessageCompletedBefore,
-  doesLatestUserTurnHaveNaturalCompletion,
-  isAssistantMessageInLatestUserTurn,
-  isAssistantMessageNaturalCompletion,
-  getAssistantMessageKind,
-  getLatestUserMessage,
-  isSummaryAssistantMessage,
-  isSessionBusy,
-  isAssistantTextReadyForQuestion,
-  deriveLatestUnansweredQuestion,
+  getNativeExecutionUsage,
   hasVisibleV2OutputSinceExecutionStart,
-  shouldBufferSessionEvent,
-  shouldRetainSessionEvent,
-  trimEventBuffer,
+  isDerivedChildSession,
+  isEventForSessionTree,
+  isSessionBusy,
   type EventBufferEntry,
+  type EventBufferEvent,
 } from './event-stream-state.js'
 
-const fixturesDir = path.join(import.meta.dirname, 'event-stream-fixtures')
-type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
+let eventId = 0
 
-function loadFixture(filename: string): EventBufferEntry[] {
-  const content = fs.readFileSync(path.join(fixturesDir, filename), 'utf8')
-  return content
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => {
-      const parsed = JSON.parse(line) as OpencodeEventLogEntry
-      return {
-        event: parsed.event as EventBufferEntry['event'],
-        timestamp: parsed.timestamp,
-      }
-    })
+function entry(event: EventBufferEvent, timestamp = 1): EventBufferEntry {
+  return { event, timestamp }
 }
 
-function getSessionId(events: EventBufferEntry[]): string {
-  for (const entry of events) {
-    const sessionId = getEventBufferSessionId(entry.event)
-    if (sessionId) {
-      return sessionId
-    }
+function durable() {
+  return { aggregateID: 'ses_main', seq: ++eventId, version: 1 as const }
+}
+
+function executionStarted(sessionID: string): Extract<V2Event, { type: 'session.execution.started' }> {
+  return {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.execution.started',
+    durable: durable(),
+    data: { sessionID },
   }
-  throw new Error('No sessionId found in fixture')
 }
 
-function getAssistantMessages(events: EventBufferEntry[], sessionId: string) {
-  const messagesById = new Map<string, AssistantMessage>()
-  events.forEach((entry) => {
-    if (entry.event.type !== 'message.updated') {
-      return
-    }
-    const info = entry.event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
-      return
-    }
-    messagesById.set(info.id, info)
-  })
-  return [...messagesById.values()]
+function executionSucceeded(sessionID: string): Extract<V2Event, { type: 'session.execution.succeeded' }> {
+  return {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.execution.succeeded',
+    durable: durable(),
+    data: { sessionID },
+  }
 }
 
-function getAssistantMessageById({
-  events,
-  sessionId,
-  messageId,
+function stepStarted({
+  sessionID,
+  assistantMessageID,
+  agent = 'build',
 }: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-}): AssistantMessage {
-  const message = getAssistantMessages(events, sessionId).find((candidate) => {
-    return candidate.id === messageId
-  })
-  if (!message) {
-    throw new Error(`Assistant message ${messageId} not found`)
+  sessionID: string
+  assistantMessageID: string
+  agent?: string
+}): Extract<V2Event, { type: 'session.step.started' }> {
+  return {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.step.started',
+    durable: durable(),
+    data: {
+      sessionID,
+      assistantMessageID,
+      agent,
+      model: { providerID: 'openai', id: 'gpt-5.3-codex' },
+    },
   }
-  return message
 }
 
-// Test fixtures omit the top-level event `id` for brevity. The SDK event types
-// require it, so inject a synthetic id when missing. Derivation never reads the
-// top-level id (only properties.id / info.id), so the value is irrelevant.
-let syntheticEventIdCounter = 0
-function eventEntry(event: {
-  type: string
-  id?: string
-  properties?: unknown
-  data?: unknown
-}): EventBufferEntry {
-  const withId = {
-    ...event,
-    id: event.id ?? `evt_${++syntheticEventIdCounter}`,
-  } as EventBufferEntry['event']
-  return { event: withId, timestamp: 1 }
-}
-
-function findAssistantCompletionEventIndex({
-  events,
-  sessionId,
-  messageId,
+function stepEnded({
+  sessionID,
+  assistantMessageID,
+  input,
+  output,
+  cost,
 }: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-}): number {
-  const index = events.findIndex((entry) => {
-    if (entry.event.type !== 'message.updated') {
-      return false
-    }
-    const info = entry.event.properties.info
-    return info.sessionID === sessionId
-      && info.role === 'assistant'
-      && info.id === messageId
-      && typeof info.time.completed === 'number'
-  })
-  if (index === -1) {
-    throw new Error(`Completed assistant message ${messageId} not found`)
+  sessionID: string
+  assistantMessageID: string
+  input: number
+  output: number
+  cost: number
+}): Extract<V2Event, { type: 'session.step.ended' }> {
+  return {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.step.ended',
+    durable: durable(),
+    data: {
+      sessionID,
+      assistantMessageID,
+      finish: 'stop',
+      cost,
+      tokens: {
+        input,
+        output,
+        reasoning: 1,
+        cache: { read: 2, write: 3 },
+      },
+    },
   }
-  return index
 }
 
-describe('session-normal-completion', () => {
-  const events = loadFixture('session-normal-completion.jsonl')
-  const sessionId = getSessionId(events)
-  const latestAssistantMessageId = getLatestAssistantMessageIdForLatestUserTurn({
-    events,
-    sessionId,
-  })
-
-  test('latest assistant message completes naturally', () => {
-    if (!latestAssistantMessageId) {
-      throw new Error('Expected latest assistant message')
-    }
-    const message = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-    })
-    expect(isAssistantMessageNaturalCompletion({ message })).toBe(true)
-  })
-
-  test('latest user turn start time comes from the latest user message', () => {
-    expect(getCurrentTurnStartTime({ events, sessionId })).toBe(1772636294845)
-  })
-
-  test('completion history only appears after the completed update lands', () => {
-    if (!latestAssistantMessageId) {
-      throw new Error('Expected latest assistant message')
-    }
-    const completionIndex = findAssistantCompletionEventIndex({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-    })
-    expect(hasAssistantMessageCompletedBefore({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-      upToIndex: completionIndex - 1,
-    })).toBe(false)
-    expect(hasAssistantMessageCompletedBefore({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-    })).toBe(true)
-  })
-
-  test('completion history survives later non-completed duplicate updates', () => {
-    const messageId = 'msg_duplicate_completion'
-    const duplicateEvents: EventBufferEntry[] = [
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: messageId,
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 1, completed: 2 },
-            parentID: 'msg_user',
-            modelID: 'deterministic-v2',
-            providerID: 'deterministic-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 1,
-              output: 1,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-          },
-        },
-      }),
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: messageId,
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 1 },
-            parentID: 'msg_user',
-            modelID: 'deterministic-v2',
-            providerID: 'deterministic-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            finish: 'stop',
-          },
-        },
-      }),
-    ]
-
-    expect(hasAssistantMessageCompletedBefore({
-      events: duplicateEvents,
-      sessionId,
-      messageId,
-    })).toBe(true)
-  })
-
-  test('getLatestRunInfo', () => {
-    expect(getLatestRunInfo({ events, sessionId })).toEqual({
-      model: 'deterministic-v2',
-      providerID: 'deterministic-provider',
-      agent: 'build',
-      tokensUsed: 2,
-    })
-  })
-})
-
-describe('derivePendingPermissionRequests', () => {
-  test('tracks unresolved permission requests', () => {
-    const sessionId = 'ses_pending_permission'
-    const events = [
-      eventEntry({
-        type: 'permission.asked',
-        properties: {
-          id: 'perm_1',
-          sessionID: sessionId,
-          permission: 'bash',
-          patterns: ['*'],
-          always: [],
-          metadata: {},
-        },
-      }),
-      eventEntry({
-        type: 'permission.asked',
-        properties: {
-          id: 'perm_2',
-          sessionID: sessionId,
-          permission: 'edit',
-          patterns: ['src/**'],
-          always: [],
-          metadata: {},
-        },
-      }),
-      eventEntry({
-        type: 'permission.replied',
-        properties: {
-          requestID: 'perm_1',
-          sessionID: sessionId,
-          reply: 'once',
-        },
-      }),
-    ]
-
-    expect(derivePendingPermissionRequests({ events, sessionId })).toMatchInlineSnapshot(`
-      [
-        "perm_2",
-      ]
-    `)
-  })
-})
-
-describe('session-explicit-abort', () => {
-  const events = loadFixture('session-explicit-abort.jsonl')
-  const sessionId = getSessionId(events)
-  const assistantMessages = getAssistantMessages(events, sessionId)
-  const latestAssistant = assistantMessages[assistantMessages.length - 1]
-
-  test('aborted assistant message is not a natural completion', () => {
-    if (!latestAssistant) {
-      throw new Error('Expected assistant message in fixture')
-    }
-    expect(isAssistantMessageNaturalCompletion({ message: latestAssistant })).toBe(false)
-  })
-})
-
-describe('session-user-interruption', () => {
-  const events = loadFixture('session-user-interruption.jsonl')
-  const sessionId = getSessionId(events)
-  const firstAssistantId = 'msg_cb95be135001I1vqtzLtT4Q1iQ'
-  const slowSleepAssistantId = 'msg_cb95be39e001huREyY2wfjgV1M'
-  const followupAssistantId = 'msg_cb95beeb8001MuEOER9WprXsPC'
-
-  test('latest user turn only includes the follow-up assistant message', () => {
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: firstAssistantId,
-    })).toBe(false)
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: slowSleepAssistantId,
-    })).toBe(false)
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: followupAssistantId,
-    })).toBe(true)
-  })
-
-  test('latest user turn start time follows the follow-up user message', () => {
-    expect(getCurrentTurnStartTime({ events, sessionId })).toBe(1772636335777)
-  })
-})
-
-describe('compaction summary during an active user turn', () => {
-  const sessionId = 'ses_compaction'
-  const userMessageId = 'msg_user_compaction'
-  const replyMessageId = 'msg_reply_compaction'
-  const summaryMessageId = 'msg_summary_compaction'
-
-  function assistantEvent({
-    messageId,
-    created,
-    completed,
-    summary,
-  }: {
-    messageId: string
-    created: number
-    completed?: number
-    summary?: true
-  }): EventBufferEntry {
-    return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          parentID: userMessageId,
-          time: { created, completed },
-          modelID: summary ? 'compaction-model' : 'reply-model',
-          providerID: 'test-provider',
-          mode: summary ? 'compaction' : 'build',
-          agent: summary ? 'compaction' : 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: summary ? 2 : 1,
-          tokens: {
-            input: summary ? 20 : 10,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-          finish: completed ? 'stop' : undefined,
-          summary,
-        },
-      },
-    })
+function sessionCreated({
+  sessionID,
+  parentID,
+}: {
+  sessionID: string
+  parentID?: string
+}): Extract<V2Event, { type: 'session.created' }> {
+  return {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.created',
+    durable: durable(),
+    data: {
+      sessionID,
+      projectID: 'prj_1',
+      location: { directory: '/test' },
+      parentID,
+      slug: sessionID,
+      title: 'session',
+      version: '2.0.2',
+    },
   }
+}
 
-  const activeEvents = [
-    eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: userMessageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 1 },
-          agent: 'build',
-          model: { providerID: 'test-provider', modelID: 'reply-model' },
-        },
-      },
-    }),
-    assistantEvent({ messageId: replyMessageId, created: 2 }),
-    assistantEvent({
-      messageId: summaryMessageId,
-      created: 3,
-      completed: 4,
-      summary: true,
-    }),
-  ]
-
-  test('compaction completion does not replace or complete the user-facing reply', () => {
-    expect(getAssistantMessageIdsForLatestUserTurn({
-      events: activeEvents,
-      sessionId,
-    })).toEqual(new Set([replyMessageId]))
-    expect(getLatestAssistantMessageIdForLatestUserTurn({
-      events: activeEvents,
-      sessionId,
-    })).toBe(replyMessageId)
-    expect(isAssistantMessageInLatestUserTurn({
-      events: activeEvents,
-      sessionId,
-      messageId: summaryMessageId,
-    })).toBe(false)
-    expect(doesLatestUserTurnHaveNaturalCompletion({
-      events: activeEvents,
-      sessionId,
-    })).toBe(false)
-  })
-
-  test('summary identity is derivable while its billed usage remains counted', () => {
-    expect(getAssistantMessageKind({
-      events: activeEvents.slice(0, 2),
-      sessionId,
-      messageId: summaryMessageId,
-    })).toBe('unknown')
-    expect(getAssistantMessageKind({
-      events: activeEvents,
-      sessionId,
-      messageId: summaryMessageId,
-    })).toBe('summary')
-    expect(getAssistantMessageKind({
-      events: activeEvents,
-      sessionId,
-      messageId: replyMessageId,
-    })).toBe('user-facing')
-    expect(isSummaryAssistantMessage({
-      events: activeEvents,
-      sessionId,
-      messageId: summaryMessageId,
-    })).toBe(true)
-    expect(isAssistantMessageNaturalCompletion({
-      message: getAssistantMessageById({
-        events: activeEvents,
-        sessionId,
-        messageId: summaryMessageId,
-      }),
-    })).toBe(false)
-    expect(getLatestRunInfo({ events: activeEvents, sessionId })).toEqual({
-      model: 'reply-model',
-      providerID: 'test-provider',
-      agent: 'build',
-      tokensUsed: 11,
-    })
-    expect(getLatestTurnTokenUsage({ events: activeEvents, sessionId })).toMatchObject({
-      total: 32,
-      cost: 3,
-      assistantMessageCount: 2,
-    })
-  })
-
-  test('the real continuation still completes normally after compaction', () => {
-    const completedEvents = [
-      ...activeEvents,
-      assistantEvent({ messageId: replyMessageId, created: 2, completed: 5 }),
-    ]
-    expect(doesLatestUserTurnHaveNaturalCompletion({
-      events: completedEvents,
-      sessionId,
-    })).toBe(true)
-  })
-
-  test('compaction user messages do not steal the latest user-facing turn', () => {
-    const compactionUserId = 'msg_compaction_user'
-    const events = [
-      ...activeEvents,
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: compactionUserId,
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 6 },
-            agent: 'build',
-            model: { providerID: 'test-provider', modelID: 'reply-model' },
-          },
-        },
-      }),
-      eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'prt_compaction',
-            sessionID: sessionId,
-            messageID: compactionUserId,
-            type: 'compaction',
-            auto: true,
-          },
-        },
-      }),
-    ]
-    expect(getLatestUserMessage({ events, sessionId })?.id).toBe(userMessageId)
-    expect(getAssistantMessageIdsForLatestUserTurn({
-      events,
-      sessionId,
-    })).toEqual(new Set([replyMessageId]))
-  })
-})
-
-describe('session-two-completions-same-session', () => {
-  const events = loadFixture('session-two-completions-same-session.jsonl')
-  const sessionId = getSessionId(events)
-  const assistantMessages = getAssistantMessages(events, sessionId)
-  const firstAssistant = assistantMessages[0]
-  const secondAssistant = assistantMessages[1]
-
-  test('latest user turn points at the second completion only', () => {
-    if (!firstAssistant || !secondAssistant) {
-      throw new Error('Expected two assistant messages in fixture')
-    }
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: firstAssistant.id,
-    })).toBe(false)
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: secondAssistant.id,
-    })).toBe(true)
-    expect(getLatestAssistantMessageIdForLatestUserTurn({
-      events,
-      sessionId,
-    })).toBe(secondAssistant.id)
-  })
-})
-
-describe('session-concurrent-messages-serialized', () => {
-  const events = loadFixture('session-concurrent-messages-serialized.jsonl')
-  const sessionId = getSessionId(events)
-  const latestAssistantMessageId = getLatestAssistantMessageIdForLatestUserTurn({
-    events,
-    sessionId,
-  })
-
-  test('fixture latest turn is still incomplete even though an older turn completed', () => {
-    expect(doesLatestUserTurnHaveNaturalCompletion({
-      events,
-      sessionId,
-    })).toBe(false)
-    if (!latestAssistantMessageId) {
-      throw new Error('Expected latest assistant message')
-    }
-    const message = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-    })
-    expect(message.id).toBe(latestAssistantMessageId)
-  })
-})
-
-describe('ignored plugin notices do not steal the current Discord turn', () => {
-  const sessionId = 'ses_notice'
-  const userMessageId = 'msg_user'
-  const replyMessageId = 'msg_asst'
-  const noticeMessageId = 'msg_notice'
-  const replyAfterNoticeMessageId = 'msg_asst_after_notice'
-  const events: EventBufferEntry[] = [
-    eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: userMessageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 1 },
-          agent: 'build',
-          model: { providerID: 'test-provider', modelID: 'reply-model' },
-        },
-      },
-    }),
-    eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        sessionID: sessionId,
-        part: {
-          id: 'prt_prompt',
-          sessionID: sessionId,
-          messageID: userMessageId,
-          type: 'text',
-          text: 'see how we display in discord tool calls',
-        },
-      },
-    }),
-    eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        sessionID: sessionId,
-        part: {
-          id: 'prt_branch',
-          sessionID: sessionId,
-          messageID: userMessageId,
-          type: 'text',
-          text: '\n[current git branch is main]\n',
-          synthetic: true,
-        },
-      },
-    }),
-    eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: replyMessageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          parentID: userMessageId,
-          time: { created: 2 },
-          modelID: 'reply-model',
-          providerID: 'test-provider',
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: 1,
-          tokens: {
-            input: 10,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-        },
-      },
-    }),
-    eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: noticeMessageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 3 },
-          agent: 'build',
-          model: { providerID: 'subrouter', modelID: 'build' },
-        },
-      },
-    }),
-    eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        sessionID: sessionId,
-        part: {
-          id: 'prt_notice',
-          sessionID: sessionId,
-          messageID: noticeMessageId,
-          type: 'text',
-          text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-          ignored: true,
-        },
-      },
-    }),
-    eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: replyAfterNoticeMessageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          parentID: noticeMessageId,
-          time: { created: 4, completed: 5 },
-          modelID: 'build',
-          providerID: 'subrouter',
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: 1,
-          tokens: {
-            input: 10,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-          finish: 'stop',
-        },
-      },
-    }),
-  ]
-
-  test('keeps the real user prompt as the latest turn', () => {
-    expect(getLatestUserMessage({ events, sessionId })?.id).toBe(userMessageId)
-    expect(getAssistantMessageIdsForLatestUserTurn({
-      events,
-      sessionId,
-    })).toEqual(new Set([replyMessageId, replyAfterNoticeMessageId]))
-    expect(getLatestAssistantMessageIdForLatestUserTurn({
-      events,
-      sessionId,
-    })).toBe(replyAfterNoticeMessageId)
-    expect(doesLatestUserTurnHaveNaturalCompletion({
-      events,
-      sessionId,
-    })).toBe(true)
-  })
-
-  test('keeps a file prompt with an ignored notice as the latest turn', () => {
-    const fileUserId = 'msg_file_user'
-    const fileAssistantId = 'msg_file_asst'
-    const fileEvents: EventBufferEntry[] = [
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: fileUserId,
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 4 },
-            agent: 'build',
-            model: { providerID: 'test-provider', modelID: 'reply-model' },
-          },
-        },
-      }),
-      eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'prt_file',
-            sessionID: sessionId,
-            messageID: fileUserId,
-            type: 'file',
-            mime: 'image/png',
-            filename: 'shot.png',
-            url: 'https://example.com/shot.png',
-          },
-        },
-      }),
-      eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          sessionID: sessionId,
-          part: {
-            id: 'prt_file_notice',
-            sessionID: sessionId,
-            messageID: fileUserId,
-            type: 'text',
-            text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-            ignored: true,
-          },
-        },
-      }),
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: fileAssistantId,
-            sessionID: sessionId,
-            role: 'assistant',
-            parentID: fileUserId,
-            time: { created: 5 },
-            modelID: 'reply-model',
-            providerID: 'test-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 1,
-            tokens: {
-              input: 10,
-              output: 1,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-          },
-        },
-      }),
-    ]
-    expect(getLatestUserMessage({ events: fileEvents, sessionId })?.id).toBe(fileUserId)
-    expect(getAssistantMessageIdsForLatestUserTurn({
-      events: fileEvents,
-      sessionId,
-    })).toEqual(new Set([fileAssistantId]))
-  })
-})
-
-describe('session-tool-call-noisy-stream', () => {
-  const events = loadFixture('session-tool-call-noisy-stream.jsonl')
-  const sessionId = getSessionId(events)
-  const latestAssistantMessageId = getLatestAssistantMessageIdForLatestUserTurn({
-    events,
-    sessionId,
-  })
-
-  test('fixture ends busy on a tool-call handoff message', () => {
-    expect(isSessionBusy({ events, sessionId })).toBe(true)
-    if (!latestAssistantMessageId) {
-      throw new Error('Expected latest assistant message')
-    }
-    const message = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-    })
-    expect(isAssistantMessageNaturalCompletion({ message })).toBe(false)
-  })
-
-  test('getLatestRunInfo still works through dense tool events', () => {
-    expect(getLatestRunInfo({ events, sessionId })).toEqual({
-      model: 'deterministic-v2',
-      providerID: 'deterministic-provider',
-      agent: 'build',
-      tokensUsed: 0,
-    })
-  })
-})
-
-describe('session-voice-queued-followup', () => {
-  const events = loadFixture('session-voice-queued-followup.jsonl')
-  const sessionId = getSessionId(events)
-
-  test('latest user turn start moves to the queued follow-up', () => {
-    expect(getCurrentTurnStartTime({ events, sessionId })).toBe(1772636414577)
-  })
-})
-
-describe('synthetic-question-followup', () => {
-  const sessionId = 'ses_question'
-  const events: EventBufferEntry[] = [
-    {
-      timestamp: 1,
-      event: {
-        id: 'evt_user_1',
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_1',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 1 },
-            agent: 'build',
-            model: {
-              providerID: 'deterministic-provider',
-              modelID: 'deterministic-v2',
-            },
-          },
-        },
-      },
+function nativeSubagentEvents({
+  mainSessionID,
+  childSessionID,
+  assistantMessageID = 'msg_parent',
+  callID = 'call_subagent',
+}: {
+  mainSessionID: string
+  childSessionID: string
+  assistantMessageID?: string
+  callID?: string
+}): EventBufferEntry[] {
+  const inputStarted: Extract<V2Event, { type: 'session.tool.input.started' }> = {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.tool.input.started',
+    durable: durable(),
+    data: {
+      sessionID: mainSessionID,
+      assistantMessageID,
+      id: callID,
+      name: 'subagent',
     },
-    {
-      timestamp: 2,
-      event: {
-        id: 'evt_asst_1',
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_user_1',
-            modelID: 'deterministic-v2',
-            providerID: 'deterministic-provider',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 1,
-              output: 1,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-          },
-        },
-      },
-    },
-    {
-      timestamp: 4,
-      event: {
-        id: 'evt_user_2',
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_2',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 4 },
-            agent: 'build',
-            model: {
-              providerID: 'deterministic-provider',
-              modelID: 'deterministic-v2',
-            },
-          },
-        },
-      },
-    },
-  ]
-
-  test('latest user turn flips immediately after the follow-up user message', () => {
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: 'msg_asst_1',
-    })).toBe(false)
-    expect(getCurrentTurnStartTime({ events, sessionId })).toBe(4)
-  })
-})
-
-describe('real-session-task-normal', () => {
-  const events = loadFixture('real-session-task-normal.jsonl')
-  const sessionId = getSessionId(events)
-  const latestAssistantMessageId = getLatestAssistantMessageIdForLatestUserTurn({
-    events,
-    sessionId,
-  })
-
-  test('latest assistant completion is terminal', () => {
-    if (!latestAssistantMessageId) {
-      throw new Error('Expected latest assistant message')
-    }
-    const message = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-    })
-    expect(isAssistantMessageNaturalCompletion({ message })).toBe(true)
-  })
-
-  test('getLatestRunInfo has model info', () => {
-    expect(getLatestRunInfo({ events, sessionId })).toEqual({
-      model: 'gemini-2.5-flash',
-      providerID: 'cached-google-real-events',
-      agent: 'build',
-      tokensUsed: 39025,
-    })
-  })
-})
-
-describe('real-session-task-user-interruption', () => {
-  const events = loadFixture('real-session-task-user-interruption.jsonl')
-  const sessionId = getSessionId(events)
-  const childSessionId = 'ses_3464f3a1dffeBBD0d15EqnGjAh'
-  const firstAssistantId = 'msg_cb9b0ba96001SpPjgzxWPmRuW9'
-  const secondAssistantId = 'msg_cb9b1ae5c001E5G3Ql6aXNpst2'
-
-  test('tool-call handoff assistant is not a natural completion but the resumed reply is', () => {
-    const firstAssistant = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: firstAssistantId,
-    })
-    const secondAssistant = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: secondAssistantId,
-    })
-    // The first message finished with tool-calls — not a natural completion
-    // (footer is deferred to session.idle). The second message IS natural.
-    expect(isAssistantMessageNaturalCompletion({ message: firstAssistant })).toBe(false)
-    expect(isAssistantMessageNaturalCompletion({ message: secondAssistant })).toBe(true)
-  })
-
-  test('latest user turn keeps both assistant messages for the same user turn', () => {
-    const assistantIds = getAssistantMessageIdsForLatestUserTurn({ events, sessionId })
-    expect(assistantIds.has(firstAssistantId)).toBe(true)
-    expect(assistantIds.has(secondAssistantId)).toBe(true)
-    expect(getLatestAssistantMessageIdForLatestUserTurn({
-      events,
-      sessionId,
-    })).toBe(secondAssistantId)
-  })
-
-  test('getDerivedSubtaskIndex starts at 1 for first task of assistant message', () => {
-    expect(getDerivedSubtaskIndex({
-      events,
-      mainSessionId: sessionId,
-      candidateSessionId: childSessionId,
-    })).toBe(1)
-  })
-
-  test('getDerivedSubtaskIndex restarts at 1 for a newer assistant message', () => {
-    const firstTaskEvent = events.find((entry) => {
-      if (entry.event.type !== 'message.part.updated') {
-        return false
-      }
-      const part = entry.event.properties.part
-      if (part.sessionID !== sessionId) {
-        return false
-      }
-      if (part.type !== 'tool' || part.tool !== 'task') {
-        return false
-      }
-      if (part.state.status !== 'running' && part.state.status !== 'completed') {
-        return false
-      }
-      return part.state.metadata?.sessionId === childSessionId
-    })
-    if (!firstTaskEvent) {
-      throw new Error('Expected to find task tool event in fixture')
-    }
-
-    const secondChildSessionId = 'ses_synthetic_child_2'
-    const thirdChildSessionId = 'ses_synthetic_child_3'
-    const syntheticAssistantMessageId = 'msg_synthetic_new_assistant'
-
-    const secondTaskEvent = structuredClone(firstTaskEvent)
-    if (secondTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected message.part.updated event')
-    }
-    const secondTaskPart = secondTaskEvent.event.properties.part
-    if (secondTaskPart.type !== 'tool' || secondTaskPart.tool !== 'task') {
-      throw new Error('Expected task tool part')
-    }
-    if (secondTaskPart.state.status !== 'completed') {
-      throw new Error('Expected completed task tool part')
-    }
-    secondTaskPart.id = `${secondTaskPart.id}-synthetic-2`
-    secondTaskPart.messageID = syntheticAssistantMessageId
-    secondTaskPart.state = {
-      ...secondTaskPart.state,
-      metadata: {
-        ...(secondTaskPart.state.metadata || {}),
-        sessionId: secondChildSessionId,
-      },
-      output: `task_id: ${secondChildSessionId}`,
-    }
-
-    const thirdTaskEvent = structuredClone(secondTaskEvent)
-    if (thirdTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected message.part.updated event')
-    }
-    const thirdTaskPart = thirdTaskEvent.event.properties.part
-    if (thirdTaskPart.type !== 'tool' || thirdTaskPart.tool !== 'task') {
-      throw new Error('Expected task tool part')
-    }
-    if (thirdTaskPart.state.status !== 'completed') {
-      throw new Error('Expected completed task tool part')
-    }
-    thirdTaskPart.id = `${thirdTaskPart.id}-synthetic-3`
-    thirdTaskPart.messageID = syntheticAssistantMessageId
-    thirdTaskPart.state = {
-      ...thirdTaskPart.state,
-      metadata: {
-        ...(thirdTaskPart.state.metadata || {}),
-        sessionId: thirdChildSessionId,
-      },
-      output: `task_id: ${thirdChildSessionId}`,
-    }
-
-    const lastTimestamp = events[events.length - 1]?.timestamp || 0
-    const augmentedEvents: EventBufferEntry[] = [
-      ...events,
-      {
-        timestamp: lastTimestamp + 1,
-        event: secondTaskEvent.event,
-      },
-      {
-        timestamp: lastTimestamp + 2,
-        event: thirdTaskEvent.event,
-      },
-    ]
-
-    expect(getDerivedSubtaskIndex({
-      events: augmentedEvents,
-      mainSessionId: sessionId,
-      candidateSessionId: childSessionId,
-    })).toBe(1)
-    expect(getDerivedSubtaskIndex({
-      events: augmentedEvents,
-      mainSessionId: sessionId,
-      candidateSessionId: secondChildSessionId,
-    })).toBe(1)
-    expect(getDerivedSubtaskIndex({
-      events: augmentedEvents,
-      mainSessionId: sessionId,
-      candidateSessionId: thirdChildSessionId,
-    })).toBe(2)
-  })
-
-  test('getDerivedSubtaskIndex returns undefined for unknown session', () => {
-    expect(getDerivedSubtaskIndex({
-      events,
-      mainSessionId: sessionId,
-      candidateSessionId: 'ses_nonexistent',
-    })).toBe(undefined)
-  })
-
-  test('getDerivedSubagentSessions returns latest tasks first with agent labels', () => {
-    const firstTaskEvent = events.find((entry) => {
-      if (entry.event.type !== 'message.part.updated') {
-        return false
-      }
-      const part = entry.event.properties.part
-      if (part.sessionID !== sessionId) {
-        return false
-      }
-      if (part.type !== 'tool' || part.tool !== 'task') {
-        return false
-      }
-      return part.state.status === 'running' || part.state.status === 'completed'
-    })
-    if (!firstTaskEvent || firstTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected to find task tool event in fixture')
-    }
-
-    const newerTaskEvent = structuredClone(firstTaskEvent)
-    if (newerTaskEvent.event.type !== 'message.part.updated') {
-      throw new Error('Expected message.part.updated event')
-    }
-    const newerTaskPart = newerTaskEvent.event.properties.part
-    if (newerTaskPart.type !== 'tool' || newerTaskPart.tool !== 'task') {
-      throw new Error('Expected task tool part')
-    }
-    if (newerTaskPart.state.status !== 'running' && newerTaskPart.state.status !== 'completed') {
-      throw new Error('Expected running or completed task tool part')
-    }
-    newerTaskPart.id = `${newerTaskPart.id}-newer`
-    newerTaskPart.state = {
-      ...newerTaskPart.state,
+  }
+  const called: Extract<V2Event, { type: 'session.tool.called' }> = {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.tool.called',
+    durable: durable(),
+    data: {
+      sessionID: mainSessionID,
+      assistantMessageID,
+      id: callID,
       input: {
-        ...newerTaskPart.state.input,
-        description: 'inspect recent task output',
-        subagent_type: 'explore',
+        agent: 'explore',
+        description: `Inspect ${childSessionID}`,
+        prompt: 'Inspect the repository',
       },
-      metadata: {
-        ...(newerTaskPart.state.metadata || {}),
-        sessionId: 'ses_newer_child',
-      },
-    }
+      executed: true,
+    },
+  }
+  const success: Extract<V2Event, { type: 'session.tool.success' }> = {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.tool.success',
+    durable: { ...durable(), version: 2 },
+    data: {
+      sessionID: mainSessionID,
+      assistantMessageID,
+      id: callID,
+      content: [{ type: 'text', text: 'complete' }],
+      metadata: { sessionID: childSessionID, status: 'completed' },
+      executed: true,
+    },
+  }
+  return [entry(inputStarted), entry(called), entry(success)]
+}
 
-    const latestTimestamp = events[events.length - 1]?.timestamp || 0
-    const augmentedEvents: EventBufferEntry[] = [
-      ...events,
-      {
-        timestamp: latestTimestamp + 1,
-        event: newerTaskEvent.event,
-      },
+describe('native execution state', () => {
+  test('Kimaki queue markers close the admission race without v1 status events', () => {
+    const sessionID = 'ses_queue'
+    const started = entry({
+      type: 'kimaki.queue-dispatch.started',
+      data: { sessionID },
+    })
+    const settled = entry({
+      type: 'kimaki.queue-dispatch.settled',
+      data: { sessionID },
+    })
+
+    expect(isSessionBusy({ events: [started], sessionId: sessionID })).toBe(true)
+    expect(isSessionBusy({ events: [started, settled], sessionId: sessionID })).toBe(false)
+    expect(getEventBufferSessionId(started.event)).toBe(sessionID)
+  })
+
+  test('latest execution start ignores earlier completed runs', () => {
+    const sessionID = 'ses_abort_wait'
+    const events = [
+      { event: executionStarted(sessionID), timestamp: 10 },
+      { event: executionSucceeded(sessionID), timestamp: 20 },
+      { event: executionStarted(sessionID), timestamp: 30 },
     ]
 
-    expect(getDerivedSubagentSessions({
-      events: augmentedEvents,
-      mainSessionId: sessionId,
-    })).toMatchInlineSnapshot(`
-      [
-        {
-          "childSessionId": "ses_newer_child",
-          "description": "inspect recent task output",
-          "subagentType": "explore",
-          "timestamp": 1772641957983,
-        },
-        {
-          "childSessionId": "ses_3464f3a1dffeBBD0d15EqnGjAh",
-          "description": undefined,
-          "subagentType": undefined,
-          "timestamp": 1772641955371,
-        },
-      ]
+    expect(getLatestExecutionStartedTimestamp({ events, sessionId: sessionID })).toBe(30)
+    expect(getLatestExecutionStartedTimestamp({
+      events,
+      sessionId: sessionID,
+      upToIndex: 1,
+    })).toBe(10)
+  })
+
+  test('native execution terminal events settle busy state', () => {
+    const sessionID = 'ses_execution'
+    const events = [
+      entry(executionStarted(sessionID)),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_a' })),
+      entry(executionSucceeded(sessionID)),
+    ]
+
+    expect(isSessionBusy({ events: events.slice(0, 2), sessionId: sessionID })).toBe(true)
+    expect(isSessionBusy({ events, sessionId: sessionID })).toBe(false)
+  })
+
+  test('assistant message ids are scoped to the latest execution', () => {
+    const sessionID = 'ses_messages'
+    const events = [
+      entry(executionStarted(sessionID)),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_old' })),
+      entry(executionSucceeded(sessionID)),
+      entry(executionStarted(sessionID)),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_new_1' })),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_new_2' })),
+    ]
+
+    expect(getAssistantMessageIdsForLatestExecution({ events, sessionId: sessionID }))
+      .toEqual(new Set(['msg_new_1', 'msg_new_2']))
+    expect(getLatestAssistantMessageIdForLatestExecution({ events, sessionId: sessionID }))
+      .toBe('msg_new_2')
+  })
+
+  test('visible output does not leak across executions', () => {
+    const sessionID = 'ses_output'
+    const textEnded: Extract<V2Event, { type: 'session.text.ended' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.text.ended',
+      durable: durable(),
+      data: {
+        sessionID,
+        assistantMessageID: 'msg_old',
+        ordinal: 0,
+        text: 'old output',
+      },
+    }
+    const events = [
+      entry(executionStarted(sessionID)),
+      entry(textEnded),
+      entry(executionSucceeded(sessionID)),
+      entry(executionStarted(sessionID)),
+      entry(executionSucceeded(sessionID)),
+    ]
+
+    expect(hasVisibleV2OutputSinceExecutionStart({ events, sessionId: sessionID })).toBe(false)
+    expect(hasVisibleV2OutputSinceExecutionStart({ events: events.slice(0, 3), sessionId: sessionID }))
+      .toBe(true)
+  })
+
+  test('derives run info and usage from native steps', () => {
+    const sessionID = 'ses_usage'
+    const events = [
+      entry(executionStarted(sessionID), 100),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_a', agent: 'plan' })),
+      entry(stepEnded({ sessionID, assistantMessageID: 'msg_a', input: 10, output: 4, cost: 0.01 })),
+      entry(stepEnded({ sessionID, assistantMessageID: 'msg_b', input: 20, output: 5, cost: 0.02 })),
+    ]
+
+    expect(getLatestRunInfo({ events, sessionId: sessionID })).toMatchInlineSnapshot(`
+      {
+        "agent": "plan",
+        "model": "gpt-5.3-codex",
+        "providerID": "openai",
+        "tokensUsed": 31,
+      }
+    `)
+    expect(getNativeExecutionUsage({ events, sessionId: sessionID })).toMatchInlineSnapshot(`
+      {
+        "agent": "plan",
+        "assistantMessageCount": 2,
+        "cacheRead": 4,
+        "cacheWrite": 6,
+        "cost": 0.03,
+        "input": 30,
+        "model": "gpt-5.3-codex",
+        "output": 9,
+        "providerID": "openai",
+        "reasoning": 2,
+        "startedAt": 100,
+        "total": 51,
+      }
     `)
   })
 })
 
-describe('real-session-action-buttons', () => {
-  const events = loadFixture('real-session-action-buttons.jsonl')
-  const sessionId = getSessionId(events)
-  const toolCallAssistantId = 'msg_cb9b55c3b001hXC9qxjVxLMypM'
-  const finalAssistantId = 'msg_cb9b5ddd1001FALqKNM6xW98u6'
-
-  test('tool-call handoff assistant is not a natural completion but final reply is', () => {
-    const toolCallAssistant = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: toolCallAssistantId,
+describe('native permissions and forms', () => {
+  test('tracks unresolved permission requests from native data', () => {
+    const sessionID = 'ses_permission'
+    const asked = (id: string): Extract<V2Event, { type: 'permission.asked' }> => ({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'permission.asked',
+      data: {
+        id,
+        sessionID,
+        action: 'read',
+        resources: ['src/**'],
+        metadata: {},
+      },
     })
-    const finalAssistant = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: finalAssistantId,
-    })
-    // The tool-call message has finish="tool-calls" — not a natural completion
-    // (footer is deferred to session.idle). The final text message IS natural.
-    expect(isAssistantMessageNaturalCompletion({ message: toolCallAssistant })).toBe(false)
-    expect(isAssistantMessageNaturalCompletion({ message: finalAssistant })).toBe(true)
-  })
-
-  test('latest user turn keeps both assistant messages for the same user turn', () => {
-    const assistantIds = getAssistantMessageIdsForLatestUserTurn({ events, sessionId })
-    expect(assistantIds.has(toolCallAssistantId)).toBe(true)
-    expect(assistantIds.has(finalAssistantId)).toBe(true)
-    expect(getLatestAssistantMessageIdForLatestUserTurn({
-      events,
-      sessionId,
-    })).toBe(finalAssistantId)
-  })
-})
-
-describe('real-session-permission-external-file', () => {
-  const events = loadFixture('real-session-permission-external-file.jsonl')
-  const sessionId = getSessionId(events)
-
-  test('permission flow has no terminal assistant completion yet', () => {
-    const latestAssistantMessageId = getLatestAssistantMessageIdForLatestUserTurn({
-      events,
-      sessionId,
-    })
-    expect(latestAssistantMessageId).toBeDefined()
-    if (!latestAssistantMessageId) {
-      return
+    const replied: Extract<V2Event, { type: 'permission.replied' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'permission.replied',
+      data: { sessionID, requestID: 'perm_1', reply: 'once' },
     }
-    const message = getAssistantMessageById({
-      events,
-      sessionId,
-      messageId: latestAssistantMessageId,
-    })
-    expect(isAssistantMessageNaturalCompletion({ message })).toBe(false)
+    const events = [entry(asked('perm_1')), entry(asked('perm_2')), entry(replied)]
+
+    expect(derivePendingPermissionRequests({ events, sessionId: sessionID }))
+      .toEqual(['perm_2'])
   })
-})
 
-describe('real-session-footer-suppressed-on-pre-idle-interrupt', () => {
-  const events = loadFixture('real-session-footer-suppressed-on-pre-idle-interrupt.jsonl')
-  const sessionId = getSessionId(events)
-  const oldAssistantId = 'msg_cbda8f408001VATHNUi9l05XqA'
-  const abortedAssistantId = 'msg_cbda90cef001GOQW8EQxkUz9b5'
-  const latestAssistantId = 'msg_cbda91463001DvEB6YMCXayZNj'
+  test('replayed forms do not reset a completed local queue handoff', () => {
+    const sessionID = 'ses_form'
+    const form = (id: string): Extract<V2Event, { type: 'form.created' }> => ({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'form.created',
+      data: {
+        form: {
+          id,
+          sessionID,
+          title: 'Question',
+          metadata: { kind: 'question' },
+          fields: [{ key: 'answer', type: 'string', title: 'Answer' }],
+        },
+      },
+    })
+    const handoff = entry({
+      type: 'kimaki.question-queue-handoff.started',
+      data: { sessionID, requestID: 'form_one' },
+    })
 
-  test('latest user turn ignores stale assistant messages from the interrupted turn', () => {
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: oldAssistantId,
-    })).toBe(false)
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: abortedAssistantId,
-    })).toBe(false)
-    expect(isAssistantMessageInLatestUserTurn({
-      events,
-      sessionId,
-      messageId: latestAssistantId,
+    expect(didQuestionQueueHandoffSinceLatestQuestionAsked({
+      events: [entry(form('form_one')), handoff, entry(form('form_one'))],
+      sessionId: sessionID,
     })).toBe(true)
+    expect(didQuestionQueueHandoffSinceLatestQuestionAsked({
+      events: [entry(form('form_one')), handoff, entry(form('form_two'))],
+      sessionId: sessionID,
+    })).toBe(false)
   })
 })
 
-describe('getLatestTurnTokenUsage', () => {
-  function userEvent({
-    sessionId,
-    messageId,
-    created,
-  }: {
-    sessionId: string
-    messageId: string
-    created: number
-  }) {
-    return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'user',
-          time: { created },
-          agent: 'build',
-          model: {
-            providerID: 'openai',
-            modelID: 'gpt-5.3-codex',
+describe('native subagent session tree', () => {
+  test('derives labels, ordering, and child routing from native tool events', () => {
+    const mainSessionID = 'ses_main'
+    const firstChild = 'ses_child_1'
+    const secondChild = 'ses_child_2'
+    const first = nativeSubagentEvents({ mainSessionID, childSessionID: firstChild })
+    const second = nativeSubagentEvents({
+      mainSessionID,
+      childSessionID: secondChild,
+      assistantMessageID: 'msg_parent_2',
+      callID: 'call_subagent_2',
+    }).map((item, index) => ({ ...item, timestamp: 10 + index }))
+    const childCreated = entry(sessionCreated({ sessionID: firstChild, parentID: mainSessionID }))
+    const events = [...first, ...second, childCreated]
+
+    expect(getDerivedSubagentSessions({ events, mainSessionId: mainSessionID }))
+      .toMatchInlineSnapshot(`
+        [
+          {
+            "childSessionId": "ses_child_2",
+            "description": "Inspect ses_child_2",
+            "subagentType": "explore",
+            "timestamp": 12,
           },
-        },
-      },
-    })
-  }
-
-  function assistantEvent({
-    sessionId,
-    messageId,
-    parentID,
-    created,
-    tokens,
-    cost = 0,
-    modelID = 'gpt-5.3-codex',
-    providerID = 'openai',
-  }: {
-    sessionId: string
-    messageId: string
-    parentID: string
-    created: number
-    tokens: {
-      total?: number
-      input: number
-      output: number
-      reasoning: number
-      cache: { read: number; write: number }
-    }
-    cost?: number
-    modelID?: string
-    providerID?: string
-  }) {
-    return eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          time: { created, completed: created + 1 },
-          parentID,
-          modelID,
-          providerID,
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost,
-          tokens,
-          finish: 'stop',
-        },
-      },
-    })
-  }
-
-  test('sums latest snapshot per assistant message in the latest turn', () => {
-    const sessionId = 'ses_tokens'
-    const events = [
-      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
-      assistantEvent({
-        sessionId,
-        messageId: 'msg_asst_1',
-        parentID: 'msg_user_1',
-        created: 2,
-        tokens: {
-          input: 0,
-          output: 0,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-      }),
-      assistantEvent({
-        sessionId,
-        messageId: 'msg_asst_1',
-        parentID: 'msg_user_1',
-        created: 2,
-        tokens: {
-          input: 100,
-          output: 20,
-          reasoning: 5,
-          cache: { read: 10, write: 2 },
-        },
-        cost: 1,
-      }),
-      assistantEvent({
-        sessionId,
-        messageId: 'msg_asst_2',
-        parentID: 'msg_user_1',
-        created: 3,
-        tokens: {
-          input: 50,
-          output: 8,
-          reasoning: 1,
-          cache: { read: 4, write: 0 },
-        },
-        cost: 2,
-      }),
-    ]
-
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
-      input: 150,
-      output: 28,
-      reasoning: 6,
-      cacheRead: 14,
-      cacheWrite: 2,
-      total: 200,
-      cost: 3,
-      model: 'gpt-5.3-codex',
-      providerID: 'openai',
-      assistantMessageCount: 2,
-      userMessageId: 'msg_user_1',
-    })
-  })
-
-  test('ignores previous-turn assistant messages', () => {
-    const sessionId = 'ses_tokens_turns'
-    const events = [
-      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
-      assistantEvent({
-        sessionId,
-        messageId: 'msg_asst_1',
-        parentID: 'msg_user_1',
-        created: 2,
-        tokens: {
-          input: 1000,
-          output: 100,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-      }),
-      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
-      assistantEvent({
-        sessionId,
-        messageId: 'msg_asst_2',
-        parentID: 'msg_user_2',
-        created: 4,
-        tokens: {
-          input: 7,
-          output: 3,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-        modelID: 'gemini-2.5-flash',
-        providerID: 'google',
-      }),
-    ]
-
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
-      input: 7,
-      output: 3,
-      reasoning: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 10,
-      cost: 0,
-      model: 'gemini-2.5-flash',
-      providerID: 'google',
-      assistantMessageCount: 1,
-      userMessageId: 'msg_user_2',
-    })
-  })
-
-  test('returns zeros when the latest turn has no assistant tokens', () => {
-    const sessionId = 'ses_empty'
-    const events = [
-      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
-    ]
-
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
-      input: 0,
-      output: 0,
-      reasoning: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 0,
-      cost: 0,
-      model: undefined,
-      providerID: undefined,
-      assistantMessageCount: 0,
-      userMessageId: 'msg_user_1',
-    })
-  })
-
-  test('real-session-task-normal uses the completed assistant snapshot', () => {
-    const events = loadFixture('real-session-task-normal.jsonl')
-    const sessionId = getSessionId(events)
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
-      input: 39025,
-      output: 0,
-      reasoning: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 39025,
-      cost: 0,
-      model: 'gemini-2.5-flash',
-      providerID: 'cached-google-real-events',
-      assistantMessageCount: 1,
-      userMessageId: 'msg_cb9aae4c9001CxCOkoqgiXRsi1',
-    })
-  })
-
-  test('real-session-task-user-interruption sums both assistant steps', () => {
-    const events = loadFixture('real-session-task-user-interruption.jsonl')
-    const sessionId = getSessionId(events)
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
-      input: 82526,
-      output: 79,
-      reasoning: 115,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 82720,
-      cost: 0,
-      model: 'gemini-2.5-flash',
-      providerID: 'cached-google-real-events',
-      assistantMessageCount: 2,
-      userMessageId: 'msg_cb9b0ba6c001i3YH7bGffdB6BF',
-    })
-  })
-
-  test('uses tokens.total when it differs from the component sum', () => {
-    const sessionId = 'ses_canonical_total'
-    const events = [
-      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
-      assistantEvent({
-        sessionId,
-        messageId: 'msg_asst_1',
-        parentID: 'msg_user_1',
-        created: 2,
-        tokens: {
-          total: 47319,
-          input: 1217,
-          output: 278,
-          reasoning: 54,
-          cache: { read: 45824, write: 0 },
-        },
-      }),
-    ]
-
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toMatchObject({
-      input: 1217,
-      output: 278,
-      reasoning: 54,
-      cacheRead: 45824,
-      cacheWrite: 0,
-      total: 47319,
-      assistantMessageCount: 1,
-    })
-  })
-
-  test('real-session-task-three-parallel-sleeps uses billed totals', () => {
-    const events = loadFixture('real-session-task-three-parallel-sleeps.jsonl')
-    const sessionId = getSessionId(events)
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toMatchObject({
-      input: 47139,
-      output: 1093,
-      reasoning: 472,
-      cacheRead: 45824,
-      cacheWrite: 0,
-      total: 94056,
-      model: 'gpt-5.3-codex',
-      providerID: 'openai',
-      assistantMessageCount: 2,
-    })
-  })
-
-  test('sums assistant tokens when the session has no user message', () => {
-    const sessionId = 'ses_no_user'
-    const events = [
-      assistantEvent({
-        sessionId,
-        messageId: 'msg_asst_1',
-        parentID: 'msg_missing',
-        created: 2,
-        tokens: {
-          input: 100,
-          output: 10,
-          reasoning: 0,
-          cache: { read: 0, write: 0 },
-        },
-      }),
-    ]
-
-    expect(getLatestTurnTokenUsage({ events, sessionId })).toEqual({
-      input: 100,
-      output: 10,
-      reasoning: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      total: 110,
-      cost: 0,
-      model: 'gpt-5.3-codex',
-      providerID: 'openai',
-      assistantMessageCount: 1,
-      userMessageId: undefined,
-    })
-  })
-})
-
-describe('getIdleTokenUsageDelta', () => {
-  function idleEvent(sessionId: string): EventBufferEntry {
-    return eventEntry({
-      type: 'session.idle',
-      properties: { sessionID: sessionId },
-    })
-  }
-
-  test('emits the first idle snapshot and skips a later idle with the same tokens', () => {
-    const sessionId = 'ses_delta'
-    const events = [
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_1',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 1 },
-            agent: 'build',
-            model: {
-              providerID: 'openai',
-              modelID: 'gpt-5.3-codex',
-            },
+          {
+            "childSessionId": "ses_child_1",
+            "description": "Inspect ses_child_1",
+            "subagentType": "explore",
+            "timestamp": 1,
           },
-        },
-      }),
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_user_1',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 10,
-              output: 5,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-          },
-        },
-      }),
-      idleEvent(sessionId),
-      idleEvent(sessionId),
-    ]
-
-    const firstIdleIndex = events.length - 2
-    const secondIdleIndex = events.length - 1
-    expect(getIdleTokenUsageDelta({
+        ]
+      `)
+    expect(getDerivedSubtaskIndex({
       events,
-      sessionId,
-      idleEventIndex: firstIdleIndex,
-    })).toMatchObject({
-      total: 15,
-    })
-    expect(getIdleTokenUsageDelta({
+      mainSessionId: mainSessionID,
+      candidateSessionId: firstChild,
+    })).toBe(1)
+    expect(getDerivedSubtaskIndex({
       events,
-      sessionId,
-      idleEventIndex: secondIdleIndex,
-    })).toBeUndefined()
-  })
-
-  test('emits the growth after an early idle that saw zero tokens', () => {
-    const sessionId = 'ses_late_tokens'
-    const events = [
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_user_1',
-            sessionID: sessionId,
-            role: 'user',
-            time: { created: 1 },
-            agent: 'build',
-            model: {
-              providerID: 'openai',
-              modelID: 'gpt-5.3-codex',
-            },
-          },
-        },
-      }),
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2 },
-            parentID: 'msg_user_1',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              input: 0,
-              output: 0,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-          },
-        },
-      }),
-      idleEvent(sessionId),
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: sessionId,
-          info: {
-            id: 'msg_asst_1',
-            sessionID: sessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 4 },
-            parentID: 'msg_user_1',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'build',
-            agent: 'build',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              total: 20,
-              input: 12,
-              output: 8,
-              reasoning: 3,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-          },
-        },
-      }),
-      idleEvent(sessionId),
-    ]
-
-    expect(getIdleTokenUsageDelta({
-      events,
-      sessionId,
-      idleEventIndex: 2,
-    })).toBeUndefined()
-    expect(getIdleTokenUsageDelta({
-      events,
-      sessionId,
-      idleEventIndex: events.length - 1,
-    })).toMatchObject({
-      input: 12,
-      output: 8,
-      reasoning: 3,
-      total: 20,
-    })
-  })
-
-  test('counts child session assistant tokens without a user message.updated', () => {
-    const childSessionId = 'ses_task_child'
-    const events = [
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: 'msg_child_asst_1',
-            sessionID: childSessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_child_user_missing',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'general',
-            agent: 'general',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0.02,
-            tokens: {
-              total: 40,
-              input: 30,
-              output: 10,
-              reasoning: 4,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-          },
-        },
-      }),
-      idleEvent(childSessionId),
-    ]
-
-    expect(getIdleTokenUsageDelta({
-      events,
-      sessionId: childSessionId,
-      idleEventIndex: events.length - 1,
-    })).toMatchObject({
-      input: 30,
-      output: 10,
-      reasoning: 4,
-      total: 40,
-      cost: 0.02,
-      assistantMessageCount: 1,
-    })
-  })
-
-  test('falls back to session.updated Session.tokens for a child with no message.updated', () => {
-    const childSessionId = 'ses_task_child_session_tokens'
-    const events = [
-      eventEntry({
-        type: 'session.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: childSessionId,
-            slug: 'child',
-            projectID: 'prj_1',
-            directory: '/test',
-            parentID: 'ses_main',
-            title: 'child task',
-            version: '1',
-            cost: 0.05,
-            tokens: {
-              input: 100,
-              output: 20,
-              reasoning: 8,
-              cache: { read: 4, write: 1 },
-            },
-            time: { created: 1, updated: 2 },
-          },
-        },
-      }),
-      idleEvent(childSessionId),
-    ]
-
-    expect(getIdleTokenUsageDelta({
-      events,
-      sessionId: childSessionId,
-      idleEventIndex: events.length - 1,
-    })).toMatchObject({
-      input: 100,
-      output: 20,
-      reasoning: 8,
-      cacheRead: 4,
-      cacheWrite: 1,
-      total: 133,
-      cost: 0.05,
-    })
-  })
-
-  test('does not re-emit child tokens at parent idle after the child already idled', () => {
-    const childSessionId = 'ses_task_child_dedupe'
-    const events = [
-      eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: 'msg_child_asst_1',
-            sessionID: childSessionId,
-            role: 'assistant',
-            time: { created: 2, completed: 3 },
-            parentID: 'msg_child_user_missing',
-            modelID: 'gpt-5.3-codex',
-            providerID: 'openai',
-            mode: 'general',
-            agent: 'general',
-            path: { cwd: '/test', root: '/test' },
-            cost: 0,
-            tokens: {
-              total: 40,
-              input: 30,
-              output: 10,
-              reasoning: 0,
-              cache: { read: 0, write: 0 },
-            },
-            finish: 'stop',
-          },
-        },
-      }),
-      idleEvent(childSessionId),
-      idleEvent('ses_main'),
-    ]
-
-    expect(getIdleTokenUsageDelta({
-      events,
-      sessionId: childSessionId,
-      idleEventIndex: 1,
-    })).toMatchObject({ total: 40 })
-    expect(getIdleTokenUsageDelta({
-      events,
-      sessionId: childSessionId,
-      idleEventIndex: 2,
-    })).toBeUndefined()
-  })
-})
-
-describe('task child session token tracking', () => {
-  function idleEvent(sessionId: string): EventBufferEntry {
-    return eventEntry({
-      type: 'session.idle',
-      properties: { sessionID: sessionId },
-    })
-  }
-
-  test('isDerivedChildSession is true from session.created parentID before task metadata', () => {
-    const mainSessionId = 'ses_main'
-    const childSessionId = 'ses_child'
-    const events = [
-      eventEntry({
-        type: 'session.created',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: childSessionId,
-            slug: 'child',
-            projectID: 'prj_1',
-            directory: '/test',
-            parentID: mainSessionId,
-            title: 'explore files',
-            version: '1',
-            time: { created: 1, updated: 1 },
-          },
-        },
-      }),
-    ]
-
+      mainSessionId: mainSessionID,
+      candidateSessionId: secondChild,
+    })).toBe(1)
     expect(isDerivedChildSession({
       events,
-      mainSessionId,
-      candidateSessionId: childSessionId,
+      mainSessionId: mainSessionID,
+      candidateSessionId: firstChild,
     })).toBe(true)
-    expect(isDerivedChildSession({
+    expect(isEventForSessionTree({
+      events: first,
+      event: childCreated.event,
+      mainSessionId: mainSessionID,
+    })).toBe(true)
+    expect(isEventForSessionTree({
       events,
-      mainSessionId,
-      candidateSessionId: 'ses_unrelated',
+      event: executionStarted('ses_unrelated'),
+      mainSessionId: mainSessionID,
     })).toBe(false)
-  })
-
-  test('main idle also returns child session ids so their tokens can be tracked', () => {
-    const mainSessionId = 'ses_main'
-    const childSessionId = 'ses_child'
-    const events = [
-      eventEntry({
-        type: 'session.created',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: childSessionId,
-            slug: 'child',
-            projectID: 'prj_1',
-            directory: '/test',
-            parentID: mainSessionId,
-            title: 'child task',
-            version: '1',
-            time: { created: 1, updated: 1 },
-          },
-        },
-      }),
-      eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            id: 'prt_task',
-            sessionID: mainSessionId,
-            messageID: 'msg_asst',
-            type: 'tool',
-            callID: 'call_task',
-            tool: 'task',
-            state: {
-              status: 'running',
-              input: { subagent_type: 'general' },
-              metadata: { sessionId: childSessionId },
-            },
-          },
-        },
-      }),
-      idleEvent(mainSessionId),
-    ]
-
-    expect(getTokenUsageSessionIdsForIdle({
-      events,
-      mainSessionId,
-      idleSessionId: mainSessionId,
-    })).toEqual([mainSessionId, childSessionId])
-    expect(getTokenUsageSessionIdsForIdle({
-      events,
-      mainSessionId,
-      idleSessionId: childSessionId,
-    })).toEqual([childSessionId])
-  })
-})
-
-describe('question waits for preceding text-end', () => {
-  const sessionId = 'ses_question_text'
-  const messageId = 'msg_asst_question'
-  const questionId = 'que_1'
-
-  const textStart = eventEntry({
-    type: 'message.part.updated',
-    properties: {
-      sessionID: sessionId,
-      part: {
-        id: 'prt_text',
-        sessionID: sessionId,
-        messageID: messageId,
-        type: 'text',
-        text: '',
-        time: { start: 1 },
-      },
-    },
-  })
-  const questionAsked = eventEntry({
-    type: 'question.asked',
-    properties: {
-      id: questionId,
-      sessionID: sessionId,
-      questions: [{
-        question: 'What next?',
-        header: 'Next step',
-        options: [
-          { label: 'Commit', description: 'Commit these files' },
-        ],
-      }],
-      tool: {
-        messageID: messageId,
-        callID: 'call_question',
-      },
-    },
-  })
-  const textEnd = eventEntry({
-    type: 'message.part.updated',
-    properties: {
-      sessionID: sessionId,
-      part: {
-        id: 'prt_text',
-        sessionID: sessionId,
-        messageID: messageId,
-        type: 'text',
-        text: 'Done callout',
-        time: { start: 1, end: 2 },
-      },
-    },
-  })
-  const questionError = eventEntry({
-    type: 'message.part.updated',
-    properties: {
-      sessionID: sessionId,
-      part: {
-        id: 'prt_question',
-        sessionID: sessionId,
-        messageID: messageId,
-        type: 'tool',
-        tool: 'question',
-        callID: 'call_question',
-        state: {
-          status: 'error',
-          error: 'Aborted',
-          time: { start: 2, end: 3 },
-        },
-      },
-    },
-  })
-
-  test('text is not ready when question.asked arrives before time.end', () => {
-    const events = [textStart, questionAsked]
-    expect(isAssistantTextReadyForQuestion({
-      events,
-      sessionId,
-      messageId,
-    })).toBe(false)
-    expect(deriveLatestUnansweredQuestion({
-      events,
-      sessionId,
-    })).toMatchObject({
-      id: questionId,
-      tool: { messageID: messageId },
-    })
-  })
-
-  test('text is ready after time.end, and still unanswered', () => {
-    const events = [textStart, questionAsked, textEnd]
-    expect(isAssistantTextReadyForQuestion({
-      events,
-      sessionId,
-      messageId,
-    })).toBe(true)
-    expect(deriveLatestUnansweredQuestion({
-      events,
-      sessionId,
-    })?.id).toBe(questionId)
-  })
-
-  test('no text part means the question is ready immediately', () => {
-    const events = [questionAsked]
-    expect(isAssistantTextReadyForQuestion({
-      events,
-      sessionId,
-      messageId,
-    })).toBe(true)
-  })
-
-  test('aborted question is not unanswered', () => {
-    const events = [textStart, questionAsked, textEnd, questionError]
-    expect(deriveLatestUnansweredQuestion({
-      events,
-      sessionId,
-    })).toBeUndefined()
-  })
-
-  test('question from an older user turn is not unanswered', () => {
-    const firstUser = eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: 'msg_user_first',
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 1 },
-          agent: 'build',
-          model: {
-            providerID: 'deterministic-provider',
-            modelID: 'deterministic-v2',
-          },
-        },
-      },
-    })
-    const questionAssistant = eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: messageId,
-          sessionID: sessionId,
-          role: 'assistant',
-          time: { created: 2 },
-          parentID: 'msg_user_first',
-          modelID: 'deterministic-v2',
-          providerID: 'deterministic-provider',
-          mode: 'build',
-          agent: 'build',
-          path: { cwd: '/test', root: '/test' },
-          cost: 0,
-          tokens: {
-            input: 1,
-            output: 1,
-            reasoning: 0,
-            cache: { read: 0, write: 0 },
-          },
-        },
-      },
-    })
-    const nextUser = eventEntry({
-      type: 'message.updated',
-      properties: {
-        sessionID: sessionId,
-        info: {
-          id: 'msg_user_commit',
-          sessionID: sessionId,
-          role: 'user',
-          time: { created: 3 },
-          agent: 'build',
-          model: {
-            providerID: 'deterministic-provider',
-            modelID: 'deterministic-v2',
-          },
-        },
-      },
-    })
-    const events = [
-      firstUser,
-      questionAssistant,
-      textStart,
-      questionAsked,
-      textEnd,
-      nextUser,
-    ]
-
-    expect(deriveLatestUnansweredQuestion({
-      events,
-      sessionId,
-    })).toBeUndefined()
-  })
-})
-
-describe('v2 execution visible output and busy', () => {
-  const sessionId = 'ses_v2'
-
-  test('isSessionBusy is true on session.step.started without session.status', () => {
-    const events = [
-      eventEntry({
-        type: 'session.execution.started',
-        data: { sessionID: sessionId },
-      }),
-      eventEntry({
-        type: 'session.step.started',
-        data: { sessionID: sessionId, assistantMessageID: 'msg_a', agent: 'build' },
-      }),
-    ]
-    expect(isSessionBusy({ events, sessionId })).toBe(true)
-  })
-
-  test('isSessionBusy is false after session.execution.succeeded', () => {
-    const events = [
-      eventEntry({
-        type: 'session.execution.started',
-        data: { sessionID: sessionId },
-      }),
-      eventEntry({
-        type: 'session.step.started',
-        data: { sessionID: sessionId, assistantMessageID: 'msg_a', agent: 'build' },
-      }),
-      eventEntry({
-        type: 'session.text.ended',
-        data: { sessionID: sessionId, assistantMessageID: 'msg_a', ordinal: 0, text: 'ok' },
-      }),
-      eventEntry({
-        type: 'session.execution.succeeded',
-        data: { sessionID: sessionId },
-      }),
-    ]
-    expect(isSessionBusy({ events, sessionId })).toBe(false)
-  })
-
-  test('hasVisibleV2OutputSinceExecutionStart is true after text.ended', () => {
-    const events = [
-      eventEntry({
-        type: 'session.execution.started',
-        data: { sessionID: sessionId },
-      }),
-      eventEntry({
-        type: 'session.text.ended',
-        data: { sessionID: sessionId, assistantMessageID: 'msg_a', ordinal: 0, text: 'ok' },
-      }),
-      eventEntry({
-        type: 'session.execution.succeeded',
-        data: { sessionID: sessionId },
-      }),
-    ]
-    expect(hasVisibleV2OutputSinceExecutionStart({ events, sessionId })).toBe(true)
-  })
-
-  test('hasVisibleV2OutputSinceExecutionStart is true after tool.called', () => {
-    const events = [
-      eventEntry({
-        type: 'session.execution.started',
-        data: { sessionID: sessionId },
-      }),
-      eventEntry({
-        type: 'session.tool.called',
-        data: { sessionID: sessionId, id: 'call_1', assistantMessageID: 'msg_a' },
-      }),
-      eventEntry({
-        type: 'session.execution.succeeded',
-        data: { sessionID: sessionId },
-      }),
-    ]
-    expect(hasVisibleV2OutputSinceExecutionStart({ events, sessionId })).toBe(true)
-  })
-
-  test('hasVisibleV2OutputSinceExecutionStart ignores prior executions', () => {
-    const events = [
-      eventEntry({
-        type: 'session.execution.started',
-        data: { sessionID: sessionId },
-      }),
-      eventEntry({
-        type: 'session.text.ended',
-        data: { sessionID: sessionId, assistantMessageID: 'msg_old', ordinal: 0, text: 'old' },
-      }),
-      eventEntry({
-        type: 'session.execution.succeeded',
-        data: { sessionID: sessionId },
-      }),
-      eventEntry({
-        type: 'session.execution.started',
-        data: { sessionID: sessionId },
-      }),
-      eventEntry({
-        type: 'session.execution.succeeded',
-        data: { sessionID: sessionId },
-      }),
-    ]
-    expect(hasVisibleV2OutputSinceExecutionStart({ events, sessionId })).toBe(false)
-  })
-})
-
-describe('event buffer trim and busy derivation during task children', () => {
-  const mainSessionId = 'ses_parent'
-  const childSessionId = 'ses_task_child'
-
-  function parentBusy(): EventBufferEntry {
-    return eventEntry({
-      type: 'session.status',
-      properties: {
-        sessionID: mainSessionId,
-        status: { type: 'busy' },
-      },
-    })
-  }
-
-  function runningTaskPart(): EventBufferEntry {
-    return eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        part: {
-          id: 'prt_task',
-          sessionID: mainSessionId,
-          messageID: 'msg_asst',
-          type: 'tool',
-          callID: 'call_task',
-          tool: 'task',
-          state: {
-            status: 'running',
-            input: { subagent_type: 'mythos-review' },
-            metadata: { sessionId: childSessionId },
-          },
-        },
-      },
-    })
-  }
-
-  function childPart(index: number): EventBufferEntry {
-    return eventEntry({
-      type: 'message.part.updated',
-      properties: {
-        part: {
-          id: `prt_child_${index}`,
-          sessionID: childSessionId,
-          messageID: 'msg_child',
-          type: 'text',
-          text: 'child output',
-        },
-      },
-    })
-  }
-
-  test('isSessionBusy stays true for a running task even without status events', () => {
-    expect(isSessionBusy({
-      events: [runningTaskPart()],
-      sessionId: mainSessionId,
-    })).toBe(true)
-  })
-
-  test('isSessionBusy is false after the same task call completes without status events', () => {
-    const events = [
-      runningTaskPart(),
-      eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            id: 'prt_task',
-            sessionID: mainSessionId,
-            messageID: 'msg_asst',
-            type: 'tool',
-            callID: 'call_task',
-            tool: 'task',
-            state: {
-              status: 'completed',
-              output: 'done',
-              input: { subagent_type: 'mythos-review' },
-              metadata: { sessionId: childSessionId },
-            },
-          },
-        },
-      }),
-    ]
-    expect(isSessionBusy({ events, sessionId: mainSessionId })).toBe(false)
-  })
-
-  test('isSessionBusy is false after the running task errors and the session idles', () => {
-    const events = [
-      runningTaskPart(),
-      eventEntry({
-        type: 'message.part.updated',
-        properties: {
-          part: {
-            id: 'prt_task',
-            sessionID: mainSessionId,
-            messageID: 'msg_asst',
-            type: 'tool',
-            callID: 'call_task',
-            tool: 'task',
-            state: {
-              status: 'error',
-              error: 'Task cancelled',
-              input: { subagent_type: 'mythos-review' },
-              metadata: { sessionId: childSessionId },
-            },
-          },
-        },
-      }),
-      eventEntry({
-        type: 'session.idle',
-        properties: { sessionID: mainSessionId },
-      }),
-    ]
-    expect(isSessionBusy({ events, sessionId: mainSessionId })).toBe(false)
-  })
-
-  test('trim keeps parent busy across a child-session event flood', () => {
-    const busy = parentBusy()
-    const task = runningTaskPart()
-    const events = [
-      busy,
-      task,
-      ...Array.from({ length: 1000 }, (_, index) => childPart(index)),
-    ]
-    const trimmed = trimEventBuffer({
-      events,
-      mainSessionId,
-      max: 1000,
-      isKnownChildSession: (sessionId) => sessionId === childSessionId,
-    })
-    expect(trimmed.length).toBeLessThanOrEqual(1000)
-    expect(isSessionBusy({ events: trimmed, sessionId: mainSessionId })).toBe(true)
-  })
-
-  test('shouldRetainSessionEvent drops child part updates but keeps parent task parts', () => {
-    expect(shouldRetainSessionEvent({
-      event: runningTaskPart().event,
-      mainSessionId,
-      isKnownChildSession: (sessionId) => sessionId === childSessionId,
-    })).toBe(true)
-    expect(shouldRetainSessionEvent({
-      event: childPart(1).event,
-      mainSessionId,
-      isKnownChildSession: (sessionId) => sessionId === childSessionId,
-    })).toBe(false)
-    expect(shouldRetainSessionEvent({
-      event: eventEntry({
-        type: 'message.updated',
-        properties: {
-          sessionID: childSessionId,
-          info: {
-            id: 'msg_child',
-            sessionID: childSessionId,
-            role: 'assistant',
-            time: { created: 1 },
-            agent: 'mythos-review',
-            model: { providerID: 'test', modelID: 'test' },
-          },
-        },
-      }).event,
-      mainSessionId,
-      isKnownChildSession: (sessionId) => sessionId === childSessionId,
-    })).toBe(true)
-    expect(shouldBufferSessionEvent({
-      event: childPart(1).event,
-      mainSessionId,
-      isKnownChildSession: (sessionId) => sessionId === childSessionId,
-    })).toBe(true)
   })
 })

@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { createOpencodeClient } from '@opencode-ai/sdk/v2'
+import { OpenCode } from '@opencode/client'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
 import { resolveOpencodeCommand } from '../src/opencode.js'
@@ -84,31 +84,24 @@ async function getLastSessionMessages() {
   // Wait for server to be ready
   await waitForServer(port)
 
-  const client = createOpencodeClient({ baseUrl })
+  const client = OpenCode.make({ baseUrl })
 
   console.log('=== Fetching Last Session Messages ===\n')
 
   try {
     // Get the current project first
-    const currentProjectResponse = await client.project.current()
-    if (!currentProjectResponse.data) {
-      console.error('Failed to fetch current project')
-      return
-    }
-    const currentProject = currentProjectResponse.data
+    const currentProject = await client.project.current({
+      location: { directory },
+    })
     console.log(`Current Project: ${currentProject.id}`)
-    console.log(`Worktree: ${currentProject.worktree}\n`)
+    console.log(`Directory: ${currentProject.directory}\n`)
 
     // Get all sessions for the current project
-    const sessionsResponse = await client.session.list()
-    if (!sessionsResponse.data) {
-      console.error('Failed to fetch sessions')
-      return
-    }
-
-    const projectSessions = sessionsResponse.data.filter(
-      (s) => s.projectID === currentProject.id,
-    )
+    const sessionsResponse = await client.session.list({
+      project: currentProject.id,
+      order: 'desc',
+    })
+    const projectSessions = sessionsResponse.data
 
     if (projectSessions.length === 0) {
       console.log('No sessions found for the current project')
@@ -127,14 +120,9 @@ async function getLastSessionMessages() {
     )
 
     // Get messages for the session
-    const messagesResponse = await client.session.messages({
+    const messagesResponse = await client.message.list({
       sessionID: latestSession.id,
     })
-
-    if (!messagesResponse.data) {
-      console.error('Failed to fetch session messages')
-      return
-    }
 
     const messages = messagesResponse.data
     console.log(`Found ${messages.length} message(s) in the session\n`)

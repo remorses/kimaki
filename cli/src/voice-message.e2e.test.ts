@@ -35,8 +35,11 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
-import type { Message } from '@opencode-ai/sdk/v2'
-import { sessionMessagesToGeneric, type DiscordSessionPart } from './message-formatting.js'
+import {
+  sessionMessagesToGeneric,
+  type DiscordSessionPart,
+  type GenericSessionMessage,
+} from './message-formatting.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
@@ -96,7 +99,7 @@ function setDeterministicTranscription(config: DeterministicTranscriptionConfig 
 // These verify what actually happened in the OpenCode session (prompts
 // sent, aborts, responses) beyond just Discord messages and thread state.
 
-type SessionMessage = { info: Message; parts: DiscordSessionPart[] }
+type SessionMessage = GenericSessionMessage
 
 function getOpencodeClientForTest(projectDirectory: string) {
   const client = getOpencodeClient(projectDirectory)
@@ -153,7 +156,7 @@ async function waitForSessionMessages({
     const result = await client.message.list({
       sessionID,
     })
-    const messages = sessionMessagesToGeneric(result.data) as SessionMessage[]
+    const messages = sessionMessagesToGeneric(result.data)
     if (predicate(messages)) {
       return messages
     }
@@ -165,7 +168,7 @@ async function waitForSessionMessages({
   const finalResult = await client.message.list({
     sessionID,
   })
-  const finalMessages = sessionMessagesToGeneric(finalResult.data) as SessionMessage[]
+  const finalMessages = sessionMessagesToGeneric(finalResult.data)
   const userTexts = getUserTexts(finalMessages)
   const assistantTexts = getAssistantTexts(finalMessages)
   throw new Error(
@@ -538,12 +541,12 @@ e2eTest('voice message handling', () => {
         })
         const client = getOpencodeClientForTest(directories.projectDirectory)
         const targetMessages = await client.message.list({ sessionID: targetSessionId! })
-        const targetTexts = getUserTexts(sessionMessagesToGeneric(targetMessages.data) as SessionMessage[]).join('\n')
+        const targetTexts = getUserTexts(sessionMessagesToGeneric(targetMessages.data)).join('\n')
         expect(targetTexts).toContain(prompt)
         expect(targetTexts).toContain(`Voice message transcription from Discord user:\n${prompt}`)
         expect(targetTexts.includes(`Source history for voice ${sessionAction}`)).toBe(sessionAction === 'btw')
         const sourceMessages = await client.message.list({ sessionID: sourceSessionId! })
-        expect(getUserTexts(sessionMessagesToGeneric(sourceMessages.data) as SessionMessage[]).join('\n')).not.toContain(prompt)
+        expect(getUserTexts(sessionMessagesToGeneric(sourceMessages.data)).join('\n')).not.toContain(prompt)
       },
     )
   }
@@ -1216,7 +1219,7 @@ e2eTest('voice message handling', () => {
       expect(assistantTexts.some((t) => t.includes('session-reply'))).toBe(true)
       // No abort errors — the queue preserved the first run
       const abortedAssistant = messages.find((m) => {
-        return m.info.role === 'assistant' && m.info.error?.name === 'MessageAbortedError'
+        return m.info.role === 'assistant' && m.info.error?.type === 'MessageAbortedError'
       })
       expect(abortedAssistant).toBeUndefined()
     },
@@ -1338,7 +1341,7 @@ e2eTest('voice message handling', () => {
       const assistantTexts = getAssistantTexts(sessionMessages)
       expect(assistantTexts.length).toBeGreaterThanOrEqual(2)
       const abortedAssistant = sessionMessages.find((m) => {
-        return m.info.role === 'assistant' && m.info.error?.name === 'MessageAbortedError'
+        return m.info.role === 'assistant' && m.info.error?.type === 'MessageAbortedError'
       })
       expect(abortedAssistant).toBeUndefined()
     },

@@ -11,6 +11,7 @@ import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
+import { sessionMessagesAscending } from './message-formatting.js'
 
 // Generic error for unexpected exceptions in async operations
 class UnexpectedError extends errore.createTaggedError({
@@ -190,7 +191,6 @@ function toGenericSessionMessage(message: SessionMessageInfo) {
       parts: message.content.map((part, index) => {
         if (part.type === 'tool') {
           const input = (() => {
-            if (!('input' in part.state)) return {}
             if (typeof part.state.input === 'string') {
               const raw = part.state.input
               const parsed = errore.try(() => JSON.parse(raw) as Record<string, unknown>)
@@ -271,13 +271,14 @@ export class ShareMarkdown {
 
     const messagesResponse = await this.client.message.list({
       sessionID,
+      order: 'asc',
     }).catch((error: unknown) => {
       return new MessagesNotFoundError({ sessionId: sessionID, cause: error })
     })
     if (messagesResponse instanceof Error) {
       return messagesResponse
     }
-    const messages = messagesResponse.data.map(toGenericSessionMessage)
+    const messages = sessionMessagesAscending(messagesResponse.data).map(toGenericSessionMessage)
 
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
@@ -531,6 +532,7 @@ export async function getCompactSessionContext({
   const messagesResponse = await client.message
     .list({
       sessionID: sessionId,
+      order: 'asc',
     })
     .catch((e: unknown) => {
       markdownLogger.error('Failed to get compact session context:', e)
@@ -540,7 +542,7 @@ export async function getCompactSessionContext({
       })
     })
   if (messagesResponse instanceof Error) return messagesResponse
-  const messages = messagesResponse.data.map(toGenericSessionMessage)
+  const messages = sessionMessagesAscending(messagesResponse.data).map(toGenericSessionMessage)
 
   const lines: string[] = []
 
@@ -553,9 +555,9 @@ export async function getCompactSessionContext({
     if (firstAssistant) {
       // look for text part marked as synthetic (system prompt)
       const systemPart = (firstAssistant.parts || []).find(
-        (p) => p.type === 'text' && (p as any).synthetic === true,
+        (p) => p.type === 'text' && 'synthetic' in p && p.synthetic === true,
       )
-      if (systemPart && 'text' in systemPart && systemPart.text) {
+      if (systemPart?.type === 'text' && systemPart.text) {
         lines.push('[System Prompt]')
         const truncated = systemPart.text.slice(0, 3000)
         lines.push(truncated)
@@ -634,11 +636,21 @@ export async function getCompactSessionContext({
 export async function getLastSessionId({
   client,
   excludeSessionId,
+  directory,
 }: {
   client: OpencodeClient
   excludeSessionId?: string
+  directory?: string
 }): Promise<UnexpectedError | (string | null)> {
-  const sessionsResponse = await client.session.list().catch((e: unknown) => {
+  const requestedDirectory = directory || await (async () => {
+    if (!excludeSessionId) return null
+    const session = await client.session.get({ sessionID: excludeSessionId }).catch(() => null)
+    return session?.location.directory || null
+  })()
+  if (!requestedDirectory) {
+    return new UnexpectedError({ message: 'A project directory is required to list sessions' })
+  }
+  const sessionsResponse = await client.session.list({ directory: requestedDirectory }).catch((e: unknown) => {
     markdownLogger.error('Failed to get last session:', e)
     return new UnexpectedError({
       message: 'Failed to get last session',

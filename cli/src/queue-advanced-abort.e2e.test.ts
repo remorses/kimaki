@@ -74,6 +74,7 @@ e2eTest('queue advanced: abort and retry', () => {
         text: 'starting sleep',
         afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
         timeout: 4_000,
+        clamp: false,
       })
 
       const runtime = getRuntime(thread.id)
@@ -93,7 +94,8 @@ e2eTest('queue advanced: abort and retry', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'papa',
-        timeout: 8_000,
+        timeout: 4_000,
+        clamp: false,
       })
 
       const afterBotMessages = after.filter((m) => {
@@ -103,9 +105,10 @@ e2eTest('queue advanced: abort and retry', () => {
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
+        timeout: 4_000,
         afterMessageIncludes: 'papa',
         afterAuthorId: TEST_USER_ID,
+        clamp: false,
       })
 
       // Assert ordering invariants instead of exact snapshot — the papa reply

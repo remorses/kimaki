@@ -1,10 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { asDiscordQuote, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, isLastTextPartInAssistantTurn, planAssistantTurnFlush, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionMessagesAscending, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
-import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
-import type { DiscordSessionPart } from './message-formatting.js'
+import type { DiscordSessionPart, SerializableMessageSnapshot } from './message-formatting.js'
 
 describe('formatPart', () => {
   test('callout text is returned without a diamond prefix', () => {
@@ -655,6 +654,30 @@ describe('collectSessionChunks', () => {
   })
 })
 
+describe('sessionMessagesAscending', () => {
+  test('orders v2 messages oldest first without changing equal timestamps', () => {
+    const messages = [
+      { id: 'new', time: { created: 30 } },
+      { id: 'same-a', time: { created: 20 } },
+      { id: 'old', time: { created: 10 } },
+      { id: 'same-b', time: { created: 20 } },
+    ]
+
+    expect(sessionMessagesAscending(messages).map((message) => message.id)).toEqual([
+      'old',
+      'same-a',
+      'same-b',
+      'new',
+    ])
+    expect(messages.map((message) => message.id)).toEqual([
+      'new',
+      'same-a',
+      'old',
+      'same-b',
+    ])
+  })
+})
+
 describe('batchChunksForDiscord', () => {
   test('does not merge text chunks with tool chunks', () => {
     expect(
@@ -966,7 +989,7 @@ describe('serializeEmbeds', () => {
     author?: { name: string }
     footer?: { text: string }
     fields?: Array<{ name: string; value: string; inline?: boolean }>
-  }): Embed {
+  }) {
     return {
       title: data.title ?? null,
       description: data.description ?? null,
@@ -974,7 +997,7 @@ describe('serializeEmbeds', () => {
       author: data.author ?? null,
       footer: data.footer ?? null,
       fields: data.fields ?? [],
-    } as unknown as Embed
+    }
   }
 
   test('serializes a full embed with all fields', () => {
@@ -1050,26 +1073,25 @@ describe('serializeEmbeds', () => {
   })
 })
 
-// Helper to create a fake Map-like Collection for tests
-function fakeCollection<K, V>(entries: [K, V][]): Collection<K, V> {
+function fakeCollection<K, V>(entries: [K, V][]) {
   const map = new Map(entries)
   return {
     size: map.size,
     [Symbol.iterator]: map[Symbol.iterator].bind(map),
-  } as unknown as Collection<K, V>
+  }
 }
 
 describe('serializePoll', () => {
   function fakePoll(data: {
     question: string
     answers: Array<{ id: number; text: string | null }>
-  }): Poll {
+  }) {
     return {
       question: { text: data.question },
       answers: fakeCollection(
         data.answers.map((a) => [a.id, { text: a.text }]),
       ),
-    } as unknown as Poll
+    }
   }
 
   test('serializes a poll with question and answers', () => {
@@ -1115,12 +1137,19 @@ describe('serializePoll', () => {
 describe('serializeMessageSnapshots', () => {
   function fakeSnapshot(data: {
     content?: string
-    embeds?: Embed[]
-  }): MessageSnapshot {
+    embeds?: Array<{
+      title?: string | null
+      description?: string | null
+      url?: string | null
+      author?: { name: string } | null
+      footer?: { text: string } | null
+      fields: Array<{ name: string; value: string }>
+    }>
+  }) {
     return {
       content: data.content ?? '',
       embeds: data.embeds ?? [],
-    } as unknown as MessageSnapshot
+    }
   }
 
   function fakeEmbed(data: {
@@ -1130,7 +1159,7 @@ describe('serializeMessageSnapshots', () => {
     author?: { name: string }
     footer?: { text: string }
     fields?: Array<{ name: string; value: string }>
-  }): Embed {
+  }) {
     return {
       title: data.title ?? null,
       description: data.description ?? null,
@@ -1138,11 +1167,11 @@ describe('serializeMessageSnapshots', () => {
       author: data.author ?? null,
       footer: data.footer ?? null,
       fields: data.fields ?? [],
-    } as unknown as Embed
+    }
   }
 
   test('serializes a forwarded message with content', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       ['1', fakeSnapshot({ content: 'Hello from another channel' })],
     ])
     expect(serializeMessageSnapshots(snapshots)).toMatchInlineSnapshot(`
@@ -1153,7 +1182,7 @@ describe('serializeMessageSnapshots', () => {
   })
 
   test('serializes forwarded message with content and embeds', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       [
         '1',
         fakeSnapshot({
@@ -1175,19 +1204,19 @@ describe('serializeMessageSnapshots', () => {
   })
 
   test('returns empty string for no snapshots', () => {
-    const empty = fakeCollection<string, MessageSnapshot>([])
+    const empty = fakeCollection<string, SerializableMessageSnapshot>([])
     expect(serializeMessageSnapshots(empty)).toBe('')
   })
 
   test('skips snapshots with no content', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       ['1', fakeSnapshot({})],
     ])
     expect(serializeMessageSnapshots(snapshots)).toBe('')
   })
 
   test('serializes multiple forwarded messages', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       ['1', fakeSnapshot({ content: 'First forwarded' })],
       ['2', fakeSnapshot({ content: 'Second forwarded' })],
     ])
@@ -1229,7 +1258,7 @@ describe('getTextAttachments', () => {
       attachments: new Map(attachments.map((attachment) => {
         return [attachment.id, attachment]
       })),
-    } as unknown as Message
+    }
   }
 
   function snapshotAttachments(result: string) {

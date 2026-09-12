@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import path from 'node:path'
-import { createOpencodeClient } from '@opencode-ai/sdk/v2'
+import { OpenCode } from '@opencode/client'
 
 async function testProjectList() {
   const port = process.env.OPENCODE_PORT || '3318'
@@ -8,37 +8,36 @@ async function testProjectList() {
 
   console.log(`Connecting to OpenCode server at ${baseUrl}...\n`)
 
-  const client = createOpencodeClient({ baseUrl })
+  const client = OpenCode.make({ baseUrl })
 
-  const result = await client.project.list()
-  const projects = result.data || []
+  const projects = await client.project.list()
 
   console.log(`Total projects from OpenCode: ${projects.length}`)
 
   // Filter like add-project.ts does
   const testProjects = projects.filter((p) =>
-    path.basename(p.worktree).startsWith('opencode-test-'),
+    path.basename(p.canonical).startsWith('opencode-test-'),
   )
   console.log(`\nFiltered out (opencode-test-*): ${testProjects.length}`)
 
   const tempProjects = projects.filter(
-    (p) => p.worktree.includes('/var/folders/') || p.worktree.includes('/tmp/'),
+    (p) => p.canonical.includes('/var/folders/') || p.canonical.includes('/tmp/'),
   )
   console.log(`Temp directories: ${tempProjects.length}`)
 
   const githubProjects = projects.filter((p) =>
-    p.worktree.includes('/Documents/GitHub/'),
+    p.canonical.includes('/Documents/GitHub/'),
   )
   console.log(`GitHub projects: ${githubProjects.length}`)
 
   const worktreeProjects = projects.filter((p) =>
-    p.worktree.includes('/.opencode/worktree/'),
+    p.canonical.includes('/.opencode/worktree/'),
   )
   console.log(`Worktree projects: ${worktreeProjects.length}`)
 
   // After filtering like add-project does
   const available = projects.filter(
-    (p) => !path.basename(p.worktree).startsWith('opencode-test-'),
+    (p) => !path.basename(p.canonical).startsWith('opencode-test-'),
   )
   console.log(`\nAfter filtering test dirs: ${available.length}`)
 
@@ -54,7 +53,7 @@ async function testProjectList() {
     const time = p.time.initialized || p.time.created
     const date = new Date(time).toISOString().slice(0, 16).replace('T', ' ')
     console.log(
-      `  ${i + 1}. ${date} | ${path.basename(p.worktree)} | ${p.worktree}`,
+      `  ${i + 1}. ${date} | ${path.basename(p.canonical)} | ${p.canonical}`,
     )
   })
 
