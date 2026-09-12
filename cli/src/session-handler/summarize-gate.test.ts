@@ -104,12 +104,15 @@ async function flushAsync(): Promise<void> {
 function makeDeferred<T>(): {
   promise: Promise<T>
   resolve: (value: T) => void
+  reject: (reason: unknown) => void
 } {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((r) => {
-    resolve = r
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function seedQueueLength(): number {
@@ -359,7 +362,7 @@ describe('manual compaction fence (ticket #55)', () => {
     expect(isManualCompactionActive(THREAD_ID)).toBe(false)
   })
 
-  test('summarize failure still releases the fence and drains held prompts', async () => {
+  test('summarize rejection still releases the fence and drains held prompts', async () => {
     const runtime = makeRuntime()
     const internal = asInternals(runtime)
     const dispatched: string[] = []
@@ -382,8 +385,10 @@ describe('manual compaction fence (ticket #55)', () => {
     })
     expect(dispatched).toEqual([])
 
-    summarize.resolve(undefined)
-    await compaction
+    // The summarize call fails (e.g. SDK error) — the fence must still
+    // release and the held prompt must still dispatch exactly once.
+    summarize.reject(new Error('summarize failed'))
+    await expect(compaction).rejects.toThrow(/summarize failed/)
     await flushAsync()
 
     expect(isManualCompactionActive(THREAD_ID)).toBe(false)

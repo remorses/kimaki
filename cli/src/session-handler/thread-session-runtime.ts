@@ -3556,17 +3556,26 @@ export class ThreadSessionRuntime {
     // plain text. Covers Discord chat messages, /new-session, /queue, CLI
     // `kimaki send --prompt`, and scheduled tasks — all funnel through here.
     input = maybeConvertLeadingCommand(input)
+    // noReply always goes through the opencode path so the flag reaches
+    // promptAsync — the local queue cannot carry noReply, and a noReply item
+    // dispatched from the queue would wrongly start an agent run.
+    if (input.noReply) {
+      return this.submitViaOpencodeQueue({
+        ...input,
+        mode: 'opencode',
+        command: undefined,
+      })
+    }
     if (
       input.mode === 'local-queue'
-      || ((arrivedDuringManualCompaction || isManualCompactionActive(this.threadId))
-        && !input.noReply)
+      || arrivedDuringManualCompaction
+      || isManualCompactionActive(this.threadId)
     ) {
       // Manual compaction (ticket #55): hold prompts in the local queue until
       // the summarize call settles. Sending prompts to OpenCode mid-compaction
       // either cancels the compaction (the interrupt plugin aborts busy
       // sessions when a user message arrives) or appends the message without
-      // ever starting a run. noReply messages keep the opencode path so the
-      // flag reaches promptAsync; local queue doesn't support noReply.
+      // ever starting a run.
       return this.enqueueViaLocalQueue({ ...input, mode: 'local-queue' })
     }
     if (input.command) {
@@ -3997,27 +4006,44 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const next = threadState.dequeueItem(this.threadId)
-    if (!next) {
+    // Peek the head for the indicator, but keep the item queued until after
+    // the Discord send completes: a new /compact can begin during that await,
+    // and dispatching a dequeued prompt into a fresh compaction window would
+    // reintroduce the cancel/strand race (ticket #55). The fence is re-checked
+    // after the await; the head item simply stays queued for the release drain.
+    const head = thread.queueItems[0]
+    if (!head) {
       return
     }
 
     logger.log(
-      `[QUEUE DRAIN] Processing queued message from ${next.username}`,
+      `[QUEUE DRAIN] Processing queued message from ${head.username}`,
     )
 
     // Show queued message indicator only for messages that actually waited
     // behind a running request — not for the first immediate dispatch.
     if (showIndicator) {
-      const displayText = next.command
-        ? `/${next.command.name}`
-        : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
+      const displayText = head.command
+        ? `/${head.command.name}`
+        : `${head.prompt.slice(0, 150)}${head.prompt.length > 150 ? '...' : ''}`
       if (displayText.trim()) {
         await sendThreadMessage(
           this.thread,
-          `» **${next.username}:** ${displayText}`,
+          `» **${head.username}:** ${displayText}`,
         )
       }
+    }
+
+    // Fence re-check after the indicator await (ticket #55): if compaction
+    // began while sending the indicator, leave the head item queued —
+    // runCompaction's release drain owns that dispatch.
+    if (isManualCompactionActive(this.threadId)) {
+      return
+    }
+
+    const next = threadState.dequeueItem(this.threadId)
+    if (!next) {
+      return
     }
 
     // Start dispatch (detached — does not block the action queue).

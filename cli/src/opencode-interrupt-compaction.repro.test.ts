@@ -9,12 +9,18 @@
 // awareness), reproducing "ordinary message cancels the compaction".
 import http from 'node:http'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 
-const livePlugin = 'C:/Dev/kimaki-compact-queue/cli/dist/opencode-interrupt-plugin.js'
-const { interruptOpencodeSessionOnUserMessage } = (await import(
-  pathToFileURL(livePlugin).href
-)) as any
+// Built plugin artifact; skips when cli/dist is not built (e.g. upstream CI
+// on a fresh checkout) so test discovery never fails on the missing file.
+const livePluginPath = fileURLToPath(
+  new URL('../dist/opencode-interrupt-plugin.js', import.meta.url),
+)
+const { interruptOpencodeSessionOnUserMessage } = existsSync(livePluginPath)
+  ? ((await import(pathToFileURL(livePluginPath).href)) as any)
+  : ({} as any)
 
 function createStubServer() {
   const abortCalls: Array<{ sessionID: string }> = []
@@ -115,7 +121,7 @@ afterEach(async () => {
   await stub.close()
 })
 
-describe('#55 interrupt plugin vs manual compaction (Path A mechanism)', () => {
+describe.skipIf(!interruptOpencodeSessionOnUserMessage)('#55 interrupt plugin vs manual compaction (Path A mechanism)', () => {
   test('user message landing mid-compaction aborts the busy session (kills the /compact run) and replays', async () => {
     process.env['KIMAKI_INTERRUPT_STEP_TIMEOUT_MS'] = '20'
     const hooks = await interruptOpencodeSessionOnUserMessage(createContext({ baseUrl: stub.baseUrl }))

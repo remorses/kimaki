@@ -12,18 +12,28 @@
 //   P2: once the fence releases, drain proceeds (negative control)
 //
 // Diagnostic only; no live systems are touched (threadState is in-memory).
+// Skips when cli/dist is not built (e.g. upstream CI on a fresh checkout) so
+// test discovery never fails on the missing artifact.
 import { describe, expect, test } from 'vitest'
+import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { pathToFileURL } from 'node:url'
 
-const liveDistDir = 'C:/Dev/kimaki-compact-queue/cli/dist/session-handler'
-const runtimeMod = await import(
-  pathToFileURL(`${liveDistDir}/thread-session-runtime.js`).href
+const liveDistDir = fileURLToPath(
+  new URL('../../dist/session-handler/', import.meta.url),
 )
-const stateMod = await import(pathToFileURL(`${liveDistDir}/thread-runtime-state.js`).href)
+const runtimePath = pathToFileURL(`${liveDistDir}/thread-session-runtime.js`).href
+const runtimeMod = existsSync(fileURLToPath(runtimePath))
+  ? await import(runtimePath)
+  : undefined
+const stateMod = existsSync(fileURLToPath(runtimePath))
+  ? await import(pathToFileURL(`${liveDistDir}/thread-runtime-state.js`).href)
+  : undefined
 
 const { ThreadSessionRuntime, beginManualCompaction, endManualCompaction, isManualCompactionActive } =
-  runtimeMod as any
-const { ensureThread, enqueueItem, clearQueueItems, getThreadState } = stateMod as any
+  (runtimeMod ?? {}) as any
+const { ensureThread, enqueueItem, clearQueueItems, getThreadState } =
+  (stateMod ?? {}) as any
 
 const THREAD = 'repro-thread-55'
 
@@ -55,7 +65,7 @@ function seedQueue() {
   })
 }
 
-describe('#55 deployed patch — manual compaction fence', () => {
+describe.skipIf(!runtimeMod)('#55 built dist — manual compaction fence', () => {
   test('P1: tryDrainQueue is a no-op while manual compaction is active (queue survives)', async () => {
     ensureThread(THREAD)
     seedQueue()
