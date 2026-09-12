@@ -144,6 +144,7 @@ import {
 } from './opencode-session-event-log.js'
 import {
   doesLatestUserTurnHaveNaturalCompletion,
+  didLatestUserTurnUseSleepTool,
   didQuestionQueueHandoffSinceLatestQuestionAsked,
   deriveLatestUnansweredQuestion,
   getAssistantMessageIdsForLatestUserTurn,
@@ -4898,7 +4899,11 @@ export class ThreadSessionRuntime {
       ? `${truncatedFolder} ⋅ ${truncatedBranch} ⋅ `
       : `${truncatedFolder} ⋅ `
     const hasQueuedMessage = this.getQueueLength() > 0
-    const mentionUserId = store.getState().footerMentionsEnabled && !hasQueuedMessage
+    const didUseSleepTool = sessionId
+      ? didLatestUserTurnUseSleepTool({ events: this.eventBuffer, sessionId })
+      : false
+    const shouldNotifyUser = !hasQueuedMessage && !didUseSleepTool
+    const mentionUserId = store.getState().footerMentionsEnabled && shouldNotifyUser
       ? await resolveThreadFooterMentionUserId({
           sessionUserId: this.state?.sessionUserId,
           thread: this.thread,
@@ -4911,7 +4916,7 @@ export class ThreadSessionRuntime {
     this.stopTyping()
 
     await sendThreadMessage(this.thread, footerText, {
-      flags: hasQueuedMessage ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
+      flags: shouldNotifyUser ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS,
     })
     logger.log(
       `DURATION: Session completed in ${sessionDuration}, model ${runInfo.model}, tokens ${runInfo.tokensUsed}`,

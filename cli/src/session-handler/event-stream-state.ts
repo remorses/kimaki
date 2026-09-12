@@ -876,6 +876,33 @@ export function getAssistantMessageIdsForLatestUserTurn({
   return assistantMessageIds
 }
 
+export function didLatestUserTurnUseSleepTool({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): boolean {
+  const assistantMessageIds = getAssistantMessageIdsForLatestUserTurn({
+    events,
+    sessionId,
+    upToIndex,
+  })
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.part.updated') continue
+    const part = event.properties.part
+    if (part.sessionID !== sessionId || part.type !== 'tool') continue
+    if (part.tool === 'kimaki_sleep' && assistantMessageIds.has(part.messageID)) {
+      return true
+    }
+  }
+  return false
+}
+
 export function getLatestAssistantMessageIdForLatestUserTurn({
   events,
   sessionId,

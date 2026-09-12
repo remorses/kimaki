@@ -350,7 +350,7 @@ describe('kimaki_sleep', () => {
         ▏kimaki_sleep until 2030-01-01T09:00:00Z _waiting for the deploy_
 
         sleep-started
-        > *project ⋅ main ⋅ 1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         ⻟Woke after sleeping until 2030-01-01 09:00 UTC
         Reason: waiting for the deploy
         Continue the work you were waiting for.
@@ -469,7 +469,7 @@ describe('kimaki_sleep', () => {
         ▏kimaki_sleep for 2h _cancel me_
 
         cancel-sleep-started
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (sleep-tester)
         SLEEP_CANCEL_FOLLOWUP never mind, keep going
         --- from: assistant (TestBot)
