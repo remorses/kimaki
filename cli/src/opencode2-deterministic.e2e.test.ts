@@ -9,7 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
-import type { V2Event } from '@opencode-ai/client'
+import type { V2Event } from '@opencode/client'
 import {
   buildDeterministicOpencode2Config,
   type DeterministicMatcher,

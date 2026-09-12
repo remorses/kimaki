@@ -7,7 +7,7 @@
 // Architecture mirrors the opencode TUI (packages/app/src/context/global-sdk.tsx)
 // which uses a single global.event() SSE stream for all directories.
 
-import { OpenCode, type OpenCodeClient, type V2Event } from '@opencode-ai/client'
+import { OpenCode, type OpenCodeClient, type V2Event } from '@opencode/client'
 
 import { OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
