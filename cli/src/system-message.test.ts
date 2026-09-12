@@ -4,10 +4,41 @@ import { describe, expect, test } from 'vitest'
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
+  KIMAKI_INSTRUCTION_ENTRY_KEY,
   KIMAKI_SYSTEM_PROMPT_MARKER,
 } from './system-message.js'
 
 describe('system-message', () => {
+  test('instruction entry key is a valid OpenCode api key', () => {
+    expect(KIMAKI_INSTRUCTION_ENTRY_KEY).toMatch(/^[a-z0-9][a-z0-9._-]*$/)
+  })
+
+  test('generated system prompt JSON stays under the 256 KiB instruction-entry limit', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_xxxxxxxxxxxxxxxxxxxxxxxxxx',
+      channelId: '1422625308523102348',
+      guildId: '1422625037164351591',
+      threadId: '1547648937639280712',
+      channelTopic: 'example topic',
+      agents: [
+        { name: 'build', description: 'The default build agent' },
+        { name: 'plan', description: 'Plan mode' },
+      ],
+      userId: '535922349652836367',
+      parentSessionId: 'ses_parentparentparentparent',
+      scheduledTask: {
+        taskId: 12,
+        scheduleKind: 'cron',
+        cronExpr: '0 9 * * 1',
+        timezone: 'UTC',
+      },
+      dataDir: '/Users/morse/.kimaki',
+      critiqueEnabled: true,
+    })
+    const jsonBytes = Buffer.byteLength(JSON.stringify(message), 'utf8')
+    expect(jsonBytes).toBeLessThan(256 * 1024)
+  })
+
   test('requires kimaki upload for Discord images, not markdown', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
