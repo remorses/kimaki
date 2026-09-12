@@ -136,7 +136,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
         --- from: assistant (TestBot)
@@ -146,10 +146,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: continue-after-archive
         --- from: assistant (TestBot)
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⺩**interrupt-tester:** Reply with exactly: archived-queue-survives
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
     20_000,
@@ -244,7 +244,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -254,10 +254,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: interrupt-now
         --- from: assistant (TestBot)
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⺩**interrupt-tester:** Reply with exactly: queued-behind-slow
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 
       // 7. Assert the interrupt message got its own ok reply between the

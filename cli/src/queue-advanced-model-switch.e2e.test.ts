@@ -329,7 +329,7 @@ describe('queue advanced: /model with interrupt recovery', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         Model set for this session:
         **deterministic-provider** / **deterministic-v3**
         \`deterministic-provider/deterministic-v3\`
@@ -343,7 +343,7 @@ describe('queue advanced: /model with interrupt recovery', () => {
         Reply with exactly: model-switcher-followup
         --- from: assistant (TestBot)
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v3* <@200000000000000991>"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v3* <@200000000000000991>"
       `)
 
       expect(footer).toBeDefined()

@@ -189,10 +189,10 @@ describe('queue drain after question select answer', () => {
         [user selects dropdown: 0]
         ⺩**question-select-tester:** Alpha
         question-drain-first
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         ⺩**question-select-tester:** Reply with exactly: post-question-second
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(timeline).toContain('How to proceed?')
       expect(timeline).toContain('[user selects dropdown: 0]')
