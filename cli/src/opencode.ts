@@ -46,7 +46,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import { randomBytes } from 'node:crypto'
-import { OpenCode, type OpenCodeClient } from '@opencode-ai/client'
+import { OpenCode, type OpenCodeClient } from '@opencode/client'
 import {
   resolveOpencode2Command,
 } from './opencode2.js'

@@ -1,11 +1,12 @@
 // OpenCode v2 (opencode2) serve harness + client factory. Phase 0 of the v1→v2
 // port: parallel to opencode.ts (v1), used only by tests for now.
 //
-// Verified v2 facts (beta 0.0.0-beta-19271):
-// - binary name is `opencode2`, shipped by @opencode-ai/cli as bin/opencode2.exe
-//   (the .exe name is kept on every platform; postinstall swaps in the native
-//   binary). Spawn the real binary, NOT node_modules/.bin/opencode2 — that is a
-//   /bin/sh wrapper that survives SIGTERM and orphans the server.
+// Verified v2 facts (@opencode/cli 2.0.2):
+// - binary names are `opencode` and `opencode2`, shipped by @opencode/cli as
+//   bin/opencode.exe (the .exe name is kept on every platform; postinstall
+//   swaps in the native binary). Spawn the real binary, NOT
+//   node_modules/.bin/opencode2 — that is a /bin/sh wrapper that survives
+//   SIGTERM and orphans the server.
 // - `opencode2 serve --port N --hostname H` (both flags optional; defaults to
 //   127.0.0.1 and a random port).
 // - auth is Basic `opencode:<password>`. We always generate the password and
@@ -21,7 +22,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 
-import { OpenCode, type OpenCodeClient } from '@opencode-ai/client'
+import { OpenCode, type OpenCodeClient } from '@opencode/client'
 import * as errore from 'errore'
 
 import { getDataDir } from './config.js'
@@ -32,7 +33,7 @@ export type { OpenCodeClient }
 /**
  * Resolve the opencode2 binary path.
  * Order: OPENCODE2_PATH env override, then the platform binary installed by
- * @opencode-ai/cli, then bare `opencode2` on PATH.
+ * @opencode/cli, then bare `opencode2` on PATH.
  */
 export function resolveOpencode2Command(): string {
   const envPath = process.env.OPENCODE2_PATH
@@ -43,15 +44,15 @@ export function resolveOpencode2Command(): string {
   const resolved = errore.try(
     () => {
       const require = createRequire(import.meta.url)
-      const packageJsonPath = require.resolve('@opencode-ai/cli/package.json')
+      const packageJsonPath = require.resolve('@opencode/cli/package.json')
       const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
-      const binRelative = packageJson.bin?.opencode2
+      const binRelative = packageJson.bin?.opencode2 || packageJson.bin?.opencode
       if (typeof binRelative !== 'string') {
-        throw new Error('@opencode-ai/cli package.json has no opencode2 bin')
+        throw new Error('@opencode/cli package.json has no opencode2 bin')
       }
       return path.join(path.dirname(packageJsonPath), binRelative)
     },
-    (error) => new Error('Could not resolve @opencode-ai/cli binary', { cause: error }),
+    (error) => new Error('Could not resolve @opencode/cli binary', { cause: error }),
   )
   if (resolved instanceof Error) {
     return 'opencode2'
