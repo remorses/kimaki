@@ -4,15 +4,16 @@
 // Keep per-message data out of the system prompt so prompt caching can reuse
 // the same session prefix across turns.
 //
-// v2 session.prompt / session.command have no `system` field. The plugin
-// builds this prompt in ctx.session.hook('context') from a sqlite row of
-// Discord IDs. Keep this file free of config.ts / store.ts so the plugin
-// can import it.
+// v2 session.prompt / session.command have no `system` field. The bot writes
+// this text once with session.instructions.entry.put({ key: 'kimaki' }).
 
 import { SESSION_SEARCH_DEFAULT_DAYS } from './session-search.js'
 
 /** Stable marker present in every kimaki system prompt; used by tests and plugins. */
 export const KIMAKI_SYSTEM_PROMPT_MARKER = 'via kimaki.dev'
+
+/** OpenCode instruction-entry key for the session-stable Kimaki system prompt. */
+export const KIMAKI_INSTRUCTION_ENTRY_KEY = 'kimaki'
 
 export type KimakiSystemPromptContext = {
   sessionId: string
