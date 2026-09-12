@@ -9,7 +9,6 @@ import {
   type ThreadChannel,
   type Message,
 } from 'discord.js'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { OpenCodeSdkError } from '../errors.js'
@@ -33,13 +32,13 @@ import { createLogger, LogPrefix } from '../logger.js'
 import { notifyError } from '../sentry.js'
 import {
   execAsync,
+  git,
   getManagedWorktreeDirectory,
   listBranchesByLastCommit,
   resolveBestBaseRef,
   validateBranchRef,
 } from '../worktrees.js'
 import {
-  KIMAKI_WORKTREE_ADAPTER_TYPE,
   removeWorktreeFromOwnRepository,
   resolveGitCommit,
   validateWorktreeIdentity,
@@ -227,16 +226,22 @@ export async function tryWorkspaceCreate({
   worktreeName: string
   projectDirectory: string
   baseCommit: string
-}): Promise<{ directory: string; workspaceId: string } | Error> {
+}): Promise<{ directory: string; branch: string } | Error> {
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
   const client = getClient()
-  const workspaceId = `wrk_${crypto.randomUUID()}`
   const managedDirectory = getManagedWorktreeDirectory({
     directory: projectDirectory,
     name: worktreeName,
   })
+  const branchResult = await git(projectDirectory, [
+    'branch',
+    worktreeName,
+    baseCommit,
+  ])
+  if (branchResult instanceof Error) return branchResult
+
   const cleanupFailedWorkspace = async (worktreeDirectory: string) => {
     const removeResponse = await client.worktree.remove({
       location: { directory: projectDirectory },
@@ -252,14 +257,14 @@ export async function tryWorkspaceCreate({
           worktreeDirectory,
           branchName: worktreeName,
         })
-      : undefined
+      : await git(projectDirectory, ['branch', '-D', worktreeName])
     return sdkCleanupError ?? gitCleanupError
   }
 
   const response = await client.worktree.create({
     location: { directory: projectDirectory },
     name: path.basename(managedDirectory),
-    branch: baseCommit,
+    branch: worktreeName,
     from: projectDirectory,
     directory: path.dirname(managedDirectory),
   }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'worktree.create', cause: e }))
@@ -300,7 +305,35 @@ export async function tryWorkspaceCreate({
     }
     return identityResult
   }
-  return { directory: workspace.directory, workspaceId }
+
+  const attachResult = await git(workspace.directory, ['switch', worktreeName])
+  if (attachResult instanceof Error) {
+    const cleanupError = await cleanupFailedWorkspace(workspace.directory)
+    if (cleanupError instanceof Error) {
+      return new Error(`${attachResult.message}; cleanup failed: ${cleanupError.message}`, {
+        cause: attachResult,
+      })
+    }
+    return attachResult
+  }
+  const actualBranch = await git(workspace.directory, [
+    'symbolic-ref',
+    '--short',
+    'HEAD',
+  ])
+  if (actualBranch instanceof Error || actualBranch !== worktreeName) {
+    const branchError = actualBranch instanceof Error
+      ? actualBranch
+      : new Error(`Expected branch ${worktreeName}, received ${actualBranch}`)
+    const cleanupError = await cleanupFailedWorkspace(workspace.directory)
+    if (cleanupError instanceof Error) {
+      return new Error(`${branchError.message}; cleanup failed: ${cleanupError.message}`, {
+        cause: branchError,
+      })
+    }
+    return branchError
+  }
+  return { directory: workspace.directory, branch: actualBranch }
 }
 
 /**
@@ -333,10 +366,7 @@ export async function createWorktreeInBackground({
   projectDirectory: string
   baseCommit?: string
   rest: REST
-  beforeReady?: (workspace: {
-    directory: string
-    workspaceId: string
-  }) => Promise<void>
+  beforeReady?: (workspace: { directory: string; branch: string }) => Promise<void>
 }): Promise<string | Error> {
   return (async () => {
       // Serialize status message edits so onProgress can't overwrite the
@@ -406,7 +436,6 @@ export async function createWorktreeInBackground({
 
       await setWorkspaceReady({
         threadId: thread.id,
-        workspaceId: workspaceResult.workspaceId,
         workspaceDirectory: workspaceResult.directory,
       })
 
@@ -418,9 +447,9 @@ export async function createWorktreeInBackground({
       }).catch(() => {})
 
       editStatus(
-        `🌳 **Worktree: ${worktreeName}**\n` +
+        `🌳 **Worktree: ${workspaceResult.branch}**\n` +
           `📁 \`${workspaceResult.directory}\`\n` +
-          `🌿 Branch: \`${worktreeName}\``,
+          `🌿 Branch: \`${workspaceResult.branch}\``,
       )
       await editChain
 
@@ -690,7 +719,7 @@ async function handleWorktreeInThread({
     projectDirectory,
     baseCommit,
     rest: command.client.rest,
-    beforeReady: async ({ directory, workspaceId }) => {
+    beforeReady: async ({ directory }) => {
       const sourceSessionId = await getThreadSession(thread.id)
       if (!sourceSessionId) {
         await sendThreadMessage(
@@ -766,7 +795,6 @@ async function handleWorktreeInThread({
       const moveResponse = await getClient().session.move({
         sessionID: forkedSession.id,
         directory,
-        workspaceID: workspaceId,
       }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.move', cause: e }))
       if (moveResponse instanceof Error) {
         logger.error('[NEW-WORKTREE] Failed to move forked session:', moveResponse)

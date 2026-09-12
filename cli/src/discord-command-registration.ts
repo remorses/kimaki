@@ -303,11 +303,6 @@ export async function registerCommands({
       .toJSON(),
 
     new SlashCommandBuilder()
-      .setName('share')
-      .setDescription(truncateCommandDescription('Share the current session as a public URL'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('diff')
       .setDescription(truncateCommandDescription('Show git diff as a shareable URL'))
       .setDMPermission(false)

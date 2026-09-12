@@ -102,14 +102,32 @@ const MAX_VITEST_WAIT_TIMEOUT_MS = 10_000
 // not these helpers (see AGENTS.md).
 const MIN_VITEST_WAIT_TIMEOUT_MS = 8_000
 
-function normalizeWaitTimeout(timeout: number): number {
-  if (process.env['KIMAKI_VITEST'] === '1') {
+function normalizeWaitTimeout(timeout: number, clamp = true): number {
+  if (process.env['KIMAKI_VITEST'] === '1' && clamp) {
     return Math.min(
       Math.max(timeout, MIN_VITEST_WAIT_TIMEOUT_MS),
       MAX_VITEST_WAIT_TIMEOUT_MS,
     )
   }
   return timeout
+}
+
+function getTerminalBotError({
+  messages,
+  botUserId,
+  afterIndex,
+}: {
+  messages: APIMessage[]
+  botUserId: string
+  afterIndex: number
+}): string | undefined {
+  const error = messages.find((message, index) => {
+    if (index <= afterIndex) return false
+    if (message.author.id !== botUserId) return false
+    return getMessageVisibleText(message).includes('✗')
+  })
+  if (!error) return undefined
+  return getMessageVisibleText(error)
 }
 
 /**
@@ -161,13 +179,15 @@ export async function waitForBotMessageCount({
   threadId,
   count,
   timeout,
+  clamp = true,
 }: {
   discord: DigitalDiscord
   threadId: string
   count: number
   timeout: number
+  clamp?: boolean
 }): Promise<APIMessage[]> {
-  const effectiveTimeout = normalizeWaitTimeout(timeout)
+  const effectiveTimeout = normalizeWaitTimeout(timeout, clamp)
   const start = Date.now()
   while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
@@ -196,14 +216,16 @@ export async function waitForBotReplyAfterUserMessage({
   userId,
   userMessageIncludes,
   timeout,
+  clamp = true,
 }: {
   discord: DigitalDiscord
   threadId: string
   userId: string
   userMessageIncludes: string
   timeout: number
+  clamp?: boolean
 }): Promise<APIMessage[]> {
-  const effectiveTimeout = normalizeWaitTimeout(timeout)
+  const effectiveTimeout = normalizeWaitTimeout(timeout, clamp)
   const start = Date.now()
   while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
@@ -216,6 +238,18 @@ export async function waitForBotReplyAfterUserMessage({
     const botReplyIndex = messages.findIndex((message, index) => {
       return index > userMessageIndex && message.author.id === discord.botUserId
     })
+    if (userMessageIndex >= 0) {
+      const terminalError = getTerminalBotError({
+        messages,
+        botUserId: discord.botUserId,
+        afterIndex: userMessageIndex,
+      })
+      if (terminalError) {
+        throw new Error(
+          `Bot posted a terminal error after user message containing "${userMessageIncludes}" in thread ${threadId}: ${terminalError}`,
+        )
+      }
+    }
     if (userMessageIndex >= 0 && botReplyIndex >= 0) {
       return messages
     }
@@ -240,6 +274,7 @@ export async function waitForBotMessageContaining({
   afterUserMessageIncludes,
   afterMessageId,
   timeout,
+  clamp = true,
 }: {
   discord: DigitalDiscord
   threadId: string
@@ -248,8 +283,9 @@ export async function waitForBotMessageContaining({
   afterUserMessageIncludes?: string
   afterMessageId?: string
   timeout: number
+  clamp?: boolean
 }): Promise<APIMessage[]> {
-  const effectiveTimeout = normalizeWaitTimeout(timeout)
+  const effectiveTimeout = normalizeWaitTimeout(timeout, clamp)
   const start = Date.now()
   let lastMessages: APIMessage[] = []
   while (Date.now() - start < effectiveTimeout) {
@@ -290,6 +326,16 @@ export async function waitForBotMessageContaining({
     })
     if (match) {
       return messages
+    }
+    const terminalError = getTerminalBotError({
+      messages,
+      botUserId: discord.botUserId,
+      afterIndex,
+    })
+    if (terminalError) {
+      throw new Error(
+        `Bot posted a terminal error while waiting for "${text}" in thread ${threadId}: ${terminalError}`,
+      )
     }
     await new Promise((resolve) => {
       setTimeout(resolve, 100)
@@ -371,14 +417,16 @@ export async function waitForFooterMessage({
   timeout,
   afterMessageIncludes,
   afterAuthorId,
+  clamp = true,
 }: {
   discord: DigitalDiscord
   threadId: string
   timeout: number
   afterMessageIncludes?: string
   afterAuthorId?: string
+  clamp?: boolean
 }): Promise<APIMessage[]> {
-  const effectiveTimeout = normalizeWaitTimeout(timeout)
+  const effectiveTimeout = normalizeWaitTimeout(timeout, clamp)
   const start = Date.now()
   let lastMessages: APIMessage[] = []
   while (Date.now() - start < effectiveTimeout) {
@@ -409,6 +457,16 @@ export async function waitForFooterMessage({
     })
     if (footer) {
       return messages
+    }
+    const terminalError = getTerminalBotError({
+      messages,
+      botUserId: discord.botUserId,
+      afterIndex,
+    })
+    if (terminalError) {
+      throw new Error(
+        `Bot posted a terminal error while waiting for footer after "${afterMessageIncludes || 'start'}" in thread ${threadId}: ${terminalError}`,
+      )
     }
     await new Promise((resolve) => {
       setTimeout(resolve, 100)

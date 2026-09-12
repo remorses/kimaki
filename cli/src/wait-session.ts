@@ -2,14 +2,14 @@
 // Used by `kimaki send --wait` and `kimaki session wait` to block until a
 // session is idle, interactive prompts are resolved, and output is stable.
 
-import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
+import type { SessionMessageInfo } from '@opencode/client'
 import { getSessionEventSnapshot, getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { ShareMarkdown } from './markdown.js'
 import { createLogger, LogPrefix } from './logger.js'
 import {
   derivePendingPermissionRequests,
-  isAssistantMessageNaturalCompletion,
+  getEventBufferSessionId,
   type EventBufferEntry,
   type EventBufferEvent,
 } from './session-handler/event-stream-state.js'
@@ -82,6 +82,7 @@ export async function waitForSessionComplete({
 
     const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
+      order: 'asc',
     })
     const messages = messagesResponse.data
     const events = await loadPersistedSessionEvents({ sessionId })
@@ -94,6 +95,7 @@ export async function waitForSessionComplete({
     const hasPendingPermissions = pendingPermissions.length > 0
     const hasCompletedTurn = hasCompletedUserTurn({
       messages,
+      events,
       sessionId,
       waitStartedAtMs,
     })
@@ -191,15 +193,21 @@ async function loadPersistedSessionEvents({
   })
 }
 
-function hasCompletedUserTurn({
+export function hasCompletedUserTurn({
   messages,
+  events,
+  sessionId,
   waitStartedAtMs,
 }: {
-  messages: Array<{ type: string; time: { created: number; completed?: number } }>
+  messages: SessionMessageInfo[]
+  events: EventBufferEntry[]
   sessionId: string
   waitStartedAtMs: number
 }): boolean {
-  const latestUserMessage = [...messages]
+  const ascending = [...messages].sort((left, right) => {
+    return left.time.created - right.time.created
+  })
+  const latestUserMessage = [...ascending]
     .reverse()
     .find((message) => {
       return message.type === 'user'
@@ -209,14 +217,36 @@ function hasCompletedUserTurn({
     return false
   }
 
-  const latestAssistant = [...messages]
+  const latestAssistant = [...ascending]
     .reverse()
     .find((message) => {
       return message.type === 'assistant'
-        && typeof message.time.completed === 'number'
         && message.time.created >= latestUserMessage.time.created
     })
-  return Boolean(latestAssistant)
+  if (!latestAssistant || latestAssistant.type !== 'assistant') return false
+  const assistantCompletedAt = latestAssistant.time.completed
+  if (typeof assistantCompletedAt !== 'number') return false
+  if (latestAssistant.error || latestAssistant.finish === 'error') return false
+  if (latestAssistant.finish !== 'stop' && latestAssistant.finish !== 'tool-calls') return false
+  if (latestAssistant.content.length === 0) return false
+  const hasOutput = latestAssistant.content.some((part) => {
+    if (part.type === 'text') return Boolean(part.text.trim())
+    return part.type === 'tool'
+  })
+  if (!hasOutput) return false
+  const hasIncompleteTool = latestAssistant.content.some((part) => {
+    return part.type === 'tool' && part.state.status !== 'completed'
+  })
+  if (hasIncompleteTool) return false
+
+  const latestTerminalExecution = [...events].reverse().find(({ event }) => {
+    if (getEventBufferSessionId(event) !== sessionId) return false
+    return event.type === 'session.execution.succeeded'
+      || event.type === 'session.execution.failed'
+      || event.type === 'session.execution.interrupted'
+  })
+  if (latestTerminalExecution?.event.type !== 'session.execution.succeeded') return false
+  return latestTerminalExecution.event.created >= assistantCompletedAt
 }
 
 /**

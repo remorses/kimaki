@@ -2,6 +2,7 @@
 
 import { describe, expect, test } from 'vitest'
 import {
+  externalOpencodeSyncInternals,
   getIgnoredNoticeTextParts,
   getRenderableUserTextParts,
   isLatestUserTurnFromDiscord,
@@ -115,5 +116,54 @@ describe('external OpenCode user-message filtering', () => {
     expect(
       isLatestUserTurnFromDiscord({ messages: [discordMessage, notice] }),
     ).toBe(true)
+  })
+
+  test('finds the latest Discord turn when v2 returns newest messages first', () => {
+    const oldDiscordMessage: SessionMessageLike = {
+      info: { role: 'user', time: { created: 10 } },
+      parts: [
+        {
+          id: 'discord-origin',
+          sessionID: 'session-1',
+          messageID: 'message-1',
+          type: 'text',
+          text: '<discord-user name="Tommy" />',
+          synthetic: true,
+        },
+        {
+          id: 'discord-text',
+          sessionID: 'session-1',
+          messageID: 'message-1',
+          type: 'text',
+          text: 'old Discord turn',
+        },
+      ],
+    }
+    const latestExternalMessage: SessionMessageLike = {
+      ...textMessage({ text: 'latest external turn' }),
+      info: { role: 'user', time: { created: 20 } },
+    }
+
+    expect(
+      isLatestUserTurnFromDiscord({
+        messages: [latestExternalMessage, oldDiscordMessage],
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('external OpenCode session cutoff', () => {
+  test('keeps only sessions updated after the directory sync start', () => {
+    const sessions = [
+      { id: 'recent', title: 'Recent', time: { created: 100, updated: 301 } },
+      { id: 'old', title: 'Old', time: { created: 100, updated: 299 } },
+      { id: 'boundary', title: 'Boundary', time: { created: 100, updated: 300 } },
+    ]
+
+    expect(
+      externalOpencodeSyncInternals
+        .selectSessionsForSync({ sessions, startMs: 300 })
+        .map((session) => session.id),
+    ).toEqual(['recent', 'boundary'])
   })
 })

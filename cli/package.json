@@ -22,11 +22,7 @@
   "repository": "https://github.com/remorses/kimaki",
   "bin": "bin.js",
   "exports": {
-    "./package.json": "./package.json",
-    "./anthropic-auth-plugin": {
-      "types": "./dist/anthropic-auth-plugin.d.ts",
-      "default": "./dist/anthropic-auth-plugin.js"
-    }
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
@@ -60,8 +56,6 @@
     "@discordjs/voice": "^0.19.2",
     "@google/genai": "^1.46.0",
     "@libsql/client": "^0.17.2",
-    "@opencode-ai/plugin": "^1.16.2",
-    "@opencode-ai/sdk": "^1.16.2",
     "@opencode/cli": "2.0.2",
     "@opencode/client": "2.0.2",
     "@opencode/plugin": "2.0.2",

@@ -947,9 +947,9 @@ export function setupQueueAdvancedSuite({
   projectPermission?: Record<string, unknown>
 }): QueueAdvancedContext {
   const ctx: QueueAdvancedContext = {
-    directories: undefined as unknown as ReturnType<typeof createRunDirectories>,
-    discord: undefined as unknown as DigitalDiscord,
-    botClient: undefined as unknown as Client,
+    directories: undefined!,
+    discord: undefined!,
+    botClient: undefined!,
     testStartTime: Date.now(),
   }
 

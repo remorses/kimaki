@@ -25,6 +25,7 @@ import {
   getLastTextPartIdsForAssistantTurns,
   QUEUE_PREFIX,
   sessionMessagesToGeneric,
+  sessionMessagesAscending,
   type SessionChunk,
 } from './message-formatting.js'
 import {
@@ -57,6 +58,7 @@ type SessionMessage = SessionMessageLike
 export type SessionMessageLike = {
   info: {
     role: string
+    time?: { created: number }
   }
   parts: DiscordSessionPart[]
 }
@@ -200,8 +202,14 @@ export function isLatestUserTurnFromDiscord({
 }: {
   messages: SessionMessageLike[]
 }): boolean {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]!
+  const ascending = messages.every((message) => message.info.time)
+    ? sessionMessagesAscending(messages.map((message) => ({
+        ...message,
+        time: message.info.time ?? { created: 0 },
+      })))
+    : messages
+  for (let i = ascending.length - 1; i >= 0; i--) {
+    const message = ascending[i]!
     if (message.info.role !== 'user') {
       continue
     }
@@ -274,6 +282,18 @@ function sortSessionsByRecency<T extends SessionWithTime>(sessions: T[]): T[] {
   return [...sessions].sort((left, right) => {
     return getSessionRecencyTimestamp(right) - getSessionRecencyTimestamp(left)
   })
+}
+
+function selectSessionsForSync<T extends SessionWithTime>({
+  sessions,
+  startMs,
+}: {
+  sessions: T[]
+  startMs: number
+}): T[] {
+  return sortSessionsByRecency(sessions.filter((session) => {
+    return getSessionRecencyTimestamp(session) >= startMs
+  }))
 }
 
 function groupTrackedChannelsByDirectory(
@@ -489,6 +509,7 @@ async function syncSessionToThread({
 }): Promise<void> {
   const messagesResponse = await client.message.list({
     sessionID: sessionId,
+    order: 'asc',
   }).catch((error: unknown) => {
     return new Error(`Failed to fetch messages for session ${sessionId}`, {
       cause: error,
@@ -498,7 +519,9 @@ async function syncSessionToThread({
     throw messagesResponse
   }
   if (signal.aborted) return
-  const messages = sessionMessagesToGeneric(messagesResponse.data)
+  const messages = sessionMessagesToGeneric(
+    sessionMessagesAscending(messagesResponse.data),
+  )
 
   // Pure derivation from opencode events: if the latest user turn has
   // <discord-user /> metadata, kimaki's thread runtime owns this session.
@@ -685,7 +708,7 @@ async function syncDirectoryInner({
     }
     return !/subagent\)\s*$/i.test(title)
   })
-  const sorted = sortSessionsByRecency(sessions)
+  const sorted = selectSessionsForSync({ sessions, startMs })
 
   for (const session of sorted) {
     if (signal.aborted) return
@@ -791,6 +814,7 @@ export const externalOpencodeSyncInternals = {
   getSessionThreadName,
   groupTrackedChannelsByDirectory,
   sortSessionsByRecency,
+  selectSessionsForSync,
   parseDiscordOriginMetadata,
   getDiscordOriginMetadataFromMessage,
   isLatestUserTurnFromDiscord,

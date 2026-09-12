@@ -1,24 +1,26 @@
-// Pure event-stream derivation functions for session lifecycle state.
-// These functions derive lifecycle decisions from an event buffer array.
-// Zero imports from thread-session-runtime.ts, store.ts, or state.ts.
-// Only types from @opencode-ai/sdk/v2 and the getOpencodeEventSessionId helper.
+// Pure derivations from native OpenCode v2 and Kimaki-local session events.
 
-import type {
-  Event as OpenCodeEvent,
-  Message as OpenCodeMessage,
-  Part,
-} from '@opencode-ai/sdk/v2'
 import type { V2Event } from '@opencode/client'
 import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 
-type QueueQuestionHandoffStartedEvent = {
-  type: 'queue.question-handoff-started'
-  properties: {
-    sessionID: string
-  }
-}
+export type KimakiLocalEvent =
+  | {
+      type: 'kimaki.queue-dispatch.started'
+      data: { sessionID: string }
+    }
+  | {
+      type: 'kimaki.queue-dispatch.settled'
+      data: { sessionID: string }
+    }
+  | {
+      type: 'kimaki.question-queue-handoff.started'
+      data: {
+        sessionID: string
+        requestID?: string
+      }
+    }
 
-export type EventBufferEvent = OpenCodeEvent | V2Event | QueueQuestionHandoffStartedEvent
+export type EventBufferEvent = V2Event | KimakiLocalEvent
 
 export type EventBufferEntry = {
   event: EventBufferEvent
@@ -27,118 +29,14 @@ export type EventBufferEntry = {
 }
 
 export function getEventBufferSessionId(event: EventBufferEvent): string | undefined {
-  if (event.type === 'queue.question-handoff-started') {
-    return event.properties.sessionID
-  }
+  if (
+    event.type === 'kimaki.queue-dispatch.started'
+    || event.type === 'kimaki.queue-dispatch.settled'
+    || event.type === 'kimaki.question-queue-handoff.started'
+  ) return event.data.sessionID
   return getOpencodeEventSessionId(event)
 }
 
-type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
-type UserMessage = Extract<OpenCodeMessage, { role: 'user' }>
-
-function isUserFacingAssistantMessage(message: AssistantMessage): boolean {
-  return message.summary !== true
-}
-
-export type AssistantMessageKind = 'user-facing' | 'summary' | 'unknown'
-
-export function getAssistantMessageKind({
-  events,
-  sessionId,
-  messageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-  upToIndex?: number
-}): AssistantMessageKind {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
-      continue
-    }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
-      continue
-    }
-    return info.summary === true ? 'summary' : 'user-facing'
-  }
-  return 'unknown'
-}
-
-function getTaskChildSessionId({
-  part,
-}: {
-  part: Extract<Part, { type: 'tool' }>
-}): string | undefined {
-  // Event-shape reference:
-  // - cli/src/session-handler/event-stream-fixtures/real-session-task-three-parallel-sleeps.jsonl
-  // - In real task events, state.metadata.sessionId appears on running/completed
-  //   tool updates and is the canonical child-session identifier.
-  // We intentionally do not parse state.output because it is user-facing text
-  // and can change format across providers/versions.
-  const metadataValue = (part.state as { metadata?: unknown }).metadata
-  const metadataSessionId =
-    metadataValue && typeof metadataValue === 'object'
-      ? (metadataValue as { sessionId?: unknown }).sessionId
-      : undefined
-  if (typeof metadataSessionId === 'string' && metadataSessionId.length > 0) {
-    return metadataSessionId
-  }
-  return undefined
-}
-
-function getTaskCandidateFromEvent({
-  event,
-  mainSessionId,
-}: {
-  event: EventBufferEvent
-  mainSessionId: string
-}): {
-  assistantMessageId: string
-  childSessionId: string
-  subagentType?: string
-  description?: string
-} | undefined {
-  if (event.type !== 'message.part.updated') {
-    return undefined
-  }
-
-  const part = event.properties.part
-  if (part.sessionID !== mainSessionId) {
-    return undefined
-  }
-  if (part.type !== 'tool' || part.tool !== 'task' || part.state.status === 'pending') {
-    return undefined
-  }
-
-  const childSessionId = getTaskChildSessionId({ part })
-  if (!childSessionId) {
-    return undefined
-  }
-
-  const subagentType = part.state.input?.subagent_type
-  const description = part.state.input?.description
-  return {
-    assistantMessageId: part.messageID,
-    childSessionId,
-    subagentType: typeof subagentType === 'string' ? subagentType : undefined,
-    description: typeof description === 'string' ? description : undefined,
-  }
-}
-
-export type DerivedSubagentSession = {
-  childSessionId: string
-  subagentType?: string
-  description?: string
-  timestamp: number
-}
-
-// Scans backward for most recent session-scoped lifecycle event.
-// Busy when the latest lifecycle fact is status busy/retry, execution.started,
-// or step.started. Idle on execution terminal events and session.idle.
 export function isSessionBusy({
   events,
   sessionId,
@@ -150,42 +48,50 @@ export function isSessionBusy({
 }): boolean {
   const end = upToIndex ?? events.length - 1
   for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
+    const event = events[i]?.event
+    if (!event || getEventBufferSessionId(event) !== sessionId) continue
+    if (
+      event.type === 'kimaki.queue-dispatch.settled'
+      || event.type === 'session.idle'
+      || event.type === 'session.execution.succeeded'
+      || event.type === 'session.execution.interrupted'
+      || event.type === 'session.execution.failed'
+    ) return false
+    if (
+      event.type === 'kimaki.queue-dispatch.started'
+      || event.type === 'session.execution.started'
+      || event.type === 'session.step.started'
+    ) return true
+    if (event.type === 'session.status') {
+      return event.data.status.type === 'busy' || event.data.status.type === 'retry'
     }
-     const e = entry.event
-     const eid = getEventBufferSessionId(e)
-    if (eid !== sessionId) {
-      continue
-    }
-     if (
-       e.type === 'session.idle' ||
-       e.type === 'session.execution.succeeded' ||
-       e.type === 'session.execution.interrupted' ||
-       e.type === 'session.execution.failed'
-     ) {
-       return false
-     }
-     if (e.type === 'session.execution.started' || e.type === 'session.step.started') {
-       return true
-     }
-     if (e.type === 'session.status') {
-       const status =
-         'data' in e && e.data && typeof e.data === 'object' && 'status' in e.data
-           ? (e.data as { status?: { type?: string } }).status
-           : 'properties' in e
-             ? (e as { properties?: { status?: { type?: string } } }).properties?.status
-             : undefined
-       return status?.type === 'busy' || status?.type === 'retry'
-     }
   }
-   return false
+  return false
 }
 
-// True when this drain produced Discord-visible assistant output.
-// Scan backward from the current index until execution.started so a later
-// empty drain does not inherit text.ended / tool.called from a prior run.
+export function getLatestExecutionStartedTimestamp({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): number | undefined {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const entry = events[i]
+    if (!entry) continue
+    if (
+      entry.event.type === 'session.execution.started'
+      && getEventBufferSessionId(entry.event) === sessionId
+    ) {
+      return entry.timestamp
+    }
+  }
+  return undefined
+}
+
 export function hasVisibleV2OutputSinceExecutionStart({
   events,
   sessionId,
@@ -198,15 +104,8 @@ export function hasVisibleV2OutputSinceExecutionStart({
   const end = upToIndex ?? events.length - 1
   for (let i = end; i >= 0; i--) {
     const event = events[i]?.event
-    if (!event) {
-      continue
-    }
-    if (getEventBufferSessionId(event) !== sessionId) {
-      continue
-    }
-    if (event.type === 'session.execution.started') {
-      return false
-    }
+    if (!event || getEventBufferSessionId(event) !== sessionId) continue
+    if (event.type === 'session.execution.started') return false
     if (event.type === 'session.text.ended' || event.type === 'session.tool.called') {
       return true
     }
@@ -224,137 +123,23 @@ export function didQuestionQueueHandoffSinceLatestQuestionAsked({
   upToIndex?: number
 }): boolean {
   const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    const eventSessionId = getEventBufferSessionId(event)
-    if (eventSessionId !== sessionId) {
-      continue
-    }
-    if (event.type === 'queue.question-handoff-started') {
-      return true
-    }
-    if (event.type === 'question.asked') {
-      return false
-    }
-  }
-  return false
-}
-
-export type DerivedUnansweredQuestion = {
-  id: string
-  questions: Array<{
-    question: string
-    header: string
-    options: Array<{
-      label: string
-      description: string
-    }>
-    multiple?: boolean
-  }>
-  tool?: {
-    messageID: string
-    callID: string
-  }
-}
-
-// OpenCode emits question.asked when the tool starts, often before the
-// preceding text part gets time.end. Discord must wait for that end event
-// or the question UI posts first and the text dumps later.
-export function isAssistantTextReadyForQuestion({
-  events,
-  sessionId,
-  messageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-  upToIndex?: number
-}): boolean {
-  const end = upToIndex ?? events.length - 1
+  let handoffRequestId: string | undefined
+  let latestRequestId: string | undefined
   for (let i = end; i >= 0; i--) {
     const event = events[i]?.event
-    if (!event || event.type !== 'message.part.updated') {
+    if (!event || getEventBufferSessionId(event) !== sessionId) continue
+    if (event.type === 'kimaki.question-queue-handoff.started') {
+      handoffRequestId = event.data.requestID
+      if (latestRequestId) return handoffRequestId === latestRequestId
       continue
     }
-    const part = event.properties.part
-    if (part.sessionID !== sessionId) {
+    if (event.type !== 'form.created' || event.data.form.metadata?.kind !== 'question') {
       continue
     }
-    if (part.messageID !== messageId) {
-      continue
-    }
-    if (part.type !== 'text') {
-      continue
-    }
-    return Boolean(part.time?.end)
+    latestRequestId ??= event.data.form.id
+    if (handoffRequestId) return handoffRequestId === latestRequestId
   }
-  return true
-}
-
-export function deriveLatestUnansweredQuestion({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex?: number
-}): DerivedUnansweredQuestion | undefined {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    if (getEventBufferSessionId(event) !== sessionId) {
-      continue
-    }
-    if (event.type === 'question.replied' || event.type === 'question.rejected') {
-      return undefined
-    }
-    if (event.type === 'message.part.updated') {
-      const part = event.properties.part
-      if (
-        part.type === 'tool'
-        && part.tool === 'question'
-        && (part.state.status === 'error' || part.state.status === 'completed')
-      ) {
-        return undefined
-      }
-    }
-    if (event.type === 'question.asked') {
-      const messageId = event.properties.tool?.messageID
-      const latestUserMessage = getLatestUserMessage({
-        events,
-        sessionId,
-        upToIndex: end,
-      })
-      if (
-        messageId
-        && latestUserMessage
-        && !isAssistantMessageInLatestUserTurn({
-          events,
-          sessionId,
-          messageId,
-          upToIndex: end,
-        })
-      ) {
-        return undefined
-      }
-      return {
-        id: event.properties.id,
-        questions: event.properties.questions,
-        tool: event.properties.tool,
-      }
-    }
-  }
-  return undefined
+  return false
 }
 
 export function derivePendingPermissionRequests({
@@ -365,148 +150,17 @@ export function derivePendingPermissionRequests({
   sessionId: string
 }): string[] {
   const permissions = new Set<string>()
-
-  for (const entry of events) {
-    const event = entry.event
-    const eventSessionId = getEventBufferSessionId(event)
-    if (eventSessionId !== sessionId) {
-      continue
-    }
-
+  for (const { event } of events) {
+    if (getEventBufferSessionId(event) !== sessionId) continue
     if (event.type === 'permission.asked') {
-      const requestId = 'data' in event && event.data && 'id' in event.data
-        ? event.data.id
-        : 'properties' in event
-          ? (event as { properties?: { id?: string } }).properties?.id
-          : undefined
-      if (requestId) {
-        permissions.add(requestId)
-      }
+      permissions.add(event.data.id)
       continue
     }
-
-    if (event.type === 'permission.replied') {
-      const requestId = 'data' in event && event.data && 'requestID' in event.data
-        ? event.data.requestID
-        : 'properties' in event
-          ? (event as { properties?: { requestID?: string } }).properties?.requestID
-          : undefined
-      if (requestId) {
-        permissions.delete(requestId)
-      }
-    }
+    if (event.type === 'permission.replied') permissions.delete(event.data.requestID)
   }
-
   return [...permissions]
 }
 
-export function isAssistantMessageNaturalCompletion({
-  message,
-}: {
-  message: AssistantMessage
-}): boolean {
-  if (!isUserFacingAssistantMessage(message)) {
-    return false
-  }
-  if (typeof message.time.completed !== 'number') {
-    return false
-  }
-  if (message.error) {
-    return false
-  }
-  // finish="tool-calls" means the model's last step was tool execution.
-  // Mid-turn tool-call steps don't get footers — the footer comes from the
-  // final text response (finish="stop") that follows. If the turn ends with
-  // only tool-calls and no text follow-up, no footer is emitted. This is
-  // acceptable since models almost always follow up with text after tools.
-  return message.finish !== 'tool-calls'
-}
-
-export function hasAssistantMessageCompletedBefore({
-  events,
-  sessionId,
-  messageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-  upToIndex?: number
-}): boolean {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    if (event.type !== 'message.updated') {
-      continue
-    }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
-      continue
-    }
-    if (typeof info.time.completed === 'number') {
-      return true
-    }
-  }
-  return false
-}
-
-export function getLatestUserMessage({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex?: number
-}): UserMessage | undefined {
-  const end = upToIndex ?? events.length - 1
-  let latestUserMessage: UserMessage | undefined
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    if (event.type !== 'message.updated') {
-      continue
-    }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'user') {
-      continue
-    }
-    if (!latestUserMessage) {
-      latestUserMessage = info
-      continue
-    }
-    if (info.time.created > latestUserMessage.time.created) {
-      latestUserMessage = info
-    }
-  }
-  return latestUserMessage
-}
-
-export function getCurrentTurnStartTime({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex?: number
-}): number | undefined {
-  const latestUserMessage = getLatestUserMessage({
-    events,
-    sessionId,
-    upToIndex,
-  })
-  return latestUserMessage?.time.created
-}
-
-// Token total helper — sum of input + output + reasoning + cache.read + cache.write
 function getTokenTotal(tokens: {
   input: number
   output: number
@@ -516,339 +170,6 @@ function getTokenTotal(tokens: {
   return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
 }
 
-export type TurnTokenUsage = {
-  input: number
-  output: number
-  reasoning: number
-  cacheRead: number
-  cacheWrite: number
-  total: number
-  cost: number
-  model: string | undefined
-  providerID: string | undefined
-  assistantMessageCount: number
-  userMessageId: string | undefined
-}
-
-function emptyTurnTokenUsage(): TurnTokenUsage {
-  return {
-    input: 0,
-    output: 0,
-    reasoning: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    total: 0,
-    cost: 0,
-    model: undefined,
-    providerID: undefined,
-    assistantMessageCount: 0,
-    userMessageId: undefined,
-  }
-}
-
-function addAssistantTokens({
-  usage,
-  message,
-}: {
-  usage: TurnTokenUsage
-  message: AssistantMessage
-}): void {
-  if (message.tokens) {
-    usage.input += message.tokens.input
-    usage.output += message.tokens.output
-    usage.reasoning += message.tokens.reasoning
-    usage.cacheRead += message.tokens.cache.read
-    usage.cacheWrite += message.tokens.cache.write
-    usage.total += message.tokens.total ?? getTokenTotal(message.tokens)
-  }
-  usage.cost += message.cost
-  usage.model = message.modelID
-  usage.providerID = message.providerID
-}
-
-function sumAssistantMessages({
-  messages,
-  userMessageId,
-}: {
-  messages: Map<string, AssistantMessage>
-  userMessageId?: string
-}): TurnTokenUsage {
-  if (messages.size === 0) {
-    return {
-      ...emptyTurnTokenUsage(),
-      userMessageId,
-    }
-  }
-  const usage = emptyTurnTokenUsage()
-  usage.userMessageId = userMessageId
-  usage.assistantMessageCount = messages.size
-  for (const message of messages.values()) {
-    addAssistantTokens({ usage, message })
-  }
-  return usage
-}
-
-function collectAssistantMessages({
-  events,
-  sessionId,
-  upToIndex,
-  parentID,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex: number
-  parentID?: string
-}): Map<string, AssistantMessage> {
-  const latestByMessageId = new Map<string, AssistantMessage>()
-  for (let i = 0; i <= upToIndex; i++) {
-    const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
-      continue
-    }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
-      continue
-    }
-    if (parentID && info.parentID !== parentID) {
-      continue
-    }
-    latestByMessageId.set(info.id, info)
-  }
-  return latestByMessageId
-}
-
-function getSessionInfoTokenUsage({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex: number
-}): TurnTokenUsage | undefined {
-  for (let i = upToIndex; i >= 0; i--) {
-    const event = events[i]?.event
-    if (event?.type !== 'session.updated' && event?.type !== 'session.created') {
-      continue
-    }
-    if (!('properties' in event) || !event.properties || !('info' in event.properties)) {
-      continue
-    }
-    const info = event.properties.info
-    if (info.id !== sessionId) {
-      continue
-    }
-    if (!info.tokens) {
-      continue
-    }
-    const usage = emptyTurnTokenUsage()
-    usage.input = info.tokens.input
-    usage.output = info.tokens.output
-    usage.reasoning = info.tokens.reasoning
-    usage.cacheRead = info.tokens.cache.read
-    usage.cacheWrite = info.tokens.cache.write
-    usage.total = getTokenTotal(info.tokens)
-    usage.cost = info.cost ?? 0
-    usage.model = info.model?.id
-    usage.providerID = info.model?.providerID
-    return usage.total > 0 || usage.cost > 0 ? usage : undefined
-  }
-  return undefined
-}
-
-// Latest billed token snapshot for the current user turn.
-// Sums the last message.updated tokens per assistant message id so streaming
-// updates are not double-counted. Scoped to sessionId so subagent idles
-// report their own usage. Child task sessions often have no user message in
-// the buffer; fall back to all assistant messages, then Session.tokens on
-// session.updated (OpenCode projects per-session usage there).
-export function getLatestTurnTokenUsage({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex?: number
-}): TurnTokenUsage {
-  const end = upToIndex ?? events.length - 1
-  const latestUserMessage = getLatestUserMessage({
-    events,
-    sessionId,
-    upToIndex,
-  })
-  if (latestUserMessage) {
-    return sumAssistantMessages({
-      messages: collectAssistantMessages({
-        events,
-        sessionId,
-        upToIndex: end,
-        parentID: latestUserMessage.id,
-      }),
-      userMessageId: latestUserMessage.id,
-    })
-  }
-
-  const sessionAssistants = sumAssistantMessages({
-    messages: collectAssistantMessages({
-      events,
-      sessionId,
-      upToIndex: end,
-    }),
-  })
-  if (sessionAssistants.total > 0 || sessionAssistants.assistantMessageCount > 0) {
-    return sessionAssistants
-  }
-
-  return getSessionInfoTokenUsage({
-    events,
-    sessionId,
-    upToIndex: end,
-  }) ?? emptyTurnTokenUsage()
-}
-
-function findFirstUserMessageIndex({
-  events,
-  userMessageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  userMessageId: string
-  upToIndex: number
-}): number | undefined {
-  for (let i = 0; i <= upToIndex; i++) {
-    const event = events[i]?.event
-    if (event?.type !== 'message.updated') {
-      continue
-    }
-    if (event.properties.info.id === userMessageId) {
-      return i
-    }
-  }
-  return undefined
-}
-
-function findPreviousIdleIndexInTurn({
-  events,
-  sessionId,
-  firstUserMessageIndex,
-  beforeIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  firstUserMessageIndex: number
-  beforeIndex: number
-}): number | undefined {
-  for (let i = beforeIndex - 1; i > firstUserMessageIndex; i--) {
-    const event = events[i]?.event
-    if (event?.type === 'session.idle' && getEventBufferSessionId(event) === sessionId) {
-      return i
-    }
-  }
-  return undefined
-}
-
-function subtractTokenUsage({
-  current,
-  previous,
-}: {
-  current: TurnTokenUsage
-  previous: TurnTokenUsage
-}): TurnTokenUsage {
-  return {
-    input: current.input - previous.input,
-    output: current.output - previous.output,
-    reasoning: current.reasoning - previous.reasoning,
-    cacheRead: current.cacheRead - previous.cacheRead,
-    cacheWrite: current.cacheWrite - previous.cacheWrite,
-    total: current.total - previous.total,
-    cost: current.cost - previous.cost,
-    model: current.model,
-    providerID: current.providerID,
-    assistantMessageCount: current.assistantMessageCount,
-    userMessageId: current.userMessageId,
-  }
-}
-
-function findFirstSessionEventIndex({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex: number
-}): number {
-  for (let i = 0; i <= upToIndex; i++) {
-    const event = events[i]?.event
-    if (!event) {
-      continue
-    }
-    if (getEventBufferSessionId(event) === sessionId) {
-      return i
-    }
-  }
-  return 0
-}
-
-// Tokens billed since the previous session.idle in this user turn.
-// Survives process restart because both idles stay in the event buffer.
-// Child task sessions may have no user message.updated; scope from the first
-// event for that sessionId instead so their tokens still emit.
-export function getIdleTokenUsageDelta({
-  events,
-  sessionId,
-  idleEventIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  idleEventIndex: number
-}): TurnTokenUsage | undefined {
-  const current = getLatestTurnTokenUsage({
-    events,
-    sessionId,
-    upToIndex: idleEventIndex,
-  })
-  if (current.total <= 0) {
-    return undefined
-  }
-  const firstUserMessageIndex = current.userMessageId
-    ? findFirstUserMessageIndex({
-      events,
-      userMessageId: current.userMessageId,
-      upToIndex: idleEventIndex,
-    })
-    : findFirstSessionEventIndex({
-      events,
-      sessionId,
-      upToIndex: idleEventIndex,
-    })
-  if (firstUserMessageIndex === undefined) {
-    return current
-  }
-  const previousIdleIndex = findPreviousIdleIndexInTurn({
-    events,
-    sessionId,
-    firstUserMessageIndex,
-    beforeIndex: idleEventIndex,
-  })
-  if (previousIdleIndex === undefined) {
-    return current
-  }
-  const previous = getLatestTurnTokenUsage({
-    events,
-    sessionId,
-    upToIndex: previousIdleIndex,
-  })
-  const delta = subtractTokenUsage({ current, previous })
-  if (delta.total <= 0) {
-    return undefined
-  }
-  return delta
-}
-
-// Scans backward for most recent message.updated with role=assistant for sessionId.
-// Extracts model, providerID, agent, tokensUsed.
 export function getLatestRunInfo({
   events,
   sessionId,
@@ -863,67 +184,109 @@ export function getLatestRunInfo({
   agent: string | undefined
   tokensUsed: number
 } {
-  const result = {
-    model: undefined as string | undefined,
-    providerID: undefined as string | undefined,
-    agent: undefined as string | undefined,
-    tokensUsed: 0,
-  }
   const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const e = entry.event
-    if (e.type === 'session.step.started' && 'data' in e) {
-      const data = e.data
-      if (data.sessionID !== sessionId) {
-        continue
+  const latestStepEnd = (() => {
+    for (let i = end; i >= 0; i--) {
+      const event = events[i]?.event
+      if (event?.type === 'session.step.ended' && event.data.sessionID === sessionId) {
+        return event
       }
-      if (!result.model) {
-        result.model = data.model.id
-        result.providerID = data.model.providerID
-        result.agent = data.agent
+    }
+    return undefined
+  })()
+  const latestStepStart = (() => {
+    for (let i = end; i >= 0; i--) {
+      const event = events[i]?.event
+      if (event?.type === 'session.step.started' && event.data.sessionID === sessionId) {
+        return event
       }
-      if (result.tokensUsed > 0) {
-        return result
-      }
-      continue
     }
-    if (e.type === 'session.step.ended' && 'data' in e) {
-      const data = e.data
-      if (data.sessionID !== sessionId) {
-        continue
-      }
-      if (result.tokensUsed === 0 && data.tokens) {
-        result.tokensUsed = getTokenTotal(data.tokens)
-      }
-      continue
-    }
-    if (e.type !== 'message.updated' || !('properties' in e)) {
-      continue
-    }
-    const msg = e.properties.info
-    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
-      continue
-    }
-    if (!isUserFacingAssistantMessage(msg)) {
-      continue
-    }
-    return {
-      model: msg.modelID,
-      providerID: msg.providerID,
-      agent: msg.mode,
-      tokensUsed: msg.tokens
-        ? getTokenTotal(msg.tokens)
-        : 0,
-    }
+    return undefined
+  })()
+  return {
+    model: latestStepStart?.data.model.id,
+    providerID: latestStepStart?.data.model.providerID,
+    agent: latestStepStart?.data.agent,
+    tokensUsed: latestStepEnd ? getTokenTotal(latestStepEnd.data.tokens) : 0,
   }
-  return result
 }
 
-export function getAssistantMessageIdsForLatestUserTurn({
+export type NativeExecutionUsage = {
+  input: number
+  output: number
+  reasoning: number
+  cacheRead: number
+  cacheWrite: number
+  total: number
+  cost: number
+  model: string | undefined
+  providerID: string | undefined
+  agent: string | undefined
+  assistantMessageCount: number
+  startedAt: number | undefined
+}
+
+export function getNativeExecutionUsage({
+  events,
+  sessionId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  upToIndex?: number
+}): NativeExecutionUsage {
+  const end = upToIndex ?? events.length - 1
+  const executionStartIndex = (() => {
+    for (let i = end; i >= 0; i--) {
+      const event = events[i]?.event
+      if (event?.type === 'session.execution.started' && event.data.sessionID === sessionId) {
+        return i
+      }
+    }
+    return -1
+  })()
+  const usage: NativeExecutionUsage = {
+    input: 0,
+    output: 0,
+    reasoning: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+    cost: 0,
+    model: undefined,
+    providerID: undefined,
+    agent: undefined,
+    assistantMessageCount: 0,
+    startedAt: executionStartIndex >= 0
+      ? events[executionStartIndex]?.timestamp
+      : undefined,
+  }
+  if (executionStartIndex < 0) return usage
+
+  const assistantMessageIds = new Set<string>()
+  for (let i = executionStartIndex + 1; i <= end; i++) {
+    const event = events[i]?.event
+    if (event?.type === 'session.step.started' && event.data.sessionID === sessionId) {
+      usage.model = event.data.model.id
+      usage.providerID = event.data.model.providerID
+      usage.agent = event.data.agent
+      continue
+    }
+    if (event?.type !== 'session.step.ended' || event.data.sessionID !== sessionId) continue
+    usage.input += event.data.tokens.input
+    usage.output += event.data.tokens.output
+    usage.reasoning += event.data.tokens.reasoning
+    usage.cacheRead += event.data.tokens.cache.read
+    usage.cacheWrite += event.data.tokens.cache.write
+    usage.total += getTokenTotal(event.data.tokens)
+    usage.cost += event.data.cost
+    assistantMessageIds.add(event.data.assistantMessageID)
+  }
+  usage.assistantMessageCount = assistantMessageIds.size
+  return usage
+}
+
+export function getAssistantMessageIdsForLatestExecution({
   events,
   sessionId,
   upToIndex,
@@ -932,40 +295,18 @@ export function getAssistantMessageIdsForLatestUserTurn({
   sessionId: string
   upToIndex?: number
 }): Set<string> {
-  const latestUserMessage = getLatestUserMessage({
-    events,
-    sessionId,
-    upToIndex,
-  })
-  if (!latestUserMessage) {
-    return new Set<string>()
+  const end = upToIndex ?? events.length - 1
+  const ids = new Set<string>()
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (!event || getEventBufferSessionId(event) !== sessionId) continue
+    if (event.type === 'session.execution.started') break
+    if (event.type === 'session.step.started') ids.add(event.data.assistantMessageID)
   }
-  const end = upToIndex === undefined ? events.length : upToIndex + 1
-  const assistantMessageIds = new Set<string>()
-  for (let i = 0; i < end; i++) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const e = entry.event
-    if (e.type !== 'message.updated') {
-      continue
-    }
-    const msg = e.properties.info
-    if (msg.sessionID !== sessionId || msg.role !== 'assistant') {
-      continue
-    }
-    if (!isUserFacingAssistantMessage(msg)) {
-      continue
-    }
-    if (msg.parentID === latestUserMessage.id) {
-      assistantMessageIds.add(msg.id)
-    }
-  }
-  return assistantMessageIds
+  return new Set([...ids].reverse())
 }
 
-export function getLatestAssistantMessageIdForLatestUserTurn({
+export function getLatestAssistantMessageIdForLatestExecution({
   events,
   sessionId,
   upToIndex,
@@ -974,234 +315,78 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
   sessionId: string
   upToIndex?: number
 }): string | undefined {
-  const latestUserMessage = getLatestUserMessage({
-    events,
-    sessionId,
-    upToIndex,
-  })
-  if (!latestUserMessage) {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (!event || getEventBufferSessionId(event) !== sessionId) continue
+    if (event.type === 'session.execution.started') return undefined
+    if (event.type === 'session.step.started') return event.data.assistantMessageID
+  }
+  return undefined
+}
+
+export type DerivedSubagentSession = {
+  childSessionId: string
+  subagentType?: string
+  description?: string
+  timestamp: number
+}
+
+function getSubagentCandidate({
+  events,
+  eventIndex,
+  mainSessionId,
+}: {
+  events: EventBufferEntry[]
+  eventIndex: number
+  mainSessionId: string
+}): {
+  assistantMessageId: string
+  childSessionId: string
+  subagentType?: string
+  description?: string
+} | undefined {
+  const event = events[eventIndex]?.event
+  if (event?.type !== 'session.tool.success' && event?.type !== 'session.tool.failed') {
     return undefined
   }
-  const end = upToIndex ?? events.length - 1
-  let latestAssistantMessage:
-    | Extract<OpenCodeMessage, { role: 'assistant' }>
-    | undefined
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
+  if (event.data.sessionID !== mainSessionId) return undefined
+  const childSessionId = event.data.metadata?.sessionID
+  if (typeof childSessionId !== 'string' || childSessionId.length === 0) return undefined
+
+  const input = (() => {
+    for (let i = eventIndex - 1; i >= 0; i--) {
+      const prior = events[i]?.event
+      if (
+        prior?.type === 'session.tool.called'
+        && prior.data.sessionID === mainSessionId
+        && prior.data.assistantMessageID === event.data.assistantMessageID
+        && prior.data.id === event.data.id
+      ) return prior.data.input
     }
-    const event = entry.event
-    if (event.type !== 'message.updated') {
-      continue
+    return undefined
+  })()
+  const toolName = (() => {
+    for (let i = eventIndex - 1; i >= 0; i--) {
+      const prior = events[i]?.event
+      if (
+        prior?.type === 'session.tool.input.started'
+        && prior.data.sessionID === mainSessionId
+        && prior.data.assistantMessageID === event.data.assistantMessageID
+        && prior.data.id === event.data.id
+      ) return prior.data.name
     }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
-      continue
-    }
-    if (!isUserFacingAssistantMessage(info)) {
-      continue
-    }
-    if (info.parentID !== latestUserMessage.id) {
-      continue
-    }
-    if (!latestAssistantMessage) {
-      latestAssistantMessage = info
-      continue
-    }
-    if (info.time.created > latestAssistantMessage.time.created) {
-      latestAssistantMessage = info
-    }
+    return undefined
+  })()
+  if (toolName !== 'subagent') return undefined
+  return {
+    assistantMessageId: event.data.assistantMessageID,
+    childSessionId,
+    subagentType: typeof input?.agent === 'string' ? input.agent : undefined,
+    description: typeof input?.description === 'string' ? input.description : undefined,
   }
-  return latestAssistantMessage?.id
 }
 
-type EventBufferedAssistantMessage = AssistantMessage & {
-  partsSummary?: Array<{ id: string; type: string }>
-}
-
-function hasRenderablePartSummary(message: EventBufferedAssistantMessage): boolean {
-  if (!('partsSummary' in message) || !Array.isArray(message.partsSummary)) {
-    return false
-  }
-  return message.partsSummary.some((part) => {
-    return part.type === 'text' || part.type === 'tool'
-  })
-}
-
-function hasAssistantPartEvidence({
-  events,
-  sessionId,
-  messageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-  upToIndex?: number
-}): boolean {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    if (event.type === 'message.updated') {
-      const info = event.properties.info as EventBufferedAssistantMessage
-      if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
-        continue
-      }
-      if (hasRenderablePartSummary(info)) {
-        return true
-      }
-      continue
-    }
-    if (event.type !== 'message.part.updated') {
-      continue
-    }
-    const { part } = event.properties
-    if (part.messageID !== messageId) {
-      continue
-    }
-    if (part.type === 'text' || part.type === 'tool') {
-      return true
-    }
-  }
-  return false
-}
-
-function hasAssistantStepFinished({
-  events,
-  messageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  messageId: string
-  upToIndex?: number
-}): boolean {
-  const end = upToIndex ?? events.length - 1
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry || entry.event.type !== 'message.part.updated') {
-      continue
-    }
-    const { part } = entry.event.properties
-    if (part.messageID !== messageId) {
-      continue
-    }
-    if (part.type === 'step-finish') {
-      return true
-    }
-  }
-  return false
-}
-
-export function doesLatestUserTurnHaveNaturalCompletion({
-  events,
-  sessionId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  upToIndex?: number
-}): boolean {
-  const latestAssistantMessageId = getLatestAssistantMessageIdForLatestUserTurn({
-    events,
-    sessionId,
-    upToIndex,
-  })
-  if (!latestAssistantMessageId) {
-    return false
-  }
-
-  const end = upToIndex ?? events.length - 1
-  let latestAssistantMessage: EventBufferedAssistantMessage | undefined
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const event = entry.event
-    if (event.type !== 'message.updated') {
-      continue
-    }
-    const info = event.properties.info
-    if (info.sessionID !== sessionId || info.role !== 'assistant') {
-      continue
-    }
-    if (info.id !== latestAssistantMessageId) {
-      continue
-    }
-    latestAssistantMessage = info as EventBufferedAssistantMessage
-    if (isAssistantMessageNaturalCompletion({ message: info })) {
-      return true
-    }
-    break
-  }
-
-  if (!latestAssistantMessage) {
-    return false
-  }
-  if (latestAssistantMessage.error) {
-    return false
-  }
-  if (latestAssistantMessage.finish === 'tool-calls') {
-    return false
-  }
-  return hasAssistantStepFinished({
-    events,
-    messageId: latestAssistantMessageId,
-    upToIndex,
-  }) && hasAssistantPartEvidence({
-    events,
-    sessionId,
-    messageId: latestAssistantMessageId,
-    upToIndex,
-  })
-}
-
-export function isAssistantMessageInLatestUserTurn({
-  events,
-  sessionId,
-  messageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-  upToIndex?: number
-}): boolean {
-  const assistantMessageIds = getAssistantMessageIdsForLatestUserTurn({
-    events,
-    sessionId,
-    upToIndex,
-  })
-  return assistantMessageIds.has(messageId)
-}
-
-export function isSummaryAssistantMessage({
-  events,
-  sessionId,
-  messageId,
-  upToIndex,
-}: {
-  events: EventBufferEntry[]
-  sessionId: string
-  messageId: string
-  upToIndex?: number
-}): boolean {
-  return getAssistantMessageKind({
-    events,
-    sessionId,
-    messageId,
-    upToIndex,
-  }) === 'summary'
-}
-
-// Returns a stable 1-based subtask index for candidateSessionId.
-// Indexing scope is the parent assistant message that spawned the task tool calls,
-// so numbering restarts at 1 for each assistant message.
 export function getDerivedSubtaskIndex({
   events,
   mainSessionId,
@@ -1214,57 +399,26 @@ export function getDerivedSubtaskIndex({
   upToIndex?: number
 }): number | undefined {
   const end = upToIndex ?? events.length - 1
-  let parentAssistantMessageId: string | undefined
-
-  for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
+  const candidate = (() => {
+    for (let i = end; i >= 0; i--) {
+      const value = getSubagentCandidate({ events, eventIndex: i, mainSessionId })
+      if (value?.childSessionId === candidateSessionId) return value
     }
-    const candidate = getTaskCandidateFromEvent({
-      event: entry.event,
-      mainSessionId,
-    })
-    if (!candidate) {
-      continue
-    }
-    if (candidate.childSessionId !== candidateSessionId) {
-      continue
-    }
-    parentAssistantMessageId = candidate.assistantMessageId
-    break
-  }
-
-  if (!parentAssistantMessageId) {
     return undefined
-  }
+  })()
+  if (!candidate) return undefined
 
   const indexByChildSessionId = new Map<string, number>()
   for (let i = 0; i <= end; i++) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const candidate = getTaskCandidateFromEvent({
-      event: entry.event,
-      mainSessionId,
-    })
-    if (!candidate || candidate.assistantMessageId !== parentAssistantMessageId) {
-      continue
-    }
-    if (!indexByChildSessionId.has(candidate.childSessionId)) {
-      indexByChildSessionId.set(
-        candidate.childSessionId,
-        indexByChildSessionId.size + 1,
-      )
+    const value = getSubagentCandidate({ events, eventIndex: i, mainSessionId })
+    if (!value || value.assistantMessageId !== candidate.assistantMessageId) continue
+    if (!indexByChildSessionId.has(value.childSessionId)) {
+      indexByChildSessionId.set(value.childSessionId, indexByChildSessionId.size + 1)
     }
   }
-
   return indexByChildSessionId.get(candidateSessionId)
 }
 
-// Returns the subagent_type (e.g. "explore", "general") for a given child session.
-// Used to build labels like "explore-1" instead of generic "task-1".
 export function getDerivedSubtaskAgentType({
   events,
   mainSessionId,
@@ -1275,18 +429,8 @@ export function getDerivedSubtaskAgentType({
   candidateSessionId: string
 }): string | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const candidate = getTaskCandidateFromEvent({
-      event: entry.event,
-      mainSessionId,
-    })
-    if (!candidate || candidate.childSessionId !== candidateSessionId) {
-      continue
-    }
-    return candidate.subagentType
+    const candidate = getSubagentCandidate({ events, eventIndex: i, mainSessionId })
+    if (candidate?.childSessionId === candidateSessionId) return candidate.subagentType
   }
   return undefined
 }
@@ -1301,60 +445,30 @@ export function getDerivedSubagentSessions({
   upToIndex?: number
 }): DerivedSubagentSession[] {
   const end = upToIndex ?? events.length - 1
-  const seenChildSessionIds = new Set<string>()
+  const seen = new Set<string>()
   const sessions: DerivedSubagentSession[] = []
-
   for (let i = end; i >= 0; i--) {
-    const entry = events[i]
-    if (!entry) {
-      continue
-    }
-    const candidate = getTaskCandidateFromEvent({
-      event: entry.event,
-      mainSessionId,
-    })
-    if (!candidate || seenChildSessionIds.has(candidate.childSessionId)) {
-      continue
-    }
-
-    seenChildSessionIds.add(candidate.childSessionId)
+    const candidate = getSubagentCandidate({ events, eventIndex: i, mainSessionId })
+    if (!candidate || seen.has(candidate.childSessionId)) continue
+    seen.add(candidate.childSessionId)
     sessions.push({
       childSessionId: candidate.childSessionId,
       subagentType: candidate.subagentType,
       description: candidate.description,
-      timestamp: entry.timestamp,
+      timestamp: events[i]?.timestamp ?? 0,
     })
   }
-
   return sessions
 }
 
-function getParentIdFromSessionEvent(event: EventBufferEvent): {
+function getParentSession(event: EventBufferEvent): {
   sessionId: string
   parentID: string
 } | undefined {
-  if (event.type !== 'session.created' && event.type !== 'session.updated') {
-    return undefined
-  }
-  if (!('properties' in event) || !event.properties || !('info' in event.properties)) {
-    return undefined
-  }
-  const info = event.properties.info
-  const parentID = info.parentID
-  if (typeof parentID !== 'string' || parentID.length === 0) {
-    return undefined
-  }
-  if (typeof info.id !== 'string') {
-    return undefined
-  }
-  return {
-    sessionId: info.id,
-    parentID,
-  }
+  if (event.type !== 'session.created' || !event.data.parentID) return undefined
+  return { sessionId: event.data.sessionID, parentID: event.data.parentID }
 }
 
-// Child sessions of the main thread: task tool metadata.sessionId, plus
-// session.created/updated parentID (available before task metadata lands).
 export function getDerivedChildSessionIds({
   events,
   mainSessionId,
@@ -1365,30 +479,19 @@ export function getDerivedChildSessionIds({
   upToIndex?: number
 }): Set<string> {
   const end = upToIndex ?? events.length - 1
-  const ids = new Set<string>()
-  for (const session of getDerivedSubagentSessions({
-    events,
-    mainSessionId,
-    upToIndex,
-  })) {
-    ids.add(session.childSessionId)
-  }
-
+  const ids = new Set(
+    getDerivedSubagentSessions({ events, mainSessionId, upToIndex })
+      .map((session) => session.childSessionId),
+  )
   let grew = true
   while (grew) {
     grew = false
     for (let i = 0; i <= end; i++) {
       const event = events[i]?.event
-      if (!event) {
-        continue
-      }
-      const parented = getParentIdFromSessionEvent(event)
-      if (!parented || ids.has(parented.sessionId)) {
-        continue
-      }
-      if (parented.parentID !== mainSessionId && !ids.has(parented.parentID)) {
-        continue
-      }
+      if (!event) continue
+      const parented = getParentSession(event)
+      if (!parented || ids.has(parented.sessionId)) continue
+      if (parented.parentID !== mainSessionId && !ids.has(parented.parentID)) continue
       ids.add(parented.sessionId)
       grew = true
     }
@@ -1407,36 +510,35 @@ export function isDerivedChildSession({
   candidateSessionId: string
   upToIndex?: number
 }): boolean {
-  if (candidateSessionId === mainSessionId) {
-    return false
-  }
-  return getDerivedChildSessionIds({
-    events,
-    mainSessionId,
-    upToIndex,
-  }).has(candidateSessionId)
+  if (candidateSessionId === mainSessionId) return false
+  return getDerivedChildSessionIds({ events, mainSessionId, upToIndex })
+    .has(candidateSessionId)
 }
 
-export function getTokenUsageSessionIdsForIdle({
+export function isEventForSessionTree({
   events,
+  event,
   mainSessionId,
-  idleSessionId,
-  upToIndex,
 }: {
   events: EventBufferEntry[]
+  event: EventBufferEvent
   mainSessionId: string
-  idleSessionId: string
-  upToIndex?: number
-}): string[] {
-  if (idleSessionId !== mainSessionId) {
-    return [idleSessionId]
-  }
-  return [
+}): boolean {
+  const eventSessionId = getEventBufferSessionId(event)
+  if (!eventSessionId) return false
+  if (eventSessionId === mainSessionId) return true
+  if (isDerivedChildSession({
+    events,
     mainSessionId,
-    ...getDerivedChildSessionIds({
-      events,
-      mainSessionId,
-      upToIndex,
-    }),
-  ]
+    candidateSessionId: eventSessionId,
+  })) return true
+
+  const parented = getParentSession(event)
+  if (!parented) return false
+  if (parented.parentID === mainSessionId) return true
+  return isDerivedChildSession({
+    events,
+    mainSessionId,
+    candidateSessionId: parented.parentID,
+  })
 }

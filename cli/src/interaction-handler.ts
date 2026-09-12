@@ -40,7 +40,6 @@ import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
-import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
 import {
   handleForkCommand,
@@ -341,10 +340,6 @@ export function registerInteractionHandler({
 
             case 'compact':
               await handleCompactCommand({ command: interaction, appId })
-              return
-
-            case 'share':
-              await handleShareCommand({ command: interaction, appId })
               return
 
             case 'diff':

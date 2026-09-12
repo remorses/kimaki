@@ -111,7 +111,9 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const sessionsResponse = await getClient().session.list()
+      const sessionsResponse = await getClient().session.list({
+        directory: projectDirectory,
+      })
       const sessions = sessionsResponse.data || []
       const statuses = await (async () => {
         if (!options.active) return null
@@ -539,7 +541,9 @@ cli
           if (getClient instanceof Error) {
             return { projectDirectory, getClient, sessions: [] }
           }
-          const sessionsResponse = await getClient().session.list()
+          const sessionsResponse = await getClient().session.list({
+            directory: projectDirectory,
+          })
           return {
             projectDirectory,
             getClient,
@@ -563,6 +567,7 @@ cli
         }
         searchedDirectories.push(listed.projectDirectory)
         for (const session of listed.sessions) {
+          if (clientsBySessionId.has(session.id)) continue
           clientsBySessionId.set(session.id, listed.getClient)
           searchableSessions.push({
             id: session.id,

@@ -67,7 +67,11 @@ import {
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
-import { cancelPendingQuestion, hasPendingQuestionForThread } from './commands/ask-question.js'
+import {
+  cancelPendingQuestion,
+  hasPendingQuestionForThread,
+  isWaitingForCustomQuestionAnswer,
+} from './commands/ask-question.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
 import { cancelPendingPermission } from './commands/permissions.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
@@ -838,7 +842,7 @@ export async function startDiscordBot({
         // Context-only messages (user-to-user replies) should not interrupt
         // the active run or dismiss pending UI.
         const dismissSourceUi = async () => {
-          if (message.author.bot || isCliInjectedPrompt || isLeadingMentionToOtherUser) return
+          if (message.author.bot || isCliInjectedPrompt || isLeadingMentionToOtherUser) return false
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
@@ -848,6 +852,10 @@ export async function startDiscordBot({
             })
           }
           const dismissedQuestion = hasPendingQuestionForThread(thread.id)
+          if (dismissedQuestion && isWaitingForCustomQuestionAnswer(thread.id)) {
+            const result = await cancelPendingQuestion(thread.id, message.content)
+            return result !== 'no-pending'
+          }
           if (dismissedQuestion) {
             await cancelPendingQuestion(thread.id)
             await runtime.abortActiveRunAndWait({
@@ -855,9 +863,11 @@ export async function startDiscordBot({
             })
           }
           void cancelPendingFileUpload(thread.id)
+          return false
         }
         if (!hasVoiceAttachment) {
-          await dismissSourceUi()
+          const consumedAsQuestionAnswer = await dismissSourceUi()
+          if (consumedAsQuestionAnswer) return
         }
 
         // A sleep wake only becomes a turn if it can still claim its own row.

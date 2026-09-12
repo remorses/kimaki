@@ -13,8 +13,11 @@ import {
 import { store, type DeterministicTranscriptionConfig } from './store.js'
 import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
-import type { Message } from '@opencode-ai/sdk/v2'
-import { sessionMessagesToGeneric, type DiscordSessionPart } from './message-formatting.js'
+import {
+  sessionMessagesToGeneric,
+  type DiscordSessionPart,
+  type GenericSessionMessage,
+} from './message-formatting.js'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
 
@@ -24,7 +27,7 @@ function setDeterministicTranscription(config: DeterministicTranscriptionConfig 
   })
 }
 
-type SessionMessage = { info: Message; parts: DiscordSessionPart[] }
+type SessionMessage = GenericSessionMessage
 
 function getOpencodeClientForTest(projectDirectory: string) {
   const client = getOpencodeClient(projectDirectory)
@@ -104,7 +107,7 @@ async function waitForSessionMessages({
       sessionID: sessionId,
       order: 'asc',
     })
-    const messages = sessionMessagesToGeneric(response.data) as SessionMessage[]
+    const messages = sessionMessagesToGeneric(response.data)
     if (predicate(messages)) {
       return messages
     }
@@ -116,7 +119,7 @@ async function waitForSessionMessages({
   const finalResponse = await client.message.list({
     sessionID: sessionId,
   })
-  return sessionMessagesToGeneric(finalResponse.data) as SessionMessage[]
+  return sessionMessagesToGeneric(finalResponse.data)
 }
 
 describe('queue advanced: question tool answer', () => {

@@ -59,49 +59,35 @@ describe('abort clears pending question dropdown', () => {
       if (!pendingEntry) {
         throw new Error('Expected pending question context')
       }
-      const contextHash = pendingEntry[0]
-
       const runtime = getRuntime(thread.id)
       if (!runtime) {
         throw new Error('Expected runtime for question abort test')
       }
       runtime.abortActiveRun('test-question-abort')
 
-      // Click the now-dead dropdown. The answer echo must never appear.
-      const interaction = await th.user(TEST_USER_ID).selectMenu({
-        messageId: questionMsg.id,
-        customId: `ask_question:${contextHash}:0`,
-        values: ['0'],
-      })
-      await th.waitForInteractionAck({
-        interactionId: interaction.id,
-        timeout: 8_000,
-      })
-
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 40; i++) {
         const messages = await th.getMessages()
-        const answered = messages.find((message) => {
-          return message.content.includes('⺩**question-abort-tester:** Alpha')
+        const cancelledQuestion = messages.find((message) => {
+          return message.id === questionMsg.id && message.components?.length === 0
         })
-        if (answered) {
-          throw new Error('Dropdown was still answerable after abort')
-        }
+        if (cancelledQuestion) break
         await new Promise<void>((resolve) => {
-          setTimeout(resolve, 20)
+          setTimeout(resolve, 100)
         })
       }
 
-      const timeline = await th.text({ showInteractions: true })
+      const messages = await th.getMessages()
+      const cancelledQuestion = messages.find((message) => message.id === questionMsg.id)
+      const timeline = await th.text()
       expect(timeline).toMatchInlineSnapshot(`
         "--- from: user (question-abort-tester)
         QUESTION_SELECT_QUEUE_MARKER abort-test
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         **Select action**
-        How to proceed?
-        [user selects dropdown: 0]
-        This question has expired. Please ask the AI again."
+        How to proceed?"
       `)
+      expect(cancelledQuestion?.components ?? []).toHaveLength(0)
       expect(pendingQuestionContexts.size).toBe(0)
     },
     20_000,

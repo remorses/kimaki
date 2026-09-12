@@ -93,6 +93,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
 
       const beforeMessages = await getClient().message.list({
         sessionID: sessionId!,
+        order: 'asc',
       })
       const beforeCount = beforeMessages.data.length
       expect(beforeCount).toBeGreaterThan(0)
@@ -100,6 +101,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       const beforeUserMessages = beforeMessages.data.filter((m) => {
         return m.type === 'user'
       })
+      const lastUserMessage = beforeUserMessages.at(-1)
       const beforeAssistantMessages = beforeMessages.data.filter(
         (m) => {
           return m.type === 'assistant'
@@ -137,11 +139,12 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         sessionID: sessionId!,
       })
       expect(afterSession.revert).toBeTruthy()
-      expect(afterSession.revert?.messageID).toBeTruthy()
+      expect(afterSession.revert?.messageID).toBe(lastUserMessage?.id)
 
       // Messages should still exist (not deleted — cleanup happens on next prompt)
       const afterMessages = await getClient().message.list({
         sessionID: sessionId!,
+        order: 'asc',
       })
       expect(afterMessages.data.length).toBe(beforeCount)
 
@@ -161,6 +164,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       // 6. Verify reverted messages were cleaned up
       const finalMessages = await getClient().message.list({
         sessionID: sessionId!,
+        order: 'asc',
       })
       const finalAssistantMessages = finalMessages.data.filter(
         (m) => {
