@@ -17,12 +17,55 @@ import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
+import {
+  beginManualCompaction,
+  endManualCompaction,
+  getOrCreateRuntime,
+  getRuntime,
+} from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.COMPACT)
 
+// Manual compaction fence (ticket #55): fence follow-up ingress before
+// inspecting the session, so prompts that arrive while the command is still
+// resolving the session/model are held too — not just while summarize runs.
 export async function handleCompactCommand({
   command,
+  appId,
+}: CommandContext): Promise<void> {
+  const channel = command.channel
+
+  const isThread = channel && [
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread,
+  ].includes(channel.type)
+
+  if (!isThread) {
+    return handleCompactCommandInsideFence({ command, appId })
+  }
+
+  if (!beginManualCompaction(channel.id)) {
+    await command.reply({
+      content: 'This session is already compacting',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
+
+  try {
+    await handleCompactCommandInsideFence({ command, appId })
+  } finally {
+    if (endManualCompaction(channel.id)) {
+      await getRuntime(channel.id)?.drainAfterManualCompaction()
+    }
+  }
+}
+
+async function handleCompactCommandInsideFence({
+  command,
+  appId,
 }: CommandContext): Promise<void> {
   const channel = command.channel
 
@@ -83,6 +126,18 @@ export async function handleCompactCommand({
     return
   }
 
+  // Runtime owns the compaction gate: while summarize runs, incoming prompts
+  // are held in kimaki's local queue and drain exactly once after compaction
+  // settles (ticket #55) — matching the desktop OpenCode flow.
+  const runtime = getOrCreateRuntime({
+    threadId: channel.id,
+    thread: channel as ThreadChannel,
+    projectDirectory: resolved.projectDirectory,
+    sdkDirectory: resolved.workingDirectory,
+    channelId: (channel as ThreadChannel).parentId || channel.id,
+    appId,
+  })
+
   const client = getOpencodeClient(workingDirectory)
   if (!client) {
     await command.reply({
@@ -96,55 +151,60 @@ export async function handleCompactCommand({
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   try {
-    // Get session messages to find the model from the last user message
-    const messagesResult = await client.session.messages({
-      sessionID: sessionId,
-      directory: workingDirectory,
+    await runtime.runCompaction({
+      sessionId,
+      compact: async () => {
+        // Get session messages to find the model from the last user message
+        const messagesResult = await client.session.messages({
+          sessionID: sessionId,
+          directory: workingDirectory,
+        })
+
+        if (messagesResult.error || !messagesResult.data) {
+          logger.error('[COMPACT] Failed to get messages:', messagesResult.error)
+          await command.editReply({
+            content: 'Failed to compact: Could not retrieve session messages',
+          })
+          return
+        }
+
+        // Find the last user message to get the model
+        const lastUserMessage = [...messagesResult.data]
+          .reverse()
+          .find((msg) => msg.info.role === 'user')
+
+        if (!lastUserMessage || lastUserMessage.info.role !== 'user') {
+          await command.editReply({
+            content: 'Failed to compact: No user message found in session',
+          })
+          return
+        }
+
+        const { providerID, modelID } = lastUserMessage.info.model
+
+        const result = await client.session.summarize({
+          sessionID: sessionId,
+          directory: workingDirectory,
+          providerID,
+          modelID,
+          auto: false,
+        })
+
+        if (result.error) {
+          logger.error('[COMPACT] Error:', result.error)
+          const errorMessage = extractSdkErrorMessage(result.error)
+          await command.editReply({
+            content: `Failed to compact: ${errorMessage}`,
+          })
+          return
+        }
+
+        await command.editReply({
+          content: `📦 Session **compacted** successfully`,
+        })
+        logger.log(`Session ${sessionId} compacted by user`)
+      },
     })
-
-    if (messagesResult.error || !messagesResult.data) {
-      logger.error('[COMPACT] Failed to get messages:', messagesResult.error)
-      await command.editReply({
-        content: 'Failed to compact: Could not retrieve session messages',
-      })
-      return
-    }
-
-    // Find the last user message to get the model
-    const lastUserMessage = [...messagesResult.data]
-      .reverse()
-      .find((msg) => msg.info.role === 'user')
-
-    if (!lastUserMessage || lastUserMessage.info.role !== 'user') {
-      await command.editReply({
-        content: 'Failed to compact: No user message found in session',
-      })
-      return
-    }
-
-    const { providerID, modelID } = lastUserMessage.info.model
-
-    const result = await client.session.summarize({
-      sessionID: sessionId,
-      directory: workingDirectory,
-      providerID,
-      modelID,
-      auto: false,
-    })
-
-    if (result.error) {
-      logger.error('[COMPACT] Error:', result.error)
-      const errorMessage = extractSdkErrorMessage(result.error)
-      await command.editReply({
-        content: `Failed to compact: ${errorMessage}`,
-      })
-      return
-    }
-
-    await command.editReply({
-      content: `📦 Session **compacted** successfully`,
-    })
-    logger.log(`Session ${sessionId} compacted by user`)
   } catch (error) {
     logger.error('[COMPACT] Error:', error)
     await command.editReply({

@@ -7,6 +7,7 @@
 // Diagnostic only: these tests document the STOCK bug, they are not a
 // regression suite for the fix (the fix's tests live alongside the patch).
 import { describe, expect, test } from 'vitest'
+import type { EventBufferEntry } from './event-stream-state.js'
 
 // Byte-identical fixture of stock kimaki 0.27.0 dist/session-handler/
 // event-stream-state.js (npm tarball), captured 2026-09-11.
@@ -15,19 +16,19 @@ const {
   isSessionBusy,
   doesLatestUserTurnHaveNaturalCompletion,
   getLatestUserMessage,
-} = ess as typeof import('./event-stream-state.js')
+} = ess as unknown as typeof import('./event-stream-state.js')
 
 const SID = 'ses_f8c58fe0'
 
 let clock = 1
-function msgUpdated(info) {
+function msgUpdated(info: Record<string, unknown>) {
   return {
     id: `evt_${clock}`,
     type: 'message.updated',
     properties: { sessionID: SID, info },
   }
 }
-function userMsg(id, created) {
+function userMsg(id: string, created: number) {
   return msgUpdated({
     id,
     sessionID: SID,
@@ -36,7 +37,12 @@ function userMsg(id, created) {
     time: { created },
   })
 }
-function assistantMsg(id, parentID, created, extra = {}) {
+function assistantMsg(
+  id: string,
+  parentID: string,
+  created: number,
+  extra: { completed?: number; finish?: string; error?: unknown; summary?: boolean } = {},
+) {
   return msgUpdated({
     id,
     sessionID: SID,
@@ -62,12 +68,12 @@ function sessionIdle() {
     properties: { sessionID: SID },
   }
 }
-function buffer(events) {
+function buffer(events: unknown[]): EventBufferEntry[] {
   clock = 1
   return events.map((event) => {
     clock += 1
     return { event, timestamp: clock, eventIndex: clock }
-  })
+  }) as unknown as EventBufferEntry[]
 }
 
 describe('#55 stock 0.27.0 — busy-gate races during manual compaction', () => {

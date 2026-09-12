@@ -1,6 +1,7 @@
 // Ticket #55 diagnostic repro — interrupt plugin vs manual compaction
 // (Path A mechanism). Adapted from the shipped opencode-interrupt-plugin.test.js
-// stub-server harness; targets the DEPLOYED dist plugin.
+// stub-server harness; targets the plugin built from this branch's source
+// (the deployed npm dist is wiped by kimaki's background auto-update).
 //
 // Shows: a user message persisted into a session that is busy running a
 // MANUAL COMPACTION is aborted+replayed after the interrupt step timeout —
@@ -10,8 +11,7 @@ import http from 'node:http'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { pathToFileURL } from 'node:url'
 
-const livePlugin =
-  'C:/Users/Cody/AppData/Roaming/npm/node_modules/kimaki/dist/opencode-interrupt-plugin.js'
+const livePlugin = 'C:/Dev/kimaki-compact-queue/cli/dist/opencode-interrupt-plugin.js'
 const { interruptOpencodeSessionOnUserMessage } = (await import(
   pathToFileURL(livePlugin).href
 )) as any
@@ -47,7 +47,7 @@ function createStubServer() {
     }
     const abortMatch = url.pathname.match(/^\/session\/([^/]+)\/abort$/)
     if (req.method === 'POST' && abortMatch) {
-      const sessionID = decodeURIComponent(abortMatch[1])
+      const sessionID = decodeURIComponent(abortMatch[1]!)
       abortCalls.push({ sessionID })
       statuses.delete(sessionID)
       sendJson(true)
@@ -55,7 +55,7 @@ function createStubServer() {
     }
     const promptMatch = url.pathname.match(/^\/session\/([^/]+)\/prompt_async$/)
     if (req.method === 'POST' && promptMatch) {
-      const sessionID = decodeURIComponent(promptMatch[1])
+      const sessionID = decodeURIComponent(promptMatch[1]!)
       const raw = await readBody(req)
       const parsed = raw ? JSON.parse(raw) : {}
       promptAsyncCalls.push({ sessionID, ...parsed })

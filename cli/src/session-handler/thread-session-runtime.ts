@@ -212,6 +212,32 @@ const shouldLogSessionEvents =
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
 
+// Manual-compaction fence (ticket #55): while a /compact summarize call is
+// in flight for a thread, incoming prompts (ordinary messages and /queue)
+// are held in kimaki's local queue and drain exactly once after compaction
+// settles — matching the desktop OpenCode flow instead of cancelling the
+// compaction or stranding the prompt. Module-level Set so the fence is
+// visible from the /compact command before a runtime exists and survives
+// runtime recreation mid-compaction.
+const manualCompactionThreadIds = new Set<string>()
+
+/** Returns false when compaction is already fenced for this thread. */
+export function beginManualCompaction(threadId: string): boolean {
+  if (manualCompactionThreadIds.has(threadId)) {
+    return false
+  }
+  manualCompactionThreadIds.add(threadId)
+  return true
+}
+
+export function endManualCompaction(threadId: string): boolean {
+  return manualCompactionThreadIds.delete(threadId)
+}
+
+export function isManualCompactionActive(threadId: string): boolean {
+  return manualCompactionThreadIds.has(threadId)
+}
+
 // Per-thread FIFO for Discord arrival order of one-shot slash calls vs messages.
 // Covers /plan-agent (no prompt) and /foo-cmd /foo-skill. OpenCode already
 // queues promptAsync. /model, /agent, and /compact are not on this queue.
@@ -809,6 +835,10 @@ export class ThreadSessionRuntime {
   // resolved input is then routed through the normal enqueue paths which
   // use dispatchAction internally.
   private preprocessChain: Promise<void> = Promise.resolve()
+
+  // Session id owned by an in-flight runCompaction() call. Guards against a
+  // second concurrent compaction on the same runtime (ticket #55).
+  private compactionSessionId: string | undefined = undefined
 
   constructor(opts: RuntimeOptions) {
     this.threadId = opts.threadId
@@ -2877,6 +2907,11 @@ export class ThreadSessionRuntime {
     if (!sessionId) {
       return
     }
+    // Never hand queue items to OpenCode while manual compaction runs —
+    // the compaction release owns that dispatch (ticket #55).
+    if (isManualCompactionActive(this.threadId)) {
+      return
+    }
     if (didQuestionQueueHandoffSinceLatestQuestionAsked({
       events: this.eventBuffer,
       sessionId,
@@ -3464,6 +3499,7 @@ export class ThreadSessionRuntime {
       const willDrainNow = stateAfterEnqueue
         ? (
           stateAfterEnqueue.queueItems.length > 0
+          && !isManualCompactionActive(this.threadId)
           && !this.isMainSessionBusy()
         )
         : false
@@ -3493,6 +3529,13 @@ export class ThreadSessionRuntime {
    * discord-bot.ts.
    */
   async enqueueIncoming(input: IngressInput): Promise<EnqueueResult> {
+    // Capture arrival against the fence BEFORE any await: a prompt that
+    // arrived during manual compaction must stay on the local-queue path
+    // even if the fence releases while preprocessing runs, so it cannot
+    // jump ahead of earlier-queued prompts (ticket #55).
+    const arrivedDuringManualCompaction = isManualCompactionActive(
+      this.threadId,
+    )
     await waitForCurrentThreadIngress()
     threadState.setSessionUsername(this.threadId, input.username)
     threadState.setSessionUserId(this.threadId, input.userId)
@@ -3503,7 +3546,9 @@ export class ThreadSessionRuntime {
     // When a preprocessor is provided, we must resolve it inside
     // dispatchAction before we know the final mode for routing.
     if (input.preprocess) {
-      return this.enqueueWithPreprocess(input)
+      return this.enqueueWithPreprocess(input, {
+        forceLocalQueue: arrivedDuringManualCompaction,
+      })
     }
     // If the prompt starts with `/cmdname ...` (and no explicit command is
     // already set), rewrite it into a command invocation so it goes through
@@ -3511,14 +3556,89 @@ export class ThreadSessionRuntime {
     // plain text. Covers Discord chat messages, /new-session, /queue, CLI
     // `kimaki send --prompt`, and scheduled tasks — all funnel through here.
     input = maybeConvertLeadingCommand(input)
-    if (input.mode === 'local-queue') {
-      return this.enqueueViaLocalQueue(input)
+    if (
+      input.mode === 'local-queue'
+      || ((arrivedDuringManualCompaction || isManualCompactionActive(this.threadId))
+        && !input.noReply)
+    ) {
+      // Manual compaction (ticket #55): hold prompts in the local queue until
+      // the summarize call settles. Sending prompts to OpenCode mid-compaction
+      // either cancels the compaction (the interrupt plugin aborts busy
+      // sessions when a user message arrives) or appends the message without
+      // ever starting a run. noReply messages keep the opencode path so the
+      // flag reaches promptAsync; local queue doesn't support noReply.
+      return this.enqueueViaLocalQueue({ ...input, mode: 'local-queue' })
     }
     if (input.command) {
       // Commands keep using local queue so they still support /queue-command.
       return this.enqueueViaLocalQueue(input)
     }
     return this.submitViaOpencodeQueue(input)
+  }
+
+  /**
+   * Drain prompts held by the manual-compaction fence. Called by the /compact
+   * command after it releases the fence; runCompaction's release also drains,
+   * so this is belt-and-braces for the command-level release path.
+   */
+  async drainAfterManualCompaction(): Promise<void> {
+    await this.dispatchAction(() => {
+      return this.tryDrainQueue({ showIndicator: true })
+    })
+  }
+
+  /**
+   * Runtime-owned gate for the /compact summarize call (ticket #55).
+   *
+   * While `compact` runs:
+   * - the thread's manual-compaction fence is active, so every incoming
+   *   prompt (ordinary messages, /queue, commands) is routed into kimaki's
+   *   local queue instead of reaching OpenCode
+   * - local queue draining is suspended
+   * - a synthetic busy status closes the race before OpenCode's first busy
+   *   event arrives
+   *
+   * When the summarize call settles (success, failure, or abort) the fence
+   * releases and held prompts drain exactly once against the compacted
+   * context. Mirrors the desktop OpenCode flow: a prompt submitted during
+   * compaction is visibly queued and handled afterward — it never cancels
+   * the compaction, never lands in the session without a run, and never gets
+   * absorbed into the summary without execution.
+   */
+  async runCompaction({
+    sessionId,
+    compact,
+  }: {
+    sessionId: string
+    compact: () => Promise<void>
+  }): Promise<void> {
+    beginManualCompaction(this.threadId)
+    await this.dispatchAction(async () => {
+      if (this.compactionSessionId) {
+        throw new Error(
+          `Session ${this.compactionSessionId} is already compacting`,
+        )
+      }
+      this.compactionSessionId = sessionId
+      // Close the race before OpenCode emits its first busy event.
+      this.markQueueDispatchBusy(sessionId)
+    })
+    try {
+      await compact()
+    } finally {
+      await this.dispatchAction(async () => {
+        if (this.compactionSessionId !== sessionId) {
+          return
+        }
+        this.compactionSessionId = undefined
+        endManualCompaction(this.threadId)
+        this.markQueueDispatchIdle(sessionId)
+        logger.log(
+          `[SUMMARIZE GATE] released sessionId=${sessionId} threadId=${this.threadId}`,
+        )
+        await this.tryDrainQueue({ showIndicator: true })
+      })
+    }
   }
 
   /**
@@ -3568,7 +3688,10 @@ export class ThreadSessionRuntime {
    * preprocessing order is serialized here — the enqueue itself goes
    * through dispatchAction as usual.
    */
-  private async enqueueWithPreprocess(input: IngressInput): Promise<EnqueueResult> {
+  private async enqueueWithPreprocess(
+    input: IngressInput,
+    { forceLocalQueue = false }: { forceLocalQueue?: boolean } = {},
+  ): Promise<EnqueueResult> {
     // Deferred result: the chain link resolves/rejects this promise.
     let resolveOuter!: (value: EnqueueResult | PromiseLike<EnqueueResult>) => void
     let rejectOuter!: (reason: unknown) => void
@@ -3617,14 +3740,22 @@ export class ThreadSessionRuntime {
         // is persisted before the next message's preprocessing reads it.
         // noReply messages always go through the opencode path so the flag
         // reaches promptAsync; local queue doesn't support noReply.
+        // Manual compaction reroutes everything else into the local queue
+        // so prompts wait for summarize to settle (ticket #55).
         const enqueueResult = resolvedInput.noReply
           ? await this.submitViaOpencodeQueue({
               ...resolvedInput,
               mode: 'opencode',
               command: undefined,
             })
-          : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
-            ? await this.enqueueViaLocalQueue(resolvedInput)
+          : (forceLocalQueue
+            || isManualCompactionActive(this.threadId)
+            || resolvedInput.mode === 'local-queue'
+            || resolvedInput.command)
+            ? await this.enqueueViaLocalQueue({
+                ...resolvedInput,
+                mode: 'local-queue',
+              })
             : await this.submitViaOpencodeQueue(resolvedInput)
         resolveOuter(enqueueResult)
       } catch (err) {
@@ -3841,6 +3972,11 @@ export class ThreadSessionRuntime {
    *   blocker resolves — not on the immediate first dispatch from enqueueIncoming.
    */
   private async tryDrainQueue({ showIndicator = false } = {}): Promise<void> {
+    // Manual compaction in flight (ticket #55): hold the queue until the
+    // summarize call settles. runCompaction drains on release.
+    if (isManualCompactionActive(this.threadId)) {
+      return
+    }
     const thread = threadState.getThreadState(this.threadId)
     if (!thread) {
       return

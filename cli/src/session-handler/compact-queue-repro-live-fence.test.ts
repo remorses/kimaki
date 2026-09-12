@@ -1,7 +1,11 @@
-// Ticket #55 diagnostic repro — DEPLOYED dist (installed kimaki 0.27.0 +
-// local compact-queue patch) manual-compaction fence.
+// Ticket #55 diagnostic repro — BUILT dist (tsc output of this branch's
+// source) manual-compaction fence.
 //
-// Drives the real deployed tryDrainQueue through the prototype with a real
+// Originally targeted the deployed npm dist's patch, but kimaki's background
+// auto-update wipes dist patches within hours (observed 2026-09-12), so the
+// fence now lives in source and this file validates the built artifact.
+//
+// Drives the built tryDrainQueue through the prototype with a real
 // threadState entry, verifying:
 //   P1: while manual compaction is active the local queue does NOT drain
 //       (the fix for the B1/B2 races documented in compact-queue-repro-stock)
@@ -11,8 +15,7 @@
 import { describe, expect, test } from 'vitest'
 import { pathToFileURL } from 'node:url'
 
-const liveDistDir =
-  'C:/Users/Cody/AppData/Roaming/npm/node_modules/kimaki/dist/session-handler'
+const liveDistDir = 'C:/Dev/kimaki-compact-queue/cli/dist/session-handler'
 const runtimeMod = await import(
   pathToFileURL(`${liveDistDir}/thread-session-runtime.js`).href
 )
@@ -33,6 +36,8 @@ function makeRuntime(sessionId?: string) {
     configurable: true,
   })
   runtime.eventBuffer = []
+  runtime.actionQueue = []
+  runtime.processingAction = false
   runtime.dispatchPrompt = async () => {}
   return runtime
 }
@@ -40,7 +45,10 @@ function makeRuntime(sessionId?: string) {
 function seedQueue() {
   clearQueueItems(THREAD)
   enqueueItem(THREAD, {
-    queueId: 'q1',
+    // No queueId: the deployed dist's dispatch finally-block calls
+    // cancelAgentRestartWork against its production sqlite db whenever a
+    // drained item carries one, which fails outside the bot process
+    // (unhandled rejection). The fence assertions don't need a queueId.
     prompt: 'next ticket instruction queued during /compact',
     userId: 'u1',
     username: 'tester',
