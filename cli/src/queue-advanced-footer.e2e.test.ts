@@ -53,9 +53,9 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       const foundFooter = footerMessages.some((m) => {
         return m.author.id === ctx.discord.botUserId
@@ -94,9 +94,9 @@ e2eTest('queue advanced: footer emission', () => {
           "--- from: user (queue-advanced-tester)
           Reply with exactly: footer-with-mention
           --- from: assistant (TestBot)
-          -# *using deterministic-provider/deterministic-v2*
+          > *using deterministic-provider/deterministic-v2*
           ok
-          -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+          > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
         `)
       } finally {
         store.setState({ footerMentionsEnabled: false })
@@ -159,14 +159,14 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-setup
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         Reply with exactly: footer-multi-second
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       if (footerCount >= 2) {
         expect(footerCount).toBeGreaterThanOrEqual(2)
@@ -271,9 +271,9 @@ e2eTest('queue advanced: footer emission', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: interrupt-footer-setup
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -282,7 +282,7 @@ e2eTest('queue advanced: footer emission', () => {
         Reply with exactly: interrupt-footer-followup
         --- from: assistant (TestBot)
         ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(followupUserIdx).toBeGreaterThanOrEqual(0)
       expect(okReplyIdx).toBeGreaterThan(followupUserIdx)
@@ -348,7 +348,7 @@ e2eTest('queue advanced: footer emission', () => {
         ▏shell _echo tool-call-footer-test_
 
         tool call completed
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
     10_000,
