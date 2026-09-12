@@ -13,7 +13,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type { McpServer } from '@opencode-ai/client'
+import type { McpServer } from '@opencode/client'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {

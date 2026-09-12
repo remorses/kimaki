@@ -4,7 +4,7 @@
 // Uses errore for type-safe error handling.
 
 import type { OpencodeClient } from './opencode.js'
-import type { SessionMessageInfo } from '@opencode-ai/client'
+import type { SessionMessageInfo } from '@opencode/client'
 import * as errore from 'errore'
 import YAML from 'yaml'
 import { formatDateTime } from './utils.js'

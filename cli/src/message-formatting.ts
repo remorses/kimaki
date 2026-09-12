@@ -3,7 +3,7 @@
 // handles file attachments, and provides tool summary generation.
 
 import type { FilePartInput } from '@opencode-ai/sdk/v2'
-import type { SessionMessageInfo } from '@opencode-ai/client'
+import type { SessionMessageInfo } from '@opencode/client'
 import * as errore from 'errore'
 
 export type DiscordSessionPart =
