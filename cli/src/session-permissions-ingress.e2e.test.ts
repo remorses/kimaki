@@ -85,33 +85,33 @@ test('creates, preserves, explicitly replaces, and preserves session rules', asy
     "--- from: assistant (TestBot)
     PERMISSION_WRITE_create
     [embed]
-    *using deterministic-provider/deterministic-v2*
-    ◼︎ write (1 line)
+    > *using deterministic-provider/deterministic-v2*
+    ▎write (1 line)
     ⨯ write Permission denied: edit (1 line)
-    ---
+
     permission-write-finished
-    *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+    > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
     --- from: user (permission-tester)
     PERMISSION_WRITE_preserve-deny
     --- from: assistant (TestBot)
-    ◼︎ write (1 line)
+    ▎write (1 line)
     ⨯ write Permission denied: edit (1 line)
-    ---
+
     permission-write-finished
-    *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+    > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
     PERMISSION_WRITE_replace
     [embed]
-    ◼︎ write (1 line)
-    ---
+    ▎write (1 line)
+
     permission-write-finished
-    *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+    > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
     --- from: user (permission-tester)
     PERMISSION_WRITE_preserve-allow
     --- from: assistant (TestBot)
-    ◼︎ write (1 line)
-    ---
+    ▎write (1 line)
+
     permission-write-finished
-    *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+    > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
   `)
   expect(results).toEqual([
     { step: 'create', content: 'original', denied: true },

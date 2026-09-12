@@ -498,8 +498,7 @@ describe('collectSessionChunks', () => {
     id: string
     text: string
     messageID: string
-    synthetic?: boolean
-  }): Part {
+  }): DiscordSessionPart {
     return {
       id,
       type: 'text',
@@ -615,7 +614,6 @@ describe('collectSessionChunks', () => {
               sessionID: 'ses_test',
               messageID: 'msg_1',
               tool: 'question',
-              callID: 'call_q1',
               state: { status: 'completed', input: {}, output: '', title: '', metadata: {}, time: { start: 0, end: 0 } },
             },
             textPart({ id: 't2', text: 'thanks', messageID: 'msg_1' }),

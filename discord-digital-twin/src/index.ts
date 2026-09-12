@@ -998,7 +998,7 @@ export class ChannelScope {
    * @param deterministicFooters - When true (default), replaces non-deterministic
    *   values in footer lines (duration like "2m 30s" and context percentage like
    *   "71%") with stable placeholders ("Ns" and "N%") so inline snapshots don't
-   *   break across runs. Footer lines are detected by starting with "*" and
+   *   break across runs. Footer lines are detected by starting with "*" or "> *" and
    *   containing "⋅".
    * @param showTyping - When true, interleaves [typing] markers at the
    *   chronological position of typing indicator POST calls. Defaults to false
@@ -1097,7 +1097,7 @@ export class ChannelScope {
         let content = visibleText
         // Footer lines look like: *project ⋅ main ⋅ <1s ⋅ 2% ⋅ model-name*
         // Replace duration and percentage with stable placeholders.
-        if (deterministicFooters && content.startsWith('*') && content.includes('⋅')) {
+        if (deterministicFooters && /^(?:> )?\*/.test(content) && content.includes('⋅')) {
           content = content
             .replace(/<1s/g, 'Ns')
             .replace(/\b\d+m\s+\d+s\b/g, 'Ns')

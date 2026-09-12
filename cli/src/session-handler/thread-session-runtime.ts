@@ -1763,6 +1763,9 @@ export class ThreadSessionRuntime {
     }
 
     switch (event.type) {
+      case 'session.renamed':
+        await this.handleSessionRenamed(event.data)
+        break
       case 'session.text.started':
         this.handleV2TextStarted(event)
         break
@@ -1816,6 +1819,7 @@ export class ThreadSessionRuntime {
       case 'session.step.started':
         if (event.data.sessionID === this.state?.sessionId) {
           this.restartTypingKeepalive({ sendNow: true })
+          await this.showContextUsageNotice(event.data.sessionID)
         }
         break
       case 'permission.asked':
@@ -2066,6 +2070,7 @@ export class ThreadSessionRuntime {
       return
     }
     this.stopTyping()
+    await this.flushCurrentTurnParts({ mode: 'final', repulseTyping: false })
     if (hasVisibleV2OutputSinceExecutionStart({
       events: this.eventBuffer,
       sessionId,
@@ -2445,15 +2450,12 @@ export class ThreadSessionRuntime {
     return true
   }
 
-  private getCurrentTurnParts(): Part[] {
+  private getCurrentTurnParts(): DiscordSessionPart[] {
     const sessionId = this.state?.sessionId
-    const messageIds = sessionId
-      ? [...this.getAssistantMessageIdsForCurrentTurn({ sessionId })]
-      : []
-    if (messageIds.length > 0) {
-      return messageIds.flatMap((id) => this.getBufferedParts(id))
-    }
-    return []
+    // V2 parts are folded by native identity and cleared at execution settlement.
+    return [...this.partBuffer.values()].flatMap((parts) => {
+      return [...parts.values()].filter((part) => part.sessionID === sessionId)
+    })
   }
 
   private async flushCurrentTurnParts({
@@ -2507,6 +2509,9 @@ export class ThreadSessionRuntime {
     repulseTyping?: boolean
     quoteText?: boolean
   }): Promise<void> {
+    // A successful terminal fact must not repeat an already displayed live tool.
+    if (part.type === 'tool' && part.state.status === 'completed'
+      && this.state?.sentPartIds.has(`${part.id}:running`)) return
     const verbosity = await this.getVerbosity()
     if (verbosity === 'text_only' && part.type !== 'text') {
       return
@@ -2716,11 +2721,11 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Context usage notice.
-    // Skip the final assistant update for a run: by the time the last
-    // message.updated arrives, the final text part has already ended and the
-    // buffered parts usually include step-finish, so a notice here would land
-    // immediately above the footer and add noise.
+    await this.showContextUsageNotice(sessionId)
+  }
+
+  // Show prior-step usage at the next V2 step, not immediately above the footer.
+  private async showContextUsageNotice(sessionId: string): Promise<void> {
     if (!isSessionBusy({
       events: this.eventBuffer,
       sessionId,
@@ -3630,12 +3635,9 @@ export class ThreadSessionRuntime {
   // - race setName() against an AbortSignal.timeout() so a throttled call never
   //   blocks the event loop
   // - fail soft (log + continue) on timeout, 429, or any other error
-  private async handleSessionUpdated(info: {
-    id: string
-    title: string
-  }): Promise<void> {
+  private async handleSessionRenamed(info: Extract<V2Event, { type: 'session.renamed' }>['data']): Promise<void> {
     // Only act on the main session for this thread
-    if (info.id !== this.state?.sessionId) {
+    if (info.sessionID !== this.state?.sessionId) {
       return
     }
     const normalizedTitle = info.title.trim()
@@ -3646,7 +3648,7 @@ export class ThreadSessionRuntime {
       sessionTitle: info.title,
       currentName: this.thread.name,
     })
-    // Mark before setName so concurrent session.updated events don't stack
+    // Mark before setName so concurrent session.renamed events don't stack
     // renames. Keep the mark on failure — retry is almost always a rate limit.
     this.appliedOpencodeTitle = normalizedTitle
     if (!desiredName) {
@@ -4428,7 +4430,6 @@ export class ThreadSessionRuntime {
   }
 
   abortActiveRun(reason: string): void {
-    const leftoverMessageIds = [...this.partBuffer.keys()]
     const outcome = this.abortActiveRunInternal({
       reason,
     })
@@ -4436,10 +4437,7 @@ export class ThreadSessionRuntime {
       void outcome.apiAbortPromise
     }
     void this.dispatchAction(async () => {
-      await this.flushBufferedPartsForMessages({
-        messageIDs: leftoverMessageIds,
-        force: true,
-      })
+      await this.flushCurrentTurnParts({ mode: 'interactive', repulseTyping: false })
       this.v2OpenTextMessageIds.clear()
       return this.tryDrainQueue({ showIndicator: true })
     })

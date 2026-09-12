@@ -138,13 +138,13 @@ describe('queue drain with pending interactive UI', () => {
         Reply with exactly: drain-button-setup
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>
+        ok
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         **Action Required**
         [user interaction]
-        » **drain-ui-tester:** Reply with exactly: post-button-drain
-        > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+        ⺩**drain-ui-tester:** Reply with exactly: post-button-drain
+        ok
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
     20_000,

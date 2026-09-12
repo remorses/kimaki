@@ -553,13 +553,13 @@ describe('worktree lifecycle', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000901>
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         Creating worktree in <#THREAD_ID>
         --- from: user (worktree-tester)
         Reply with exactly: after-source-thread
         --- from: assistant (TestBot)
-        > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ source-model-v2* <@200000000000000901>"
+        ok
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(sourceText).toContain('Reply with exactly: before-worktree')
       expect(sourceText).toContain('Reply with exactly: after-source-thread')
@@ -807,7 +807,7 @@ describe('worktree lifecycle', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         ok
-        *non-git-project ⋅ opencode/kimaki-opncd-v2-kmk-… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
+        > *non-git-project ⋅ opencode/kimaki-opncd-v2-kmk-… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
