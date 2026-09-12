@@ -29,7 +29,7 @@ async function tryLoadSharp(): Promise<SharpModule | null> {
     return sharpModule
   }
   try {
-    sharpModule = (await import('sharp')).default as unknown as SharpModule
+    sharpModule = (await import('sharp')).default
     logger.log('sharp loaded successfully')
     return sharpModule
   } catch {

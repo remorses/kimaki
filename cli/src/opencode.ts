@@ -13,7 +13,7 @@
 //
 // Uses errore for type-safe error handling.
 
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
@@ -27,8 +27,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 import { randomBytes } from 'node:crypto'
 import { OpenCode, type OpenCodeClient, type PermissionRuleset } from '@opencode/client'
 import {
-  resolveOpencode2Command,
-} from './opencode2.js'
+  DEFAULT_PRESET_NAME,
+  loadModelsDevCatalog,
+  loadPresets,
+  modelsDevInputModalities,
+  modelsDevLimit,
+  PROVIDER_DISPLAY_NAME,
+  PROVIDER_ID,
+  resolveCandidates,
+  resolvePresetModels,
+} from '@subrouter/cli'
+import { applyPatchApiId, shouldUseApplyPatch } from '@subrouter/opencode/provider'
+import { resolveOpencode2Command } from './opencode2.js'
 
 export type OpencodeClient = OpenCodeClient
 
@@ -59,6 +69,84 @@ export function resolveSubrouterPluginSpec({ isDev }: { isDev: boolean }) {
   return `@subrouter/opencode@${version}`
 }
 
+export async function buildSubrouterProviderConfig() {
+  const require = createRequire(import.meta.url)
+  // Native v2 loads AI SDK factories only through the aisdk: prefix. A bare
+  // file:// package is treated as a native ProviderPackage and never calls
+  // createSubrouter(), so the generated provider is present but unused.
+  const packageEntry = `aisdk:${pathToFileURL(require.resolve('@subrouter/opencode/provider')).href}`
+  const presets = await loadPresets().catch(() => ({
+    version: 1 as const,
+    presets: {},
+  }))
+  const catalog = await loadModelsDevCatalog({})
+  const names = new Set([DEFAULT_PRESET_NAME, ...Object.keys(presets.presets)])
+  const takenApiIds = new Set<string>()
+  const presetByApiId: Record<string, string> = {}
+  const models = Object.fromEntries(
+    await Promise.all(
+      [...names].map(async (name) => {
+        const presetModels = await resolvePresetModels(name)
+        const candidates =
+          presetModels instanceof Error
+            ? []
+            : (await resolveCandidates({ presetModels })).candidates
+        const candidate = candidates[0]
+        const input = new Set<'text' | 'audio' | 'image' | 'video' | 'pdf'>(['text'])
+        for (const current of candidates) {
+          const modalities = modelsDevInputModalities({
+            provider: current.provider,
+            modelId: current.modelId,
+            catalog,
+          })
+          for (const modality of modalities ?? []) input.add(modality)
+        }
+        const limit = candidate
+          ? modelsDevLimit({
+              provider: candidate.provider,
+              modelId: candidate.modelId,
+              catalog,
+            })
+          : null
+        const apiId =
+          candidate && shouldUseApplyPatch(candidate.modelId)
+            ? applyPatchApiId({
+                preset: name,
+                modelId: candidate.modelId,
+                taken: takenApiIds,
+              })
+            : null
+        if (apiId) {
+          takenApiIds.add(apiId)
+          presetByApiId[apiId] = name
+        }
+        return [
+          name,
+          {
+            name,
+            ...(apiId && { modelID: apiId }),
+            capabilities: {
+              tools: true,
+              input: [...input],
+              output: ['text'],
+            },
+            cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+            limit: limit ?? { context: 200_000, output: 64_000 },
+          },
+        ]
+      }),
+    ),
+  )
+  return {
+    [PROVIDER_ID]: {
+      name: PROVIDER_DISPLAY_NAME,
+      package: packageEntry,
+      settings: { presetByApiId },
+      models,
+    },
+  }
+}
+
 type PermissionAction = 'ask' | 'allow' | 'deny'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
@@ -68,7 +156,7 @@ import {
   ServerStartError,
   ServerNotReadyError,
   FetchError,
-  OpencodeIncompatibleVersionError,
+  OpenCodeSdkError,
   type OpenCodeErrors,
 } from './errors.js'
 import {
@@ -87,9 +175,13 @@ const opencodeLogger = createLogger(LogPrefix.OPENCODE)
  * Build Basic auth headers from OPENCODE_SERVER_PASSWORD env var.
  * Returns empty object when no password is set.
  */
-export function getOpencodeServerAuthHeaders(): Record<string, string> {
+export function getOpencodeServerAuthHeaders({
+  password,
+}: {
+  password?: string
+} = {}): Record<string, string> {
   const serverPassword =
-    process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD
+    password || process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD
   if (!serverPassword) return {}
   const username = process.env.OPENCODE_SERVER_USERNAME || 'opencode'
   const encoded = Buffer.from(`${username}:${serverPassword}`).toString('base64')
@@ -117,13 +209,7 @@ export function buildOpencodeServeArgs({
   port: number
   hostname?: string | null
 }): string[] {
-  return [
-    'serve',
-    '--port',
-    port.toString(),
-    '--hostname',
-    hostname || DEFAULT_OPENCODE_HOSTNAME,
-  ]
+  return ['serve', '--port', port.toString(), '--hostname', hostname || DEFAULT_OPENCODE_HOSTNAME]
 }
 
 // Tracks directories that have been initialized, to avoid repeated log spam
@@ -139,20 +225,29 @@ const ANSI_ESCAPE_REGEX =
 export async function requestHealthcheck({
   url,
   timeoutMs = 2000,
+  headers,
+  signal,
 }: {
   url: string
   timeoutMs?: number
+  headers?: Record<string, string>
+  signal?: AbortSignal
 }): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     let settled = false
     let timeout: NodeJS.Timeout | null = null
-    const settle = (
-      handler: () => void,
-    ) => {
+    const settle = (handler: () => void) => {
       if (settled) return
       settled = true
       if (timeout) clearTimeout(timeout)
+      signal?.removeEventListener('abort', onAbort)
       handler()
+    }
+    const onAbort = () => {
+      settle(() => {
+        req.destroy()
+        reject(signal?.reason instanceof Error ? signal.reason : new Error('Health check aborted'))
+      })
     }
 
     const req = http.request(
@@ -161,7 +256,7 @@ export async function requestHealthcheck({
         method: 'GET',
         headers: {
           connection: 'close',
-          ...getOpencodeServerAuthHeaders(),
+          ...headers,
         },
       },
       (res) => {
@@ -191,17 +286,42 @@ export async function requestHealthcheck({
         reject(new Error(`Health check request timed out after ${timeoutMs}ms`))
       })
     }, timeoutMs)
+    if (signal) {
+      if (signal.aborted) {
+        onAbort()
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
     req.end()
   })
 }
 
-function truncateWithEllipsis({
-  value,
-  maxLength,
-}: {
-  value: string
-  maxLength: number
-}): string {
+export function isOpencodeServerReadyResponse({ status }: { status: number }) {
+  return status === 200
+}
+
+export function parseOpencodeServerDiscovery(body: string): {
+  port: number
+  password: string
+} | null {
+  const parsed = errore.try(
+    () => JSON.parse(body) as unknown,
+    (cause) => new Error('Invalid OpenCode server discovery response', { cause }),
+  )
+  if (parsed instanceof Error || typeof parsed !== 'object' || parsed === null) {
+    return null
+  }
+  if (!('port' in parsed) || !('password' in parsed)) return null
+  const { port, password } = parsed
+  if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65_535) {
+    return null
+  }
+  if (typeof password !== 'string' || password.length === 0) return null
+  return { port, password }
+}
+
+function truncateWithEllipsis({ value, maxLength }: { value: string; maxLength: number }): string {
   if (maxLength <= 3) {
     return value.slice(0, maxLength)
   }
@@ -223,13 +343,7 @@ function sanitizeForCodeFence(line: string): string {
   return line.replaceAll('```', '`\u200b``')
 }
 
-function pushStartupStderrTail({
-  stderrTail,
-  line,
-}: {
-  stderrTail: string[]
-  line: string
-}): void {
+function pushStartupStderrTail({ stderrTail, line }: { stderrTail: string[]; line: string }): void {
   const sanitizedLine = sanitizeOutputLine(line)
   if (sanitizedLine.length === 0) {
     return
@@ -273,30 +387,20 @@ function subscribeToProcessLogStream({
   return logReader
 }
 
-function buildStartupTimeoutReason({
-  maxAttempts,
+function formatStartupStderrReason({
+  baseReason,
   stderrTail,
 }: {
-  maxAttempts: number
+  baseReason: string
   stderrTail: string[]
 }): string {
-  const timeoutSeconds = Math.round((maxAttempts * 100) / 1000)
-  const baseReason = `Server did not start after ${timeoutSeconds} seconds`
   if (stderrTail.length === 0) {
     return baseReason
   }
 
-  const formatReason = ({
-    lines,
-    omitted,
-  }: {
-    lines: string[]
-    omitted: number
-  }): string => {
+  const formatReason = ({ lines, omitted }: { lines: string[]; omitted: number }): string => {
     const omittedLine =
-      omitted > 0
-        ? `[... ${omitted} older stderr lines omitted to fit Discord ...]\n`
-        : ''
+      omitted > 0 ? `[... ${omitted} older stderr lines omitted to fit Discord ...]\n` : ''
     const stderrCodeBlock = `${omittedLine}${lines.join('\n')}`
     return `${baseReason}\nLast opencode stderr lines:\n\`\`\`text\n${stderrCodeBlock}\n\`\`\``
   }
@@ -305,10 +409,7 @@ function buildStartupTimeoutReason({
   let omitted = 0
   let formattedReason = formatReason({ lines, omitted })
 
-  while (
-    formattedReason.length > STARTUP_ERROR_REASON_MAX_LENGTH &&
-    lines.length > 0
-  ) {
+  while (formattedReason.length > STARTUP_ERROR_REASON_MAX_LENGTH && lines.length > 0) {
     lines = lines.slice(1)
     omitted += 1
     formattedReason = formatReason({ lines, omitted })
@@ -320,6 +421,142 @@ function buildStartupTimeoutReason({
   })
 }
 
+function buildStartupTimeoutReason({
+  maxAttempts,
+  stderrTail,
+}: {
+  maxAttempts: number
+  stderrTail: string[]
+}): string {
+  const timeoutSeconds = Math.round((maxAttempts * 100) / 1000)
+  return formatStartupStderrReason({
+    baseReason: `Server did not start after ${timeoutSeconds} seconds`,
+    stderrTail,
+  })
+}
+
+function describeChildExit({
+  code,
+  signal,
+}: {
+  code: number | null
+  signal: NodeJS.Signals | null
+}): string {
+  if (signal) return `signal ${signal}`
+  if (code === null) return 'an unknown exit'
+  return `code ${code}`
+}
+
+export async function waitForServer({
+  port,
+  password,
+  directory,
+  maxAttempts = 300,
+  startupStderrTail,
+  child,
+}: {
+  port: number
+  password: string
+  directory?: string
+  maxAttempts?: number
+  startupStderrTail: string[]
+  child?: ChildProcess | null
+}): Promise<ServerStartError | true> {
+  const endpoint = new URL(`http://127.0.0.1:${port}/api/session/active`)
+  if (directory) {
+    endpoint.searchParams.set('directory', directory)
+  }
+
+  const childExit: { code: number | null; signal: NodeJS.Signals | null } = {
+    code: null,
+    signal: null,
+  }
+  const healthcheckAbort = new AbortController()
+  const onChildExit = (code: number | null, signal: NodeJS.Signals | null) => {
+    childExit.code = code
+    childExit.signal = signal
+    if (!healthcheckAbort.signal.aborted) {
+      healthcheckAbort.abort()
+    }
+  }
+  child?.once('exit', onChildExit)
+  if (child?.exitCode !== null && child?.exitCode !== undefined) {
+    onChildExit(child.exitCode, child.signalCode)
+  }
+
+  const childHasExited = () => {
+    return Boolean(
+      child && (child.exitCode !== null || childExit.code !== null || childExit.signal),
+    )
+  }
+  const exitedBeforeReady = () => {
+    const code = child?.exitCode ?? childExit.code ?? null
+    const signal = child?.signalCode ?? childExit.signal ?? null
+    return new ServerStartError({
+      port,
+      reason: formatStartupStderrReason({
+        baseReason: `Server process exited with ${describeChildExit({ code, signal })} before becoming ready`,
+        stderrTail: startupStderrTail,
+      }),
+    })
+  }
+
+  try {
+    for (let i = 0; i < maxAttempts; i++) {
+      if (childHasExited()) {
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve)
+        })
+        return exitedBeforeReady()
+      }
+
+      const response = await requestHealthcheck({
+        url: endpoint.toString(),
+        headers: getOpencodeServerAuthHeaders({ password }),
+        signal: healthcheckAbort.signal,
+      }).catch((e) => new FetchError({ url: endpoint.toString(), cause: e }))
+
+      if (childHasExited()) {
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve)
+        })
+        return exitedBeforeReady()
+      }
+
+      if (response instanceof Error) {
+        // Connection refused or other transient errors - continue polling.
+        // Use 100ms interval instead of 1s so we detect readiness faster.
+        // Critical for scale-to-zero cold starts where every ms matters.
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        continue
+      }
+      if (isOpencodeServerReadyResponse(response)) return true
+      if (response.status === 401 || response.status === 403) {
+        return new ServerStartError({
+          port,
+          reason: `Readiness probe was rejected with HTTP ${response.status}`,
+        })
+      }
+      const body = response.body
+      // Fatal errors that won't resolve with retrying
+      if (body.includes('BunInstallFailedError')) {
+        return new ServerStartError({ port, reason: body.slice(0, 200) })
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  } finally {
+    child?.off('exit', onChildExit)
+  }
+
+  return new ServerStartError({
+    port,
+    reason: buildStartupTimeoutReason({
+      maxAttempts,
+      stderrTail: startupStderrTail,
+    }),
+  })
+}
+
 // ── Single server state ──────────────────────────────────────────
 // One opencode serve process, shared by all project directories.
 // Clients are created per-directory with the x-opencode-directory header.
@@ -328,27 +565,93 @@ type SingleServer = {
   process: ChildProcess | null
   port: number
   baseUrl: string
-  password?: string
+  password: string
   /** True when this server was discovered from the bot's hrana endpoint,
    *  not spawned by this process. We must not kill it on cleanup. */
   discovered?: boolean
 }
 
-type ServerLifecycleEvent =
-  | { type: 'started'; port: number }
-  | { type: 'stopped' }
+type ServerLifecycleEvent = { type: 'started'; port: number } | { type: 'stopped' }
 
 let singleServer: SingleServer | null = null
 let serverRetryCount = 0
 const serverLifecycleListeners = new Set<(event: ServerLifecycleEvent) => void>()
 let processCleanupHandlersRegistered = false
 let startingServerProcess: ChildProcess | null = null
+let stoppingServer: Promise<boolean> | null = null
+const intentionallyStoppedChildren = new WeakSet<ChildProcess>()
 const clientCache = new Map<string, OpencodeClient>()
+const STOP_CHILD_EXIT_TIMEOUT_MS = 500
 
 function notifyServerLifecycle(event: ServerLifecycleEvent): void {
   for (const listener of serverLifecycleListeners) {
     listener(event)
   }
+}
+
+function clearSingleServer(): boolean {
+  if (!singleServer) return false
+  singleServer = null
+  clientCache.clear()
+  notifyServerLifecycle({ type: 'stopped' })
+  return true
+}
+
+function releaseServerOwnedByChild(child: ChildProcess): boolean {
+  if (singleServer?.process !== child) return false
+  return clearSingleServer()
+}
+
+function waitForChildExit({
+  child,
+  timeoutMs = STOP_CHILD_EXIT_TIMEOUT_MS,
+}: {
+  child: ChildProcess
+  timeoutMs?: number
+}): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true)
+
+  return new Promise((resolve) => {
+    const onExit = () => {
+      clearTimeout(timeout)
+      resolve(true)
+    }
+    const timeout = setTimeout(() => {
+      child.off('exit', onExit)
+      resolve(false)
+    }, timeoutMs)
+    child.once('exit', onExit)
+  })
+}
+
+async function terminateChildProcess({
+  child,
+  reason,
+  label,
+}: {
+  child: ChildProcess
+  reason: string
+  label: string
+}): Promise<boolean> {
+  sendSigtermToChild({ child, reason, label })
+  const exitedGracefully = await waitForChildExit({ child })
+  if (exitedGracefully) return true
+  if (!child.pid) return child.exitCode !== null || child.signalCode !== null
+
+  const forceResult = errore.try(
+    () => process.kill(child.pid!, 'SIGKILL'),
+    (error) => new Error('Failed to force-stop OpenCode server', { cause: error }),
+  )
+  if (forceResult instanceof Error) {
+    opencodeLogger.warn(forceResult.message)
+    return false
+  }
+  const exitedAfterKill = await waitForChildExit({ child })
+  if (!exitedAfterKill) {
+    opencodeLogger.warn(`OpenCode server did not exit after SIGKILL (pid: ${child.pid})`)
+    return false
+  }
+  return true
 }
 
 export function subscribeOpencodeServerLifecycle(
@@ -360,11 +663,46 @@ export function subscribeOpencodeServerLifecycle(
   }
 }
 
-function killSingleServerProcessNow({
+function markChildIntentionallyStopped(child: ChildProcess | null | undefined): void {
+  if (!child) return
+  intentionallyStoppedChildren.add(child)
+}
+
+function sendSigtermToChild({
+  child,
   reason,
+  label,
 }: {
+  child: ChildProcess
   reason: string
+  label: string
 }): void {
+  markChildIntentionallyStopped(child)
+  const pid = child.pid
+  if (!pid || child.killed) {
+    return
+  }
+
+  const killResult = errore.try(
+    () => {
+      child.kill('SIGTERM')
+    },
+    (error) => {
+      return new Error(`Failed to send SIGTERM to ${label}`, {
+        cause: error,
+      })
+    },
+  )
+
+  if (killResult instanceof Error) {
+    opencodeLogger.warn(`[cleanup:${reason}] ${killResult.message} (pid: ${pid})`)
+    return
+  }
+
+  opencodeLogger.log(`[cleanup:${reason}] Sent SIGTERM to ${label} (pid: ${pid})`)
+}
+
+function killSingleServerProcessNow({ reason }: { reason: string }): void {
   if (!singleServer) {
     return
   }
@@ -374,71 +712,23 @@ function killSingleServerProcessNow({
     return
   }
 
-  const serverProcess = singleServer.process
-  const pid = serverProcess.pid
-  if (!pid || serverProcess.killed) {
-    return
-  }
-
-  const killResult = errore.try(
-    () => {
-      serverProcess.kill('SIGTERM')
-    },
-    (error) => {
-      return new Error('Failed to send SIGTERM to opencode server', {
-        cause: error,
-      })
-    },
-  )
-
-  if (killResult instanceof Error) {
-    opencodeLogger.warn(
-      `[cleanup:${reason}] ${killResult.message} (pid: ${pid}, port: ${singleServer.port})`,
-    )
-    return
-  }
-
-  opencodeLogger.log(
-    `[cleanup:${reason}] Sent SIGTERM to opencode server (pid: ${pid}, port: ${singleServer.port})`,
-  )
+  sendSigtermToChild({
+    child: singleServer.process,
+    reason,
+    label: `opencode server (port: ${singleServer.port})`,
+  })
 }
 
-function killStartingServerProcessNow({
-  reason,
-}: {
-  reason: string
-}): void {
-  const serverProcess = startingServerProcess
-  if (!serverProcess) {
+function killStartingServerProcessNow({ reason }: { reason: string }): void {
+  if (!startingServerProcess) {
     return
   }
 
-  const pid = serverProcess.pid
-  if (!pid || serverProcess.killed) {
-    return
-  }
-
-  const killResult = errore.try(
-    () => {
-      serverProcess.kill('SIGTERM')
-    },
-    (error) => {
-      return new Error('Failed to send SIGTERM to starting opencode server', {
-        cause: error,
-      })
-    },
-  )
-
-  if (killResult instanceof Error) {
-    opencodeLogger.warn(
-      `[cleanup:${reason}] ${killResult.message} (pid: ${pid})`,
-    )
-    return
-  }
-
-  opencodeLogger.log(
-    `[cleanup:${reason}] Sent SIGTERM to starting opencode server (pid: ${pid})`,
-  )
+  sendSigtermToChild({
+    child: startingServerProcess,
+    reason,
+    label: 'starting opencode server',
+  })
 }
 
 function ensureProcessCleanupHandlersRegistered(): void {
@@ -489,15 +779,15 @@ function ensureProcessCleanupHandlersRegistered(): void {
 let resolvedOpencodeCommand: string | null = null
 
 export function resolveOpencodeCommand(): string {
-  if (resolvedOpencodeCommand) {
-    return resolvedOpencodeCommand
-  }
-
   const envPath = process.env.OPENCODE2_PATH || process.env.OPENCODE_PATH
   if (envPath) {
     resolvedOpencodeCommand = envPath
     opencodeLogger.log(`Resolved opencode2 binary from env: ${envPath}`)
     return envPath
+  }
+
+  if (resolvedOpencodeCommand) {
+    return resolvedOpencodeCommand
   }
 
   const resolved = resolveOpencode2Command()
@@ -549,50 +839,6 @@ async function getOpenPort(): Promise<number> {
   })
 }
 
-async function waitForServer({
-  port,
-  directory,
-  maxAttempts = 300,
-  startupStderrTail,
-}: {
-  port: number
-  directory?: string
-  maxAttempts?: number
-  startupStderrTail: string[]
-}): Promise<ServerStartError | true> {
-  const endpoint = new URL(`http://127.0.0.1:${port}/api/session/active`)
-  if (directory) {
-    endpoint.searchParams.set('directory', directory)
-  }
-  for (let i = 0; i < maxAttempts; i++) {
-    const response = await requestHealthcheck({ url: endpoint.toString() })
-      .catch((e) => new FetchError({ url: endpoint.toString(), cause: e }))
-    if (response instanceof Error) {
-      // Connection refused or other transient errors - continue polling.
-      // Use 100ms interval instead of 1s so we detect readiness faster.
-      // Critical for scale-to-zero cold starts where every ms matters.
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      continue
-    }
-    if (response.status < 500) {
-      return true
-    }
-    const body = response.body
-    // Fatal errors that won't resolve with retrying
-    if (body.includes('BunInstallFailedError')) {
-      return new ServerStartError({ port, reason: body.slice(0, 200) })
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-  return new ServerStartError({
-    port,
-    reason: buildStartupTimeoutReason({
-      maxAttempts,
-      stderrTail: startupStderrTail,
-    }),
-  })
-}
-
 // ── Single server lifecycle ──────────────────────────────────────
 // The server is started lazily on first initializeOpencodeForDirectory() call.
 // It uses permissive defaults (edit: allow, bash: allow, webfetch: allow, and
@@ -604,11 +850,7 @@ let startingServer: Promise<
 > | null = null
 let preferredStartupDirectory: string | null = null
 
-function ensureOpencodeHomeDirectories({
-  directories,
-}: {
-  directories: Record<string, string>
-}) {
+function ensureOpencodeHomeDirectories({ directories }: { directories: Record<string, string> }) {
   Object.values(directories).map((directory) => {
     fs.mkdirSync(directory, { recursive: true })
   })
@@ -621,42 +863,41 @@ function ensureOpencodeHomeDirectories({
  */
 async function discoverExistingServer(): Promise<SingleServer | null> {
   const lockPort = getLockPort()
-  try {
-    const portResponse = await requestHealthcheck({
-      url: `http://127.0.0.1:${lockPort}/kimaki/opencode-port`,
-      timeoutMs: 2000,
-    })
-    if (portResponse.status !== 200) {
-      return null
-    }
-    const parsed = JSON.parse(portResponse.body)
-    const port = parsed?.port
-    if (typeof port !== 'number') {
-      return null
-    }
+  const serviceAuthToken = store.getState().gatewayToken
+  if (!serviceAuthToken) return null
+  const portResponse = await requestHealthcheck({
+    url: `http://127.0.0.1:${lockPort}/kimaki/opencode-port`,
+    timeoutMs: 2000,
+    headers: { Authorization: `Bearer ${serviceAuthToken}` },
+  }).catch(() => null)
+  if (!portResponse || portResponse.status !== 200) return null
+  const discovered = parseOpencodeServerDiscovery(portResponse.body)
+  if (!discovered) return null
 
-    // Verify the OpenCode server is actually healthy
-    const healthResponse = await requestHealthcheck({
-      url: `http://127.0.0.1:${port}/api/session/active`,
-      timeoutMs: 2000,
-    })
-    if (healthResponse.status >= 500) {
-      return null
-    }
+  const healthResponse = await requestHealthcheck({
+    url: `http://127.0.0.1:${discovered.port}/api/session/active`,
+    timeoutMs: 2000,
+    headers: getOpencodeServerAuthHeaders({ password: discovered.password }),
+  }).catch(() => null)
+  if (!healthResponse || !isOpencodeServerReadyResponse(healthResponse)) return null
 
-    opencodeLogger.log(
-      `Discovered existing OpenCode server on port ${port} via hrana lock port ${lockPort}`,
-    )
-    return {
-      process: null,
-      port,
-      baseUrl: `http://127.0.0.1:${port}`,
-      discovered: true,
-    }
-  } catch {
-    // Connection refused or other network error — no bot running
-    return null
+  opencodeLogger.log(
+    `Discovered existing OpenCode server on port ${discovered.port} via hrana lock port ${lockPort}`,
+  )
+  return {
+    process: null,
+    port: discovered.port,
+    baseUrl: `http://127.0.0.1:${discovered.port}`,
+    password: discovered.password,
+    discovered: true,
   }
+}
+
+function stoppedDuringStartupError(port: number) {
+  return new ServerStartError({
+    port,
+    reason: 'OpenCode server stopped during startup',
+  })
 }
 
 async function ensureSingleServer({
@@ -665,38 +906,38 @@ async function ensureSingleServer({
   directory?: string
 } = {}): Promise<ServerStartError | OpencodeIncompatibleVersionError | SingleServer> {
   const startupDirectory = directory || preferredStartupDirectory || undefined
-  if (singleServer && !singleServer.process?.killed) {
-    return singleServer
-  }
-
-  // Deduplicate concurrent startup attempts (covers both discovery and spawn)
-  if (startingServer) {
-    return startingServer
-  }
-
-  // Wrap discovery + spawn in a single shared promise so concurrent callers
-  // don't each run discoverExistingServer() and then each spawn a server.
-  startingServer = (async () => {
-    // Try to discover an already-running server from the bot process via
-    // the hrana server's /kimaki/opencode-port endpoint. This lets CLI
-    // subcommands (kimaki session list, archive, wait, etc.) reuse the
-    // bot's OpenCode server instead of spawning a redundant one.
-    const discovered = await discoverExistingServer()
-    if (discovered) {
-      singleServer = discovered
-      return discovered
+  for (;;) {
+    if (stoppingServer) {
+      await stoppingServer
+      continue
     }
+    if (singleServer) return singleServer
+    // Deduplicate concurrent startup attempts (covers both discovery and spawn)
+    if (startingServer) return startingServer
 
-    const compatibility = await assertCompatibleOpencodeVersion()
-    if (compatibility instanceof Error) return compatibility
+    // Wrap discovery + spawn in a single shared promise so concurrent callers
+    // don't each run discoverExistingServer() and then each spawn a server.
+    const startup = (async () => {
+      // Try to discover an already-running server from the bot process via
+      // the hrana server's /kimaki/opencode-port endpoint. This lets CLI
+      // subcommands (kimaki session list, archive, wait, etc.) reuse the
+      // bot's OpenCode server instead of spawning a redundant one.
+      const discovered = await discoverExistingServer()
+      if (discovered) {
+        if (stoppingServer) return stoppedDuringStartupError(discovered.port)
+        singleServer = discovered
+        return discovered
+      }
 
-    return startSingleServer({ directory: startupDirectory })
-  })()
+      return startSingleServer({ directory: startupDirectory })
+    })()
+    startingServer = startup
 
-  try {
-    return await startingServer
-  } finally {
-    startingServer = null
+    try {
+      return await startup
+    } finally {
+      if (startingServer === startup) startingServer = null
+    }
   }
 }
 
@@ -706,9 +947,11 @@ async function startSingleServer({
   directory?: string
 } = {}): Promise<ServerStartError | SingleServer> {
   ensureProcessCleanupHandlersRegistered()
+  if (stoppingServer) return stoppedDuringStartupError(getOpencodePort() ?? 0)
 
   const configuredPort = getOpencodePort()
   const port = configuredPort ?? (await getOpenPort())
+  if (stoppingServer) return stoppedDuringStartupError(port)
   const hostname = getOpencodeHostname() ?? DEFAULT_OPENCODE_HOSTNAME
 
   if (
@@ -756,12 +999,13 @@ async function startSingleServer({
     entryScript: process.argv[1] || fileURLToPath(new URL('../bin.js', import.meta.url)),
   })
   const pathEnvKey = getPathEnvKey(process.env)
-  const pathEnv = kimakiShimDirectory instanceof Error
-    ? process.env[pathEnvKey]
-    : prependPathEntry({
-        entry: kimakiShimDirectory,
-        existingPath: process.env[pathEnvKey],
-      })
+  const pathEnv =
+    kimakiShimDirectory instanceof Error
+      ? process.env[pathEnvKey]
+      : prependPathEntry({
+          entry: kimakiShimDirectory,
+          existingPath: process.env[pathEnvKey],
+        })
   if (kimakiShimDirectory instanceof Error) {
     opencodeLogger.warn(kimakiShimDirectory.message)
   }
@@ -793,20 +1037,30 @@ async function startSingleServer({
   // priority chain, so project-level opencode.json can override kimaki defaults.
   // OPENCODE_CONFIG_CONTENT was loaded last and overrode user project configs,
   // causing issue #90 (project permissions not being respected).
-  // v2 plugin paths must be directories, not .ts files. The plugin dir is
-  // excluded from tsc, so dist builds fall back to src.
-  const kimakiPluginDirectory = (() => {
-    const besideThisFile = path.join(__dirname, 'kimaki-opencode-plugin')
-    if (fs.existsSync(besideThisFile)) {
-      return besideThisFile
-    }
-    return path.join(__dirname, '..', 'src', 'kimaki-opencode-plugin')
-  })()
+  const kimakiPluginDirectory = path.join(
+    __dirname,
+    path.basename(__dirname) === 'src' ? '../dist/kimaki-opencode-plugin' : 'kimaki-opencode-plugin',
+  )
+  if (!fs.existsSync(path.join(kimakiPluginDirectory, 'index.js'))) {
+    return new ServerStartError({
+      port,
+      reason: `Built Kimaki OpenCode plugin not found at ${kimakiPluginDirectory}. Run pnpm tsc in cli.`,
+    })
+  }
   const opencodeConfig = {
     $schema: 'https://opencode.ai/config.json',
     lsp: false,
     formatter: false,
+    media: {
+      image: {
+        auto_resize: true,
+        max_width: 2000,
+        max_height: 2000,
+        max_base64_bytes: 4 * 1024 * 1024,
+      },
+    },
     plugins: [kimakiPluginDirectory],
+    providers: await buildSubrouterProviderConfig(),
     permissions: [
       { action: 'edit', resource: '*', effect: 'allow' as const },
       { action: 'shell', resource: '*', effect: 'allow' as const },
@@ -837,56 +1091,62 @@ async function startSingleServer({
   if (existingContent !== opencodeConfigJson) {
     fs.writeFileSync(opencodeConfigPath, opencodeConfigJson)
   }
+  if (stoppingServer) return stoppedDuringStartupError(port)
 
-  const serverProcess = spawn(
-    spawnCommand,
-    spawnArgs,
-    {
-      stdio: 'pipe',
-      detached: false,
-      windowsVerbatimArguments,
-      // No project-specific cwd — the server handles all directories via
-      // x-opencode-directory header. Use home dir as a neutral working dir.
-      cwd: os.homedir(),
-      env: {
-        ...process.env,
-        OPENCODE_CONFIG: opencodeConfigPath,
-        OPENCODE_PASSWORD: serverPassword,
-        OPENCODE_SERVER_PASSWORD: serverPassword,
-        OPENCODE_CONFIG_CONTENT: undefined,
-        OPENCODE_PORT: port.toString(),
-        KIMAKI: '1',
-        // The browser is not on this machine, so no localhost callback fires.
-        SUBROUTER_MANUAL_OAUTH: '1',
-        OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
-        OPENCODE_ENABLE_EXA: '1',
-        KIMAKI_DATA_DIR: getDataDir(),
-        KIMAKI_LOCK_PORT: getLockPort().toString(),
-        KIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),
-        ...(gatewayToken && { KIMAKI_DB_AUTH_TOKEN: gatewayToken }),
-        // Guard: prevents agents from running `kimaki` root command inside
-        // an OpenCode session, which would steal the lock port and break the bot.
-        KIMAKI_OPENCODE_PROCESS: '1',
-        ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
-        ...(process.env.KIMAKI_SENTRY_DSN && {
-          KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,
-        }),
-        ...vitestOpencodeEnv,
-        ...(pathEnv && { [pathEnvKey]: pathEnv }),
-      },
+  const serverProcess = spawn(spawnCommand, spawnArgs, {
+    stdio: 'pipe',
+    detached: false,
+    windowsVerbatimArguments,
+    // No project-specific cwd — the server handles all directories via
+    // x-opencode-directory header. Use home dir as a neutral working dir.
+    cwd: os.homedir(),
+    env: {
+      ...process.env,
+      OPENCODE_CONFIG: opencodeConfigPath,
+      OPENCODE_PASSWORD: serverPassword,
+      OPENCODE_SERVER_PASSWORD: serverPassword,
+      OPENCODE_CONFIG_CONTENT: undefined,
+      OPENCODE_PORT: port.toString(),
+      KIMAKI: '1',
+      // The browser is not on this machine, so no localhost callback fires.
+      SUBROUTER_MANUAL_OAUTH: '1',
+      OPENCODE_EXPERIMENTAL_WORKSPACES: 'true',
+      OPENCODE_ENABLE_EXA: '1',
+      KIMAKI_DATA_DIR: getDataDir(),
+      KIMAKI_LOCK_PORT: getLockPort().toString(),
+      KIMAKI_PARENT_LOCK_PORT: getLockPort().toString(),
+      ...(gatewayToken && { KIMAKI_DB_AUTH_TOKEN: gatewayToken }),
+      // Guard: prevents agents from running `kimaki` root command inside
+      // an OpenCode session, which would steal the lock port and break the bot.
+      KIMAKI_OPENCODE_PROCESS: '1',
+      ...(getHranaUrl() && { KIMAKI_DB_URL: getHranaUrl()! }),
+      ...(process.env.KIMAKI_SENTRY_DSN && {
+        KIMAKI_SENTRY_DSN: process.env.KIMAKI_SENTRY_DSN,
+      }),
+      ...vitestOpencodeEnv,
+      ...(pathEnv && { [pathEnvKey]: pathEnv }),
     },
-  )
+  })
 
   startingServerProcess = serverProcess
+  if (stoppingServer) {
+    await terminateChildProcess({
+      child: serverProcess,
+      reason: 'stop-opencode-server',
+      label: 'starting opencode server',
+    })
+    if (startingServerProcess === serverProcess) {
+      startingServerProcess = null
+    }
+    return stoppedDuringStartupError(port)
+  }
 
   // Buffer logs until we know if server started successfully.
   const logBuffer: string[] = []
   const startupStderrTail: string[] = []
   let serverReady = false
 
-  logBuffer.push(
-    `Spawned opencode ${serveArgs.join(' ')} (pid: ${serverProcess.pid})`,
-  )
+  logBuffer.push(`Spawned opencode ${serveArgs.join(' ')} (pid: ${serverProcess.pid})`)
 
   const stdoutReader = subscribeToProcessLogStream({
     stream: serverProcess.stdout,
@@ -923,40 +1183,32 @@ async function startSingleServer({
       startingServerProcess = null
     }
 
-    opencodeLogger.log(
-      `Opencode server exited with code: ${code}, signal: ${signal}`,
-    )
-    singleServer = null
-    clientCache.clear()
-    notifyServerLifecycle({ type: 'stopped' })
+    opencodeLogger.log(`Opencode server exited with code: ${code}, signal: ${signal}`)
+    const wasActiveServer = releaseServerOwnedByChild(serverProcess)
+    if (!wasActiveServer) return
 
-    // Intentional kills should not trigger auto-restart:
-    // - SIGTERM from our cleanup/restart code
-    // - SIGINT propagated from Ctrl+C (parent process group signal)
-    // - any exit during bot shutdown (shuttingDown flag)
-    // Only unexpected crashes (non-zero exit without signal) get retried.
-    if (signal === 'SIGTERM' || signal === 'SIGINT' || global.shuttingDown) {
+    // Restart only unexpected crashes. Intentional Kimaki stops are tracked
+    // per child; @opencode/cli can exit 130 with signal null after SIGTERM.
+    if (
+      intentionallyStoppedChildren.has(serverProcess) ||
+      global.shuttingDown ||
+      signal === 'SIGINT'
+    ) {
       serverRetryCount = 0
       return
     }
     if (code !== 0) {
       if (serverRetryCount < 5) {
         serverRetryCount += 1
-        opencodeLogger.log(
-          `Restarting server (attempt ${serverRetryCount}/5)`,
-        )
-        void ensureSingleServer().then(
-          (result) => {
-            if (result instanceof Error) {
-              opencodeLogger.error(`Failed to restart opencode server:`, result)
-              void notifyError(result, `OpenCode server restart failed`)
-            }
-          },
-        )
+        opencodeLogger.log(`Restarting server (attempt ${serverRetryCount}/5)`)
+        void ensureSingleServer().then((result) => {
+          if (result instanceof Error) {
+            opencodeLogger.error(`Failed to restart opencode server:`, result)
+            void notifyError(result, `OpenCode server restart failed`)
+          }
+        })
       } else {
-        const crashError = new Error(
-          `Server crashed too many times (5), not restarting`,
-        )
+        const crashError = new Error(`Server crashed too many times (5), not restarting`)
         opencodeLogger.error(crashError.message)
         void notifyError(crashError, `OpenCode server crash loop exhausted`)
       }
@@ -967,8 +1219,10 @@ async function startSingleServer({
 
   const waitResult = await waitForServer({
     port,
+    password: serverPassword,
     directory,
     startupStderrTail,
+    child: serverProcess,
   })
   if (waitResult instanceof Error) {
     killStartingServerProcessNow({ reason: 'startup-failed' })
@@ -1007,6 +1261,17 @@ async function startSingleServer({
     baseUrl: `http://127.0.0.1:${port}`,
     password: serverPassword,
   }
+  if (stoppingServer) {
+    await terminateChildProcess({
+      child: serverProcess,
+      reason: 'stop-opencode-server',
+      label: 'starting opencode server',
+    })
+    if (startingServerProcess === serverProcess) {
+      startingServerProcess = null
+    }
+    return stoppedDuringStartupError(port)
+  }
   if (startingServerProcess === serverProcess) {
     startingServerProcess = null
   }
@@ -1017,9 +1282,11 @@ async function startSingleServer({
 
 function getOrCreateClient({
   baseUrl,
+  password,
   directory,
 }: {
   baseUrl: string
+  password: string
   directory: string
 }): OpencodeClient {
   const cached = clientCache.get(directory)
@@ -1030,7 +1297,7 @@ function getOrCreateClient({
   const client = OpenCode.make({
     baseUrl,
     headers: {
-      ...getOpencodeServerAuthHeaders(),
+      ...getOpencodeServerAuthHeaders({ password }),
       'x-opencode-directory': directory,
     },
   })
@@ -1073,12 +1340,27 @@ export async function initializeOpencodeForDirectory(
     initializedDirectories.add(directory)
   }
 
+  const client = getOrCreateClient({
+    baseUrl: server.baseUrl,
+    password: server.password,
+    directory,
+  })
+  const activation = await client.plugin
+    .awaitActivation({ location: { directory } })
+    .catch((e) => new OpenCodeSdkError({ operation: 'plugin.awaitActivation', cause: e }))
+  if (activation instanceof Error) {
+    opencodeLogger.warn(
+      `OpenCode plugins did not finish activating for ${directory}: ${activation.message}`,
+    )
+  }
+
   return () => {
     if (!singleServer) {
       throw new ServerNotReadyError({ directory })
     }
     return getOrCreateClient({
       baseUrl: singleServer.baseUrl,
+      password: singleServer.password,
       directory,
     })
   }
@@ -1132,10 +1414,7 @@ function knownSafeExternalDirectories(): string[] {
  * via findLast(). A plain string would instead be replaced wholesale by the
  * project object, dropping allow-all for every unmatched path.
  */
-function buildServerExternalDirectoryPermissions(): Record<
-  string,
-  'ask' | 'allow' | 'deny'
-> {
+function buildServerExternalDirectoryPermissions(): Record<string, 'ask' | 'allow' | 'deny'> {
   if (!getRestrictExternalDirectories()) {
     return { [ALL_EXTERNAL_DIRECTORIES_PATTERN]: 'allow' }
   }
@@ -1161,9 +1440,8 @@ export function buildSessionPermissions({
   originalRepoDirectory?: string
 }): PermissionRuleset {
   if (!originalRepoDirectory) return []
-  const paths = path.win32.isAbsolute(directory) && !path.posix.isAbsolute(directory)
-    ? path.win32
-    : path.posix
+  const paths =
+    path.win32.isAbsolute(directory) && !path.posix.isAbsolute(directory) ? path.win32 : path.posix
   const originalRepo = paths.resolve(originalRepoDirectory).replaceAll('\\', '/')
   const relative = paths.relative(directory, originalRepoDirectory).replaceAll('\\', '/')
   if (!relative) return []
@@ -1173,7 +1451,11 @@ export function buildSessionPermissions({
     return [root, `${root.replace(/\/$/, '')}/*`]
   })
   return [
-    { action: 'external_directory', resource: `${originalRepo.replace(/\/$/, '')}/*`, effect: 'deny' },
+    {
+      action: 'external_directory',
+      resource: `${originalRepo.replace(/\/$/, '')}/*`,
+      effect: 'deny',
+    },
     ...['read', 'edit'].flatMap((action) => {
       return resources.map((resource) => ({ action, resource, effect: 'deny' as const }))
     }),
@@ -1206,10 +1488,15 @@ export function parsePermissionRules(raw: unknown): PermissionRuleset {
       return s.trim()
     })
     if (parts.length < 2) return []
-    const action = parts[0]!
+    const legacyAction = parts[0]!
+    const action =
+      ({ bash: 'shell', task: 'subagent', write: 'edit', patch: 'edit' } as const)[
+        legacyAction as 'bash' | 'task' | 'write' | 'patch'
+      ] || legacyAction
     const effect = parts[parts.length - 1]!.toLowerCase()
     const resource = parts.length === 2 ? '*' : parts.slice(1, -1).join(':')
-    if (!action || !resource || (effect !== 'allow' && effect !== 'deny' && effect !== 'ask')) return []
+    if (!action || !resource || (effect !== 'allow' && effect !== 'deny' && effect !== 'ask'))
+      return []
     return [{ action, resource, effect }]
   })
 }
@@ -1242,10 +1529,7 @@ export function writeInjectionGuardConfig({
   try {
     const dir = getInjectionGuardDir()
     fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(
-      path.join(dir, `${sessionId}.json`),
-      JSON.stringify({ scanPatterns }),
-    )
+    fs.writeFileSync(path.join(dir, `${sessionId}.json`), JSON.stringify({ scanPatterns }))
   } catch {
     // Best effort -- don't crash the bot if data dir write fails
   }
@@ -1266,12 +1550,13 @@ export function removeInjectionGuardConfig({ sessionId }: { sessionId: string })
  * Read per-session injection guard config. Used by the kimaki plugin
  * inside the opencode server process.
  */
-export function readInjectionGuardConfig({ sessionId }: { sessionId: string }): { scanPatterns: string[] } | null {
+export function readInjectionGuardConfig({
+  sessionId,
+}: {
+  sessionId: string
+}): { scanPatterns: string[] } | null {
   try {
-    const raw = fs.readFileSync(
-      path.join(getInjectionGuardDir(), `${sessionId}.json`),
-      'utf-8',
-    )
+    const raw = fs.readFileSync(path.join(getInjectionGuardDir(), `${sessionId}.json`), 'utf-8')
     return JSON.parse(raw) as { scanPatterns: string[] }
   } catch {
     return null
@@ -1285,6 +1570,19 @@ export function getOpencodeServerPort(_directory?: string): number | null {
   return singleServer?.port ?? null
 }
 
+export function getOpencodeServerConnection(): {
+  port: number
+  baseUrl: string
+  password: string
+} | null {
+  if (!singleServer) return null
+  return {
+    port: singleServer.port,
+    baseUrl: singleServer.baseUrl,
+    password: singleServer.password,
+  }
+}
+
 export function getOpencodeServerBaseUrl(): string | null {
   return singleServer?.baseUrl ?? null
 }
@@ -1295,6 +1593,7 @@ export function getOpencodeClient(directory: string): OpencodeClient | null {
   }
   return getOrCreateClient({
     baseUrl: singleServer.baseUrl,
+    password: singleServer.password,
     directory,
   })
 }
@@ -1352,56 +1651,66 @@ export function extractSdkErrorMessage(error: SdkErrorResponse | null | undefine
  * Stop the single opencode server.
  * Used for process teardown, tests, and explicit restarts.
  */
-export async function stopOpencodeServer(): Promise<boolean> {
-  // A server still booting lives only in startingServerProcess.
-  killStartingServerProcessNow({ reason: 'stop-opencode-server' })
-  startingServerProcess = null
-
-  if (!singleServer) {
-    return false
+async function stopOpencodeServerNow({
+  server,
+}: {
+  server: SingleServer | null
+}): Promise<boolean> {
+  const startingChild = startingServerProcess
+  if (startingChild) {
+    const stoppedStarting = await terminateChildProcess({
+      child: startingChild,
+      reason: 'stop-opencode-server',
+      label: 'starting opencode server',
+    })
+    if (startingServerProcess === startingChild) {
+      startingServerProcess = null
+    }
+    if (!stoppedStarting && !startingServer && !server) return false
+  }
+  const startup = startingServer
+  if (startup) {
+    await startup
+    if (startingServer === startup) startingServer = null
   }
 
-  const server = singleServer
-
-  // For discovered servers (from another process), just clear local state
-  // without killing the process we don't own.
+  if (!server) return true
   if (server.discovered || !server.process) {
-    singleServer = null
-    clientCache.clear()
     serverRetryCount = 0
     return true
   }
 
-  opencodeLogger.log(
-    `Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`,
-  )
-  if (!server.process.killed) {
-    const killResult = errore.try(
-      () => {
-        server.process!.kill('SIGTERM')
-      },
-      (error) => {
-        return new Error('Failed to send SIGTERM to opencode server', {
-          cause: error,
-        })
-      },
-    )
-    if (killResult instanceof Error) {
-      opencodeLogger.warn(killResult.message)
-    }
-  }
-
-  singleServer = null
-  clientCache.clear()
+  opencodeLogger.log(`Stopping opencode server (pid: ${server.process.pid}, port: ${server.port})`)
+  const stopped = await terminateChildProcess({
+    child: server.process,
+    reason: 'stop-opencode-server',
+    label: `opencode server (port: ${server.port})`,
+  })
+  if (!stopped) return false
   serverRetryCount = 0
   // Don't dispose the global listener here — it will reconnect when
   // the server restarts. Only abort the current SSE connection so it
   // doesn't hang on a dead server.
   restartGlobalEventListener()
-  await new Promise((resolve) => {
-    setTimeout(resolve, 1000)
-  })
   return true
+}
+
+export function stopOpencodeServer(): Promise<boolean> {
+  if (stoppingServer) return stoppingServer
+  const server = singleServer
+  if (!server && !startingServer && !startingServerProcess) {
+    return Promise.resolve(false)
+  }
+
+  // Assign stoppingServer before stop work so concurrent ensure waits.
+  const stopping = Promise.resolve()
+    .then(() => stopOpencodeServerNow({ server }))
+    .finally(() => {
+      if (stoppingServer === stopping) stoppingServer = null
+    })
+  stoppingServer = stopping
+  clearSingleServer()
+  return stopping
 }
 
 /**
@@ -1410,8 +1719,15 @@ export async function stopOpencodeServer(): Promise<boolean> {
  * Used for resolving opencode state issues, refreshing auth, plugins, etc.
  */
 export async function restartOpencodeServer(): Promise<OpenCodeErrors | true> {
-  if (singleServer) {
-    await stopOpencodeServer()
+  const port = singleServer?.port ?? getOpencodePort() ?? 0
+  if (singleServer || startingServer || startingServerProcess) {
+    const stopped = await stopOpencodeServer()
+    if (!stopped) {
+      return new ServerStartError({
+        port,
+        reason: 'Existing OpenCode server did not stop',
+      })
+    }
   }
 
   // Reset retry count for the fresh start

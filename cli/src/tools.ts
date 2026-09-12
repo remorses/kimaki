@@ -6,11 +6,67 @@ import { tool } from './ai-tool.js'
 import { z } from 'zod'
 import { spawn, type ChildProcess } from 'node:child_process'
 import net from 'node:net'
+import type { SessionLogOutput } from '@opencode/client'
 import type { OpencodeClient } from './opencode.js'
 import { createLogger, LogPrefix } from './logger.js'
 import * as errore from 'errore'
+import { getDataDir } from './config.js'
+import {
+  getOpencodeSystemMessage,
+  KIMAKI_INSTRUCTION_ENTRY_KEY,
+} from './system-message.js'
+import { OpenCodeSdkError } from './errors.js'
 
 const toolsLogger = createLogger(LogPrefix.TOOLS)
+
+class VoicePromptExecutionError extends errore.createTaggedError({
+  name: 'VoicePromptExecutionError',
+}) {}
+
+export function deriveVoicePromptTerminal({
+  events,
+  sessionId,
+  inboxId,
+}: {
+  events: SessionLogOutput[]
+  sessionId: string
+  inboxId: string
+}) {
+  const delivered = events.find((event) => {
+    return event.type === 'session.inbox.delivered'
+      && event.data.sessionID === sessionId
+      && event.data.inboxID === inboxId
+  })
+  if (!delivered || delivered.type !== 'session.inbox.delivered') {
+    return new VoicePromptExecutionError({
+      message: `Voice prompt inbox item ${inboxId} was not delivered`,
+    })
+  }
+
+  const terminal = events.find((event) => {
+    if (event.type === 'log.synced' || event.durable.seq <= delivered.durable.seq) return false
+    if (event.type !== 'session.execution.succeeded'
+      && event.type !== 'session.execution.failed'
+      && event.type !== 'session.execution.interrupted') return false
+    return event.data.sessionID === sessionId
+  })
+  if (!terminal) {
+    return new VoicePromptExecutionError({
+      message: `Voice prompt inbox item ${inboxId} has no terminal execution`,
+    })
+  }
+  if (terminal.type === 'session.execution.failed') {
+    return new VoicePromptExecutionError({
+      message: `Voice prompt execution failed: ${terminal.data.error.message}`,
+    })
+  }
+  if (terminal.type === 'session.execution.interrupted') {
+    return new VoicePromptExecutionError({
+      message: `Voice prompt execution was interrupted: ${terminal.data.reason}`,
+    })
+  }
+  return terminal
+}
 
 import { ShareMarkdown } from './markdown.js'
 import { formatDistanceToNow } from './utils.js'
@@ -28,7 +84,7 @@ export async function getTools({
     sessionId: string
     messageId: string
     data?: { info: { role: string } }
-    error?: unknown
+    error?: Error
     markdown?: string
   }) => void
 }) {
@@ -40,6 +96,80 @@ export async function getTools({
 
   const markdownRenderer = new ShareMarkdown(client)
 
+  const completeVoicePrompt = async ({
+    sessionId,
+    inboxId,
+  }: {
+    sessionId: string
+    inboxId: string
+  }) => {
+    const waitResult = await getClient().session.wait({
+      sessionID: sessionId,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: `session.wait.${sessionId}`,
+      cause,
+    }))
+    if (waitResult instanceof Error) {
+      onMessageCompleted?.({ sessionId, messageId: '', error: waitResult })
+      return
+    }
+
+    const events: SessionLogOutput[] = []
+    const logResult = await (async () => {
+      for await (const event of getClient().session.log({ sessionID: sessionId })) {
+        events.push(event)
+      }
+    })().catch((cause) => new OpenCodeSdkError({
+      operation: `session.log.${sessionId}`,
+      cause,
+    }))
+    if (logResult instanceof Error) {
+      onMessageCompleted?.({ sessionId, messageId: '', error: logResult })
+      return
+    }
+
+    const terminal = deriveVoicePromptTerminal({ events, sessionId, inboxId })
+    if (terminal instanceof Error) {
+      onMessageCompleted?.({ sessionId, messageId: '', error: terminal })
+      return
+    }
+
+    const markdownResult = await markdownRenderer.generate({
+      sessionID: sessionId,
+      lastAssistantOnly: true,
+    })
+    if (markdownResult instanceof Error) {
+      onMessageCompleted?.({ sessionId, messageId: '', error: markdownResult })
+      return
+    }
+    onMessageCompleted?.({
+      sessionId,
+      messageId: '',
+      markdown: markdownResult,
+    })
+  }
+
+  const submitVoicePrompt = async ({
+    sessionId,
+    message,
+  }: {
+    sessionId: string
+    message: string
+  }) => {
+    const inbox = await getClient().session.prompt({
+      sessionID: sessionId,
+      text: message,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: `session.prompt.${sessionId}`,
+      cause,
+    }))
+    if (inbox instanceof Error) {
+      onMessageCompleted?.({ sessionId, messageId: '', error: inbox })
+      return
+    }
+    await completeVoicePrompt({ sessionId, inboxId: inbox.id })
+  }
+
   const modelsResponse = await client.model.list({
     location: { directory },
   })
@@ -49,7 +179,10 @@ export async function getTools({
   const getSessionModel = async (
     sessionId: string,
   ): Promise<{ providerID: string; modelID: string } | undefined> => {
-    const res = await getClient().message.list({ sessionID: sessionId })
+    const res = await getClient().message.list({
+      sessionID: sessionId,
+      order: 'asc',
+    })
     const data = res.data
     if (data.length === 0) return undefined
     for (let i = data.length - 1; i >= 0; i--) {
@@ -72,30 +205,7 @@ export async function getTools({
       execute: async ({ sessionId, message }) => {
         const sessionModel = await getSessionModel(sessionId)
 
-        // do not await
-        getClient()
-          .session.prompt({
-            sessionID: sessionId,
-            text: message,
-          })
-          .then(async (response) => {
-            const markdownResult = await markdownRenderer.generate({
-              sessionID: sessionId,
-              lastAssistantOnly: true,
-            })
-            onMessageCompleted?.({
-              sessionId,
-              messageId: '',
-              markdown: errore.unwrapOr(markdownResult, ''),
-            })
-          })
-          .catch((error: unknown) => {
-            onMessageCompleted?.({
-              sessionId,
-              messageId: '',
-              error,
-            })
-          })
+        void submitVoicePrompt({ sessionId, message })
         return {
           success: true,
           sessionId,
@@ -126,41 +236,36 @@ export async function getTools({
           .optional()
           .describe('Optional model to use for this session'),
       }),
-      execute: async ({ message, title }) => {
+      execute: async ({ message, title, model }) => {
         if (!message.trim()) {
           throw new Error(`message must be a non empty string`)
         }
 
         try {
           const session = await getClient().session.create({
-            ...(title ? { title } : {}),
+            title: title || undefined,
+            model: model
+              ? { providerID: model.providerId, id: model.modelId }
+              : undefined,
             location: { directory },
           })
 
-          // do not await
-          getClient()
-            .session.prompt({
-              sessionID: session.id,
-              text: message,
-            })
-            .then(async (response) => {
-              const markdownResult = await markdownRenderer.generate({
-                sessionID: session.id,
-                lastAssistantOnly: true,
-              })
-              onMessageCompleted?.({
-                sessionId: session.id,
-                messageId: '',
-                markdown: errore.unwrapOr(markdownResult, ''),
-              })
-            })
-            .catch((error: unknown) => {
-              onMessageCompleted?.({
-                sessionId: session.id,
-                messageId: '',
-                error,
-              })
-            })
+          const instructionsResult = await getClient().session.instructions.entry.put({
+            sessionID: session.id,
+            key: KIMAKI_INSTRUCTION_ENTRY_KEY,
+            value: getOpencodeSystemMessage({
+              sessionId: session.id,
+              dataDir: getDataDir(),
+            }),
+          }).catch((cause) => new OpenCodeSdkError({
+            operation: 'session.instructions.entry.put',
+            cause,
+          }))
+          if (instructionsResult instanceof Error) {
+            return { success: false, error: instructionsResult.message }
+          }
+
+          void submitVoicePrompt({ sessionId: session.id, message })
 
           return {
             success: true,
@@ -185,7 +290,7 @@ export async function getTools({
       inputSchema: z.object({}),
       execute: async () => {
         toolsLogger.log(`Listing opencode sessions`)
-        const sessions = await getClient().session.list()
+        const sessions = await getClient().session.list({ directory })
 
         if (!sessions.data) {
           return { success: false, error: 'No sessions found' }
@@ -203,6 +308,7 @@ export async function getTools({
             if (session.revert) return 'error'
             const messagesResponse = await getClient().message.list({
               sessionID: session.id,
+              order: 'asc',
             })
             const messages = messagesResponse.data
             const lastMessage = messages[messages.length - 1]
@@ -271,6 +377,7 @@ export async function getTools({
         if (lastAssistantOnly) {
           const messages = await getClient().message.list({
             sessionID: sessionId,
+            order: 'asc',
           })
 
           if (!messages.data) {
@@ -317,6 +424,7 @@ export async function getTools({
 
           const messages = await getClient().message.list({
             sessionID: sessionId,
+            order: 'asc',
           })
           const lastMessage = messages.data[messages.data.length - 1]
           const status =

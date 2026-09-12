@@ -177,10 +177,10 @@ export function createDeterministicProvider(
     }
   }
 
-  const provider = ((modelId: string) => {
+  const provider = ((modelId) => {
     return buildLanguageModel({ modelId })
   }) as DeterministicProvider
-  provider.languageModel = (modelId: string) => {
+  provider.languageModel = (modelId) => {
     return buildLanguageModel({ modelId })
   }
   return provider
@@ -190,12 +190,16 @@ export function buildDeterministicOpencodeConfig({
   model,
   smallModel,
   providerName,
+  providerNpm,
   settings,
 }: BuildDeterministicOpencodeConfigOptions) {
   return buildDeterministicOpencode2Config({
     model,
     extraModels: smallModel ? [smallModel] : undefined,
     providerName,
+    providerPackage: providerNpm
+      ? providerNpm.startsWith('aisdk:') ? providerNpm : `aisdk:${providerNpm}`
+      : undefined,
     settings,
     permissions: [
       { action: 'shell', resource: '*', effect: 'allow' },

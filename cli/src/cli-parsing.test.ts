@@ -15,10 +15,6 @@ async function parseWithGoke(argv: string[]) {
     "cli.command('add-project', 'Add a project').option('-g, --guild <guildId>', 'Discord guild/server ID')",
     "cli.command('task delete <id>', 'Delete task')",
     "cli.command('task edit <id>', 'Edit task').option('-u, --user <user>', 'Discord user')",
-    "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
-    "cli.command('multioauth anthropic remove <indexOrEmail>', 'Remove stored Anthropic account')",
-    "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
-    "cli.command('multioauth openai remove <indexOrEmail>', 'Remove stored OpenAI account')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
@@ -31,27 +27,6 @@ async function parseWithGoke(argv: string[]) {
     args: string[]
     options: Record<string, string>
   }
-}
-
-async function getHelpOutput() {
-  const script = [
-    "import { goke } from 'goke'",
-    'const stdout = { text: \'\', write(data) { this.text += String(data) } }',
-    "const cli = goke('kimaki', { stdout })",
-    "cli.command('send', 'Send a message')",
-    "cli.command('multioauth list', 'List all OAuth accounts')",
-    "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
-    "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
-    'cli.help()',
-    "cli.parse(['node', 'kimaki', '--help'], { run: false })",
-    'process.stdout.write(stdout.text)',
-  ].join(';')
-
-  const { stdout } = await execAsync(`node --input-type=module -e ${JSON.stringify(script)}`, {
-    cwd: import.meta.dirname,
-    timeout: 10_000,
-  })
-  return stdout
 }
 
 async function parseRootBotOptions(argv: string[]) {
@@ -227,28 +202,6 @@ describe('goke CLI ID parsing', () => {
 
     expect(result.args[0]).toBe('11')
     expect(result.options.user).toBe('')
-  })
-
-  test('multioauth account remove parses index and email as strings', async () => {
-    const indexResult = await parseWithGoke(
-      ['node', 'kimaki', 'multioauth', 'anthropic', 'remove', '2'],
-    )
-
-    const emailResult = await parseWithGoke(
-      ['node', 'kimaki', 'multioauth', 'openai', 'remove', 'user@example.com'],
-    )
-
-    expect(indexResult.args[0]).toBe('2')
-    expect(typeof indexResult.args[0]).toBe('string')
-    expect(emailResult.args[0]).toBe('user@example.com')
-    expect(typeof emailResult.args[0]).toBe('string')
-  })
-
-  test('multioauth commands are included in help output', async () => {
-    const stdout = await getHelpOutput()
-
-    expect(stdout).toContain('send')
-    expect(stdout).toContain('multioauth')
   })
 
   test('merge-worktree parses strategy and target branch', async () => {

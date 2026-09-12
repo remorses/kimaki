@@ -1,8 +1,6 @@
 // Plugin-safe Git worktree creation, identity validation, and removal primitives.
 // This module must NOT import config.ts, logger.ts, or any module that
-// transitively pulls them in. It is used by both:
-//   - worktrees.ts (bot process — wraps with kimaki logger + config)
-//   - kimaki-workspace-adaptor.ts (opencode server process — silent callbacks)
+// transitively pulls them in. worktrees.ts wraps it with kimaki logger and config.
 //
 // All logging goes through an optional `log` callback so callers control output.
 

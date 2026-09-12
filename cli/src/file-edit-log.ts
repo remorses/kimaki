@@ -1,13 +1,12 @@
 // Tracks which OpenCode sessions last edited each file.
 // Plugin appends JSONL events; CLI derives the per-file session list on read.
 
-import type { Plugin } from '@opencode-ai/plugin'
 import fs from 'node:fs'
 import path from 'node:path'
 import * as errore from 'errore'
 import { FilesystemOperationError } from './errors.js'
 import { extractPatchFilePaths } from './patch-text-parser.js'
-import { createPluginLogger, setPluginLogFilePath } from './plugin-logger.js'
+import { createPluginLogger } from './plugin-logger.js'
 
 const logger = createPluginLogger('FILEEDIT')
 
@@ -266,18 +265,4 @@ export function createFileEditHooks({
       })
     },
   }
-}
-
-export const fileEditTrackerPlugin: Plugin = async ({ directory }) => {
-  const dataDir = process.env.KIMAKI_DATA_DIR
-  if (!dataDir) return {}
-  setPluginLogFilePath(dataDir)
-  const created = errore.try(
-    () => fs.mkdirSync(dataDir, { recursive: true }),
-    (cause) => new FilesystemOperationError({ operation: 'create file edit log dir', cause }),
-  )
-  if (created instanceof Error) {
-    logger.warn('Failed to create file edit log dir', created.message)
-  }
-  return createFileEditHooks({ dataDir, directory })
 }

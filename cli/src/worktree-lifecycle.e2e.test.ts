@@ -577,7 +577,7 @@ describe('worktree lifecycle', () => {
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
         ok
-        > *WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
+        > *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Worktree:')
       expect(worktreeText).toContain('Branch:')
@@ -673,7 +673,7 @@ describe('worktree lifecycle', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         ok
-        > *CHANNEL_WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
+        > *CHANNEL_WORKTREE_NAME ⋅ opencode/kimaki-CHANNEL_WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Branch:')
       expect(worktreeText).toContain('ok')
@@ -898,7 +898,7 @@ describe('worktree lifecycle', () => {
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
         > *using deterministic-provider/deterministic-v2*
         ok
-        > *AUTO_WORKTREE_FOLDER ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
+        > *AUTO_WORKTREE_FOLDER ⋅ opencode/kimaki-rply-wth-exct… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
 
       // Verify DB has worktree info

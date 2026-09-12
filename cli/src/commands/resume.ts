@@ -7,9 +7,9 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
-  getChannelDirectory,
   setThreadSession,
   setPartMessagesBatch,
   getAllThreadSessionIds,
@@ -19,6 +19,7 @@ import {
   sendThreadMessage,
   sendSessionPartBatches,
   resolveProjectDirectoryFromAutocomplete,
+  resolveWorkingDirectory,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { collectSessionChunks, batchChunksForDiscord, sessionMessagesToGeneric } from '../message-formatting.js'
@@ -26,6 +27,29 @@ import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.RESUME)
+
+export function isSessionInWorkingDirectory({
+  sessionDirectory,
+  workingDirectory,
+}: {
+  sessionDirectory: string
+  workingDirectory: string
+}) {
+  return path.resolve(sessionDirectory) === path.resolve(workingDirectory)
+}
+
+export function getSessionDirectoryMismatchReply({
+  sessionDirectory,
+  workingDirectory,
+}: {
+  sessionDirectory: string
+  workingDirectory: string
+}) {
+  if (isSessionInWorkingDirectory({ sessionDirectory, workingDirectory })) {
+    return undefined
+  }
+  return `This session belongs to a different project or worktree: \`${sessionDirectory}\`. Run \`/resume\` in the channel for that directory.`
+}
 
 export async function handleResumeCommand({
   command,
@@ -55,15 +79,14 @@ export async function handleResumeCommand({
     return
   }
 
-  const channelConfig = await getChannelDirectory(channel.id)
-  const projectDirectory = channelConfig?.directory
-
-  if (!projectDirectory) {
+  const resolved = await resolveWorkingDirectory({ channel })
+  if (!resolved) {
     await command.editReply(
       'This channel is not configured with a project directory',
     )
     return
   }
+  const { projectDirectory, workingDirectory } = resolved
 
   if (!fs.existsSync(projectDirectory)) {
     await command.editReply(`Directory does not exist: ${projectDirectory}`)
@@ -86,6 +109,15 @@ export async function handleResumeCommand({
       return
     }
 
+    const directoryMismatchReply = getSessionDirectoryMismatchReply({
+      sessionDirectory: sessionResponse.location.directory,
+      workingDirectory,
+    })
+    if (directoryMismatchReply) {
+      await command.editReply(directoryMismatchReply)
+      return
+    }
+
     const sessionTitle = sessionResponse.title ?? 'Untitled'
 
     const thread = await channel.threads.create({
@@ -105,6 +137,7 @@ export async function handleResumeCommand({
 
     const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
+      order: 'asc',
     })
 
     if (!messagesResponse.data) {
@@ -191,7 +224,9 @@ export async function handleResumeAutocomplete({
       return
     }
 
-    const sessionsResponse = await getClient().session.list()
+    const sessionsResponse = await getClient().session.list({
+      directory: projectDirectory,
+    })
     if (!sessionsResponse.data) {
       await interaction.respond([])
       return
