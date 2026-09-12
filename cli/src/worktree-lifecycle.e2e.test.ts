@@ -38,6 +38,7 @@ import {
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import {
+  buildSessionPermissions,
   initializeOpencodeForDirectory,
   stopOpencodeServer,
 } from './opencode.js'
@@ -489,6 +490,10 @@ describe('worktree lifecycle', () => {
         sessionID: worktreeSession,
       })
       expect(worktreeSessionResponse.location.directory).toBe(worktreeDirectory)
+      expect(worktreeSessionResponse.permissions).toEqual(buildSessionPermissions({
+        directory: worktreeDirectory,
+        originalRepoDirectory: directories.projectDirectory,
+      }))
 
       const runtimeAfter = getRuntime(thread.id)
       expect(runtimeAfter).toBe(runtimeBefore)
