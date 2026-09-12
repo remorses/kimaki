@@ -257,6 +257,18 @@ describe('messages and reactions', () => {
     expect(reactions[0]!.userId).toBe(discord.botUserId)
   })
 
+  test('quoted footers normalize duration and context without changing raw messages', async () => {
+    const guild = client.guilds.cache.first()!
+    const channel = await guild.channels.create({ name: 'quoted-footers', type: ChannelType.GuildText })
+    const content = '> *project ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ model*'
+    await channel.send(content)
+    expect(await discord.channel(channel.id).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      > *project ⋅ main ⋅ Ns ⋅ N% ⋅ model*"
+    `)
+    expect(await discord.channel(channel.id).text({ deterministicFooters: false })).toContain(content)
+  })
+
   test('getMessageVisibleText flattens Separator and TextDisplay', () => {
     expect(
       getMessageVisibleText({
