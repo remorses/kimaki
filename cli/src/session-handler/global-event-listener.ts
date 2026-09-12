@@ -37,7 +37,8 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 
 // ── Types ──────────────────────────────────────────────────────
 
-type EventCallback = (event: V2Event) => void
+export type GlobalEventContext = { reconnected: boolean }
+type EventCallback = (event: V2Event, context: GlobalEventContext) => void
 
 // ── State ──────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ let loopRunning = false
 let disposed = false
 let controller: AbortController | null = null
 let connected = false
+let connectedBefore = false
 const connectionWaiters = new Set<() => void>()
 
 // ── Public API ─────────────────────────────────────────────────
@@ -82,6 +84,7 @@ export function disposeGlobalEventListener(): void {
   disposed = true
   loopRunning = false
   connected = false
+  connectedBefore = false
   controller?.abort()
   controller = null
   callbacks.clear()
@@ -142,31 +145,36 @@ function ensureListenerRunning(): void {
   void runEventLoop()
 }
 
-/** Resolve getOpencodeServerBaseUrl lazily to break circular dep. */
-let _getBaseUrl: (() => string | null) | null = null
+type ServerConnection = { baseUrl: string; password: string }
 
-async function resolveBaseUrlGetter(): Promise<() => string | null> {
-  if (_getBaseUrl) return _getBaseUrl
+/** Resolve the active server connection lazily to break the circular import. */
+let _getServerConnection: (() => ServerConnection | null) | null = null
+
+async function resolveServerConnectionGetter(): Promise<() => ServerConnection | null> {
+  if (_getServerConnection) return _getServerConnection
   const mod = await import('../opencode.js')
-  _getBaseUrl = mod.getOpencodeServerBaseUrl
-  return _getBaseUrl
+  _getServerConnection = () => mod.getOpencodeServerConnection()
+  return _getServerConnection
 }
 
-function createGlobalClient(baseUrl: string): OpenCodeClient {
+export function createGlobalEventClient({
+  baseUrl,
+  password,
+}: ServerConnection): OpenCodeClient {
   return OpenCode.make({
     baseUrl,
-    headers: getOpencodeServerAuthHeaders(),
+    headers: getOpencodeServerAuthHeaders({ password }),
   })
 }
 
-function dispatchEvent(event: V2Event): void {
+function dispatchEvent(event: V2Event, context: GlobalEventContext): void {
   for (const callback of callbacks.values()) {
-    callback(event)
+    callback(event, context)
   }
 }
 
 async function runEventLoop(): Promise<void> {
-  const getBaseUrl = await resolveBaseUrlGetter()
+  const getServerConnection = await resolveServerConnectionGetter()
 
   let backoffMs = 500
   const maxBackoffMs = 30_000
@@ -175,8 +183,8 @@ async function runEventLoop(): Promise<void> {
     controller = new AbortController()
     const signal = controller.signal
 
-    const baseUrl = getBaseUrl()
-    if (!baseUrl) {
+    const serverConnection = getServerConnection()
+    if (!serverConnection) {
       if (callbacks.size === 0) {
         logger.log('[GLOBAL LISTENER] No registrations, pausing')
         loopRunning = false
@@ -190,7 +198,7 @@ async function runEventLoop(): Promise<void> {
       continue
     }
 
-    const client = createGlobalClient(baseUrl)
+    const client = createGlobalEventClient(serverConnection)
 
     const events = client.event.subscribe({ signal })
 
@@ -201,12 +209,16 @@ async function runEventLoop(): Promise<void> {
       for await (const event of events) {
         if (!receivedAnyEvent) {
           receivedAnyEvent = true
+          const reconnected = connectedBefore
+          connectedBefore = true
           connected = true
           for (const resolve of connectionWaiters) resolve()
           connectionWaiters.clear()
           logger.log('[GLOBAL LISTENER] Connected to global event stream')
+          dispatchEvent(event, { reconnected })
+          continue
         }
-        dispatchEvent(event)
+        dispatchEvent(event, { reconnected: false })
       }
     })()
       .catch((e) => new OpenCodeSdkError({ operation: 'event.iterate', cause: e }))

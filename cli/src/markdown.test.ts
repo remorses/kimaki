@@ -248,7 +248,9 @@ beforeAll(async () => {
     })
     const messages = msgs.data
     const hasToolPart = messages.some((m) =>
-      m.type === 'assistant' && m.content.some((p) => p.type === 'tool' && p.state.status === 'completed' && 'content' in p.state),
+      m.type === 'assistant' && m.content.some((p) => {
+        return p.type === 'tool' && p.state.status === 'completed'
+      }),
     )
     if (hasToolPart) {
       await new Promise((resolve) => { setTimeout(resolve, 500) })
@@ -346,7 +348,8 @@ test('generate markdown without system info', async () => {
   })
 
   expect(errore.isOk(markdown)).toBe(true)
-  const md = errore.unwrap(markdown as string)
+  if (markdown instanceof Error) throw markdown
+  const md = markdown
   expect(md).toContain('# Markdown Test Session')
   expect(md).not.toContain('## Session Information')
   expect(md).toContain('## Conversation')
@@ -378,7 +381,8 @@ test('error handling for non-existent session', async () => {
 
   const result = await exporter.generate({ sessionID: badSessionID })
   expect(result).toBeInstanceOf(Error)
-  expect((result as Error).message).toContain(`Session ${badSessionID} not found`)
+  if (!(result instanceof Error)) throw new Error('Expected session error')
+  expect(result.message).toContain(`Session ${badSessionID} not found`)
 })
 
 test('getCompactSessionContext generates compact format', async () => {

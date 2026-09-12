@@ -17,7 +17,6 @@ import {
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
 import { publicOpencodeBindRequiresPassword } from './opencode.js'
-import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
 import miscCommands from './cli-commands/misc.js'
@@ -35,8 +34,6 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke('kimaki')
-cli.use(multioauthCommands)
-
 process.title = 'kimaki'
 
 cli

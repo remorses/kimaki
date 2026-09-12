@@ -2,7 +2,10 @@
 
 import { describe, expect, test } from 'vitest'
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider'
-import { createDeterministicProvider } from './deterministic-provider.js'
+import {
+  buildDeterministicOpencodeConfig,
+  createDeterministicProvider,
+} from './deterministic-provider.js'
 
 describe('createDeterministicProvider', () => {
   test('emits v3 tool call for matched sleep prompt', async () => {
@@ -79,6 +82,23 @@ describe('createDeterministicProvider', () => {
         ],
       }),
     ).rejects.toThrow('No deterministic matcher matched current prompt')
+  })
+})
+
+describe('buildDeterministicOpencodeConfig', () => {
+  test('uses providerNpm as the v2 AI SDK provider package', () => {
+    expect(
+      buildDeterministicOpencodeConfig({
+        model: 'deterministic-v2',
+        providerNpm: 'file:///tmp/provider.ts',
+      }),
+    ).toMatchObject({
+      providers: {
+        'deterministic-provider': {
+          package: 'aisdk:file:///tmp/provider.ts',
+        },
+      },
+    })
   })
 })
 

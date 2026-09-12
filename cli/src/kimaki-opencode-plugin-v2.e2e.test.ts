@@ -6,7 +6,6 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { V2Event } from '@opencode/client'
@@ -22,9 +21,7 @@ import {
   type OpenCodeClient,
 } from './opencode2.js'
 
-const pluginDirectory = path.dirname(
-  fileURLToPath(new URL('./kimaki-opencode-plugin/index.ts', import.meta.url)),
-)
+const pluginDirectory = path.join(import.meta.dirname, '../dist/kimaki-opencode-plugin')
 
 function buildMatchers(): DeterministicMatcher[] {
   const sleepMatcher: DeterministicMatcher = {
@@ -54,7 +51,69 @@ function buildMatchers(): DeterministicMatcher[] {
       ],
     },
   }
-  return [sleepMatcher]
+  const invalidTools = [
+    {
+      id: 'invalid-max-files',
+      toolName: 'kimaki_file_upload',
+      input: { prompt: 'Upload', maxFiles: 11 },
+    },
+    {
+      id: 'invalid-fractional-max-files',
+      toolName: 'kimaki_file_upload',
+      input: { prompt: 'Upload', maxFiles: 1.5 },
+    },
+    {
+      id: 'invalid-button-count',
+      toolName: 'kimaki_action_buttons',
+      input: { buttons: [] },
+    },
+    {
+      id: 'invalid-maximum-button-count',
+      toolName: 'kimaki_action_buttons',
+      input: {
+        buttons: ['One', 'Two', 'Three', 'Four'].map((label) => ({ label })),
+      },
+    },
+    {
+      id: 'invalid-button-label',
+      toolName: 'kimaki_action_buttons',
+      input: { buttons: [{ label: '' }] },
+    },
+    {
+      id: 'invalid-button-color',
+      toolName: 'kimaki_action_buttons',
+      input: { buttons: [{ label: 'Continue', color: 'purple' }] },
+    },
+  ] as const
+  return [
+    sleepMatcher,
+    ...invalidTools.map(
+      (item): DeterministicMatcher => ({
+        id: item.id,
+        priority: 20,
+        when: {
+          lastMessageRole: 'user',
+          latestUserTextIncludes: item.id,
+        },
+        then: {
+          parts: [
+            { type: 'stream-start', warnings: [] },
+            {
+              type: 'tool-call',
+              toolCallId: `call-${item.id}`,
+              toolName: item.toolName,
+              input: JSON.stringify(item.input),
+            },
+            {
+              type: 'finish',
+              finishReason: 'tool-calls',
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ],
+        },
+      }),
+    ),
+  ]
 }
 
 let server: Opencode2Server
@@ -64,14 +123,6 @@ const events: V2Event[] = []
 const stderrLines: string[] = []
 const subscribeController = new AbortController()
 const createdSessionIds: string[] = []
-
-function eventSessionId(event: V2Event): string | undefined {
-  const data: unknown = event.data
-  if (typeof data !== 'object' || data === null || !('sessionID' in data)) {
-    return undefined
-  }
-  return typeof data.sessionID === 'string' ? data.sessionID : undefined
-}
 
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
@@ -103,9 +154,8 @@ function executionEnded(sessionId: string): boolean {
 }
 
 beforeAll(async () => {
-  tempDir = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-opencode2-plugin-')),
-  )
+  expect(fs.existsSync(path.join(pluginDirectory, 'index.js'))).toBe(true)
+  tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-opencode2-plugin-')))
   execFileSync('git', ['init', '-q'], { cwd: tempDir })
 
   const config = {
@@ -115,16 +165,11 @@ beforeAll(async () => {
         strict: false,
         matchers: buildMatchers(),
       },
-      permissions: [
-        { action: 'kimaki_sleep', resource: '*', effect: 'allow' },
-      ],
+      permissions: [{ action: 'kimaki_sleep', resource: '*', effect: 'allow' }],
     }),
     plugins: [pluginDirectory],
   }
-  fs.writeFileSync(
-    path.join(tempDir, 'opencode.json'),
-    JSON.stringify(config, null, 2),
-  )
+  fs.writeFileSync(path.join(tempDir, 'opencode.json'), JSON.stringify(config, null, 2))
 
   const started = await startOpencode2Server()
   if (started instanceof Error) {
@@ -197,25 +242,17 @@ test('kimaki_sleep is a real tool, not Unknown tool', async () => {
   })
 
   const toolFailed = events.find((event) => {
-    return (
-      event.type === 'session.tool.failed' &&
-      event.data.sessionID === session.id
-    )
+    return event.type === 'session.tool.failed' && event.data.sessionID === session.id
   })
   if (toolFailed && toolFailed.type === 'session.tool.failed') {
     expect(toolFailed.data.error.message).not.toContain('Unknown tool')
   }
 
   const toolSuccess = events.find((event) => {
-    return (
-      event.type === 'session.tool.success' &&
-      event.data.sessionID === session.id
-    )
+    return event.type === 'session.tool.success' && event.data.sessionID === session.id
   })
   if (!toolSuccess || toolSuccess.type !== 'session.tool.success') {
-    throw new Error(
-      `missing session.tool.success. stderr:\n${stderrLines.slice(-40).join('\n')}`,
-    )
+    throw new Error(`missing session.tool.success. stderr:\n${stderrLines.slice(-40).join('\n')}`)
   }
   const textContent = toolSuccess.data.content
     .filter((item) => item.type === 'text')
@@ -223,3 +260,29 @@ test('kimaki_sleep is a real tool, not Unknown tool', async () => {
     .join('\n')
   expect(textContent).toContain('sleep is only available in the main session')
 }, 30_000)
+
+test.each([
+  'invalid-max-files',
+  'invalid-fractional-max-files',
+  'invalid-button-count',
+  'invalid-maximum-button-count',
+  'invalid-button-label',
+  'invalid-button-color',
+])('rejects invalid tool input: %s', async (marker) => {
+  const session = await client.session.create({
+    title: marker,
+    location: { directory: tempDir },
+  })
+  createdSessionIds.push(session.id)
+  await client.session.prompt({ sessionID: session.id, text: marker })
+  await waitFor(() => executionEnded(session.id), {
+    label: `invalid tool execution end for ${session.id}`,
+  })
+  const failure = events.find((event) => {
+    return event.type === 'session.tool.failed' && event.data.sessionID === session.id
+  })
+  expect(failure?.type).toBe('session.tool.failed')
+  if (failure?.type === 'session.tool.failed') {
+    expect(failure.data.error.message).not.toContain('Unknown tool')
+  }
+})

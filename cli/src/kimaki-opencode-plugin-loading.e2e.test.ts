@@ -5,24 +5,18 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
-import {
-  buildBasicAuthHeader,
-  startOpencode2Server,
-  type Opencode2Server,
-} from './opencode2.js'
+import { buildBasicAuthHeader, startOpencode2Server, type Opencode2Server } from './opencode2.js'
 
-const pluginDirectory = path.dirname(
-  fileURLToPath(new URL('./kimaki-opencode-plugin/index.ts', import.meta.url)),
-)
+const pluginDirectory = path.join(import.meta.dirname, '../dist/kimaki-opencode-plugin')
 
 const stderrLines: string[] = []
 let server: Opencode2Server | undefined
 let tempDir = ''
 
 beforeAll(async () => {
+  expect(fs.existsSync(path.join(pluginDirectory, 'index.js'))).toBe(true)
   tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-plugin-loading-')))
   fs.writeFileSync(
     path.join(tempDir, 'opencode.json'),

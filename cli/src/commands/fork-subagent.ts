@@ -246,6 +246,7 @@ export async function handleForkSubagentSelectMenu(
   try {
     const messagesResponse = await getClient().message.list({
       sessionID: forkedSession.id,
+      order: 'asc',
     })
     if (messagesResponse.data) {
       const { chunks } = collectSessionChunks({

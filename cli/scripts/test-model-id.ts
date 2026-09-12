@@ -9,7 +9,7 @@
  * 3. Logs the available models sorted by release date
  */
 
-import { createOpencodeClient } from '@opencode-ai/sdk/v2'
+import { OpenCode } from '@opencode/client'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
 
@@ -78,52 +78,46 @@ async function main() {
     await waitForServer(port)
     console.log('Server ready!')
 
-    const client = createOpencodeClient({
+    const client = OpenCode.make({
       baseUrl: `http://127.0.0.1:${port}`,
     })
 
-    const response = await client.provider.list({
-      query: { directory },
+    const [providerResponse, modelResponse] = await Promise.all([
+      client.provider.list({ location: { directory } }),
+      client.model.list({ location: { directory } }),
+    ])
+    const providers = providerResponse.data
+    const models = modelResponse.data
+    const enabledProviders = providers.filter((provider) => {
+      return provider.activation !== 'disabled'
     })
 
-    if (!response.data) {
-      throw new Error('Failed to fetch providers')
-    }
-
-    const { all: providers, connected, default: defaults } = response.data
-
-    console.log(`\n=== Connected Providers (${connected.length}) ===`)
-    console.log(connected.join(', ') || '(none)')
-
-    console.log(`\n=== Default Models ===`)
-    for (const [key, value] of Object.entries(defaults)) {
-      console.log(`  ${key}: ${value}`)
-    }
+    console.log(`\n=== Enabled Providers (${enabledProviders.length}) ===`)
+    console.log(enabledProviders.map((provider) => provider.id).join(', ') || '(none)')
 
     console.log(`\n=== All Providers (${providers.length}) ===`)
 
     for (const provider of providers) {
-      const isConnected = connected.includes(provider.id)
-      const models = Object.entries(provider.models || {})
+      const providerModels = models.filter((model) => {
+        return model.providerID === provider.id
+      })
 
       console.log(
-        `\n--- ${provider.name} (${provider.id}) ${isConnected ? '[CONNECTED]' : ''} ---`,
+        `\n--- ${provider.name} (${provider.id}) ${provider.activation !== 'disabled' ? '[ENABLED]' : ''} ---`,
       )
-      console.log(`  Models: ${models.length}`)
+      console.log(`  Models: ${providerModels.length}`)
 
-      if (models.length > 0) {
+      if (providerModels.length > 0) {
         // Sort by release date (ascending)
-        const sortedModels = models
-          .map(([id, model]) => ({
-            id,
+        const sortedModels = providerModels
+          .map((model) => ({
+            id: model.modelID,
             name: model.name,
-            releaseDate: model.release_date,
-            fullId: `${provider.id}/${id}`,
+            releaseDate: model.time.released,
+            fullId: model.id,
           }))
           .sort((a, b) => {
-            const dateA = a.releaseDate ? new Date(a.releaseDate).getTime() : 0
-            const dateB = b.releaseDate ? new Date(b.releaseDate).getTime() : 0
-            return dateA - dateB
+            return a.releaseDate - b.releaseDate
           })
 
         // Show last 5 models (most recent)
@@ -132,7 +126,7 @@ async function main() {
         for (const model of recentModels) {
           console.log(`    - ${model.name}`)
           console.log(`      ID: ${model.fullId}`)
-          console.log(`      Date: ${model.releaseDate || 'unknown'}`)
+          console.log(`      Date: ${new Date(model.releaseDate).toISOString()}`)
 
           // Validate parsing
           const [parsedProvider, ...modelParts] = model.fullId.split('/')

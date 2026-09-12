@@ -16,6 +16,7 @@ import {
   type Opencode2Server,
   type OpenCodeClient,
 } from './opencode2.js'
+import { createGlobalEventClient } from './session-handler/global-event-listener.js'
 
 let server: Opencode2Server
 let client: OpenCodeClient
@@ -115,6 +116,24 @@ test('event.subscribe yields server.connected first', async () => {
     for await (const event of client.event.subscribe({
       signal: controller.signal,
     })) {
+      expect(event.type).toBe('server.connected')
+      break
+    }
+  } finally {
+    clearTimeout(timeout)
+    controller.abort()
+  }
+})
+
+test('global event client authenticates with the active server password', async () => {
+  const globalClient = createGlobalEventClient({
+    baseUrl: server.baseUrl,
+    password: server.password,
+  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 5000)
+  try {
+    for await (const event of globalClient.event.subscribe({ signal: controller.signal })) {
       expect(event.type).toBe('server.connected')
       break
     }

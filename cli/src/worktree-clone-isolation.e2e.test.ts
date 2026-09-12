@@ -8,7 +8,6 @@ import { tryWorkspaceCreate } from './commands/new-worktree.js'
 import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import { chooseLockPort } from './test-utils.js'
 import { execAsync, getManagedWorktreeDirectory } from './worktrees.js'
-import { KIMAKI_WORKTREE_ADAPTER_TYPE } from './git-worktree-core.js'
 
 const WORKTREE_BRANCH = 'opencode/kimaki-clone-isolation'
 const REJECTED_WORKTREE_BRANCH = 'opencode/kimaki-rejected-clone-isolation'
@@ -95,7 +94,6 @@ test('creates a workspace from the exact requested clone and commit', async () =
   const workspace = await requestedClient.worktree.create({
     location: { directory: requestedClone },
     name: WORKTREE_BRANCH,
-    branch: requestedCommit,
     from: requestedClone,
   })
   if (!workspace) throw new Error('OpenCode returned no workspace')
@@ -136,6 +134,49 @@ test('creates a workspace from the exact requested clone and commit', async () =
     await requestedClient.worktree.remove({
       location: { directory: requestedClone },
       directory: workspace.directory,
+      force: true,
+    })
+  }
+}, 30_000)
+
+test('creates and returns the requested attached branch', async () => {
+  const requestedCommit = await git({
+    cwd: requestedClone,
+    args: ['rev-parse', 'HEAD^{commit}'],
+  })
+  const result = await tryWorkspaceCreate({
+    worktreeName: 'opencode/kimaki-directory-only',
+    projectDirectory: requestedClone,
+    baseCommit: requestedCommit,
+  })
+  if (result instanceof Error) throw result
+
+  try {
+    const actualBranch = await git({
+      cwd: result.directory,
+      args: ['symbolic-ref', '--short', 'HEAD'],
+    })
+    expect({
+      result: {
+        ...result,
+        directory: path.basename(result.directory),
+      },
+      actualBranch,
+    }).toMatchInlineSnapshot(`
+      {
+        "actualBranch": "opencode/kimaki-directory-only",
+        "result": {
+          "branch": "opencode/kimaki-directory-only",
+          "directory": "directory-only",
+        },
+      }
+    `)
+  } finally {
+    const clientResult = await initializeOpencodeForDirectory(requestedClone)
+    if (clientResult instanceof Error) throw clientResult
+    await clientResult().worktree.remove({
+      location: { directory: requestedClone },
+      directory: result.directory,
       force: true,
     })
   }

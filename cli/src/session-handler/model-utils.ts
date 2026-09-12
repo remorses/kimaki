@@ -7,6 +7,7 @@ import path from 'node:path'
 import { xdgState } from 'xdg-basedir'
 import * as errore from 'errore'
 import type { OpencodeClient } from '../opencode.js'
+import type { ConfigEntry } from '@opencode/client'
 import {
   formatCandidateRef,
   PROVIDER_ID as SUBROUTER_PROVIDER_ID,
@@ -79,26 +80,18 @@ export function parseModelId(
   return { providerID, modelID }
 }
 
-function getModelFromProjectConfig({
-  directory,
-}: {
-  directory?: string
-}): { providerID: string; modelID: string } | undefined {
-  if (!directory) {
-    return undefined
-  }
-
-  const result = errore.tryFn(() => {
-    const configPath = path.join(directory, 'opencode.json')
-    const raw = fs.readFileSync(configPath, 'utf-8')
-    const parsed = JSON.parse(raw) as { model?: string }
-    if (!parsed.model) {
-      return undefined
-    }
-    return parseModelId(parsed.model)
+export function getConfiguredModel(
+  entries: readonly ConfigEntry[],
+): { providerID: string; modelID: string } | undefined {
+  const entry = entries.findLast((candidate) => {
+    return candidate.type === 'document' && candidate.info.model !== undefined
   })
-  if (result instanceof Error) return undefined
-  return result
+  if (!entry || entry.type !== 'document' || !entry.info.model) return undefined
+  if (typeof entry.info.model === 'string') return parseModelId(entry.info.model)
+  return {
+    providerID: entry.info.model.providerID,
+    modelID: entry.info.model.model,
+  }
 }
 
 /**
@@ -262,8 +255,14 @@ export async function listModels({
   if (cached?.status === 'pending') return cached.promise
 
   const promise = (async () => {
+    const location = directory ? { location: { directory } } : undefined
+    // model.list can return an empty snapshot before plugins settle.
+    const activation = await getClient()
+      .plugin.awaitActivation(location)
+      .catch((e) => new OpenCodeSdkError({ operation: 'plugin.awaitActivation', cause: e }))
+    if (activation instanceof Error) return activation
     const modelsResponse = await getClient()
-      .model.list(directory ? { location: { directory } } : undefined)
+      .model.list(location)
       .catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
     if (modelsResponse instanceof Error) return modelsResponse
     if (!modelsResponse.data) {
@@ -280,7 +279,12 @@ export async function listModels({
     if (ownsCacheEntry) modelListCache.delete(cacheKey)
     return result
   }
-  if (ownsCacheEntry) modelListCache.set(cacheKey, { status: 'ready', value: result })
+  // An empty connected list is the pre-plugin snapshot, not a stable catalog.
+  if (ownsCacheEntry && result.some((model) => model.connected)) {
+    modelListCache.set(cacheKey, { status: 'ready', value: result })
+  } else if (ownsCacheEntry) {
+    modelListCache.delete(cacheKey)
+  }
   return result
 }
 
@@ -397,14 +401,6 @@ export async function getDefaultModel({
 > {
   if (getClient instanceof Error) return undefined
 
-  const configModel = getModelFromProjectConfig({ directory })
-  if (configModel) {
-    sessionLogger.log(
-      `[MODEL] Using project config model: ${configModel.providerID}/${configModel.modelID}`,
-    )
-    return { ...configModel, source: 'opencode-config' }
-  }
-
   const listed = await listModels({ getClient, directory })
   if (listed instanceof Error) {
     sessionLogger.log(
@@ -428,27 +424,19 @@ export async function getDefaultModel({
   const configResponse = await getClient().config.get(
     directory ? { location: { directory } } : undefined,
   ).catch((e) => new OpenCodeSdkError({ operation: 'config.get', cause: e }))
-  const configModelValue = !(configResponse instanceof Error) && 'model' in configResponse
-    ? configResponse.model
-    : undefined
-  const configModelText = typeof configModelValue === 'string'
-    ? configModelValue
-    : configModelValue && typeof configModelValue === 'object' && 'providerID' in configModelValue
-      ? `${configModelValue.providerID}/${'model' in configModelValue ? configModelValue.model : ''}`
-      : undefined
-  if (configModelText) {
-    const configModel = parseModelId(configModelText)
-    if (configModel && isListed(configModel)) {
+  const configModel = configResponse instanceof Error
+    ? undefined
+    : getConfiguredModel(configResponse)
+  if (configModel) {
+    if (isListed(configModel)) {
       sessionLogger.log(
         `[MODEL] Using config model: ${configModel.providerID}/${configModel.modelID}`,
       )
       return { ...configModel, source: 'opencode-config' }
     }
-    if (configModel) {
-      sessionLogger.log(
-        `[MODEL] Config model ${configModelText} not available, checking recent`,
-      )
-    }
+    sessionLogger.log(
+      `[MODEL] Config model ${configModel.providerID}/${configModel.modelID} not available, checking recent`,
+    )
   }
 
   const recentModels = getRecentModelsFromTuiState()

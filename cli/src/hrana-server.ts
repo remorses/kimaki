@@ -15,11 +15,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import Database from 'libsql'
 import * as errore from 'errore'
-import {
-  createLibsqlHandler,
-  createLibsqlNodeHandler,
-  libsqlExecutor,
-} from 'libsqlproxy'
+import { createLibsqlHandler, createLibsqlNodeHandler, libsqlExecutor } from 'libsqlproxy'
 import { createLogger, LogPrefix } from './logger.js'
 import { ServerStartError, FetchError } from './errors.js'
 import { getLockPort } from './config.js'
@@ -28,7 +24,7 @@ import { store } from './store.js'
 // Safe because both sides only use lazy runtime function calls, never
 // top-level initialization values. The cycle could be broken by moving
 // the port into store.ts, but the current approach is simpler.
-import { getOpencodeServerPort } from './opencode.js'
+import { getOpencodeServerConnection } from './opencode.js'
 
 const hranaLogger = createLogger(LogPrefix.DB)
 
@@ -66,7 +62,7 @@ async function waitForDiscordGatewayReady({ timeoutMs }: { timeoutMs: number }):
   return Promise.race([readyPromise, timeoutPromise])
 }
 
-function getRequestAuthToken(req: http.IncomingMessage): string | null {
+function getRequestAuthToken(req: { headers: http.IncomingHttpHeaders }): string | null {
   const authorizationHeader = req.headers.authorization
   if (typeof authorizationHeader === 'string' && authorizationHeader.startsWith('Bearer ')) {
     return authorizationHeader.slice('Bearer '.length)
@@ -77,7 +73,7 @@ function getRequestAuthToken(req: http.IncomingMessage): string | null {
 
 // Timing-safe comparison to prevent timing attacks when the hrana server
 // is internet-facing (bindAll=true / KIMAKI_INTERNET_REACHABLE_URL set).
-function isAuthorizedRequest(req: http.IncomingMessage): boolean {
+export function isAuthorizedRequest(req: { headers: http.IncomingHttpHeaders }): boolean {
   const expectedToken = store.getState().gatewayToken
   if (!expectedToken) {
     return false
@@ -108,7 +104,7 @@ function ensureServiceAuthTokenInStore(): string {
  * Get the Hrana HTTP URL for injecting into plugin child processes.
  * Returns null if the server hasn't been started yet.
  * Only used for KIMAKI_DB_URL env var in opencode.ts — the bot process
-  * itself always uses direct file: access via Drizzle/libSQL.
+ * itself always uses direct file: access via Drizzle/libSQL.
  */
 export function getHranaUrl(): string | null {
   return hranaUrl
@@ -137,9 +133,7 @@ export async function startHranaServer({
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   await evictExistingInstance({ port })
 
-  hranaLogger.log(
-    `Starting hrana server on ${bindHost}:${port} with db: ${dbPath}`,
-  )
+  hranaLogger.log(`Starting hrana server on ${bindHost}:${port} with db: ${dbPath}`)
 
   const database = new Database(dbPath)
   database.exec('PRAGMA journal_mode = WAL')
@@ -184,14 +178,19 @@ export async function startHranaServer({
     // CLI subcommands query this to reuse the bot's running OpenCode server
     // instead of spawning a redundant second server process.
     if (pathname === '/kimaki/opencode-port') {
-      const port = getOpencodeServerPort()
-      if (port === null) {
+      if (!isAuthorizedRequest(req)) {
+        res.writeHead(401, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: 'unauthorized' }))
+        return
+      }
+      const connection = getOpencodeServerConnection()
+      if (!connection) {
         res.writeHead(404, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ error: 'no_opencode_server' }))
         return
       }
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ port }))
+      res.end(JSON.stringify(connection))
       return
     }
     // Hrana routes: /v2, /v2/pipeline — require auth
@@ -216,10 +215,7 @@ export async function startHranaServer({
       resolve(
         new ServerStartError({
           port,
-          reason:
-            code === 'EADDRINUSE'
-              ? `Port ${port} still in use after eviction`
-              : err.message,
+          reason: code === 'EADDRINUSE' ? `Port ${port} still in use after eviction` : err.message,
         }),
       )
     })
@@ -301,9 +297,7 @@ export async function evictExistingInstance({
     ? body.wrapperPid
     : null
 
-  hranaLogger.log(
-    `Evicting existing kimaki process (PID: ${targetPid}, wrapper: ${wrapperPid ?? 'none'}) on port ${port}`,
-  )
+  hranaLogger.log(`Evicting existing kimaki process (PID: ${targetPid}) on port ${port}`)
   const killResult = errore.try(
     () => {
       process.kill(wrapperPid ?? targetPid, 'SIGTERM')

@@ -192,7 +192,7 @@ cli
 
         const client = getClient()
         const [sessionsResponse, statuses] = await Promise.all([
-          client.session.list(),
+          client.session.list({ directory: projectDirectory }),
           client.session.active().catch(() => null),
         ])
         if (!statuses) {
@@ -691,7 +691,9 @@ cli
           if (getClient instanceof Error) {
             return { projectDirectory, getClient, sessions: [] }
           }
-          const sessionsResponse = await getClient().session.list()
+          const sessionsResponse = await getClient().session.list({
+            directory: projectDirectory,
+          })
           return {
             projectDirectory,
             getClient,
@@ -715,6 +717,7 @@ cli
         }
         searchedDirectories.push(listed.projectDirectory)
         for (const session of listed.sessions) {
+          if (clientsBySessionId.has(session.id)) continue
           clientsBySessionId.set(session.id, listed.getClient)
           searchableSessions.push({
             id: session.id,
