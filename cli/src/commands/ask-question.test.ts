@@ -1,15 +1,15 @@
 // Tests AskUserQuestion request deduplication and cleanup helpers.
 
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { ThreadChannel } from 'discord.js'
 import {
   areAllQuestionsAnswered,
   deletePendingQuestionContextsForRequest,
   pendingQuestionContexts,
+  resolveQuestionSelection,
   showAskUserQuestionDropdowns,
 } from './ask-question.js'
 
-function createFakeThread({ failSend }: { failSend?: boolean } = {}): ThreadChannel {
+function createFakeThread({ failSend }: { failSend?: boolean } = {}) {
   const send = vi.fn(async () => {
     if (failSend) {
       throw new Error('Missing Permissions')
@@ -20,7 +20,7 @@ function createFakeThread({ failSend }: { failSend?: boolean } = {}): ThreadChan
   return {
     id: 'thread-1',
     send,
-  } as unknown as ThreadChannel
+  }
 }
 
 afterEach(() => {
@@ -173,5 +173,22 @@ describe('ask-question', () => {
         2: ['Gamma'],
       },
     })).toBe(true)
+  })
+
+  test('keeps Other unanswered for the next chat message', () => {
+    const question = {
+      question: 'Choose one',
+      header: 'Pick',
+      options: [
+        { label: 'Alpha', description: 'A', value: 'alpha' },
+        { label: 'Beta', description: 'B' },
+      ],
+    }
+
+    expect(resolveQuestionSelection({ question, selectedValues: ['other'] }))
+      .toBeNull()
+    expect(resolveQuestionSelection({ question, selectedValues: ['0', '1'] }))
+      .toEqual(['alpha', 'Beta'])
+
   })
 })

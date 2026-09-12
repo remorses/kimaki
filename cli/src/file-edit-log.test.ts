@@ -246,7 +246,7 @@ describe('file edit jsonl log', () => {
   })
 })
 
-describe('fileEditTrackerPlugin', () => {
+describe('createFileEditHooks', () => {
   test('records edit and apply_patch and ignores bash', async () => {
     const dataDir = makeDataDir()
     const hooks = createFileEditHooks({ dataDir, directory: '/repo' })

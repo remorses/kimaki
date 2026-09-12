@@ -1,461 +1,377 @@
 ---
-title: OpenCode v2 facts for in-place Kimaki migration
+title: OpenCode 2.0.2 in-place migration
 description: >
-  How OpenCode v2 actually works. Deltas not snapshots, durable vs live,
-  inbox vs execution. For rewriting cli/ against opencode2. Not the plugin rewrite.
+  The stable OpenCode 2.0.2 architecture used by Kimaki, including native
+  inbox, execution, forms, instructions, event folding, reconciliation, and
+  the checks required to complete a v1 integration migration.
 ---
 
-# OpenCode v2 facts for in-place Kimaki migration
+# OpenCode 2.0.2 in-place migration
 
-Kimaki stays the **Discord bot** (`cli/`). OpenCode v2 is the **child server**. This file is the mental model for that swap. Do not rewrite Kimaki as OpenCode plugins.
+Kimaki now runs the stable OpenCode **2.0.2** stack in `cli/`. The Discord bot remains the host process, but its session runtime, server manager, and built plugin use the native v2 protocol.
 
-Pin packages. This worktree used `@opencode-ai/plugin`, `@opencode-ai/client`, `@opencode-ai/cli` at **`0.0.0-beta-19271`**. Binary is `opencode2`. V1 stays `opencode`.
+The pinned packages are:
 
-**Package names do not match the docs site.** Official pages say `@opencode/client`. npm beta is **`@opencode-ai/client`**. `@opencode/client` on npm is a stub. Import the name you pin.
+- `@opencode/client@2.0.2`
+- `@opencode/plugin@2.0.2`
+- `@opencode/cli@2.0.2`
 
-Docs:
+The installed `@opencode/cli` package maps both command aliases, `opencode` and `opencode2`, to the same native file: **`bin/opencode.exe`**. Kimaki resolves and spawns that file directly so process signals reach the server instead of a shell wrapper.
 
-- https://opencode.ai/v2/docs/migrate-v1/
-- https://opencode.ai/v2/docs/build/client
-- https://opencode.ai/v2/docs/permissions
-- Source: https://github.com/anomalyco/opencode/tree/v2
-- Session rules: `opencode-v2/AGENTS.md` (V2 Session Core)
+References:
 
-# The one sentence
+- [OpenCode v2 migration guide](https://opencode.ai/v2/docs/migrate-v1/)
+- [OpenCode client guide](https://opencode.ai/v2/docs/build/client)
+- [OpenCode permission guide](https://opencode.ai/v2/docs/permissions)
+- [OpenCode v2 source](https://github.com/anomalyco/opencode/tree/v2)
 
-V1 Kimaki watches **mutable part snapshots**. V2 Kimaki must **fold facts**. Live tokens are **deltas**. Replay is **ended values**. Prompting **admits inbox work**. Execution is a **separate drain**.
+## SDK migration from OpenCode 1
 
-If an agent still thinks in `message.part.updated` + `promptAsync` + `session.abort`, the port will be wrong even if the HTTP names are swapped.
+Do not confuse OpenCode 1's `@opencode-ai/sdk/v2` export with the OpenCode 2 SDK. That export was a transitional client over a mix of legacy and v2 routes. Changing only the import from `@opencode-ai/sdk` to `@opencode-ai/sdk/v2` does not migrate an integration to OpenCode 2.
 
-# Mental model
+OpenCode 2 uses new package names and contracts:
 
-```
-  Discord bot
-       │  OpenCode.make({ baseUrl, Basic opencode:TOKEN })
-       ▼
-  opencode2 serve     one process, many locations
-       │
-       │  session.prompt  →  session.inbox.enqueued   (admit)
-       │                  →  SessionExecution.wake    (unless resume: false)
-       │
-       │  drain           →  session.execution.started
-       │                  →  one or more logical STEPS (each = one LLM call)
-       │                       text/reasoning/tool deltas (LIVE ONLY)
-       │                       *.ended / tool.success (DURABLE FULL VALUE)
-       │                  →  session.execution.succeeded | failed | interrupted
-       │
-       └─ GET /api/event  volatile SSE. Missed events are gone.
-          Reconcile with GET /api/session/:id/message
-```
-
-A Discord user message is **not** an OpenCode user message until `session.inbox.delivered`. `session.prompt` returning only means the inbox accepted the item.
-
-One Discord prompt is **not** one assistant step. Tools continue the drain. Retries are extra physical attempts inside one logical step. A **turn** (all steps until idle) is reserved for later. Do not name a step a turn.
-
-# Deltas, not part snapshots (the core UI change)
-
-This is the change that breaks Kimaki render if you ignore it.
-
-## What V1 Kimaki does
-
-`message.part.updated` is a **full snapshot** of that part.
-
-Each event can carry the whole `part.text`, whole tool `state`, whole reasoning blob. The bot **replaces** the previous part for that `part.id`. `thread-session-runtime.ts` truncates those snapshots in the event buffer because they are large.
-
-`message.updated` is the same idea at message level: a new full `info` + `parts[]`.
-
-V1 plugins and the SDK still talk as if those names exist. Schema v2 says `message.updated` and `message.part.*` are **V1-only**. They are not on generated `V2Event`.
-
-## What V2 emits instead
-
-Stream fragments are **chunks**. Schema comments, copied:
-
-> Stream fragments are live-only; Text.Ended is the replayable full-value boundary.
-
-Same sentence for reasoning and tool input.
-
-| Live (ephemeral) | Field | Durable full value |
+| Role | OpenCode 1 | OpenCode 2 |
 |---|---|---|
-| `session.text.delta` | `data.delta` (chunk only) | `session.text.ended` → `data.text` |
-| `session.reasoning.delta` | `data.delta` | `session.reasoning.ended` → `data.text` |
-| `session.tool.input.delta` | `data.delta` | `session.tool.input.ended` → `data.text` (raw JSON string) |
-| `session.compaction.delta` | chunk | `session.compaction.ended` → `data.text` |
-| `session.tool.progress` | live metadata **replacement** | `session.tool.success` / `failed` |
-
-**Wrong:** `message.content = event.data.delta`  
-**Wrong:** treat each delta like `part.updated` and replace the Discord message with only the chunk  
-**Right for live Discord:** append `delta` onto a buffer keyed by identity  
-**Right for reconnect / missed SSE:** use `*.ended` or `GET /api/session/:id/message`. You cannot rebuild a typewriter from history.
-
-## Identity (not v1 `part.id`)
-
-Text and reasoning:
-
-```
-sessionID + assistantMessageID + ordinal
-```
-
-`ordinal` is allocated in stream-start order per assistant message (`nextOrdinal++` in `publish-llm-event.ts`).
-
-Tools:
-
-```
-sessionID + assistantMessageID + tool id
-```
-
-Producer fibers and tool fibers are concurrent. **Do not fold by global event order.** Fold by id/ordinal. A tool event can arrive interleaved with text deltas.
-
-On `*.ended` / `tool.success` / `tool.failed`, **replace** the live buffer with the durable full value. Do not keep concatenating after ended.
-
-## `session.message.content.updated` is not a stream
-
-It is a **durable replacement** of a **completed** assistant message in an **idle** session. HTTP: replace content only when not busy, message completed, no unfinished tools.
-
-Do not use it as `message.updated` while tokens stream. Live path is `text.delta` / `reasoning.delta` / `tool.input.delta`. Use content.updated after the fact (edit, reconcile), or if you missed the whole stream.
-
-## SSE is volatile
-
-`GET /api/event` → `client.event.subscribe()`.
-
-- Payload is the event JSON itself: `id`, `created`, `type`, `data`, optional `location`, optional `durable`, optional `metadata`
-- First event: `server.connected`
-- Heartbeats: SSE comments every 15s
-- **No replay. No cursor. No auto-reconnect**
-- Slow consumer: dropping queue capacity **4096**, then the subscriber **fails**
-
-After disconnect, missed deltas are gone. Reconcile with projected messages:
-
-```
-GET /api/session/:sessionID/message
-GET /api/session/:sessionID/message/:messageID
-```
-
-Ordered durable replay (experimental):
-
-```
-GET /api/experimental/session/:sessionID/log?after=<seq>&follow=true
-```
-
-That log does **not** contain ephemeral deltas. It has ended/success facts plus a `log.synced` watermark.
-
-# Durable vs ephemeral
-
-Durable events have `durable: { aggregateID, seq, version }`. They are the session log.
-
-Ephemeral events have no envelope. Live only.
-
-Kimaki rule: **derive Discord from durable facts when possible.** Use ephemeral only for typewriter / progress / status chrome.
-
-Do not store every delta in a 1000-event cap. You will drop `execution.succeeded` and the footer dies. Keep lifecycle, inbox, execution, usage. Drop or compact deltas.
-
-# Inbox vs execution (delete the 3s interrupt plugin)
-
-V1 `opencode-interrupt-plugin.ts`: `session.abort`, wait, `promptAsync` replay. **Delete it.**
-
-V2 splits **admit** from **run**.
-
-```
-session.prompt(...)
-    → publishes session.inbox.enqueued
-    → inserts a pending session_inbox row
-    → SessionExecution.wake(sessionID)   unless resume: false
-```
-
-`resume: false` = write the inbox item, do not wake. Admit-only.
-
-`session_inbox` holds **unconsumed work only**. On `session.inbox.delivered`, the row is deleted in the same transaction that inserts the visible user message. `GET .../inbox` is pending work, not history.
-
-## Delivery
-
-| Mode | Meaning |
-|---|---|
-| `steer` | Default. Interrupt at a safe step boundary |
-| `queue` | Wait. At idle, if no steer exists, deliver **exactly one** queued item, then reevaluate |
-
-At a busy step boundary, steered **compaction** can jump ahead of earlier steered prompts, until a **move** boundary. Moves block compaction from crossing locations. Other steers keep enqueue order.
-
-At idle: steers still win. Else one queue item.
-
-HTTP after enqueue: `session.inbox.list` / `cancel` / `steer` / `queue`.
-
-## Events (key by `inboxID`)
-
-| Event | Payload | Kimaki |
-|---|---|---|
-| `session.inbox.enqueued` | `inboxID`, `item` (`type`, `payload`, `delivery`) | Remember payload. Do not show as Discord user text from OpenCode yet |
-| `session.inbox.delivered` | `inboxID` **only** (no `item`) | Look up enqueue map. Drain line `» **user:**` if delivery was `queue` |
-| `session.inbox.cancelled` | `inboxID` | Drop map entry |
-| `session.inbox.delivery.changed` | `inboxID`, `delivery` | Update steer/queue before deliver |
-
-Item types: `user`, `synthetic`, `compaction`, `move`. Compaction and move are control work, not chat.
-
-## Idempotent IDs
-
-If you pass the same inbox item `id` (`msg_...`) for a user/synthetic item on the same session and type, **first admission wins**. Later payload, metadata, and delivery are ignored, even after delivery. Cross-session or cross-type reuse fails.
-
-Kimaki should store a stable id per Discord message if it retries `session.prompt`.
-
-`/queue` and `. queue` → `delivery: "queue"`. Do not keep Zustand `queueItems` for ordinary chat. A hook that forces `steer` on every non-suffix prompt will smash slash `/queue`.
-
-# Execution, steps, interrupt
-
-`SessionExecution` is **process-global**, keyed by `sessionID`. Different sessions run in parallel. One session has one drain fiber. Wakes coalesce.
-
-Placement: load session from store, then run in that session's location. You do not pass `directory` on `prompt` / `interrupt`. The session already has a location.
-
-## Lifecycle facts (durable)
-
-- `session.execution.started`
-- `session.execution.succeeded` → **footer** (natural end of this drain)
-- `session.execution.failed`
-- `session.execution.interrupted` → **no footer**. `data.reason`: `user` \| `shutdown` \| `superseded` \| `inactivity`
-
-A drain can contain **many logical steps**. One step = one logical LLM call = one `llm.stream`. Generic retries are extra **physical attempts** inside the same step. They do not consume another agent-step allowance.
-
-Do **not** show the Kimaki footer on `session.step.ended`. That is mid-drain if tools continue.
-
-## Interrupt
-
-`POST /api/session/:id/interrupt` → `{ interrupted: boolean }`
-
-- `true`: this process owned an active drain and stopped it
-- `false`: idle or locally unowned. **No-op**, not an error
-- unknown session: **404**
-
-Optional `continue: true` resumes pending steers and next-in-line control items (compaction, move). Queued user prompts stay parked.
-
-V1 `session.abort` does **not** exist on the v2 HTTP client.
-
-Restart recovery uses an execution **claim**. At-least-once. Not exactly-once. Crash can redo side effects.
-
-## Status vs idle
-
-`session.status` is **ephemeral**: `busy` \| `idle` \| `retry`. Chrome only.
-
-`session.idle` still emits. Schema marks it **deprecated**. Same idle as status. It fires after interrupt too. **Do not** use it as “assistant finished, show footer.”
-
-Wait APIs: `GET /api/session/active`, `POST /api/session/:id/wait`.
-
-# Tools
-
-```
-tool.input.started
-  → tool.input.delta*     live raw JSON chunks
-  → tool.input.ended      durable raw text
-  → tool.called           durable parsed input + executed: boolean
-  → tool.progress*        live metadata replacement (not append)
-  → tool.success | failed durable terminal
-```
-
-`tool.success` content is a **non-empty array** of content items (text, files, …), not `state.output: string`. `executed` distinguishes local run vs provider-executed.
-
-`tool.failed` is self-contained (includes a bounded progress snapshot). You do not need to replay progress events.
-
-V1 `part.state.output` string rendering will drop file items.
-
-# Compaction
-
-First-class inbox item + event lifecycle: `started` / live `delta` / `ended` / `failed`.
-
-Manual compact **admits** a compaction item (default **steer**). It is not “compact immediately, ignore the inbox.”
-
-`compaction.ended` has final `text`, `recent`, model, provider state. Completed compaction **moves the instruction epoch**.
-
-There is no public `session.compacted` on generated `V2Event`.
-
-# Instructions
-
-Not a static `system` string on `promptAsync`.
-
-- Baseline instructions render from stored values for the current **epoch**
-- Later updates freeze as durable system messages (`session.instructions.updated`)
-- Compaction advances the epoch
-- Session **move** keeps the epoch
-- Committed **revert** clears it
-- **Fork** adopts the parent's **newest** instruction values, even if copied history ends at an earlier message
-
-Kimaki should not inject a fake v1 system prompt as if OpenCode will ignore epochs.
-
-# Fork
-
-HTTP `POST /api/session/:id/fork` body `{ boundary }`:
-
-- `{ type: "before", messageID }`
-- `{ type: "through" }` (through latest)
-
-Copies **settled** projected history only (completed assistant / shell / compaction). No in-flight tool. Copies location, agent, model, metadata. Instructions = parent **current**, not instructions-at-boundary.
-
-Not on plugin `SessionDomain`. In-place Kimaki uses HTTP.
-
-`. btw` in Kimaki v1 forked Discord + OpenCode without replaying Discord history. Verify fork copies model/worktree and **not** Discord thread messages (those are Kimaki-side).
-
-# Forms, not question events
-
-`question.asked` is **not** on `V2Event`. The question tool creates a **form** with `metadata.kind = "question"`.
-
-Events (all **ephemeral**): `form.created` / `form.replied` / `form.cancelled`.
-
-Recover with HTTP: list/get/state/reply/cancel under `/api/session/:id/form`.
-
-Port Discord dropdowns to forms. After reconnect, list pending forms. Do not wait for a missed `form.created`.
-
-# Permissions
-
-Bus already used `permission.asked` in v1 runtime. V2 names match.
-
-Ask: `data.id`, `data.sessionID`, `data.action`, `data.resources[]`, optional `save[]`, `message`, `metadata`, `source`.
-
-Reply: `POST /api/session/:sessionID/permission/:requestID/reply` body `{ reply, message? }` with `reply`: `once` \| `always` \| `reject`. Use ask **`data.id` as `requestID`**. You cannot widen patterns.
-
-Config: ordered `permissions` array. Last match wins. `bash` → `shell`, `task` → `subagent`, `write`/`patch` → `edit`.
-
-`session.create` in this beta has **no** `permission` field. The v1 trap (create-time rules beating `opencode.json`) is not on this payload. Still do not inject allow-all elsewhere.
-
-# Location and process
-
-One `opencode2` serves **many directories**. Session stores `directory` (+ optional `workspaceID`). Runner, tools, permissions, fs are location-scoped.
-
-Create: `location` in the **JSON body**.
-
-Prompt / interrupt / get: **`sessionID` only**. Server looks up location.
-
-Location-scoped routes (plugin list, agents, RPC): query `location[directory]=...` (client `query: { location }`). Also `location[workspace]`. Fallback header **`x-opencode-directory`** still works. Prefer query. Do not send v1 `directory` on every session method.
-
-Event `location` may be missing. Unlocated session events use the session owner at publish time. **Moves** go to old and new location.
-
-Kimaki today: one OpenCode child per project. That still works but fights v2. Prefer one serve and a `sessionID → directory` map in sqlite.
-
-`setup()` for plugins runs **per location**. Module eval can run twice. `globalThis` is shared. If Kimaki still injects a plugin, Discord/sqlite must be process singletons.
-
-Config `plugins` path must be a **directory** (or package / `file://` dir). `./plugin.ts` is dropped. Official migrate-v1 still shows a `.ts` file in one example. Source rejects it.
-
-# Client SDK map
+| Network client | `@opencode-ai/sdk`, including its `/v2` export | `@opencode/client` |
+| Embedded host | `@opencode-ai/sdk` | `@opencode/sdk` |
+| Plugin API | `@opencode-ai/plugin` | `@opencode/plugin` |
+| Native CLI | `opencode-ai` | `@opencode/cli` |
+
+The OpenCode 2 Promise client uses flat generated inputs, returns unwrapped success values, and rejects with declared errors or `ClientError`. Remove v1 `.data`, `.error`, nested `path`/`query`/`body`, and `throwOnError` handling while migrating each call.
 
 ```ts
-import { OpenCode } from '@opencode-ai/client'
+import { OpenCode } from '@opencode/client'
+
+const client = OpenCode.make({ baseUrl, headers })
+const session = await client.session.create({
+  title: 'Review the current changes',
+  location: { directory },
+  permissions: [
+    { action: 'edit', resource: `${directory}/**`, effect: 'allow' },
+  ],
+})
+```
+
+Session migration is not a one-to-one method rename:
+
+| OpenCode 1 behavior | OpenCode 2 replacement |
+|---|---|
+| `session.create({ directory, permission })` | `session.create({ location: { directory }, permissions })` |
+| `session.promptAsync({ parts })` | `session.prompt({ sessionID, text, files, delivery })` |
+| `promptAsync({ noReply: true })` for a user message | `session.prompt({ sessionID, text, resume: false })` |
+| Synthetic model context without a reply | `session.synthetic({ sessionID, text, resume: false })` |
+| `promptAsync({ system })` | `session.instructions.entry.put({ sessionID, key, value })` |
+| `session.abort(...)` | `session.interrupt({ sessionID, continue? })` |
+| `session.update({ permission })` | `permission.rules({ sessionID, permissions })` |
+| Question request APIs and events | Session forms and `form.*` events |
+| `message.part.*` snapshots | `session.text.*`, `session.reasoning.*`, and `session.tool.*` facts |
+
+`session.prompt` returns the accepted inbox item, not the assistant response. Observe `session.execution.*` and content events, or read projected messages, to determine the final result. Event subscriptions are lazy `AsyncIterable` streams and do not reconnect automatically.
+
+The most useful upstream migration records are the [client migration tracker](https://github.com/anomalyco/opencode/issues/34359), the [removed internal API checklist](https://github.com/anomalyco/opencode/blob/5d351406a1ed0ac93975dfcff55b7764f159375a/packages/app/V1_API_MIGRATION.md), and the [Promise-first embedded SDK design](https://github.com/anomalyco/opencode/pull/44746). The internal checklist explicitly calls `@opencode-ai/sdk/v2` a legacy client despite its package export name.
+
+## Architecture
+
+```text
+Discord events
+      │
+      ▼
+Kimaki CLI and Discord runtime
+      │  @opencode/client
+      ▼
+one OpenCode server process  ──► many project locations
+      │
+      ├─ native inbox and execution
+      ├─ native forms and permission requests
+      ├─ native instruction entries
+      ├─ Subrouter provider and route affinity
+      └─ built Kimaki plugin directory
+             ├─ Discord tools
+             ├─ context and memory instructions
+             ├─ injection guard
+             └─ file-edit tracking
+```
+
+`cli/src/opencode.ts` starts one authenticated server and reuses it for all project directories. Clients select a location with `x-opencode-directory`; sessions store their own location after creation.
+
+The generated OpenCode config loads the built `dist/kimaki-opencode-plugin` directory. It also installs Subrouter as the provider. Project `opencode.json` files load after Kimaki's generated defaults, so project permissions and provider settings can override those defaults.
+
+## Protocol model
+
+OpenCode v2 emits **facts**, not mutable v1 part snapshots. Live events contain deltas. Durable terminal events and projected messages contain complete values.
+
+```text
+session.prompt
+      │
+      ├─ session.inbox.enqueued
+      ├─ session.execution.started
+      ├─ session.inbox.delivered
+      │
+      ├─ session.text.* / reasoning.* / tool.*
+      │
+      └─ session.execution.succeeded | failed | interrupted
+```
+
+A successful `session.prompt` call means that the inbox accepted the item. The prompt becomes visible session history when `session.inbox.delivered` occurs. One inbox item can produce multiple logical steps while tools and retries run.
+
+### Live and durable content
+
+| Live event | Live value | Durable boundary |
+|---|---|---|
+| `session.text.delta` | `data.delta` chunk | `session.text.ended` with full `data.text` |
+| `session.reasoning.delta` | `data.delta` chunk | `session.reasoning.ended` with full `data.text` |
+| `session.tool.input.delta` | raw JSON chunk | `session.tool.input.ended` with full raw input |
+| `session.tool.progress` | replacement progress metadata | `session.tool.success` or `session.tool.failed` |
+| `session.compaction.delta` | text chunk | `session.compaction.ended` with full text |
+
+Kimaki folds text and reasoning by `sessionID + assistantMessageID + ordinal`. It folds tools by `sessionID + assistantMessageID + tool id`. Concurrent tool and producer fibers can interleave events, so global event order is not a part identity.
+
+On an ended, success, or failed event, Kimaki replaces the live buffer with the complete terminal value. Tool success content is an array of content items, not a single `state.output` string.
+
+### Inbox and execution
+
+Native inbox delivery replaces the old abort-and-replay mechanism:
+
+- `delivery: "steer"` admits work for the next safe step boundary.
+- `delivery: "queue"` leaves work queued until the current execution drains.
+- `resume: false` admits an item without waking execution.
+- `session.inbox.list`, `cancel`, `steer`, and `queue` manage pending work.
+
+`session_inbox` contains pending work only. Delivery removes the inbox row in the same transaction that creates the visible user message. Kimaki tracks `inboxID` from enqueue to delivery so queued Discord messages can show at the correct time.
+
+Execution lifecycle is separate from inbox admission:
+
+- `session.execution.started` starts duration and typing state.
+- `session.execution.succeeded` flushes output and can emit the footer.
+- `session.execution.failed` emits the execution error.
+- `session.execution.interrupted` stops without a completion footer.
+
+`session.status` is useful for live UI state. It is not the completion boundary. `session.idle` is deprecated and can also follow an interruption.
+
+### Forms and permissions
+
+The native question tool creates a form with `metadata.kind = "question"`. Kimaki handles `form.created`, renders Discord controls, and replies through the form API. After an SSE reconnect, it lists forms and restores only pending questions.
+
+Permission requests use `permission.asked` and `permission.replied`. A reply uses the ask event's `data.id` as `requestID`; valid replies are `once`, `always`, and `reject`.
+
+### Instruction entries
+
+Kimaki writes its system prompt through `session.instructions.entry.put` with a stable entry key before the first prompt. This preserves OpenCode's instruction epochs across normal turns, compaction, moves, forks, and reverts.
+
+The built plugin adds per-request context through the native `context` hook. It supplies branch or detached-head state, working-directory changes, onboarding instructions, and a condensed `MEMORY.md` overview without replacing the durable Kimaki instruction entry.
+
+## Plugin integration
+
+OpenCode loads plugin **directories**. Kimaki supplies `dist/kimaki-opencode-plugin`, built from `cli/src/kimaki-opencode-plugin/index.ts` by TypeScript.
+
+The plugin currently implements:
+
+- Subrouter request affinity and routed-model disclosure.
+- Prompt-injection scanning for selected tool outputs.
+- File-edit tracking after `edit`, `write`, and `apply_patch` tool execution.
+- Shell input metadata used by Discord tool rendering.
+- Native Kimaki tools for file upload, action buttons, and sleep.
+- Branch, directory, onboarding, and memory context.
+
+`setup()` can run once per location in one server process. Process-wide resources use `globalThis` symbols where shared initialization is required. The plugin filters or keys state by session and location instead of treating its event subscription as location-local.
+
+## SSE and reconciliation
+
+Kimaki uses one global SSE connection and broadcasts each event to registered thread runtimes. Each runtime filters by session ID.
+
+SSE deltas are volatile. There is no cursor that can recreate missed token chunks. On reconnect, Kimaki replays each session's durable log, including nested subagents, then lists forms and restores pending question forms. This recovers completed text, tools, execution outcomes, and usage without pretending to replay live token chunks.
+
+The event buffer keeps lifecycle facts and compact representations. It must not fill with unbounded live deltas because terminal execution events control typing, queue draining, analytics, and footers.
+
+## Client calls
+
+```ts
+import { OpenCode } from '@opencode/client'
 
 const client = OpenCode.make({
   baseUrl,
   headers: {
-    authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`,
+    Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`,
   },
 })
 ```
 
-Docs show Bearer. **`opencode2 serve` is Basic** `opencode:TOKEN`.
+The server uses Basic authentication with user `opencode` and `OPENCODE_PASSWORD`. Kimaki creates a random password when the user did not configure one.
 
-Foreground serve logs (password line only if password was not from env):
-
-```
-server listening on http://127.0.0.1:PORT
-server password TOKEN
-```
-
-Generated `SessionPromptInput` types look nested. Codegen artifact. **HTTP body is flat:**
-
-```ts
-POST /api/session/:sessionID/prompt
-{
-  id?,          // inbox item id, idempotent
-  text,
-  files?,
-  agents?,
-  skills?,
-  metadata?,
-  delivery?,    // "steer" | "queue"
-  resume?,      // default wakes; false = admit only
-}
-```
-
-Success unwraps `{ data: SessionInbox.User }`. That is the **inbox row**, not the assistant reply.
-
-| V1 | V2 |
+| Operation | Stable v2 call |
 |---|---|
-| `session.promptAsync({ parts, directory })` | `session.prompt({ sessionID, text, delivery?, resume?, id? })` |
-| `session.abort` | `session.interrupt({ sessionID, continue? })` |
-| `session.create({ title, directory })` | `session.create({ title, agent, model, location, metadata })` |
-| `parts[]` | `text` + `files` / `agents` / `skills` |
-| empty prompt to resume | inbox wake, or `resume` |
-| Kimaki queue Zustand | `delivery: "queue"` |
+| Create a session | `session.create({ location, permissions })` |
+| Admit a user prompt | `session.prompt({ sessionID, text, files?, delivery? })` |
+| Admit synthetic context | `session.synthetic({ sessionID, text, delivery, resume })` |
+| Interrupt execution | `session.interrupt({ sessionID, continue? })` |
+| Persist Kimaki instructions | `session.instructions.entry.put({ sessionID, key, value })` |
+| Change agent or model | `session.switchAgent(...)` / `session.switchModel(...)` |
+| Answer a question | form reply API with `sessionID` and `formID` |
 
-Plugin `SessionDomain` (only if you keep an in-process plugin): `create`, `get`, `switchAgent`, `switchModel`, `prompt`, `generate`, `command`, `synthetic`, `interrupt`, `rename`, `move`, `wait`, `context`, `hook`. No `abort`. No `fork`. Plugin `interrupt` typed `Promise<void>`; HTTP returns `{ interrupted }`.
+Location belongs in `session.create`. Later session calls use `sessionID`; the server resolves the stored location. Location-scoped non-session routes use the directory header or location query supported by the client.
 
-RPC: `POST /api/rpc/:rpcID/:method` body `{ input }`, response `{ output? }`. Location on the **call options**, not inside plugin input.
+## Migration invariants
 
-`POST /api/plugin/await-activation` → **204**. Does not mean every plugin succeeded. `GET /api/plugin` returns 200 during setup; inventory can be incomplete. Await before depending on plugin RPC.
+A migration is complete only when these invariants hold. Passing TypeScript while old behavior is disabled or routed through dead compatibility code is not sufficient.
 
-Kimaki leaks `OPENCODE_CONFIG` / `OPENCODE_CONFIG_CONTENT`. Tests: private `HOME` / `XDG_*`, unset `OPENCODE_CONFIG_CONTENT`. Copy `opencode-v2/packages/core/script/test.ts`.
+### One submission path
 
-`@opencode-ai/core` npm has **no** `test/` helpers. Submodule branch `v2` if you need `packages/core/test/plugin/`.
+All user, queued, voice, command, and synthetic inputs must share one native submission boundary. Resolve the session, agent, model, variant, instructions, text, files, delivery, and error handling once, then select the native operation:
 
-# Event name cheat sheet
+| Input | Native operation |
+|---|---|
+| Normal user turn | `session.prompt` with `delivery: "steer"` |
+| Explicit queued turn | `session.prompt` with `delivery: "queue"` |
+| Context-only message | `session.synthetic` with `resume: false` |
+| Command | Native command or inbox API for that command |
 
-**Drop (not on `V2Event`):** `message.updated`, `message.part.*`, `permission.updated`, `question.*`, `session.error` as the main channel, `session.diff` as a part stream, `session.compacted`.
+Do not maintain separate direct and local-queue prompt builders. Parallel builders drift. Typical failures are queued images disappearing, one path omitting instructions, or one path ignoring model-switch errors.
 
-**Lifecycle:** `session.created`, `deleted`, `renamed`, `moved`, `forked`, `viewed`, `agent.selected`, `model.selected`, `status`, `idle` (deprecated), `execution.*`.
+Agent and model selection is session-wide in OpenCode 2.0.2. A failed `switchAgent` or `switchModel` must stop submission with a visible error. Do not continue with the previous model. Until selection can be bound to an inbox item, serialize selection and admission for each session.
 
-**Live + ended:** `session.text.*`, `reasoning.*`, `tool.input.*`, `tool.called`, `tool.progress`, `tool.success` / `failed`, `compaction.*`.
+### Native events only
 
-**Other:** `session.message.content.updated`, `usage.updated` (public, ephemeral), `usage.recorded` (durable, **internal**, not on public union), `step.started` / `streamed` / `ended` / `failed`, `inbox.*`, `instructions.updated`, `synthetic`, `skill.activated`, `shell.started` / `ended`, `retry.scheduled`, `revert.*`, `form.*`.
+Production runtime types and tests must use `V2Event`. Remove compatibility handlers for these v1-only events after their behavior has native coverage:
 
-Footer: **`execution.succeeded` only**. Hide on **`execution.interrupted`**. Duration from last **`execution.started`**. Model from `created` or `step.started` (`data.model.id` + `providerID`). Tokens: `usage.updated` / `step.ended`. Context window may be missing; do not print fake `0%`.
+- `message.updated`
+- `message.part.*`
+- `question.*`
+- `session.error` as the primary completion channel
+- `session.idle` as a successful-turn signal
 
-Filter the process bus: `event.location.directory` when present, else sqlite `sessionID → directory`. Do not accept every event with no location.
+Do not convert v2 events into fake SDK `Part` objects. A small Discord display model is valid, but its fields must be folded directly from native delta and terminal facts.
 
-# Config Kimaki must not smash
+Filter an event by the owning session before appending it to a thread runtime's bounded buffer. Broadcasting every process event into every runtime causes `O(active threads)` work and lets unrelated sessions evict lifecycle evidence.
 
-V2 still reads the same `opencode.json` paths. Native keys: `plugins`, `agents`, `permissions`, `providers`. V1 keys still load. Native wins on conflict.
+### Parent and subagent routing
 
-Permission arrays are ordered. Do not inject bot allow-all over the user file.
+Native v2 subagents use different names from v1:
 
-Deterministic provider matchers still use AI SDK stream parts (`text-delta`, `tool-call`). That is the **model** stream, not the Kimaki bus. Wire via project `opencode.json`, not leaked `OPENCODE_CONFIG_CONTENT`.
+| Meaning | Native v2 field |
+|---|---|
+| Tool name | `subagent` |
+| Selected agent input | `agent` |
+| Child session metadata | `sessionID` |
+| Parent on session creation | `session.created.data.parentID` |
 
-# What to delete in `cli/`
+Use these facts to build parent-child ownership before applying the runtime session filter. Cover child text, tool output, labels, completion, interruption, and token usage in native event tests.
 
-- `opencode-interrupt-plugin.ts`
-- Zustand queue for normal chat
-- Render on `message.part.updated` snapshots
-- Footer on `session.idle`
-- `promptAsync({ parts: [] })` as resume
-- `directory` on every session call as if v1
-- `state.output` string as the only tool result
-- Question handlers on `question.asked`
-- Treating `prompt()` return as “user message is in the transcript”
-- Treating one prompt as one step / one footer
-- Storing all deltas in a tiny ring buffer
-- Assuming SSE reconnect replays tokens
+### Durable completion and analytics
 
-# What to keep (Discord)
+Use `session.execution.succeeded` as the successful run boundary. Cleanup and queue draining must run even when Discord output, including the footer, fails to send.
 
-`custom_id` 100, nonce 25, Components V2 budget, typing ~7s from busy/step-start not from user message, `allowedMentions`, 2000-char split, GuildMember unions, thread rename rate limit, worktree folder ≠ branch, line-based `. queue` / `. btw`, Digital Twin = fake Discord only.
+Emit turn and token analytics from native facts:
 
-# Test strategy
+- `turn_completed` from `session.execution.succeeded`
+- failed or interrupted outcomes from their matching execution events
+- token deltas from `session.usage.updated` or settled step usage
 
-1. Spawn `opencode2 serve`, isolated XDG
-2. `OpenCode.make` + Basic password
-3. Digital Twin unchanged
-4. New jsonl from v2 streams. V1 fixtures will not parse
-5. First paths: new thread, follow-up, queue drain (key inboxID), interrupt with no footer, reconnect after drop (ended text still correct, no fake typewriter)
-6. Permissions: ask `data.id` → reply `requestID`
-7. Forms if you port questions
+Do not leave analytics attached to unreachable v1 `session.idle` or `message.updated` handlers.
 
-# Suggested `cli/` order
+### Ordered and scoped reads
 
-1. Serve + client + Basic auth + location on create only
-2. `prompt` + inbox events + delete interrupt plugin
-3. Renderer: delta fold by identity, commit on ended, footer on execution.succeeded
-4. `/queue` → `delivery: "queue"`
-5. Interrupt
-6. Permissions + forms
-7. Fork / compact via inbox+HTTP
-8. One `opencode2` for many projects if stable
+Verify the default ordering of every list API. OpenCode 2 message lists can be newest-first. Normalize to chronological order before rendering markdown, selecting the latest user turn, or mirroring external sessions.
 
-# Known gaps in this beta
+Every `session.list` call must include the intended directory or project unless the feature explicitly requests all projects. An all-project search must deduplicate session IDs. `/resume` must not attach a session owned by another project.
 
-- Docs import `@opencode/client`; npm is `@opencode-ai/client`
-- `question.*` not on the client union; forms replace them
-- `usage.recorded` internal
-- Context % may be unknown
-- Plugin domain has no `fork`
-- APIs still move. Pin versions
-- V1 Kimaki plugins do not load on v2. Rewrite or drop `kimaki-opencode-plugin.ts`
+External synchronization must apply its startup cutoff locally when the native API has no `start` filter. Never mirror historical sessions merely because the server returns them in its first page.
+
+### Reconnect recovery
+
+An SSE reconnect is not recovery by itself. After connection loss:
+
+1. Read projected messages for owned active sessions.
+2. Fold completed content into the Discord display projection.
+3. List forms and restore pending interactive questions.
+4. Recheck inbox and execution state before restarting typing or draining local work.
+
+Do not replay a missed typewriter animation. Restore the final durable value once. Test a disconnect during output, not only a server restart followed by a new prompt.
+
+## Server and authentication migration
+
+The shared server password is part of server discovery. A second Kimaki CLI process that discovers only a port cannot authenticate to a server started with a random password. Publish the authentication material through the protected local discovery channel, or use one durable credential that both processes can resolve.
+
+Readiness probes must require a successful authenticated response. A `401` or `403` means the client is not ready; it must not be accepted because its status is below `500`.
+
+Never write the server password to normal logs, Discord messages, project files, or command output.
+
+## Command migration checks
+
+Commands need behavioral migration, not only renamed client methods.
+
+### Provider login
+
+Preserve the native integration method model:
+
+- `oauth`
+- `key`
+- `command`
+- `env`
+
+Do not coerce command or environment methods into API-key forms. Render each method's declared form fields. Start OAuth with `integration.oauth.connect`, pass the selected `methodID`, retain the returned unique `attemptID`, and use that ID for status or completion. A provider ID is not an OAuth attempt ID.
+
+### Worktrees and workspaces
+
+An OpenCode worktree directory is not a workspace resource ID. `worktree.create` returns a directory. Do not invent a `wrk_<uuid>` value and pass it to workspace APIs.
+
+Store the returned directory with Kimaki's thread mapping. Remove it through `worktree.remove`. Use `workspace.move` or `workspace.destroy` only for a workspace that OpenCode actually created and identified.
+
+### Revert, wait, forms, and sharing
+
+- Stage `/undo` at the selected **user message** boundary used by the native revert API.
+- Treat only a successful, natural assistant completion as satisfying `--wait`. Errors and tool-call-only intermediate steps are not completion.
+- Cancel only the form selected by the Discord interaction. Keep the interaction context until the API confirms cancellation.
+- Do not keep registered commands that always reply “not available.” Port the command, or remove its registration and document the intentional breaking change.
+- Voice-created and fresh sessions must apply the requested model and the same durable Kimaki instructions as text-created sessions.
+
+## Plugin parity audit
+
+Before removing the v1 aggregate plugin, inventory every hook and assign one explicit result:
+
+| Previous behavior | Required result |
+|---|---|
+| Subrouter | Load the native provider/plugin and test activation |
+| Injection guard | Port scanning hooks or remove the user option with a clear error |
+| File-edit tracking | Record native edit/write/apply-patch success facts |
+| Image optimization | Port before file admission or document removal |
+| Cache-drift detection | Port to native hooks or document removal |
+| Worktree adaptation | Replace with native location/worktree behavior |
+| Provider auth rotation | Use native integration support or document removal |
+| Kitty image output | Preserve only where the host still supports it |
+
+No feature may remain as a silent no-op. A configuration writer without an active reader is a migration bug.
+
+The production plugin must be a normal TypeScript build input. Load the built plugin directory in packaged output. Do not exclude the main plugin from `tsc`, export a raw `.ts` entry, or depend on the OpenCode runtime to transpile Kimaki source as a fallback.
+
+Validate tool schemas at the model boundary. Kimaki file upload must enforce `maxFiles` as an integer from 1 through 10. Action buttons must enforce 1 through 3 buttons, labels from 1 through 80 characters, and the supported color set.
+
+## Completion test matrix
+
+Use native v2 events and real OpenCode 2 APIs. Do not use mocks or v1 fixtures to prove migrated behavior.
+
+| Area | Required regression coverage |
+|---|---|
+| Submission | Direct text, queued text, queued image, voice model, context-only synthetic |
+| Execution | Success footer, failure, interruption without footer, tool continuation |
+| Routing | Two active thread runtimes, native subagent child output, child usage |
+| Recovery | SSE loss during output, projected-message recovery, pending-form recovery |
+| Ordering | Chronological markdown and external synchronization |
+| Scope | Project session list, all-project deduplication, safe `/resume` |
+| Login | OAuth attempt ID, key form, command form, environment form |
+| Worktrees | Create, move/fork, remove, fresh-clone behavior |
+| Permissions | Alias conversion and native session rules |
+| Plugins | Subrouter, injection guard, edit tracking, upload, buttons, sleep |
+| Commands | Undo, redo, wait success/error/tool-only, form cancellation |
+
+Also validate a fresh clone. Dirty submodule checkouts can hide a recorded gitlink that points backward. The superproject must reference the exact remote commit used by local tests.
+
+## Current limitations
+
+- SSE reconnect restores durable projected output, but it cannot replay the missed typewriter animation.
+- `usage.recorded` is internal. Kimaki derives user-visible usage from public execution and step facts.
+- Context percentage is omitted when the model context limit is unavailable.
+- Plugin `SessionDomain` does not expose every HTTP operation, so some commands use `@opencode/client` directly.
+- OpenCode execution recovery is at-least-once. A process crash can repeat a tool side effect.
+
+These are runtime constraints, not unfinished migration phases.

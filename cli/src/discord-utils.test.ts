@@ -1,4 +1,4 @@
-import { PermissionsBitField, type Message } from 'discord.js'
+import { PermissionsBitField } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   hasKimakiAdminPermission,
@@ -255,7 +255,7 @@ describe('resolveGuildMessageMember', () => {
       member,
       author: { id: 'member-id' },
       id: 'message-id',
-    } as unknown as Message
+    }
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(member)
   })
@@ -265,7 +265,7 @@ describe('resolveGuildMessageMember', () => {
     const message = {
       guild: {
         members: {
-          fetch(id: string) {
+          fetch: (id: string) => {
             expect(id).toBe('member-id')
             return Promise.resolve(member)
           },
@@ -274,7 +274,7 @@ describe('resolveGuildMessageMember', () => {
       member: null,
       author: { id: 'member-id' },
       id: 'message-id',
-    } as unknown as Message
+    }
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(member)
   })
@@ -283,15 +283,13 @@ describe('resolveGuildMessageMember', () => {
     const message = {
       guild: {
         members: {
-          fetch() {
-            return Promise.reject(new Error('missing member'))
-          },
+          fetch: () => Promise.reject(new Error('missing member')),
         },
       },
       member: null,
       author: { id: 'member-id' },
       id: 'message-id',
-    } as unknown as Message
+    }
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(null)
   })

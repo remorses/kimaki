@@ -7,6 +7,7 @@
 // Run only one test file at a time to avoid overloading the machine:
 //   VITEST_CPU_PROF=1 pnpm test --run src/some-file.test.ts
 
+import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 
 const cpuProf = process.env.VITEST_CPU_PROF === '1'
@@ -17,6 +18,7 @@ export default defineConfig({
     hookTimeout: 5_000,
     env: {
       KIMAKI_VITEST: '1',
+      SUBROUTER_HOME: path.join(process.cwd(), 'tmp', 'subrouter-vitest'),
     },
     // Use forked workers so e2e suites that mutate process.env (KIMAKI_DB_URL,
     // KIMAKI_LOCK_PORT, etc.) do not race across files. Thread workers share

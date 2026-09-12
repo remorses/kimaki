@@ -26,13 +26,18 @@ import {
   type TextChannel,
   MessageFlags,
 } from 'discord.js'
-import type { AuthHook } from '@opencode-ai/plugin'
+import type {
+  FormAnswer,
+  FormField,
+  IntegrationAttemptStatus,
+  IntegrationCommandAttemptStatus,
+  IntegrationMethod,
+} from '@opencode/client/promise'
 import crypto from 'node:crypto'
 import {
   initializeOpencodeForDirectory,
-  getOpencodeServerPort,
-  getOpencodeServerAuthHeaders,
 } from '../opencode.js'
+import { OpenCodeSdkError } from '../errors.js'
 import { resolveTextChannel, getKimakiMetadata } from '../discord-utils.js'
 import { clearModelListCache } from '../session-handler/model-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
@@ -41,44 +46,47 @@ import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.
 const loginLogger = createLogger(LogPrefix.LOGIN)
 
 // ── Types ───────────────────────────────────────────────────────
-// Derive prompt types from the plugin package so they stay in sync.
-// Strip runtime-only callback fields (validate, condition) that
-// aren't present in the REST response from the opencode server.
-// Add `when` rule — the server's zod schema includes it but the
-// published plugin package hasn't been updated yet.
+// Adapt native v2 integration methods and forms to Discord components.
 
-type WhenRule = { key: string; op: 'eq' | 'neq'; value: string }
-
-// Extract prompt option type from the plugin's select prompt
-type PluginMethod = AuthHook['methods'][number]
-type PluginSelectPrompt = Extract<
-  NonNullable<PluginMethod['prompts']>[number],
-  { type: 'select' }
->
-type PromptOption = PluginSelectPrompt['options'][number]
+type WhenRule = { key: string; op: 'eq' | 'neq'; value: string | number | boolean }
 
 type AuthPromptText = {
   type: 'text'
   key: string
   message: string
   placeholder?: string
-  when?: WhenRule
+  valueType: 'string' | 'number' | 'integer'
+  when?: WhenRule[]
 }
 
 type AuthPromptSelect = {
   type: 'select'
   key: string
   message: string
-  options: PromptOption[]
-  when?: WhenRule
+  options: Array<{ label: string; value: string; hint?: string }>
+  valueType: 'string' | 'boolean' | 'multiselect'
+  when?: WhenRule[]
 }
 
 type AuthPrompt = AuthPromptText | AuthPromptSelect
 
 type ProviderAuthMethod = {
-  type: 'oauth' | 'api'
+  type: 'oauth'
+  id: string
   label: string
-  prompts?: AuthPrompt[]
+  prompts: AuthPrompt[]
+} | {
+  type: 'key'
+  label: string
+  prompts: AuthPrompt[]
+} | {
+  type: 'command'
+  id: string
+  label: string
+} | {
+  type: 'env'
+  label: string
+  names: string[]
 }
 
 // ── Login step state machine ────────────────────────────────────
@@ -89,18 +97,16 @@ type ProviderAuthMethod = {
 type StepProvider = { type: 'provider' }
 type StepMethod = { type: 'method'; methods: ProviderAuthMethod[] }
 type StepPrompt = { type: 'prompt'; prompt: AuthPrompt }
-type LoginStep = StepProvider | StepMethod | StepPrompt
-
 type LoginContext = {
   dir: string
   channelId: string
   providerId?: string
   providerName?: string
-  methodIndex?: number
-  methodType?: 'oauth' | 'api'
-  steps: LoginStep[]
+  method?: ProviderAuthMethod
+  attemptId?: string
+  steps: Array<StepProvider | StepMethod | StepPrompt>
   stepIndex: number
-  inputs: Record<string, string>
+  inputs: FormAnswer
   providerPage?: number
 }
 
@@ -157,35 +163,93 @@ const PROVIDER_POPULARITY_ORDER: string[] = [
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-function extractErrorMessage({
-  error,
-  fallback,
-}: {
-  error: unknown
-  fallback: string
-}): string {
-  if (!error || typeof error !== 'object') {
-    return fallback
-  }
-  const parsed = error as { message?: string; data?: { message?: string } }
-  return parsed.data?.message || parsed.message || fallback
-}
-
 function shouldShowPrompt(
   prompt: AuthPrompt,
-  inputs: Record<string, string>,
+  inputs: FormAnswer,
 ): boolean {
   if (!prompt.when) {
     return true
   }
-  const value = inputs[prompt.when.key]
-  if (prompt.when.op === 'eq') {
-    return value === prompt.when.value
+  return prompt.when.every((rule) => {
+    const value = inputs[rule.key]
+    return rule.op === 'eq' ? value === rule.value : value !== rule.value
+  })
+}
+
+function normalizeFormField(field: FormField): AuthPrompt | null {
+  if (field.type === 'external') return null
+  const rules = field.when?.map((rule) => ({
+    key: rule.key,
+    op: rule.op,
+    value: rule.value,
+  }))
+  const message = field.title || field.description || field.key
+  if (field.type === 'boolean') {
+    return {
+      type: 'select',
+      key: field.key,
+      message,
+      options: [
+        { label: 'Yes', value: 'true' },
+        { label: 'No', value: 'false' },
+      ],
+      valueType: 'boolean',
+      when: rules,
+    }
   }
-  if (prompt.when.op === 'neq') {
-    return value !== prompt.when.value
+  if (field.type === 'multiselect' || (field.type === 'string' && field.options)) {
+    const options = field.options!
+    return {
+      type: 'select',
+      key: field.key,
+      message,
+      options: options.map((option) => ({
+        label: option.label,
+        value: option.value,
+        hint: option.description,
+      })),
+      valueType: field.type === 'multiselect' ? 'multiselect' : 'string',
+      when: rules,
+    }
   }
-  return true
+  return {
+    type: 'text',
+    key: field.key,
+    message,
+    placeholder: field.type === 'string' ? field.placeholder : undefined,
+    valueType: field.type,
+    when: rules,
+  }
+}
+
+export function normalizeAuthMethods(
+  methods: IntegrationMethod[],
+): ProviderAuthMethod[] {
+  return methods.map((method) => {
+    if (method.type === 'oauth') {
+      return {
+        type: method.type,
+        id: method.id,
+        label: method.label,
+        prompts: method.form?.map(normalizeFormField).filter((field) => field !== null) ?? [],
+      }
+    }
+    if (method.type === 'key') {
+      return {
+        type: method.type,
+        label: method.label || 'API key',
+        prompts: method.form?.map(normalizeFormField).filter((field) => field !== null) ?? [],
+      }
+    }
+    if (method.type === 'command') {
+      return { type: method.type, id: method.id, label: method.label }
+    }
+    return {
+      type: method.type,
+      label: `Environment: ${method.names.join(', ')}`,
+      names: method.names,
+    }
+  })
 }
 
 function buildSelectMenu({
@@ -387,7 +451,7 @@ export async function handleLoginSelect(
     } else if (step.type === 'method') {
       await handleMethodStep(interaction, ctx, hash, value, step)
     } else if (step.type === 'prompt') {
-      await handlePromptStep(interaction, ctx, hash, value, step)
+      await handlePromptStep(interaction, ctx, hash, step)
     }
   } catch (error) {
     loginLogger.error('Error in login select:', error)
@@ -480,36 +544,28 @@ async function handleProviderStep(
   const integration = await getClient().integration.get({
     integrationID: providerId,
     location: { directory: ctx.dir },
-  }).catch(() => null)
-  const authResponse = {
-    data: {
-      [providerId]: (integration?.data?.methods ?? []).map((method) => {
-        if (method.type === 'oauth') {
-          return { type: 'oauth' as const, label: method.label }
-        }
-        if (method.type === 'key') {
-          return { type: 'api' as const, label: method.label || 'API Key' }
-        }
-        return { type: 'api' as const, label: 'API Key' }
-      }),
-    },
-  }
-  if (!authResponse.data) {
+  }).catch((cause) => new OpenCodeSdkError({
+    operation: 'integration.get',
+    cause,
+  }))
+  if (integration instanceof Error) {
     await interaction.deferUpdate()
     await interaction.editReply({
-      content: 'Failed to fetch authentication methods',
+      content: `Failed to fetch authentication methods: ${integration.message}`,
+      components: [],
+    })
+    return
+  }
+  if (!integration.data) {
+    await interaction.deferUpdate()
+    await interaction.editReply({
+      content: `No authentication methods are available for ${providerName}.`,
       components: [],
     })
     return
   }
 
-  // The server returns prompts in the auth response when the opencode
-  // version supports it (dev branch, not yet released as of v1.2.27).
-  // Once released, plugin-defined prompts will be collected and passed
-  // as inputs to the authorize call automatically.
-  const methods: ProviderAuthMethod[] = authResponse.data[providerId] || [
-    { type: 'api', label: 'API Key' },
-  ]
+  const methods = normalizeAuthMethods(integration.data.methods)
 
   if (methods.length === 0) {
     await interaction.deferUpdate()
@@ -526,8 +582,7 @@ async function handleProviderStep(
   if (methods.length === 1) {
     // Single method — skip method select, go straight to prompts or action
     const method = methods[0]!
-    ctx.methodIndex = 0
-    ctx.methodType = method.type
+    ctx.method = method
 
     const promptSteps = buildPromptSteps(method)
     if (promptSteps.length > 0) {
@@ -536,13 +591,16 @@ async function handleProviderStep(
       ctx.stepIndex = 0
       await interaction.deferUpdate()
       await showNextStep(interaction, ctx, hash)
-    } else if (method.type === 'api') {
+    } else if (method.type === 'key') {
       // API key with no prompts — show modal directly (don't defer)
       await showApiKeyModal(interaction, hash, providerName)
-    } else {
+    } else if (method.type === 'oauth') {
       // OAuth with no prompts — defer and authorize
       await interaction.deferUpdate()
       await startOAuthFlow(interaction, ctx, hash)
+    } else {
+      await interaction.deferUpdate()
+      await startNonInteractiveMethod(interaction, ctx, hash)
     }
     return
   }
@@ -574,8 +632,7 @@ async function handleMethodStep(
     return
   }
 
-  ctx.methodIndex = methodIndex
-  ctx.methodType = method.type
+  ctx.method = method
 
   const promptSteps = buildPromptSteps(method)
   if (promptSteps.length > 0) {
@@ -584,13 +641,16 @@ async function handleMethodStep(
     ctx.stepIndex = 0
     await interaction.deferUpdate()
     await showNextStep(interaction, ctx, hash)
-  } else if (method.type === 'api') {
+  } else if (method.type === 'key') {
     // API key with no prompts — show modal directly (don't defer)
     await showApiKeyModal(interaction, hash, ctx.providerName || '')
-  } else {
+  } else if (method.type === 'oauth') {
     // OAuth with no prompts
     await interaction.deferUpdate()
     await startOAuthFlow(interaction, ctx, hash)
+  } else {
+    await interaction.deferUpdate()
+    await startNonInteractiveMethod(interaction, ctx, hash)
   }
 }
 
@@ -598,11 +658,15 @@ async function handlePromptStep(
   interaction: StringSelectMenuInteraction,
   ctx: LoginContext,
   hash: string,
-  value: string,
   step: StepPrompt,
 ): Promise<void> {
-  // Store the answer
-  ctx.inputs[step.prompt.key] = value
+  if (step.prompt.type !== 'select') return
+  const values = interaction.values
+  ctx.inputs[step.prompt.key] = step.prompt.valueType === 'multiselect'
+    ? values
+    : step.prompt.valueType === 'boolean'
+      ? values[0] === 'true'
+      : values[0] ?? ''
   ctx.stepIndex++
 
   // Find the next prompt step that passes its `when` condition
@@ -631,7 +695,7 @@ async function showNextStep(
 
   if (ctx.stepIndex >= ctx.steps.length) {
     // All steps done — proceed to action
-    if (ctx.methodType === 'api') {
+    if (ctx.method?.type === 'key') {
       // We're deferred, so show a button that opens the API key modal
       const button = new ButtonBuilder()
         .setCustomId(`login_apikey_btn:${hash}`)
@@ -643,8 +707,10 @@ async function showNextStep(
           new ActionRowBuilder<ButtonBuilder>().addComponents(button),
         ],
       })
-    } else {
+    } else if (ctx.method?.type === 'oauth') {
       await startOAuthFlow(interaction, ctx, hash)
+    } else {
+      await startNonInteractiveMethod(interaction, ctx, hash)
     }
     return
   }
@@ -659,7 +725,11 @@ async function showNextStep(
       description:
         method.type === 'oauth'
           ? 'OAuth authentication'
-          : 'Enter API key manually',
+          : method.type === 'key'
+            ? 'Enter API key manually'
+            : method.type === 'command'
+              ? 'Run provider login command'
+              : 'Use configured environment variables',
     }))
 
     await interaction.editReply({
@@ -684,15 +754,18 @@ async function showNextStep(
         description: opt.hint?.slice(0, 100),
       }))
 
+      const row = buildSelectMenu({
+        customId: `login_select:${hash}`,
+        placeholder: prompt.message.slice(0, 150),
+        options,
+      })
+      const select = row.components[0]!
+      if (prompt.valueType === 'multiselect') {
+        select.setMinValues(1).setMaxValues(options.length)
+      }
       await interaction.editReply({
         content: `**Authenticate with ${ctx.providerName}**\n${prompt.message}`,
-        components: [
-          buildSelectMenu({
-            customId: `login_select:${hash}`,
-            placeholder: prompt.message.slice(0, 150),
-            options,
-          }),
-        ],
+        components: [row],
       })
       return
     }
@@ -716,7 +789,8 @@ async function showNextStep(
 }
 
 function buildPromptSteps(method: ProviderAuthMethod): StepPrompt[] {
-  return (method.prompts || []).map((prompt) => ({
+  if (method.type !== 'oauth' && method.type !== 'key') return []
+  return method.prompts.map((prompt) => ({
     type: 'prompt' as const,
     prompt,
   }))
@@ -810,7 +884,24 @@ export async function handleLoginTextModalSubmit(
     return
   }
 
-  ctx.inputs[step.prompt.key] = value.trim()
+  const parsedValue = step.prompt.valueType === 'string'
+    ? value.trim()
+    : Number(value.trim())
+  if (typeof parsedValue === 'number' && !Number.isFinite(parsedValue)) {
+    await interaction.editReply({
+      content: 'Enter a valid number.',
+      components: [],
+    })
+    return
+  }
+  if (step.prompt.valueType === 'integer' && !Number.isInteger(parsedValue)) {
+    await interaction.editReply({
+      content: 'Enter a whole number.',
+      components: [],
+    })
+    return
+  }
+  ctx.inputs[step.prompt.key] = parsedValue
   ctx.stepIndex++
   await showNextStep(interaction, ctx, hash)
 }
@@ -913,7 +1004,7 @@ export async function handleOAuthCodeModalSubmit(
   const hash = interaction.customId.replace('login_oauth_code:', '')
   const ctx = pendingLoginContexts.get(hash)
 
-  if (!ctx || !ctx.providerId || !ctx.providerName || ctx.methodIndex === undefined) {
+  if (!ctx || !ctx.providerId || !ctx.providerName || !ctx.attemptId) {
     await interaction.editReply({
       content: 'Session expired. Please run /login again.',
       components: [],
@@ -947,10 +1038,13 @@ export async function handleOAuthCodeModalSubmit(
 
     const callbackResponse = await getClient().integration.oauth.complete({
       integrationID: ctx.providerId,
-      attemptID: ctx.providerId,
+      attemptID: ctx.attemptId,
       location: { directory: ctx.dir },
       code,
-    }).catch((error: unknown) => error)
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'integration.oauth.complete',
+      cause,
+    }))
 
     if (callbackResponse instanceof Error) {
       pendingLoginContexts.delete(hash)
@@ -1016,6 +1110,7 @@ export async function handleApiKeyModalSubmit(
       integrationID: ctx.providerId,
       location: { directory: ctx.dir },
       key: apiKey.trim(),
+      answer: Object.keys(ctx.inputs).length > 0 ? ctx.inputs : undefined,
     })
 
     await getClient().debug.location.evict({ location: { directory: ctx.dir } }).catch(() => undefined)
@@ -1036,12 +1131,106 @@ export async function handleApiKeyModalSubmit(
 
 // ── OAuth flow ──────────────────────────────────────────────────
 
+async function waitForAuthenticationAttempt({
+  getStatus,
+}: {
+  getStatus: () => Promise<IntegrationAttemptStatus | IntegrationCommandAttemptStatus>
+}): Promise<void | Error> {
+  while (true) {
+    const status = await getStatus().catch((cause) => {
+      return new OpenCodeSdkError({ operation: 'integration status', cause })
+    })
+    if (status instanceof Error) return status
+    const result = getAuthenticationAttemptResult(status)
+    if (result !== 'pending') return result
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+  }
+}
+
+export function getAuthenticationAttemptResult(
+  status: IntegrationAttemptStatus | IntegrationCommandAttemptStatus,
+): 'pending' | void | Error {
+  if (status.status === 'pending') return 'pending'
+  if (status.status === 'complete') return
+  if (status.status === 'failed') return new Error(status.message)
+  return new Error('Authentication attempt expired')
+}
+
+async function startNonInteractiveMethod(
+  interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
+  ctx: LoginContext,
+  hash: string,
+): Promise<void> {
+  if (!ctx.providerId || !ctx.method) return
+  if (ctx.method.type === 'env') {
+    pendingLoginContexts.delete(hash)
+    await interaction.editReply({
+      content: `**Authenticate with ${ctx.providerName}**\nSet ${ctx.method.names.map((name) => `\`${name}\``).join(' or ')} in the Kimaki environment, then restart Kimaki.`,
+      components: [],
+    })
+    return
+  }
+  if (ctx.method.type !== 'command') return
+
+  const getClient = await initializeOpencodeForDirectory(ctx.dir)
+  if (getClient instanceof Error) {
+    await interaction.editReply({ content: getClient.message, components: [] })
+    return
+  }
+  await interaction.editReply({
+    content: `**Authenticating with ${ctx.providerName}**\nRunning ${ctx.method.label}...`,
+    components: [],
+  })
+  const providerId = ctx.providerId
+  const connectResponse = await getClient().integration.command.connect({
+    integrationID: providerId,
+    methodID: ctx.method.id,
+    location: { directory: ctx.dir },
+  }).catch((cause) => new OpenCodeSdkError({
+    operation: 'integration.command.connect',
+    cause,
+  }))
+  if (connectResponse instanceof Error) {
+    await interaction.editReply({
+      content: `**Authentication Failed**\n${connectResponse.message}`,
+      components: [],
+    })
+    return
+  }
+  const attemptID = connectResponse.data.attemptID
+  const status = await waitForAuthenticationAttempt({
+    getStatus: async () => {
+      const response = await getClient().integration.command.status({
+        integrationID: providerId,
+        attemptID,
+        location: { directory: ctx.dir },
+      })
+      return response.data
+    },
+  })
+  if (status instanceof Error) {
+    await interaction.editReply({
+      content: `**Authentication Failed**\n${status.message}`,
+      components: [],
+    })
+    return
+  }
+
+  await getClient().debug.location.evict({ location: { directory: ctx.dir } }).catch(() => undefined)
+  clearModelListCache()
+  pendingLoginContexts.delete(hash)
+  await interaction.editReply({
+    content: `Successfully authenticated with ${ctx.providerName}.\nYou can now use models from this provider.`,
+    components: [],
+  })
+}
+
 async function startOAuthFlow(
   interaction: StringSelectMenuInteraction | ModalSubmitInteraction,
   ctx: LoginContext,
   hash: string,
 ): Promise<void> {
-  if (!ctx.providerId || ctx.methodIndex === undefined) {
+  if (!ctx.providerId || ctx.method?.type !== 'oauth') {
     await interaction.editReply({
       content: 'Invalid context for OAuth flow',
       components: [],
@@ -1064,72 +1253,25 @@ async function startOAuthFlow(
       components: [],
     })
 
-    // Direct fetch to the server because the SDK's buildClientParams drops
-    // unknown keys — `inputs` would be silently stripped. The server accepts
-    // `inputs` in the body (see opencode server/routes/provider.ts).
-    const port = getOpencodeServerPort()
-    if (!port) {
+    const providerId = ctx.providerId
+    const connectResponse = await getClient().integration.oauth.connect({
+      integrationID: providerId,
+      methodID: ctx.method.id,
+      location: { directory: ctx.dir },
+      answer: Object.keys(ctx.inputs).length > 0 ? ctx.inputs : undefined,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'integration.oauth.connect',
+      cause,
+    }))
+    if (connectResponse instanceof Error) {
       await interaction.editReply({
-        content: 'OpenCode server is not running. Please try again.',
+        content: `Failed to start authorization: ${connectResponse.message}`,
         components: [],
       })
       return
     }
-
-    const hasInputs = Object.keys(ctx.inputs).length > 0
-    const authorizeUrl = new URL(
-      `/provider/${encodeURIComponent(ctx.providerId)}/oauth/authorize`,
-      `http://127.0.0.1:${port}`,
-    )
-    authorizeUrl.searchParams.set('directory', ctx.dir)
-
-    const fetchHeaders: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-opencode-directory': ctx.dir,
-      ...getOpencodeServerAuthHeaders(),
-    }
-
-    const authorizeRes = await fetch(authorizeUrl, {
-      method: 'POST',
-      headers: fetchHeaders,
-      body: JSON.stringify({
-        method: ctx.methodIndex,
-        ...(hasInputs ? { inputs: ctx.inputs } : {}),
-      }),
-    })
-
-    if (!authorizeRes.ok) {
-      const errorText = await authorizeRes.text().catch(() => '')
-      let errorMessage = 'Unknown error'
-      try {
-        const parsed = JSON.parse(errorText) as {
-          message?: string
-          data?: { message?: string }
-        }
-        errorMessage = parsed?.data?.message || parsed?.message || errorMessage
-      } catch {
-        errorMessage = errorText || errorMessage
-      }
-      await interaction.editReply({
-        content: `Failed to start authorization: ${errorMessage}`,
-        components: [],
-      })
-      return
-    }
-
-    const loginData = (await authorizeRes.json()) as {
-      url: string
-      method: 'auto' | 'code'
-      instructions: string
-    } | null
-    if (!loginData) {
-      await interaction.editReply({
-        content: 'Failed to parse authorization response',
-        components: [],
-      })
-      return
-    }
-    const { url, method, instructions } = loginData
+    const { attemptID, url, mode, instructions } = connectResponse.data
+    ctx.attemptId = attemptID
 
     let message = `**Authenticating with ${ctx.providerName}**\n\n`
     message += `Open this URL to authorize:\n${url}\n\n`
@@ -1145,11 +1287,11 @@ async function startOAuthFlow(
       }
     }
 
-    if (method === 'auto') {
+    if (mode === 'auto') {
       message += '_Waiting for authorization to complete..._'
     }
 
-    if (method === 'code') {
+    if (mode === 'code') {
       // Code mode: show a button to paste the auth code/URL after
       // completing login in a browser (possibly on a different machine).
       const button = new ButtonBuilder()
@@ -1169,17 +1311,20 @@ async function startOAuthFlow(
 
     await interaction.editReply({ content: message, components: [] })
 
-    // Auto mode: poll for completion (device flow / localhost callback)
-    const callbackResponse = await getClient().integration.oauth.complete({
-      integrationID: ctx.providerId,
-      attemptID: ctx.providerId,
-      location: { directory: ctx.dir },
-    }).catch((error: unknown) => error)
-
-    if (callbackResponse instanceof Error) {
+    const oauthStatus = await waitForAuthenticationAttempt({
+      getStatus: async () => {
+        const response = await getClient().integration.oauth.status({
+          integrationID: providerId,
+          attemptID,
+          location: { directory: ctx.dir },
+        })
+        return response.data
+      },
+    })
+    if (oauthStatus instanceof Error) {
       pendingLoginContexts.delete(hash)
       await interaction.editReply({
-        content: `**Authentication Failed**\n${callbackResponse.message || 'Authorization was not completed'}`,
+        content: `**Authentication Failed**\n${oauthStatus.message}`,
         components: [],
       })
       return
