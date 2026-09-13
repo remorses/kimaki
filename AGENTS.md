@@ -460,37 +460,24 @@ for live user-session debugging (without restarting with env vars), export the p
 
 use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `cli/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
 
-runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. the buffer stores a compacted event shape to avoid memory spikes.
+runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. long string values are truncated before storage to avoid memory spikes, but the native OpenCode event shape is preserved.
 
-the compacted buffer strips/truncates these large fields:
-
-- `message.updated` user events: strip `info.system`, `info.summary`, `info.tools`
-- `message.part.updated` text/reasoning/snapshot: truncate long text fields
-- `message.part.updated` `step-start.snapshot`: truncate
-- `message.part.updated` tool states: replace `state.input` with `{}`
-- `message.part.updated` completed tool output: truncate `state.output`
-- `message.part.updated` completed tool attachments: strip `state.attachments`
-- `message.part.updated` pending `state.raw` and error `state.error`: truncate
-
-the jsonl line is intentionally minimal: `{ timestamp, threadId, projectDirectory, event }`.
+each jsonl line is one raw OpenCode event. do not wrap events with Kimaki metadata.
 
 use `jq` to inspect these files quickly:
 
 ```bash
 # list event type counts for one session file
-jq -r '.event.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
+jq -r '.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
 
-# show only session lifecycle events (status/idle/error)
-jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# show execution lifecycle events
+jq -r 'select(.type | startswith("session.execution.")) | [.created, .type, .data.sessionID, .data.executionID] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
-# filter by a specific event type (example: message.part.updated)
-jq -r 'select(.event.type=="message.part.updated")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
-
-# filter by event subtype (example: session.status idle)
-jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# filter by a specific event type
+jq -r 'select(.type=="session.tool.called")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
 # show timestamps + event types
-jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+jq -r '[.created, .type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 ```
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
