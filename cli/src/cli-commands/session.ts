@@ -22,10 +22,11 @@ import { formatTimeAgo } from '../commands/worktrees.js'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
-import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
+import { serializeOpencodeEventsJsonl } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { OpenCodeSdkError } from '../errors.js'
+import { listAllMessages, listAllSessions } from '../opencode-pagination.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -45,6 +46,12 @@ import {
 } from '../cli-runner.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
+const persistedSessionEventSchema = z.object({
+  type: z.string(),
+  data: z.unknown().optional(),
+  location: z.unknown().optional(),
+  properties: z.unknown().optional(),
+}).passthrough()
 const cli = goke()
 
 async function resolveSessionDirectoryFromDatabase({
@@ -190,10 +197,22 @@ cli
         }
 
         const client = getClient()
-        const [sessionsResponse, statuses] = await Promise.all([
-          client.session.list({ directory: projectDirectory }),
+        const [sessions, statuses] = await Promise.all([
+          listAllSessions({
+            client,
+            directory: projectDirectory,
+            order: 'desc',
+          }),
           client.session.active().catch(() => null),
         ])
+        if (sessions instanceof Error) {
+          if (options.all) {
+            cliLogger.warn(`Skipping ${projectDirectory}: ${sessions.message}`)
+            continue
+          }
+          cliLogger.error('Failed to list OpenCode sessions:', sessions.message)
+          process.exit(EXIT_NO_RESTART)
+        }
         if (!statuses) {
           if (options.all) {
             cliLogger.warn(`Skipping ${projectDirectory}: failed to list active sessions`)
@@ -203,7 +222,7 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
 
-        for (const session of sessionsResponse.data || []) {
+        for (const session of sessions) {
           const isBusy = Boolean(statuses[session.id])
           const pendingForms = isBusy
             ? await client.form.list({ sessionID: session.id }).catch(() => [])
@@ -680,13 +699,19 @@ cli
           if (getClient instanceof Error) {
             return { projectDirectory, getClient, sessions: [] }
           }
-          const sessionsResponse = await getClient().session.list({
+          const sessions = await listAllSessions({
+            client: getClient(),
             directory: projectDirectory,
+            order: 'desc',
+            stopWhen:
+              minUpdated === undefined
+                ? undefined
+                : (session) => session.time.updated < minUpdated,
           })
           return {
             projectDirectory,
             getClient,
-            sessions: sessionsResponse.data || [],
+            sessions,
           }
         }),
       )
@@ -701,6 +726,19 @@ cli
           cliLogger.error(
             'Failed to connect to OpenCode:',
             listed.getClient.message,
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+        if (listed.sessions instanceof Error) {
+          if (options.all) {
+            cliLogger.warn(
+              `Skipping ${listed.projectDirectory}: failed to list OpenCode sessions: ${listed.sessions.message}`,
+            )
+            continue
+          }
+          cliLogger.error(
+            'Failed to list OpenCode sessions:',
+            listed.sessions.message,
           )
           process.exit(EXIT_NO_RESTART)
         }
@@ -772,10 +810,13 @@ cli
             if (!getClient) {
               return []
             }
-            const messagesResponse = await getClient().message.list({
-              sessionID: session.id,
+            const messages = await listAllMessages({
+              client: getClient(),
+              sessionId: session.id,
+              order: 'desc',
             })
-            return sessionMessagesToGeneric(messagesResponse.data)
+            if (messages instanceof Error) throw messages
+            return sessionMessagesToGeneric(messages)
           },
         })
 
@@ -860,10 +901,7 @@ cli
     const parsedRows = rows.flatMap((row) => {
       const parsed = errore.try(
         () => {
-          return JSON.parse(row.event_json) as {
-            type: string
-            properties?: { info?: { directory?: string } }
-          }
+          return persistedSessionEventSchema.parse(JSON.parse(row.event_json))
         },
         (error) => {
           return new Error('Failed to parse persisted event JSON', {
@@ -888,32 +926,12 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    const projectDirectory = parsedRows.reduce((directory, { event }) => {
-      if (directory) {
-        return directory
-      }
-      if (event.type !== 'session.updated') {
-        return directory
-      }
-      return event.properties?.info?.directory || directory
-    }, '')
-
-    const lines = parsedRows.map(({ row, event }) => {
-      return JSON.stringify(
-        buildOpencodeEventLogLine({
-          timestamp: Number(row.timestamp),
-          threadId: row.thread_id,
-          projectDirectory,
-          event,
-        }),
-      )
-    })
-    const jsonl = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`
+    const jsonl = serializeOpencodeEventsJsonl(parsedRows.map(({ event }) => event))
 
     fs.mkdirSync(path.dirname(outPath), { recursive: true })
     fs.writeFileSync(outPath, jsonl, 'utf8')
     cliLogger.log(
-      `Exported ${lines.length} events from ${sessionId} to ${outPath}`,
+      `Exported ${parsedRows.length} events from ${sessionId} to ${outPath}`,
     )
     process.exit(0)
   })
