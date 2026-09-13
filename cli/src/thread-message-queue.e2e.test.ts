@@ -1134,6 +1134,13 @@ e2eTest('thread message queue ordering', () => {
         userMessageIncludes: 'india',
         timeout: 4_000,
       })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'india',
+        afterAuthorId: TEST_USER_ID,
+      })
 
       // The last text part is quoted until the turn ends, then edited back to
       // full width right before the footer. Snapshot after the footer so the
