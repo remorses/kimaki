@@ -17,7 +17,6 @@ import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearc
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
-import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
