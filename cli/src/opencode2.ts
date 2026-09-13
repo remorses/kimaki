@@ -1,5 +1,11 @@
-// OpenCode v2 (opencode2) serve harness + client factory. Phase 0 of the v1→v2
-// port: parallel to opencode.ts (v1), used only by tests for now.
+// OpenCode v2 (opencode2) binary resolution + a minimal serve harness.
+//
+// Production only uses resolveOpencode2Command() from here; opencode.ts owns the
+// real shared-server lifecycle (config, plugins, permissions). The
+// startOpencode2Server / createOpencode2Client / buildOpencode2Env harness below
+// is a stripped-down, isolated server used by the opencode2-*.e2e tests, kept
+// separate from opencode.ts so tests can spawn a throwaway server without the
+// bot's config surface.
 //
 // Verified v2 facts (@opencode/cli 2.0.2):
 // - binary names are `opencode` and `opencode2`, shipped by @opencode/cli as
