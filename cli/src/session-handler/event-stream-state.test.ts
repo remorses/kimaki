@@ -6,17 +6,23 @@ import {
   derivePendingPermissionRequests,
   didQuestionQueueHandoffSinceLatestQuestionAsked,
   getAssistantMessageIdsForLatestExecution,
+  compactSubagentRoutingEvidence,
   getDerivedSubagentSessions,
+  getDerivedSubtaskAgentType,
   getDerivedSubtaskIndex,
   getEventBufferSessionId,
   getLatestAssistantMessageIdForLatestExecution,
   getLatestExecutionStartedTimestamp,
+  getContextUsageNoticePercentage,
   getLatestRunInfo,
+  getNativeDurableIdentity,
   getNativeExecutionUsage,
+  hasSeenNativeDurableEvent,
   hasVisibleV2OutputSinceExecutionStart,
   isDerivedChildSession,
   isEventForSessionTree,
   isSessionBusy,
+  shouldShowRetryNotice,
   type EventBufferEntry,
   type EventBufferEvent,
 } from './event-stream-state.js'
@@ -131,6 +137,36 @@ function sessionCreated({
   }
 }
 
+function nativeSubagentProgress({
+  mainSessionID,
+  childSessionID,
+  assistantMessageID = 'msg_parent',
+  callID = 'call_subagent',
+  status = 'running',
+}: {
+  mainSessionID: string
+  childSessionID: string
+  assistantMessageID?: string
+  callID?: string
+  status?: string
+}): Extract<V2Event, { type: 'session.tool.progress' }> {
+  return {
+    id: `evt_${++eventId}`,
+    created: eventId,
+    type: 'session.tool.progress',
+    data: {
+      sessionID: mainSessionID,
+      assistantMessageID,
+      id: callID,
+      metadata: {
+        sessionID: childSessionID,
+        status,
+        output: 'x'.repeat(8_000),
+      },
+    },
+  }
+}
+
 function nativeSubagentEvents({
   mainSessionID,
   childSessionID,
@@ -187,6 +223,80 @@ function nativeSubagentEvents({
   }
   return [entry(inputStarted), entry(called), entry(success)]
 }
+
+describe('native durable identity', () => {
+  test('same aggregate and seq is already seen', () => {
+    const first = executionSucceeded('ses_main')
+    const replay = {
+      ...first,
+      id: 'evt_replay',
+    }
+    const events = [entry(first)]
+
+    expect(getNativeDurableIdentity(first)).toEqual({
+      aggregateID: first.durable.aggregateID,
+      seq: first.durable.seq,
+    })
+    expect(hasSeenNativeDurableEvent({ events, event: replay })).toBe(true)
+  })
+
+  test('different aggregates with the same seq stay distinct', () => {
+    const main = executionSucceeded('ses_main')
+    const child: Extract<V2Event, { type: 'session.execution.succeeded' }> = {
+      ...executionSucceeded('ses_child'),
+      durable: {
+        aggregateID: 'ses_child',
+        seq: main.durable.seq,
+        version: 1,
+      },
+    }
+
+    expect(getNativeDurableIdentity(main)).toEqual({
+      aggregateID: 'ses_main',
+      seq: main.durable.seq,
+    })
+    expect(getNativeDurableIdentity(child)).toEqual({
+      aggregateID: 'ses_child',
+      seq: main.durable.seq,
+    })
+    expect(hasSeenNativeDurableEvent({
+      events: [entry(main)],
+      event: child,
+    })).toBe(false)
+  })
+
+  test('different seq values in the same aggregate stay distinct', () => {
+    const first = executionSucceeded('ses_main')
+    const second = executionSucceeded('ses_main')
+
+    expect(first.durable.aggregateID).toBe(second.durable.aggregateID)
+    expect(first.durable.seq).not.toBe(second.durable.seq)
+    expect(hasSeenNativeDurableEvent({
+      events: [entry(first)],
+      event: second,
+    })).toBe(false)
+  })
+
+  test('ephemeral deltas without durable identity are never deduped', () => {
+    const delta: Extract<V2Event, { type: 'session.text.delta' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.text.delta',
+      data: {
+        sessionID: 'ses_main',
+        assistantMessageID: 'msg_1',
+        ordinal: 0,
+        delta: 'Hello',
+      },
+    }
+
+    expect(getNativeDurableIdentity(delta)).toBeNull()
+    expect(hasSeenNativeDurableEvent({
+      events: [entry(delta)],
+      event: delta,
+    })).toBe(false)
+  })
+})
 
 describe('native execution state', () => {
   test('Kimaki queue markers close the admission race without v1 status events', () => {
@@ -311,6 +421,68 @@ describe('native execution state', () => {
       }
     `)
   })
+
+  test('derives context notice thresholds from prior native steps', () => {
+    const sessionID = 'ses_context'
+    const events = [
+      entry(executionStarted(sessionID)),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_a' })),
+      entry(stepEnded({ sessionID, assistantMessageID: 'msg_a', input: 10_000, output: 1, cost: 0 })),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_b' })),
+    ]
+
+    expect(getContextUsageNoticePercentage({
+      events,
+      sessionId: sessionID,
+      contextLimit: 100_000,
+    })).toBe(10)
+    events.push(entry(stepEnded({
+      sessionID,
+      assistantMessageID: 'msg_b',
+      input: 10_500,
+      output: 1,
+      cost: 0,
+    })))
+    events.push(entry(stepStarted({ sessionID, assistantMessageID: 'msg_c' })))
+    expect(getContextUsageNoticePercentage({
+      events,
+      sessionId: sessionID,
+      contextLimit: 100_000,
+    })).toBeUndefined()
+
+    const nextExecution = [
+      ...events,
+      entry(executionSucceeded(sessionID)),
+      entry(executionStarted(sessionID)),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_d' })),
+      entry(stepEnded({ sessionID, assistantMessageID: 'msg_d', input: 10_000, output: 1, cost: 0 })),
+      entry(stepStarted({ sessionID, assistantMessageID: 'msg_e' })),
+    ]
+    expect(getContextUsageNoticePercentage({
+      events: nextExecution,
+      sessionId: sessionID,
+      contextLimit: 100_000,
+    })).toBe(10)
+  })
+
+  test('derives retry throttling from retry status events', () => {
+    const retry = (created: number): Extract<V2Event, { type: 'session.status' }> => ({
+      id: `evt_${++eventId}`,
+      created,
+      type: 'session.status',
+      data: {
+        sessionID: 'ses_retry',
+        status: { type: 'retry', attempt: 1, message: 'rate limited', next: created + 1_000 },
+      },
+    })
+    const first = retry(1_000)
+    const second = retry(5_000)
+    const third = retry(12_000)
+
+    expect(shouldShowRetryNotice({ events: [entry(first)], event: first })).toBe(true)
+    expect(shouldShowRetryNotice({ events: [entry(first), entry(second)], event: second })).toBe(false)
+    expect(shouldShowRetryNotice({ events: [entry(first), entry(third)], event: third })).toBe(true)
+  })
 })
 
 describe('native permissions and forms', () => {
@@ -429,5 +601,203 @@ describe('native subagent session tree', () => {
       event: executionStarted('ses_unrelated'),
       mainSessionId: mainSessionID,
     })).toBe(false)
+  })
+
+  test('session.created puts the child in the tree before progress supplies an index', () => {
+    // Native Session.create publishes session.created before subagent progress
+    // and sessions.prompt, so child output cannot exist before this event.
+    const mainSessionID = 'ses_main'
+    const childSessionID = 'ses_child_1'
+    const created = entry(sessionCreated({ sessionID: childSessionID, parentID: mainSessionID }))
+    const events = [created]
+    expect(isDerivedChildSession({
+      events,
+      mainSessionId: mainSessionID,
+      candidateSessionId: childSessionID,
+    })).toBe(true)
+    expect(getDerivedSubtaskIndex({
+      events,
+      mainSessionId: mainSessionID,
+      candidateSessionId: childSessionID,
+    })).toBeUndefined()
+  })
+
+  test('keeps parallel sibling identity from compact progress and reversed terminal replay', () => {
+    const mainSessionID = 'ses_main'
+    const firstChild = 'ses_child_1'
+    const secondChild = 'ses_child_2'
+    const firstStarted: Extract<V2Event, { type: 'session.tool.input.started' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.input.started',
+      durable: durable(),
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_parent',
+        id: 'call_a',
+        name: 'subagent',
+      },
+    }
+    const firstCalled: Extract<V2Event, { type: 'session.tool.called' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.called',
+      durable: durable(),
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_parent',
+        id: 'call_a',
+        input: {
+          agent: 'explore',
+          description: 'Inspect first',
+          prompt: 'Inspect the first child',
+        },
+        executed: true,
+      },
+    }
+    const secondStarted: Extract<V2Event, { type: 'session.tool.input.started' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.input.started',
+      durable: durable(),
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_parent',
+        id: 'call_b',
+        name: 'subagent',
+      },
+    }
+    const secondCalled: Extract<V2Event, { type: 'session.tool.called' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.called',
+      durable: durable(),
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_parent',
+        id: 'call_b',
+        input: {
+          agent: 'explore',
+          description: 'Inspect second',
+          prompt: 'Inspect the second child',
+        },
+        executed: true,
+      },
+    }
+    const firstProgress = nativeSubagentProgress({
+      mainSessionID,
+      childSessionID: firstChild,
+      callID: 'call_a',
+    })
+    const secondProgress = nativeSubagentProgress({
+      mainSessionID,
+      childSessionID: secondChild,
+      callID: 'call_b',
+    })
+    const firstEvidence = compactSubagentRoutingEvidence(firstProgress)
+    const secondEvidence = compactSubagentRoutingEvidence(secondProgress)
+    if (!firstEvidence || !secondEvidence) {
+      throw new Error('Missing compact subagent routing evidence')
+    }
+    expect(JSON.stringify(firstEvidence).length).toBeLessThan(400)
+    expect(JSON.stringify(firstEvidence)).not.toContain('xxxxxxx')
+
+    const running = [
+      entry(firstStarted),
+      entry(firstCalled),
+      entry(secondStarted),
+      entry(secondCalled),
+      entry(firstEvidence),
+      entry(secondEvidence),
+    ]
+    expect(getDerivedSubtaskIndex({
+      events: running,
+      mainSessionId: mainSessionID,
+      candidateSessionId: firstChild,
+    })).toBe(1)
+    expect(getDerivedSubtaskIndex({
+      events: running,
+      mainSessionId: mainSessionID,
+      candidateSessionId: secondChild,
+    })).toBe(2)
+    expect(getDerivedSubtaskAgentType({
+      events: running,
+      mainSessionId: mainSessionID,
+      candidateSessionId: firstChild,
+    })).toBe('explore')
+    expect(getDerivedSubtaskAgentType({
+      events: running,
+      mainSessionId: mainSessionID,
+      candidateSessionId: secondChild,
+    })).toBe('explore')
+    expect(isDerivedChildSession({
+      events: running,
+      mainSessionId: mainSessionID,
+      candidateSessionId: firstChild,
+    })).toBe(true)
+
+    const secondSuccess: Extract<V2Event, { type: 'session.tool.success' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.success',
+      durable: { ...durable(), version: 2 },
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_parent',
+        id: 'call_b',
+        content: [{ type: 'text', text: 'second done' }],
+        metadata: { sessionID: secondChild, status: 'completed' },
+        executed: true,
+      },
+    }
+    const firstSuccess: Extract<V2Event, { type: 'session.tool.success' }> = {
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.success',
+      durable: { ...durable(), version: 2 },
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_parent',
+        id: 'call_a',
+        content: [{ type: 'text', text: 'first done' }],
+        metadata: { sessionID: firstChild, status: 'completed' },
+        executed: true,
+      },
+    }
+    const replay = [
+      entry(firstStarted),
+      entry(firstCalled),
+      entry(secondStarted),
+      entry(secondCalled),
+      entry(secondSuccess),
+      entry(firstSuccess),
+    ]
+    expect(getDerivedSubtaskIndex({
+      events: replay,
+      mainSessionId: mainSessionID,
+      candidateSessionId: firstChild,
+    })).toBe(1)
+    expect(getDerivedSubtaskIndex({
+      events: replay,
+      mainSessionId: mainSessionID,
+      candidateSessionId: secondChild,
+    })).toBe(2)
+    expect(getDerivedSubagentSessions({ events: replay, mainSessionId: mainSessionID }))
+      .toMatchInlineSnapshot(`
+        [
+          {
+            "childSessionId": "ses_child_1",
+            "description": "Inspect first",
+            "subagentType": "explore",
+            "timestamp": 1,
+          },
+          {
+            "childSessionId": "ses_child_2",
+            "description": "Inspect second",
+            "subagentType": "explore",
+            "timestamp": 1,
+          },
+        ]
+      `)
   })
 })
