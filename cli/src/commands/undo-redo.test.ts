@@ -75,6 +75,8 @@ test('loads more than 200 messages through opaque native cursors', async () => {
       client,
       sessionId: 'session-with-long-history',
     })
+    expect(messages).not.toBeInstanceOf(Error)
+    if (messages instanceof Error) throw messages
 
     expect(messages.map((message) => message.id)).toEqual(messageIds)
     expect(getUndoBoundary({

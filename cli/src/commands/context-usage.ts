@@ -15,6 +15,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { listAllMessages } from '../opencode-pagination.js'
 
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -106,11 +107,14 @@ export async function handleContextUsageCommand({
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   try {
-    const messagesResponse = await client.message.list({
-      sessionID: sessionId,
+    const messagesResult = await listAllMessages({
+      client,
+      sessionId,
+      order: 'asc',
     })
+    if (messagesResult instanceof Error) throw messagesResult
 
-    const messages = messagesResponse.data
+    const messages = messagesResult
     const assistantMessages = messages.filter(
       (m) => m.type === 'assistant',
     )

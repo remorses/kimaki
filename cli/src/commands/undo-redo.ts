@@ -16,6 +16,7 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { listAllMessages } from '../opencode-pagination.js'
 
 const logger = createLogger(LogPrefix.UNDO_REDO)
 
@@ -27,22 +28,17 @@ export async function listAllUserMessages({
 }: {
   client: OpencodeClient
   sessionId: string
-}): Promise<SessionMessageUser[]> {
-  const messages: SessionMessageUser[] = []
-  let cursor: string | undefined
-  do {
-    const page = await client.message.list({
-      sessionID: sessionId,
-      limit: 200,
-      ...(cursor ? { cursor } : { order: 'asc' as const }),
-      type: 'user',
-    })
-    messages.push(...page.data.filter((message): message is SessionMessageUser => {
-      return message.type === 'user'
-    }))
-    cursor = page.cursor.next ?? undefined
-  } while (cursor)
-  return messages
+}) {
+  const messages = await listAllMessages({
+    client,
+    sessionId,
+    order: 'asc',
+    type: 'user',
+  })
+  if (messages instanceof Error) return messages
+  return messages.filter((message): message is SessionMessageUser => {
+    return message.type === 'user'
+  })
 }
 
 export function getUndoBoundary<T extends UserMessageBoundary>({
