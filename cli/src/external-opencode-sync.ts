@@ -35,6 +35,7 @@ import { getRuntime, isEssentialToolPart } from './session-handler/thread-sessio
 import { notifyError } from './sentry.js'
 import { store } from './store.js'
 import { extractNonXmlContent } from './xml.js'
+import { listAllMessages } from './opencode-pagination.js'
 
 
 const logger = createLogger(LogPrefix.OPENCODE)
@@ -547,20 +548,15 @@ async function syncSessionToThread({
   sessionTitle?: string | null
   signal: AbortSignal
 }): Promise<void> {
-  const messagesResponse = await client.message.list({
-    sessionID: sessionId,
+  const messagesResult = await listAllMessages({
+    client,
+    sessionId,
     order: 'asc',
-  }).catch((error: unknown) => {
-    return new Error(`Failed to fetch messages for session ${sessionId}`, {
-      cause: error,
-    })
   })
-  if (messagesResponse instanceof Error) {
-    throw messagesResponse
-  }
+  if (messagesResult instanceof Error) throw messagesResult
   if (signal.aborted) return
   const messages = sessionMessagesToGeneric(
-    sessionMessagesAscending(messagesResponse.data),
+    sessionMessagesAscending(messagesResult),
   )
 
   // Pure derivation from opencode events: if the latest user turn has
@@ -740,6 +736,7 @@ async function syncDirectoryInner({
   const sessionsResponse = await client.session.list({
     directory,
     limit: EXTERNAL_SYNC_MAX_SESSIONS,
+    order: 'desc',
   }).catch((error: unknown) => {
     return new Error(`Failed to list sessions for ${directory}`, {
       cause: error,
