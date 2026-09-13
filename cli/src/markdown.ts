@@ -11,7 +11,9 @@ import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
-import { sessionMessagesAscending } from './message-formatting.js'
+import { readV2AssistantToolPart, sessionMessagesAscending } from './message-formatting.js'
+import { listAllMessages } from './opencode-pagination.js'
+import { KIMAKI_INSTRUCTION_ENTRY_KEY } from './system-message.js'
 
 // Generic error for unexpected exceptions in async operations
 class UnexpectedError extends errore.createTaggedError({
@@ -190,31 +192,12 @@ function toGenericSessionMessage(message: SessionMessageInfo) {
       },
       parts: message.content.map((part, index) => {
         if (part.type === 'tool') {
-          const input = (() => {
-            if (typeof part.state.input === 'string') {
-              const raw = part.state.input
-              const parsed = errore.try(() => JSON.parse(raw) as Record<string, unknown>)
-              if (parsed instanceof Error || !parsed || typeof parsed !== 'object') return {}
-              return parsed
-            }
-            return part.state.input
-          })()
-          const output = part.state.status === 'completed'
-            ? part.state.content
-              .filter((item) => item.type === 'text')
-              .map((item) => item.text)
-              .join('\n')
-            : ''
+          const { input, output, status, error } = readV2AssistantToolPart(part)
           return {
             id: part.id,
             type: 'tool' as const,
             tool: part.name,
-            state: {
-              status: part.state.status === 'error' ? 'error' as const : part.state.status === 'completed' ? 'completed' as const : 'pending' as const,
-              input,
-              output,
-              error: part.state.status === 'error' ? part.state.error : undefined,
-            },
+            state: { status, input, output, error },
           }
         }
         return {
@@ -269,16 +252,18 @@ export class ShareMarkdown {
       return session
     }
 
-    const messagesResponse = await this.client.message.list({
-      sessionID,
+    const messagesResult = await listAllMessages({
+      client: this.client,
+      sessionId: sessionID,
       order: 'asc',
-    }).catch((error: unknown) => {
-      return new MessagesNotFoundError({ sessionId: sessionID, cause: error })
     })
-    if (messagesResponse instanceof Error) {
-      return messagesResponse
+    if (messagesResult instanceof Error) {
+      return new MessagesNotFoundError({
+        sessionId: sessionID,
+        cause: messagesResult,
+      })
     }
-    const messages = sessionMessagesAscending(messagesResponse.data).map(toGenericSessionMessage)
+    const messages = sessionMessagesAscending(messagesResult).map(toGenericSessionMessage)
 
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
@@ -532,7 +517,8 @@ export async function getCompactSessionContext({
   const messagesResponse = await client.message
     .list({
       sessionID: sessionId,
-      order: 'asc',
+      limit: maxMessages,
+      order: 'desc',
     })
     .catch((e: unknown) => {
       markdownLogger.error('Failed to get compact session context:', e)
@@ -546,26 +532,21 @@ export async function getCompactSessionContext({
 
   const lines: string[] = []
 
-  // Get system prompt if requested
-  // Note: OpenCode SDK doesn't expose system prompt directly. We try multiple approaches:
-  // 1. session.system field (if available in future SDK versions)
-  // 2. synthetic text part in first assistant message (current approach)
-  if (includeSystemPrompt && messages.length > 0) {
-    const firstAssistant = messages.find((m) => m.info.role === 'assistant')
-    if (firstAssistant) {
-      // look for text part marked as synthetic (system prompt)
-      const systemPart = (firstAssistant.parts || []).find(
-        (p) => p.type === 'text' && 'synthetic' in p && p.synthetic === true,
-      )
-      if (systemPart?.type === 'text' && systemPart.text) {
-        lines.push('[System Prompt]')
-        const truncated = systemPart.text.slice(0, 3000)
-        lines.push(truncated)
-        if (systemPart.text.length > 3000) {
-          lines.push('...(truncated)')
-        }
-        lines.push('')
+  // Get system prompt if requested. In native v2 the Kimaki system prompt is a
+  // session instruction entry (key 'kimaki'), not a synthetic message part.
+  if (includeSystemPrompt) {
+    const entries = await client.session.instructions.entry
+      .list({ sessionID: sessionId })
+      .catch(() => null)
+    const kimakiEntry = entries?.find((entry) => entry.key === KIMAKI_INSTRUCTION_ENTRY_KEY)
+    const systemPrompt = typeof kimakiEntry?.value === 'string' ? kimakiEntry.value : ''
+    if (systemPrompt) {
+      lines.push('[System Prompt]')
+      lines.push(systemPrompt.slice(0, 3000))
+      if (systemPrompt.length > 3000) {
+        lines.push('...(truncated)')
       }
+      lines.push('')
     }
   }
 
@@ -650,7 +631,11 @@ export async function getLastSessionId({
   if (!requestedDirectory) {
     return new UnexpectedError({ message: 'A project directory is required to list sessions' })
   }
-  const sessionsResponse = await client.session.list({ directory: requestedDirectory }).catch((e: unknown) => {
+  const sessionsResponse = await client.session.list({
+    directory: requestedDirectory,
+    limit: 2,
+    order: 'desc',
+  }).catch((e: unknown) => {
     markdownLogger.error('Failed to get last session:', e)
     return new UnexpectedError({
       message: 'Failed to get last session',

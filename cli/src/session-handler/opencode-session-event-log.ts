@@ -10,6 +10,7 @@ import { FilesystemOperationError } from '../errors.js'
 type LooseEvent = {
   type: string
   data?: unknown
+  location?: unknown
   properties?: unknown
 }
 
@@ -66,40 +67,19 @@ async function resolveEventLogDirectory(): Promise<string> {
   return eventLogDirPromise
 }
 
-export type OpencodeEventLogEntry = {
-  timestamp: number
-  threadId: string
-  projectDirectory: string
-  event: LooseEvent
-}
-
-export function buildOpencodeEventLogLine({
-  timestamp,
-  threadId,
-  projectDirectory,
-  event,
-}: {
-  timestamp: number
-  threadId: string
-  projectDirectory: string
-  event: LooseEvent
-}): OpencodeEventLogEntry {
-  return {
-    timestamp,
-    threadId,
-    projectDirectory,
-    event,
-  }
+export function serializeOpencodeEventsJsonl(events: LooseEvent[]): string {
+  const lines = events.map((event) => JSON.stringify(event))
+  return `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`
 }
 
 export async function appendOpencodeSessionEventLog(
-  entry: Omit<OpencodeEventLogEntry, 'timestamp'>,
+  event: LooseEvent,
 ): Promise<Error | null> {
   if (!isOpencodeSessionEventLogEnabled() || eventLogWriteDisabled) {
     return null
   }
 
-  const sessionId = getOpencodeEventSessionId(entry.event)
+  const sessionId = getOpencodeEventSessionId(event)
   if (!sessionId) {
     return null
   }
@@ -114,15 +94,7 @@ export async function appendOpencodeSessionEventLog(
   const safeSessionId = sanitizeSessionIdForFilename(sessionId)
   const logFilePath = path.join(logDirResult, `${safeSessionId}.jsonl`)
 
-  const now = Date.now()
-  const line = `${JSON.stringify(
-    buildOpencodeEventLogLine({
-      timestamp: now,
-      threadId: entry.threadId,
-      projectDirectory: entry.projectDirectory,
-      event: entry.event,
-    }),
-  )}\n`
+  const line = serializeOpencodeEventsJsonl([event])
 
   const appendResult = await fs.promises.appendFile(logFilePath, line, 'utf8')
     .catch((e) => new FilesystemOperationError({ operation: 'appendEventLog', cause: e }))
