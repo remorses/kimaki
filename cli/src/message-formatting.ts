@@ -183,28 +183,14 @@ export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): Generi
           const ordinals = { text: 0, reasoning: 0 }
           return message.content.flatMap((part): DiscordSessionPart[] => {
             if (part.type === 'tool') {
-              const output = part.state.status === 'completed'
-                ? part.state.content
-                  .filter((item) => item.type === 'text')
-                  .map((item) => item.text)
-                  .join('\n')
-                : ''
+              const { input, output, status, error } = readV2AssistantToolPart(part)
               return [{
                 id: discordToolPartId({ messageID: message.id, toolId: part.id }),
                 type: 'tool',
                 sessionID: '',
                 messageID: message.id,
                 tool: part.name,
-                state: {
-                  status: part.state.status === 'error'
-                    ? 'error'
-                    : part.state.status === 'completed'
-                      ? 'completed'
-                      : 'running',
-                  input: parseToolInput(part.state.input),
-                  output,
-                  error: part.state.status === 'error' ? formatToolError(part.state.error) : undefined,
-                },
+                state: { status, input, output, error },
               }]
             }
             if (part.type === 'reasoning') {
@@ -249,6 +235,47 @@ function formatToolError(error: unknown): string {
     return error.message
   }
   return 'Tool failed'
+}
+
+type V2AssistantToolPart = {
+  state: {
+    status: string
+    input?: unknown
+    content?: ReadonlyArray<{ type: string; text?: string }>
+    error?: unknown
+  }
+}
+
+/**
+ * Parse a native v2 assistant tool part into the fields both the Discord and
+ * share-markdown renderers need. Single source of truth for tool input/output
+ * extraction so the two converters don't duplicate the parsing logic.
+ */
+export function readV2AssistantToolPart(part: V2AssistantToolPart): {
+  input: Record<string, unknown>
+  output: string
+  status: 'completed' | 'error' | 'running'
+  error?: string
+} {
+  const status =
+    part.state.status === 'error'
+      ? 'error'
+      : part.state.status === 'completed'
+        ? 'completed'
+        : 'running'
+  const output =
+    status === 'completed' && Array.isArray(part.state.content)
+      ? part.state.content
+          .filter((item) => item.type === 'text')
+          .map((item) => item.text ?? '')
+          .join('\n')
+      : ''
+  return {
+    input: parseToolInput(part.state.input),
+    output,
+    status,
+    error: status === 'error' ? formatToolError(part.state.error) : undefined,
+  }
 }
 
 const logger = createLogger(LogPrefix.FORMATTING)
