@@ -160,6 +160,7 @@ import {
   hasAssistantMessageCompletedBefore,
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
+  shouldBufferSessionEvent,
   type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -1487,10 +1488,14 @@ export class ThreadSessionRuntime {
   // Subtask sessions also bypass — they're tracked in subtaskSessions.
 
   private async handleEvent(event: OpenCodeEvent): Promise<void> {
-    // session.diff can carry repeated full-file before/after snapshots and is
-    // not used by event-derived runtime state, queueing, typing, or UI routing.
-    // Drop it at ingress so large diff payloads never hit memory buffers.
-    if (event.type === 'session.diff') {
+    const sessionId = this.state?.sessionId
+    if (!shouldBufferSessionEvent({
+      event,
+      mainSessionId: sessionId,
+      isKnownChildSession: (candidateSessionId) => {
+        return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
+      },
+    })) {
       return
     }
 
@@ -1504,8 +1509,6 @@ export class ThreadSessionRuntime {
     if (event.type !== 'message.part.delta') {
       this.appendEventToBuffer(event)
     }
-
-    const sessionId = this.state?.sessionId
 
     const eventSessionId = getOpencodeEventSessionId(event)
     const toastSessionId = event.type === 'tui.toast.show'

@@ -16,6 +16,35 @@ export function isOpencodeSessionEventLogEnabled(): boolean {
   return process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS'] === '1'
 }
 
+function sessionIdFromEventProperties(properties: OpenCodeEvent['properties']): string | undefined {
+  if (!properties || typeof properties !== 'object') {
+    return undefined
+  }
+  const sessionID = Reflect.get(properties, 'sessionID')
+  if (typeof sessionID === 'string') {
+    return sessionID
+  }
+  const info = Reflect.get(properties, 'info')
+  if (info && typeof info === 'object') {
+    const id = Reflect.get(info, 'id')
+    if (typeof id === 'string') {
+      return id
+    }
+    const infoSessionId = Reflect.get(info, 'sessionID')
+    if (typeof infoSessionId === 'string') {
+      return infoSessionId
+    }
+  }
+  const part = Reflect.get(properties, 'part')
+  if (part && typeof part === 'object') {
+    const partSessionId = Reflect.get(part, 'sessionID')
+    if (typeof partSessionId === 'string') {
+      return partSessionId
+    }
+  }
+  return undefined
+}
+
 export function getOpencodeEventSessionId(event: OpenCodeEvent): string | undefined {
   switch (event.type) {
     case 'message.updated':
@@ -40,7 +69,8 @@ export function getOpencodeEventSessionId(event: OpenCodeEvent): string | undefi
     case 'session.deleted':
       return event.properties.info.id
     default:
-      return undefined
+      // session.next.* and later SDK events put sessionID on properties.
+      return sessionIdFromEventProperties(event.properties)
   }
 }
 

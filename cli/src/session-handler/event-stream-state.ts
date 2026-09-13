@@ -1284,6 +1284,43 @@ function getParentIdFromSessionEvent(event: EventBufferEvent): {
   }
 }
 
+// Global SSE is broadcast to every thread. Buffer only this thread's session
+// plus its task/subagent children. /btw fork clones history onto a new
+// sessionId; those events must not evict the parent's latest-turn buffer.
+export function shouldBufferSessionEvent({
+  event,
+  mainSessionId,
+  isKnownChildSession,
+}: {
+  event: EventBufferEvent
+  mainSessionId?: string
+  isKnownChildSession: (sessionId: string) => boolean
+}): boolean {
+  if (event.type === 'session.diff' || event.type.endsWith('.delta')) {
+    return false
+  }
+  if (event.type === 'tui.toast.show') {
+    return true
+  }
+
+  const eventSessionId = getEventBufferSessionId(event)
+  if (!eventSessionId || !mainSessionId) {
+    return true
+  }
+  if (eventSessionId === mainSessionId) {
+    return true
+  }
+  if (isKnownChildSession(eventSessionId)) {
+    return true
+  }
+
+  const parented = getParentIdFromSessionEvent(event)
+  if (!parented) {
+    return false
+  }
+  return parented.parentID === mainSessionId || isKnownChildSession(parented.parentID)
+}
+
 // Child sessions of the main thread: task tool metadata.sessionId, plus
 // session.created/updated parentID (available before task metadata lands).
 export function getDerivedChildSessionIds({

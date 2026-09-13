@@ -28,6 +28,7 @@ import {
   isSessionBusy,
   isAssistantTextReadyForQuestion,
   deriveLatestUnansweredQuestion,
+  shouldBufferSessionEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
 
@@ -1897,5 +1898,145 @@ describe('question waits for preceding text-end', () => {
       events,
       sessionId,
     })).toBeUndefined()
+  })
+})
+
+describe('shouldBufferSessionEvent', () => {
+  const mainSessionId = 'ses_parent'
+  const childSessionId = 'ses_child'
+  const btwSessionId = 'ses_btw_fork'
+
+  test('keeps the thread session and drops unrelated /btw fork events', () => {
+    const parentBusy = eventEntry({
+      type: 'session.status',
+      properties: {
+        sessionID: mainSessionId,
+        status: { type: 'busy' },
+      },
+    }).event
+    const btwClone = eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: btwSessionId,
+        info: {
+          id: 'msg_cloned',
+          sessionID: btwSessionId,
+          role: 'user',
+          time: { created: 1 },
+          agent: 'build',
+          model: { providerID: 'test', modelID: 'test' },
+        },
+      },
+    }).event
+
+    expect(shouldBufferSessionEvent({
+      event: parentBusy,
+      mainSessionId,
+      isKnownChildSession: () => false,
+    })).toBe(true)
+    expect(shouldBufferSessionEvent({
+      event: btwClone,
+      mainSessionId,
+      isKnownChildSession: () => false,
+    })).toBe(false)
+  })
+
+  test('keeps the first child session.created so later child events can be recognized', () => {
+    const childCreated = eventEntry({
+      type: 'session.created',
+      properties: {
+        info: {
+          id: childSessionId,
+          parentID: mainSessionId,
+          title: 'task',
+          version: '1',
+          projectID: 'proj',
+          directory: '/test',
+          time: { created: 1, updated: 1 },
+        },
+      },
+    }).event
+
+    expect(shouldBufferSessionEvent({
+      event: childCreated,
+      mainSessionId,
+      isKnownChildSession: () => false,
+    })).toBe(true)
+  })
+
+  test('keeps known child session events and global toasts', () => {
+    const childBusy = eventEntry({
+      type: 'session.status',
+      properties: {
+        sessionID: childSessionId,
+        status: { type: 'busy' },
+      },
+    }).event
+    const toast = eventEntry({
+      type: 'tui.toast.show',
+      properties: {
+        title: 'ok',
+        message: 'done',
+        variant: 'info',
+      },
+    }).event
+    const diff = eventEntry({
+      type: 'session.diff',
+      properties: {
+        sessionID: mainSessionId,
+        diff: [],
+      },
+    }).event
+
+    expect(shouldBufferSessionEvent({
+      event: childBusy,
+      mainSessionId,
+      isKnownChildSession: (sessionId) => sessionId === childSessionId,
+    })).toBe(true)
+    expect(shouldBufferSessionEvent({
+      event: toast,
+      mainSessionId,
+      isKnownChildSession: () => false,
+    })).toBe(true)
+    expect(shouldBufferSessionEvent({
+      event: diff,
+      mainSessionId,
+      isKnownChildSession: () => false,
+    })).toBe(false)
+  })
+
+  test('drops unrelated session.next text deltas that lack a typed session helper', () => {
+    const btwDelta = eventEntry({
+      type: 'session.next.text.delta',
+      properties: {
+        timestamp: 1,
+        sessionID: btwSessionId,
+        assistantMessageID: 'msg_btw',
+        textID: 'txt_btw',
+        delta: 'x',
+      },
+    }).event
+    const parentDelta = eventEntry({
+      type: 'session.next.text.delta',
+      properties: {
+        timestamp: 1,
+        sessionID: mainSessionId,
+        assistantMessageID: 'msg_parent',
+        textID: 'txt_parent',
+        delta: 'x',
+      },
+    }).event
+
+    expect(getEventBufferSessionId(btwDelta)).toBe(btwSessionId)
+    expect(shouldBufferSessionEvent({
+      event: btwDelta,
+      mainSessionId,
+      isKnownChildSession: () => false,
+    })).toBe(false)
+    expect(shouldBufferSessionEvent({
+      event: parentDelta,
+      mainSessionId,
+      isKnownChildSession: () => false,
+    })).toBe(false)
   })
 })
