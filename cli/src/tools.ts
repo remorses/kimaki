@@ -175,25 +175,6 @@ export async function getTools({
   })
   const providers = [...new Set(modelsResponse.data.map((model) => model.providerID))]
 
-  // Helper: get last assistant model for a session (non-summary)
-  const getSessionModel = async (
-    sessionId: string,
-  ): Promise<{ providerID: string; modelID: string } | undefined> => {
-    const res = await getClient().message.list({
-      sessionID: sessionId,
-      order: 'asc',
-    })
-    const data = res.data
-    if (data.length === 0) return undefined
-    for (let i = data.length - 1; i >= 0; i--) {
-      const info = data[i]
-      if (info?.type === 'assistant' && info.model.providerID && info.model.id) {
-        return { providerID: info.model.providerID, modelID: info.model.id }
-      }
-    }
-    return undefined
-  }
-
   const tools = {
     submitMessage: tool({
       description:
@@ -203,8 +184,6 @@ export async function getTools({
         message: z.string().describe('The message text to send'),
       }),
       execute: async ({ sessionId, message }) => {
-        const sessionModel = await getSessionModel(sessionId)
-
         void submitVoicePrompt({ sessionId, message })
         return {
           success: true,
