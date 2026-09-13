@@ -141,6 +141,38 @@ function listenOnEphemeralPort() {
   })
 }
 
+function listen({
+  server,
+  port = 0,
+}: {
+  server: http.Server
+  port?: number
+}): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.listen(port, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        reject(new Error('Failed to listen on a TCP port'))
+        return
+      }
+      resolve(address.port)
+    })
+    server.on('error', reject)
+  })
+}
+
+function closeServer(server: http.Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve()
+    })
+  })
+}
+
 describe('OpenCode server lifecycle', () => {
   let sandbox = ''
   let previousOpencode2Path: string | undefined
@@ -205,6 +237,49 @@ describe('OpenCode server lifecycle', () => {
     expect(getOpencodeServerPort()).toBeNull()
   })
 
+  test('discovered server publishes committed transitions and is never stopped', async () => {
+    const discoveredServer = http.createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end('[]')
+    })
+    const discoveredPort = await listen({ server: discoveredServer })
+    const password = 'discovered-password'
+    const lockServer = http.createServer((request, response) => {
+      if (request.url !== '/kimaki/opencode-port') {
+        response.writeHead(404)
+        response.end()
+        return
+      }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ port: discoveredPort, password }))
+    })
+    const lockPort = Number(process.env.KIMAKI_LOCK_PORT)
+    await listen({ server: lockServer, port: lockPort })
+    store.setState({ gatewayToken: 'discovery-token' })
+    const lifecycle: Array<'started' | 'stopped'> = []
+    const unsubscribe = subscribeOpencodeServerLifecycle((event) => {
+      lifecycle.push(event.type)
+    })
+
+    try {
+      const projectDirectory = path.join(sandbox, 'discovered-project')
+      fs.mkdirSync(projectDirectory, { recursive: true })
+      const client = await initializeOpencodeForDirectory(projectDirectory)
+      if (client instanceof Error) throw client
+      expect(getOpencodeServerPort()).toBe(discoveredPort)
+      expect(await stopOpencodeServer()).toBe(true)
+
+      const response = await fetch(`http://127.0.0.1:${discoveredPort}/api/session/active`)
+      expect(response.status).toBe(200)
+      expect(lifecycle).toEqual(['started', 'stopped'])
+    } finally {
+      unsubscribe()
+      store.setState({ gatewayToken: null })
+      await closeServer(lockServer)
+      await closeServer(discoveredServer)
+    }
+  })
+
   test('stopOpencodeServer resolves when the child exits', async () => {
     const fake = writeFakeOpencode({ contents: EXIT_130_JS, fileName: 'fake-opencode.mjs' })
     fakeDirs.push(fake.directory)
@@ -224,6 +299,33 @@ describe('OpenCode server lifecycle', () => {
 
     expect(fs.existsSync(exitFile)).toBe(true)
     expect(elapsedMs).toBeLessThan(500)
+  })
+
+  test('concurrent initialization commits one server startup', async () => {
+    const fake = writeFakeOpencode({ contents: EXIT_130_JS, fileName: 'fake-opencode.mjs' })
+    fakeDirs.push(fake.directory)
+    process.env.OPENCODE2_PATH = fake.filePath
+    process.env.OPENCODE_PATH = fake.filePath
+    const projectDirectory = path.join(sandbox, 'concurrent-project')
+    fs.mkdirSync(projectDirectory, { recursive: true })
+    const lifecycle: Array<'started' | 'stopped'> = []
+    const unsubscribe = subscribeOpencodeServerLifecycle((event) => {
+      lifecycle.push(event.type)
+    })
+
+    try {
+      const clients = await Promise.all(
+        Array.from({ length: 8 }, () => initializeOpencodeForDirectory(projectDirectory)),
+      )
+      for (const client of clients) {
+        if (client instanceof Error) throw client
+      }
+      expect(lifecycle).toEqual(['started'])
+      expect(await stopOpencodeServer()).toBe(true)
+      expect(lifecycle).toEqual(['started', 'stopped'])
+    } finally {
+      unsubscribe()
+    }
   })
 
   test('force-stops a child that does not exit after SIGTERM', async () => {
