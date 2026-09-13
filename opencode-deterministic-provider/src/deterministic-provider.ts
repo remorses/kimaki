@@ -81,6 +81,7 @@ export type DeterministicMatcher = {
     rawPromptRegex?: string
     latestUserTextEquals?: string
     latestUserTextIncludes?: string
+    latestUserTextExcludes?: string
     latestUserTextRegex?: string
   }
   then: {
@@ -459,6 +460,12 @@ function matcherMatches({
   if (
     when.latestUserTextIncludes !== undefined &&
     !latestUserText.includes(when.latestUserTextIncludes)
+  ) {
+    return false
+  }
+  if (
+    when.latestUserTextExcludes !== undefined &&
+    latestUserText.includes(when.latestUserTextExcludes)
   ) {
     return false
   }
