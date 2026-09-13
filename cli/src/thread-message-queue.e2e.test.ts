@@ -1055,6 +1055,13 @@ e2eTest('thread message queue ordering', () => {
         userMessageIncludes: 'india',
         timeout: 4_000,
       })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'india',
+        afterAuthorId: TEST_USER_ID,
+      })
 
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
