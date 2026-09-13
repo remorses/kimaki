@@ -3,6 +3,9 @@
 // API keys, and model preferences in <dataDir>/discord-sessions.db.
 
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import * as errore from 'errore'
 import * as orm from 'drizzle-orm'
 
 import { getDb, closeDb } from './db.js'
@@ -1107,6 +1110,36 @@ export async function findChannelsByDirectory({ directory, channelType }: { dire
         ? { channel_type: channelType }
         : undefined
   return db.query.channel_directories.findMany({ where, columns: { channel_id: true, directory: true, channel_type: true, guild_id: true } })
+}
+
+function canonicalizeDirectory(directory: string) {
+  const resolved = path.resolve(directory)
+  const real = errore.try(
+    () => fs.realpathSync(resolved),
+    (e) => new Error('realpath failed', { cause: e }),
+  )
+  if (real instanceof Error) return resolved
+  return real
+}
+
+export async function findRegisteredTextChannelForDirectory(directory: string) {
+  const wanted = canonicalizeDirectory(directory)
+  const channels = await findChannelsByDirectory({ channelType: 'text' })
+  return channels.find((ch) => canonicalizeDirectory(ch.directory) === wanted) ?? null
+}
+
+export function formatProjectAlreadyRegisteredError({
+  channelId,
+  directory,
+}: {
+  channelId: string
+  directory: string
+}) {
+  return [
+    `Channel already exists for this directory: ${directory}`,
+    `Channel ID: ${channelId}`,
+    `Remove the mapping first: kimaki project remove ${channelId}`,
+  ].join('\n')
 }
 
 export async function getAllTextChannelDirectories() {

@@ -1,10 +1,13 @@
 /**
  * Interactive Discord playground for the homepage hero.
- * Sizes are em-based so the parent font-size scales the whole window.
+ * Scripted Kimaki sessions (voice, queue, permissions, selects, worktrees)
+ * with Discord UI. Sizes are em-based so the parent font-size scales the window.
  */
 'use client'
 
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+
+type PlaygroundPermission = 'accept' | 'always' | 'deny'
 
 type PlaygroundMessage = {
   author: 'user' | 'kimaki'
@@ -16,13 +19,36 @@ type PlaygroundMessage = {
     height: number
   }
   cta?: boolean
+  footer?: string
+  voice?: {
+    duration: string
+  }
+  permission?: boolean
+  select?: {
+    header: string
+    question: string
+    options: {
+      label: string
+      description: string
+    }[]
+  }
+  queueAck?: boolean
+  reveal?: 'select' | 'permission-accept' | 'permission-deny' | 'queue-kept'
+}
+
+type PlaygroundThreadUi = {
+  selectAnswer?: string
+  permission?: PlaygroundPermission
+  queueRemoved?: boolean
+  queueDrained?: boolean
 }
 
 const DEPLOY_REPLY: PlaygroundMessage = {
   author: 'kimaki',
   time: 'Today at 4:01 PM',
-  text: 'to start using kimaki deploy your own kimaki',
+  text: 'To start using Kimaki, deploy your own bot with `npx -y kimaki@latest`.',
   cta: true,
+  footer: 'kimaki ⋅ main ⋅ 2s ⋅ 4% ⋅ claude-opus-4-6',
 }
 
 const CHANNELS: {
@@ -31,111 +57,241 @@ const CHANNELS: {
   threads: {
     id: string
     name: string
+    title: string
+    summary: string
     messages: PlaygroundMessage[]
   }[]
 }[] = [
   {
-    id: 'chief',
-    name: 'chief',
+    id: 'web-app',
+    name: 'web-app',
     threads: [
       {
-        id: 'book-the-venue',
-        name: 'book the venue',
+        id: 'voice-login-timeout',
+        name: 'midjourney still',
+        title: 'Generate a Midjourney still from a voice note',
+        summary:
+          'Record a voice note. Kimaki transcribes it, then drives Midjourney in the browser.',
         messages: [
           {
+            author: 'user',
+            time: 'Today at 2:14 PM',
+            text: '',
+            voice: { duration: '0:08' },
+          },
+          {
             author: 'kimaki',
-            time: 'Yesterday at 3:59 PM',
-            text: 'morning briefing:\n✓ Calendar → 2pm double-booking resolved · board review kept\n✓ Deck → numbers checked against finance\'s sheet · 2 stale slides flagged\n✓ Offsite → 3 venues shortlisted · dates held on each\n\ntwo things need you today: the deck review at 2pm, and a yes/no on the venue. everything else is handled.',
+            time: 'Today at 2:14 PM',
+            text: 'Transcribing voice message...',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 2:14 PM',
+            text: '📝 **Transcribed message:** open midjourney in the browser and generate a still. pale light, almost nothing in it.',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 2:14 PM',
+            text: '▏bash playwriter open https://www.midjourney.com/imagine',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 2:15 PM',
+            text: 'here.',
+            image: {
+              src: '/playground/gen-2.jpg',
+              width: 800,
+              height: 533,
+            },
+            footer: 'web-app ⋅ main ⋅ 41s ⋅ 14% ⋅ claude-opus-4-6',
+          },
+        ],
+      },
+      {
+        id: 'queue-commit-after-refactor',
+        name: 'queue a commit',
+        title: 'Queue a commit after the refactor',
+        summary:
+          'Line up a follow-up for when the current run finishes. Kimaki commits after the refactor.',
+        messages: [
+          {
+            author: 'user',
+            time: 'Today at 3:02 PM',
+            text: 'extract formatFooter into cli/src/session-footer.ts',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 3:02 PM',
+            text: '▎write cli/src/session-footer.ts',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 3:02 PM',
+            text: '▎edit cli/src/session-handler/thread-session-runtime.ts',
           },
           {
             author: 'user',
-            time: 'Yesterday at 6:59 PM',
-            text: "take the venue, i'll do the deck",
+            time: 'Today at 3:03 PM',
+            text: 'commit this when you are done. queue',
           },
           {
             author: 'kimaki',
-            time: 'Yesterday at 6:59 PM',
-            text: "the marina house is the pick: seats all 40, the mid-week rate came in 15% under budget, and they'll hold the date until tomorrow.",
-          },
-          {
-            author: 'user',
-            time: 'Yesterday at 7:59 PM',
-            text: 'book it',
+            time: 'Today at 3:03 PM',
+            text: 'Queued message (position 1)',
+            queueAck: true,
           },
           {
             author: 'kimaki',
-            time: 'Yesterday at 7:59 PM',
-            text: '✓ Venue → marina house booked · deposit paid\n✓ Calendar → invites updated for all 40\n✓ Holds → other two released with a thank-you',
+            time: 'Today at 3:03 PM',
+            text: 'Moved `formatFooter` into `cli/src/session-footer.ts` and pointed the runtime at it.',
+            footer: 'web-app ⋅ main ⋅ 48s ⋅ 17% ⋅ claude-opus-4-6',
           },
           {
             author: 'kimaki',
-            time: 'Yesterday at 7:59 PM',
-            text: "booked the venue and sent the confirmation around. you're clear until the 2pm deck review.",
+            time: 'Today at 3:03 PM',
+            text: '⺩**Tommy:** commit this when you are done',
+            reveal: 'queue-kept',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 3:03 PM',
+            text: '▏bash git commit',
+            reveal: 'queue-kept',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 3:03 PM',
+            text: 'Committed on main: extract formatFooter helper.',
+            footer: 'web-app ⋅ main ⋅ 12s ⋅ 19% ⋅ claude-opus-4-6',
+            reveal: 'queue-kept',
           },
         ],
       },
     ],
   },
   {
-    id: 'sales-outbound',
-    name: 'sales-outbound',
+    id: 'api',
+    name: 'api',
     threads: [
       {
-        id: 'overnight-pipeline',
-        name: 'overnight pipeline',
+        id: 'approve-production-migration',
+        name: 'prod migration',
+        title: 'Approve a production database migration',
+        summary:
+          'Kimaki asks before a dangerous command. Accept once, always allow, or deny.',
         messages: [
           {
-            author: 'kimaki',
-            time: 'Today at 3:59 PM',
-            text: 'Hey Armand, good to meet you. What do you want me around for? Anything concrete, or more of a general sidekick?',
+            author: 'user',
+            time: 'Today at 11:41 AM',
+            text: 'run the production migration',
           },
+          {
+            author: 'kimaki',
+            time: 'Today at 11:41 AM',
+            text: '⚠️ **Permission Required**\n**Type:** `bash`\n**Pattern:** `pnpm db:migrate --prod`',
+            permission: true,
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 11:41 AM',
+            text: '▏bash pnpm db:migrate --prod',
+            reveal: 'permission-accept',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 11:41 AM',
+            text: 'Applied 3 migrations. `users` now has `last_seen_at`.',
+            footer: 'api ⋅ main ⋅ 22s ⋅ 8% ⋅ claude-opus-4-6',
+            reveal: 'permission-accept',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 11:41 AM',
+            text: 'Skipped the production migrate. Say if you want a dry-run against staging instead.',
+            footer: 'api ⋅ main ⋅ 4s ⋅ 6% ⋅ claude-opus-4-6',
+            reveal: 'permission-deny',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'docs',
+    name: 'docs',
+    threads: [
+      {
+        id: 'pick-docs-rewrite',
+        name: 'rewrite getting-started',
+        title: 'Pick a rewrite strategy from a dropdown',
+        summary:
+          'The agent asks with a Discord dropdown. Your pick is posted back as the next message.',
+        messages: [
           {
             author: 'user',
-            time: 'Today at 3:59 PM',
-            text: 'Overnight pipeline generation and outbound.\n\nPick eligible prospects from this Google Sheet, research them on the web, grab context on contacts and accounts from Hex, Sumble, and Salesforce. Draft email and LinkedIn sequences in my voice.',
+            time: 'Today at 4:18 PM',
+            text: 'rewrite getting-started so a new user can install in one minute',
           },
           {
             author: 'kimaki',
-            time: 'Today at 4:00 PM',
-            text: 'Done.',
-            image: {
-              src: '/playground/gen-3.jpg',
-              width: 800,
-              height: 448,
+            time: 'Today at 4:18 PM',
+            text: '',
+            select: {
+              header: 'Tone',
+              question: 'Which voice should the page use?',
+              options: [
+                {
+                  label: 'Casual, with code first',
+                  description: 'Lead with the install command, then explain',
+                },
+                {
+                  label: 'Formal reference',
+                  description: 'Full options, flags, and edge cases',
+                },
+                {
+                  label: 'Short checklist',
+                  description: 'Numbered steps only, almost no prose',
+                },
+              ],
             },
           },
-        ],
-      },
-      {
-        id: 'send-the-top-10',
-        name: 'send the top 10',
-        messages: [
           {
-            author: 'user',
-            time: 'Today at 4:00 PM',
-            text: 'The top 10 look good. Send it. Run this every week.',
+            author: 'kimaki',
+            time: 'Today at 4:18 PM',
+            text: '⺩**Tommy:** {select}',
+            reveal: 'select',
           },
           {
             author: 'kimaki',
-            time: 'Today at 4:00 PM',
-            text: 'Done.',
+            time: 'Today at 4:18 PM',
+            text: '▎write docs/getting-started.mdx',
+            reveal: 'select',
+          },
+          {
+            author: 'kimaki',
+            time: 'Today at 4:19 PM',
+            text: 'Rewrote it around `npx -y kimaki@latest` first, then the Discord install click.',
+            footer: 'docs ⋅ main ⋅ 41s ⋅ 15% ⋅ claude-opus-4-6',
+            reveal: 'select',
           },
         ],
       },
     ],
   },
   {
-    id: 'image-gen',
-    name: 'image-gen',
+    id: 'website',
+    name: 'website',
     threads: [
       {
-        id: 'soft-light-still',
-        name: 'soft light still',
+        id: 'landing-hero-still',
+        name: 'landing hero still',
+        title: 'Generate a still for the landing hero',
+        summary:
+          'Type a prompt. Kimaki generates the image and shows it inline in the thread.',
         messages: [
           {
             author: 'user',
             time: 'Today at 1:12 PM',
-            text: 'generate a still. pale light, almost nothing in it.',
+            text: 'generate a still for the landing hero. pale light, almost nothing in it.',
           },
           {
             author: 'kimaki',
@@ -146,216 +302,42 @@ const CHANNELS: {
               width: 800,
               height: 448,
             },
+            footer: 'website ⋅ main ⋅ 9s ⋅ 6% ⋅ gemini-3-pro',
           },
         ],
       },
       {
-        id: 'darkroom-streak',
-        name: 'darkroom streak',
+        id: 'isolated-dark-mode-worktree',
+        name: 'dark-mode worktree',
+        title: 'Build dark mode in an isolated worktree',
+        summary:
+          '/new-worktree moves this session into an isolated folder so main stays clean.',
         messages: [
           {
             author: 'user',
-            time: 'Today at 1:18 PM',
-            text: 'darker this time. one streak of light.',
+            time: 'Today at 5:08 PM',
+            text: '/new-worktree dark-mode',
           },
           {
             author: 'kimaki',
-            time: 'Today at 1:19 PM',
-            text: 'uploaded.',
-            image: {
-              src: '/playground/gen-2.jpg',
-              width: 800,
-              height: 533,
-            },
-          },
-        ],
-      },
-      {
-        id: 'violet-grain',
-        name: 'violet grain',
-        messages: [
-          {
-            author: 'user',
-            time: 'Today at 1:22 PM',
-            text: 'grain, violet, like a scan.',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 1:23 PM',
-            text: 'done.',
-            image: {
-              src: '/playground/gen-3.jpg',
-              width: 800,
-              height: 448,
-            },
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'inbox-manager',
-    name: 'inbox-manager',
-    threads: [
-      {
-        id: 'inbox-at-zero',
-        name: 'inbox at zero',
-        messages: [
-          {
-            author: 'user',
-            time: 'Today at 11:59 AM',
-            text: 'inbox got away from me over the weekend, sweep it?',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 11:59 AM',
-            text: "on it. 41 unread since friday. archiving the noise, drafting the rest.",
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 12:59 PM',
-            text: '✓ Archived → 26 newsletters + receipts\n✓ Replied → 9 routine threads · scheduling and intros\n✓ Drafted → 6 that sound like you · held for your read\n✓ Flagged → 1 from dana · contract question',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 12:59 PM',
-            text: "dana's asking whether the renewal covers the new seats. her draft answers yes and quotes the contract line. it's at the top of the held pile.",
+            time: 'Today at 5:08 PM',
+            text: 'Created worktree `opencode/kimaki-dark-mode`. This thread now edits an isolated checkout, not main.',
           },
           {
             author: 'user',
-            time: 'Today at 12:59 PM',
-            text: "send dana's, i'll take the rest tomorrow",
+            time: 'Today at 5:08 PM',
+            text: 'make the hero dark by default',
           },
           {
             author: 'kimaki',
-            time: 'Today at 12:59 PM',
-            text: 'sent. inbox is at zero, with 5 drafts parked for tomorrow.',
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'account-manager',
-    name: 'account-manager',
-    threads: [
-      {
-        id: 'acme-renewal',
-        name: 'acme renewal',
-        messages: [
-          {
-            author: 'user',
-            time: 'Today at 9:59 AM',
-            text: "where are we with acme? renewal can't sneak up on us",
+            time: 'Today at 5:08 PM',
+            text: '▎edit src/components/hero-section.tsx',
           },
           {
             author: 'kimaki',
-            time: 'Today at 9:59 AM',
-            text: 'pulling usage, open threads, and the exec notes together now.',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 10:59 AM',
-            text: 'acme renews in 60 days:\n✓ Usage → 214 seats active · up 18% this quarter\n✓ Threads → 2 open · security review + a pricing question\n✓ Next step → renewal call with vicky drafted · week of the 18th',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 10:59 AM',
-            text: "globex is the quiet one: nothing since the pilot wrapped. i wrote a re-engagement note that leads with their own pilot numbers. it's in drafts, not sent.",
-          },
-          {
-            author: 'user',
-            time: 'Today at 10:59 AM',
-            text: "send the acme invite. hold globex until i've read the note",
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 10:59 AM',
-            text: "invite's out to vicky. the globex note is holding in drafts, and quiet-account sends wait for your read from now on.",
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'talent-scout',
-    name: 'talent-scout',
-    threads: [
-      {
-        id: 'three-intros',
-        name: '3 intros',
-        messages: [
-          {
-            author: 'user',
-            time: 'Yesterday at 3:59 PM',
-            text: 'take the platform engineer req: senior, infra-heavy, remote ok. source quietly.',
-          },
-          {
-            author: 'kimaki',
-            time: 'Yesterday at 3:59 PM',
-            text: "on it. i'll screen overnight against the req and skip anyone already in the ats.",
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 6:59 AM',
-            text: 'overnight run:\n✓ Sourced → 64 profiles matched the req\n✓ Skipped → 11 already in the ats\n✓ Shortlist → 12 screened · notes on each',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 6:59 AM',
-            text: 'three worth your time first:\nMara Iyer → scaled ingest 40× at a data startup · writes like an owner\nTomás Rivera → runs a 6-person infra team · wants to build again\nGrace Osei → your exact stack end to end · shipped the migration you keep citing',
-          },
-          {
-            author: 'user',
-            time: 'Today at 7:59 AM',
-            text: 'strong list, mara especially. draft the intros',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 7:59 AM',
-            text: "3 intros drafted in your voice and held for your ok. nothing sends until you've read them.",
-          },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'expense-manager',
-    name: 'expense-manager',
-    threads: [
-      {
-        id: 'month-end-close',
-        name: 'month-end close',
-        messages: [
-          {
-            author: 'user',
-            time: 'Yesterday at 3:59 PM',
-            text: 'month-end is friday, close out the card for me?',
-          },
-          {
-            author: 'kimaki',
-            time: 'Yesterday at 3:59 PM',
-            text: "i'll match every charge to a receipt and file the report. anything that doesn't line up, i ask instead of guessing.",
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 10:59 AM',
-            text: '✓ Receipts → 9 matched to card charges\n✓ Report → drafted · $2,340 across 3 trips\n✓ Flagged → 1 charge · harbor hotel, $412 twice',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 10:59 AM',
-            text: 'the harbor hotel charged $412 on the 12th and again on the 14th. double-billed, or two separate nights?',
-          },
-          {
-            author: 'user',
-            time: 'Today at 11:59 AM',
-            text: 'two nights, mia stayed the second one',
-          },
-          {
-            author: 'kimaki',
-            time: 'Today at 11:59 AM',
-            text: 'that clears it. report filed: 9 receipts matched, $2,340 across 3 trips, nothing outstanding.',
+            time: 'Today at 5:09 PM',
+            text: 'Hero now defaults to dark. The main checkout is untouched. Merge later with `/merge-worktree`.',
+            footer: 'website ⋅ opencode/kimaki-dark-mode ⋅ 27s ⋅ 11% ⋅ claude-opus-4-6',
           },
         ],
       },
@@ -363,7 +345,7 @@ const CHANNELS: {
   },
 ]
 
-const DEFAULT_THREAD_ID = 'overnight-pipeline'
+const DEFAULT_THREAD_ID = 'voice-login-timeout'
 
 function HashIcon() {
   return (
@@ -424,19 +406,6 @@ function InviteIcon() {
       <path
         fill='currentColor'
         d='M21 6h-1V5a1 1 0 1 0-2 0v1h-1a1 1 0 1 0 0 2h1v1a1 1 0 1 0 2 0V8h1a1 1 0 1 0 0-2Z'
-      />
-    </svg>
-  )
-}
-
-function SearchIcon() {
-  return (
-    <svg width='1em' height='1em' viewBox='0 0 24 24' fill='none' aria-hidden='true'>
-      <path
-        fill='currentColor'
-        fillRule='evenodd'
-        d='M15.62 17.03a9 9 0 1 1 1.41-1.41l4.68 4.67a1 1 0 0 1-1.42 1.42l-4.67-4.68ZM17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z'
-        clipRule='evenodd'
       />
     </svg>
   )
@@ -588,8 +557,59 @@ function findThread(threadId: string) {
     const thread = channel.threads.find((item) => item.id === threadId)
     if (thread) return { channel, thread }
   }
-  const channel = CHANNELS[1]
+  const channel = CHANNELS[0]
   return { channel, thread: channel.threads[0] }
+}
+
+function isMessageVisible(
+  message: PlaygroundMessage,
+  ui: PlaygroundThreadUi,
+): boolean {
+  if (!message.reveal) return true
+  if (message.reveal === 'select') return Boolean(ui.selectAnswer)
+  if (message.reveal === 'permission-accept') {
+    return ui.permission === 'accept' || ui.permission === 'always'
+  }
+  if (message.reveal === 'permission-deny') return ui.permission === 'deny'
+  if (message.reveal === 'queue-kept') {
+    return Boolean(ui.queueDrained) && !ui.queueRemoved
+  }
+  return true
+}
+
+function DiscordText({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|_[^_]+_)/g)
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return (
+            <strong key={index} className='font-semibold text-[#f2f3f5]'>
+              {part.slice(2, -2)}
+            </strong>
+          )
+        }
+        if (part.startsWith('`') && part.endsWith('`')) {
+          return (
+            <code
+              key={index}
+              className='rounded-[0.25em] bg-[#2b2d31] px-[0.25em] py-[0.05em] font-mono text-[0.9em] text-[#dbdee1]'
+            >
+              {part.slice(1, -1)}
+            </code>
+          )
+        }
+        if (part.startsWith('_') && part.endsWith('_')) {
+          return (
+            <em key={index} className='italic text-[#b5bac1]'>
+              {part.slice(1, -1)}
+            </em>
+          )
+        }
+        return <span key={index}>{part}</span>
+      })}
+    </>
+  )
 }
 
 function UserAvatar() {
@@ -620,6 +640,144 @@ function DiscordButton() {
     >
       Deploy Kimaki
     </a>
+  )
+}
+
+function PlayIcon() {
+  return (
+    <svg width='1.1em' height='1.1em' viewBox='0 0 24 24' fill='none' aria-hidden='true'>
+      <path fill='currentColor' d='M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14Z' />
+    </svg>
+  )
+}
+
+function VoiceMessage({ duration }: { duration: string }) {
+  const bars = [4, 9, 6, 12, 8, 14, 7, 11, 5, 13, 8, 10, 6, 12, 7, 9, 5, 11, 8, 6]
+  return (
+    <div className='mt-[0.2em] flex w-[16em] items-center gap-[0.6em] rounded-[1.25em] bg-[#2b2d31] px-[0.7em] py-[0.45em]'>
+      <span className='flex size-[1.75em] shrink-0 items-center justify-center rounded-full bg-[#23a559] text-white'>
+        <PlayIcon />
+      </span>
+      <span className='flex min-w-0 flex-1 items-end gap-[0.12em] h-[1.15em]'>
+        {bars.map((height, index) => (
+          <span
+            key={index}
+            className='w-[0.18em] rounded-full bg-[#23a559]'
+            style={{ height: `${height * 0.08}em` }}
+          />
+        ))}
+      </span>
+      <span className='shrink-0 text-[0.75em] font-medium text-[#b5bac1]'>
+        {duration}
+      </span>
+    </div>
+  )
+}
+
+function PermissionButtons({
+  status,
+  onChoose,
+}: {
+  status?: PlaygroundPermission
+  onChoose: (status: PlaygroundPermission) => void
+}) {
+  if (status) return null
+
+  return (
+    <div className='mt-[0.45em] flex flex-wrap gap-[0.5em]'>
+      <button
+        type='button'
+        onClick={() => onChoose('accept')}
+        className='h-[2em] rounded-[0.25em] bg-[#248046] px-[1em] text-[0.875em] font-medium text-white hover:bg-[#1a6334] active:scale-[0.97]'
+      >
+        Accept
+      </button>
+      <button
+        type='button'
+        onClick={() => onChoose('always')}
+        className='h-[2em] rounded-[0.25em] bg-[#248046] px-[1em] text-[0.875em] font-medium text-white hover:bg-[#1a6334] active:scale-[0.97]'
+      >
+        Accept Always
+      </button>
+      <button
+        type='button'
+        onClick={() => onChoose('deny')}
+        className='h-[2em] rounded-[0.25em] bg-[#4e5058] px-[1em] text-[0.875em] font-medium text-white hover:bg-[#6d6f78] active:scale-[0.97]'
+      >
+        Deny
+      </button>
+    </div>
+  )
+}
+
+function SelectMenu({
+  select,
+  answer,
+  onSelect,
+}: {
+  select: NonNullable<PlaygroundMessage['select']>
+  answer?: string
+  onSelect: (label: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  if (answer) return null
+
+  return (
+    <div className='relative mt-[0.45em] w-[18em] max-w-full'>
+      <button
+        type='button'
+        onClick={() => setOpen((current) => !current)}
+        className='flex h-[2.5em] w-full items-center justify-between rounded-[0.25em] bg-[#2b2d31] px-[0.75em] text-left text-[0.875em] text-[#dbdee1] ring-1 ring-[#1e1f22] hover:bg-[#313338]'
+      >
+        <span className='truncate'>{select.options[0]?.label}</span>
+        <span className='ml-[0.5em] shrink-0 text-[#b5bac1]'>
+          <ChevronIcon />
+        </span>
+      </button>
+      {open && (
+        <div className='absolute top-[2.7em] left-0 z-10 w-full overflow-hidden rounded-[0.25em] bg-[#2b2d31] py-[0.25em] shadow-[0_0.5em_1.5em_rgba(0,0,0,0.45)] ring-1 ring-[#1e1f22]'>
+          {select.options.map((option) => (
+            <button
+              key={option.label}
+              type='button'
+              onClick={() => {
+                onSelect(option.label)
+                setOpen(false)
+              }}
+              className='flex w-full flex-col items-start px-[0.75em] py-[0.45em] text-left hover:bg-[#5865f2]'
+            >
+              <span className='text-[0.875em] font-medium text-[#f2f3f5]'>
+                {option.label}
+              </span>
+              <span className='text-[0.75em] text-[#b5bac1]'>
+                {option.description}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function QueueRemoveButton({
+  hidden,
+  onRemove,
+}: {
+  hidden: boolean
+  onRemove: () => void
+}) {
+  if (hidden) return null
+
+  return (
+    <button
+      type='button'
+      onClick={onRemove}
+      className='mt-[0.45em] h-[2em] rounded-[0.25em] bg-[#4e5058] px-[1em] text-[0.875em] font-medium text-white hover:bg-[#6d6f78] active:scale-[0.97]'
+    >
+      Remove from queue
+    </button>
   )
 }
 
@@ -656,13 +814,53 @@ export function DiscordPlayground() {
   const [liveMessages, setLiveMessages] = useState<
     Record<string, PlaygroundMessage[]>
   >({})
+  const [threadUi, setThreadUi] = useState<Record<string, PlaygroundThreadUi>>(
+    {},
+  )
   const { channel, thread } = findThread(selectedThreadId)
+  const ui = threadUi[selectedThreadId] ?? {}
   const messages = [...thread.messages, ...(liveMessages[selectedThreadId] ?? [])]
+    .filter((message) => isMessageVisible(message, ui))
+  const lastMessage = messages[messages.length - 1]
+  const waitingOnUser =
+    messages.some((message) => message.permission && !ui.permission) ||
+    messages.some((message) => message.select && !ui.selectAnswer)
+  const drainingQueue =
+    selectedThreadId === 'queue-commit-after-refactor' &&
+    !ui.queueRemoved &&
+    !ui.queueDrained
+  const showTyping = drainingQueue || (!waitingOnUser && !lastMessage?.footer)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'end' })
   }, [selectedThreadId, messages.length])
+
+  useEffect(() => {
+    if (selectedThreadId !== 'queue-commit-after-refactor') return
+    if (ui.queueRemoved || ui.queueDrained) return
+    const id = window.setTimeout(() => {
+      setThreadUi((current) => {
+        const existing = current[selectedThreadId]
+        if (existing?.queueRemoved || existing?.queueDrained) return current
+        return {
+          ...current,
+          [selectedThreadId]: { ...existing, queueDrained: true },
+        }
+      })
+    }, 1600)
+    return () => window.clearTimeout(id)
+  }, [selectedThreadId, ui.queueRemoved, ui.queueDrained])
+
+  function patchThreadUi(patch: PlaygroundThreadUi) {
+    setThreadUi((current) => ({
+      ...current,
+      [selectedThreadId]: {
+        ...current[selectedThreadId],
+        ...patch,
+      },
+    }))
+  }
 
   function sendDraft(event: FormEvent) {
     event.preventDefault()
@@ -687,7 +885,7 @@ export function DiscordPlayground() {
   return (
     <div
       data-discord-playground
-      className='relative flex w-full flex-col overflow-hidden rounded-[1.5em] bg-[#1e1f22] font-normal text-[#dbdee1] shadow-[0_1.5em_5em_rgba(0,0,0,0.45)] ring-1 ring-white/10 pointer-events-none lg:pointer-events-auto'
+      className='relative flex w-full flex-col overflow-hidden rounded-[0.85em] bg-[#1e1f22] font-normal text-[#dbdee1] shadow-[0_1.5em_5em_rgba(0,0,0,0.45)] ring-1 ring-white/10 pointer-events-none lg:pointer-events-auto'
       style={{
         fontFamily:
           'Inter, "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif',
@@ -834,7 +1032,7 @@ export function DiscordPlayground() {
               <span className='shrink-0 text-[#80848e]'>
                 <ThreadIcon size='1.125em' />
               </span>
-              <span className='truncate'>{thread.name}</span>
+              <span className='truncate'>{thread.title}</span>
             </div>
             <div className='hidden shrink-0 items-center gap-[0.75em] text-[#b5bac1] min-[900px]:flex'>
               <BellIcon />
@@ -849,19 +1047,39 @@ export function DiscordPlayground() {
                 <ThreadIcon size='2.25em' />
               </div>
               <div className='text-[2em] font-medium leading-[1.25] text-white'>
-                {thread.name}
+                {thread.title}
               </div>
-              <p className='mt-[0.25em] text-[0.875em] leading-[1.25em] text-[#b5bac1]'>
-                Started from{' '}
-                <span className='font-medium text-[#dbdee1]'>
-                  #{channel.name}
-                </span>
-                . This is the start of the thread.
+              <p className='mt-[0.25em] text-[0.875em] leading-[1.375em] text-[#b5bac1]'>
+                {thread.summary}
               </p>
             </div>
             {messages.map((message, index) => {
               const prev = messages[index - 1]
-              const grouped = prev && prev.author === message.author
+              const grouped = Boolean(prev && prev.author === message.author)
+              const bodyText = (() => {
+                if (message.select) {
+                  if (!ui.selectAnswer) {
+                    return `**${message.select.header}**\n${message.select.question}`
+                  }
+                  return `**${message.select.header}**\n${message.select.question}\n✓ _${ui.selectAnswer}_`
+                }
+                if (message.permission && ui.permission) {
+                  const statusLine =
+                    ui.permission === 'always'
+                      ? '✓ Accepted always'
+                      : ui.permission === 'deny'
+                        ? '✗ Denied'
+                        : '✓ Accepted'
+                  return `${message.text}\n${statusLine}`
+                }
+                if (message.queueAck && ui.queueRemoved) {
+                  return 'Removed queued message'
+                }
+                if (message.reveal === 'select' && ui.selectAnswer) {
+                  return message.text.replace('{select}', ui.selectAnswer)
+                }
+                return message.text
+              })()
               return (
                 <div
                   key={`${message.author}-${index}`}
@@ -895,9 +1113,12 @@ export function DiscordPlayground() {
                         )}
                       </div>
                     )}
-                    {message.text && (
+                    {message.voice && (
+                      <VoiceMessage duration={message.voice.duration} />
+                    )}
+                    {bodyText && (
                       <div className='whitespace-pre-wrap text-[1em] leading-[1.375em] text-[#dbdee1]'>
-                        {message.text}
+                        <DiscordText text={bodyText} />
                       </div>
                     )}
                     {message.image && (
@@ -914,7 +1135,31 @@ export function DiscordPlayground() {
                         }}
                       />
                     )}
+                    {message.permission && (
+                      <PermissionButtons
+                        status={ui.permission}
+                        onChoose={(status) => patchThreadUi({ permission: status })}
+                      />
+                    )}
+                    {message.select && (
+                      <SelectMenu
+                        select={message.select}
+                        answer={ui.selectAnswer}
+                        onSelect={(label) => patchThreadUi({ selectAnswer: label })}
+                      />
+                    )}
+                    {message.queueAck && (
+                      <QueueRemoveButton
+                        hidden={Boolean(ui.queueRemoved || ui.queueDrained)}
+                        onRemove={() => patchThreadUi({ queueRemoved: true })}
+                      />
+                    )}
                     {message.cta && <DiscordButton />}
+                    {message.footer && (
+                      <div className='mt-[0.15em] whitespace-pre-wrap text-[0.875em] italic leading-[1.375em] text-[#b5bac1]'>
+                        {message.footer}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -923,13 +1168,17 @@ export function DiscordPlayground() {
           </div>
 
           <div className='shrink-0 px-[1em] pb-[1.5em] pt-[0.25em]'>
-            <div className='mb-[0.4em] flex h-[1.5em] items-center pl-[0.15em] text-[0.875em] leading-none'>
-              <TypingDots />
-              <span className='text-[#dbdee1]'>
-                <span className='font-medium'>Kimaki</span>
-                <span className='text-[#949ba4]'> is typing...</span>
-              </span>
-            </div>
+            {showTyping ? (
+              <div className='mb-[0.4em] flex h-[1.5em] items-center pl-[0.15em] text-[0.875em] leading-none'>
+                <TypingDots />
+                <span className='text-[#dbdee1]'>
+                  <span className='font-medium'>Kimaki</span>
+                  <span className='text-[#949ba4]'> is typing...</span>
+                </span>
+              </div>
+            ) : (
+              <div className='mb-[0.4em] h-[1.5em]' />
+            )}
             <form
               onSubmit={sendDraft}
               className='flex h-[2.75em] items-center gap-[0.75em] rounded-[0.5em] bg-[#383a40] px-[0.75em]'
@@ -940,7 +1189,7 @@ export function DiscordPlayground() {
               <input
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
-                placeholder={`Message ${thread.name}`}
+                placeholder={`Message ${thread.title}`}
                 className='min-w-0 flex-1 bg-transparent text-[1em] text-[#dbdee1] outline-none placeholder:text-[#6d6f78]'
               />
               <span className='flex items-center gap-[0.75em] text-[#b5bac1]'>

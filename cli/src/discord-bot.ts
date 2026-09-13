@@ -34,6 +34,7 @@ import {
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
+import { STATUS_PREFIX } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -66,7 +67,11 @@ import {
   preprocessNewThreadMessage,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
-import { cancelPendingQuestion, hasPendingQuestionForThread } from './commands/ask-question.js'
+import {
+  cancelPendingQuestion,
+  hasPendingQuestionForThread,
+  isWaitingForCustomQuestionAnswer,
+} from './commands/ask-question.js'
 import { cancelPendingFileUpload } from './commands/file-upload.js'
 import { cancelPendingPermission } from './commands/permissions.js'
 import { cancelHtmlActionsForThread } from './html-actions.js'
@@ -836,7 +841,8 @@ export async function startDiscordBot({
         // Cancel interactive UI when a real user sends a message.
         // Context-only messages (user-to-user replies) should not interrupt
         // the active run or dismiss pending UI.
-        if (!message.author.bot && !isCliInjectedPrompt && !isLeadingMentionToOtherUser) {
+        const dismissSourceUi = async () => {
+          if (message.author.bot || isCliInjectedPrompt || isLeadingMentionToOtherUser) return false
           cancelPendingActionButtons(thread.id)
           cancelHtmlActionsForThread(thread.id)
           const dismissedPermission = await cancelPendingPermission(thread.id)
@@ -846,6 +852,10 @@ export async function startDiscordBot({
             })
           }
           const dismissedQuestion = hasPendingQuestionForThread(thread.id)
+          if (dismissedQuestion && isWaitingForCustomQuestionAnswer(thread.id)) {
+            const result = await cancelPendingQuestion(thread.id, message.content)
+            return result !== 'no-pending'
+          }
           if (dismissedQuestion) {
             await cancelPendingQuestion(thread.id)
             await runtime.abortActiveRunAndWait({
@@ -853,6 +863,11 @@ export async function startDiscordBot({
             })
           }
           void cancelPendingFileUpload(thread.id)
+          return false
+        }
+        if (!hasVoiceAttachment) {
+          const consumedAsQuestionAnswer = await dismissSourceUi()
+          if (consumedAsQuestionAnswer) return
         }
 
         // A sleep wake only becomes a turn if it can still claim its own row.
@@ -901,8 +916,8 @@ export async function startDiscordBot({
                 scheduledTaskRunId: sessionStartSource.scheduledTaskRunId,
               }
             : undefined,
-          preprocess: () => {
-            return preprocessExistingThreadMessage({
+          preprocess: async () => {
+            const result = await preprocessExistingThreadMessage({
               message,
               thread,
               projectDirectory: resolvedProjectDir,
@@ -911,6 +926,12 @@ export async function startDiscordBot({
               hasVoiceAttachment,
               appId: currentAppId,
             })
+            // Routing must finish before touching source UI. This chain is separate
+            // from dispatchAction, so abort waiting does not block session events.
+            if (hasVoiceAttachment && !result.skip) {
+              await dismissSourceUi()
+            }
+            return result
           },
         })
 
@@ -1180,7 +1201,7 @@ export async function startDiscordBot({
           )
           await sendThreadMessage(
             channel,
-            `⬦ **${displayName}** removed message from queue`,
+            `${STATUS_PREFIX}**${displayName}** removed message from queue`,
           )
         } else {
           discordLogger.log(
@@ -1188,7 +1209,7 @@ export async function startDiscordBot({
           )
           await sendThreadMessage(
             channel,
-            `⬦ **${displayName}** edited queued message`,
+            `${STATUS_PREFIX}**${displayName}** edited queued message`,
           )
         }
       }
@@ -1219,7 +1240,7 @@ export async function startDiscordBot({
       )
       await sendThreadMessage(
         channel,
-        `⬦ **${removed.username}** removed message from queue`,
+        `${STATUS_PREFIX}**${removed.username}** removed message from queue`,
       )
     } catch (error) {
       discordLogger.error(

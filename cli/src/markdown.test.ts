@@ -5,18 +5,17 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import url from 'node:url'
 import { test, expect, beforeAll, afterAll } from 'vitest'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from './opencode.js'
 import * as errore from 'errore'
 import {
-  buildDeterministicOpencodeConfig,
+  buildDeterministicOpencode2Config,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 import { ShareMarkdown, getCompactSessionContext } from './markdown.js'
 import { setDataDir } from './config.js'
-import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
-import { cleanupTestSessions, initTestGitRepo } from './test-utils.js'
+import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import { chooseLockPort, cleanupTestSessions, initTestGitRepo } from './test-utils.js'
 
 const ROOT = path.resolve(process.cwd(), 'tmp', 'markdown-test')
 
@@ -33,7 +32,7 @@ function createMatchers(): DeterministicMatcher[] {
   const helloMatcher: DeterministicMatcher = {
     id: 'hello-reply',
     priority: 100,
-    when: { latestUserTextIncludes: 'hello markdown test' },
+    when: { lastMessageRole: 'user', latestUserTextIncludes: 'hello markdown test' },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
@@ -48,11 +47,11 @@ function createMatchers(): DeterministicMatcher[] {
   const toolCallMatcher: DeterministicMatcher = {
     id: 'tool-call-reply',
     priority: 90,
-    when: { latestUserTextIncludes: 'use a tool please' },
+    when: { lastMessageRole: 'user', latestUserTextIncludes: 'use a tool please' },
     then: {
       parts: [
         { type: 'stream-start', warnings: [] },
-        { type: 'tool-call', toolCallId: 'tc1', toolName: 'bash', input: JSON.stringify({ command: 'echo hello world', description: 'Print greeting' }) },
+         { type: 'tool-call', toolCallId: 'tc1', toolName: 'shell', input: JSON.stringify({ command: 'echo hello world', description: 'Print greeting' }) },
         { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
       ],
     },
@@ -84,29 +83,21 @@ let toolSessionID: string
 beforeAll(async () => {
   testStartTime = Date.now()
   directories = createRunDirectories()
+  process.env['KIMAKI_LOCK_PORT'] = String(chooseLockPort({ key: 'markdown-test' }))
   setDataDir(directories.dataDir)
 
-  const providerNpm = url
-    .pathToFileURL(
-      path.resolve(
-        process.cwd(),
-        '..',
-        'opencode-deterministic-provider',
-        'src',
-        'index.ts',
-      ),
-    )
-    .toString()
-
-  const opencodeConfig = buildDeterministicOpencodeConfig({
+  const opencodeConfig = buildDeterministicOpencode2Config({
     providerName: 'deterministic-provider',
-    providerNpm,
     model: 'deterministic-v2',
-    smallModel: 'deterministic-v2',
+    extraModels: ['deterministic-v2'],
     settings: {
       strict: false,
       matchers: createMatchers(),
     },
+    permissions: [
+      { action: 'shell', resource: '*', effect: 'allow' },
+      { action: 'edit', resource: '*', effect: 'allow' },
+    ],
   })
   fs.writeFileSync(
     path.join(directories.projectDirectory, 'opencode.json'),
@@ -124,20 +115,14 @@ beforeAll(async () => {
 
   // Create a session and send a known prompt
   const createResult = await client.session.create({
-    directory: directories.projectDirectory,
+    location: { directory: directories.projectDirectory },
     title: 'Markdown Test Session',
   })
-  sessionID = createResult.data!.id
+  sessionID = createResult.id
 
-  // Send prompt and wait for completion (promptAsync returns immediately)
-  await client.session.promptAsync({
+  await client.session.prompt({
     sessionID,
-    directory: directories.projectDirectory,
-    model: {
-      providerID: 'deterministic-provider',
-      modelID: 'deterministic-v2',
-    },
-    parts: [{ type: 'text', text: 'hello markdown test' }],
+    text: 'hello markdown test',
   })
 
   // Wait for assistant text parts to be fully written (not just message existence).
@@ -147,13 +132,12 @@ beforeAll(async () => {
   const maxWait = 15_000
   const pollStart = Date.now()
   while (Date.now() - pollStart < maxWait) {
-    const msgs = await client.session.messages({
+    const msgs = await client.message.list({
       sessionID,
-      directory: directories.projectDirectory,
     })
-    const assistantMsg = msgs.data?.find((m) => m.info.role === 'assistant')
-    const hasTextParts = assistantMsg?.parts?.some((p) => {
-      return p.type === 'text' && p.text && !p.synthetic
+    const assistantMsg = msgs.data.find((m) => m.type === 'assistant')
+    const hasTextParts = assistantMsg?.type === 'assistant' && assistantMsg.content.some((p) => {
+      return p.type === 'text' && p.text
     })
     if (hasTextParts) {
       // Extra wait for step-start and other parts to be flushed
@@ -169,32 +153,28 @@ beforeAll(async () => {
 
   // Create a second session that triggers a tool call (bash echo)
   const toolCreateResult = await client.session.create({
-    directory: directories.projectDirectory,
+    location: { directory: directories.projectDirectory },
     title: 'Tool Call Session',
   })
-  toolSessionID = toolCreateResult.data!.id
+  toolSessionID = toolCreateResult.id
 
-  await client.session.promptAsync({
+  await client.session.prompt({
     sessionID: toolSessionID,
-    directory: directories.projectDirectory,
-    model: {
-      providerID: 'deterministic-provider',
-      modelID: 'deterministic-v2',
-    },
-    parts: [{ type: 'text', text: 'use a tool please' }],
+    text: 'use a tool please',
   })
 
   // Wait for tool execution to complete
   const toolMaxWait = 15_000
   const toolPollStart = Date.now()
   while (Date.now() - toolPollStart < toolMaxWait) {
-    const msgs = await client.session.messages({
+    const msgs = await client.message.list({
       sessionID: toolSessionID,
-      directory: directories.projectDirectory,
     })
-    const messages = msgs.data || []
+    const messages = msgs.data
     const hasToolPart = messages.some((m) =>
-      m.parts.some((p) => p.type === 'tool' && p.state?.status === 'completed'),
+      m.type === 'assistant' && m.content.some((p) => {
+        return p.type === 'tool' && p.state.status === 'completed'
+      }),
     )
     if (hasToolPart) {
       await new Promise((resolve) => { setTimeout(resolve, 500) })
@@ -212,6 +192,7 @@ afterAll(async () => {
     })
   }
   await stopOpencodeServer()
+  delete process.env['KIMAKI_LOCK_PORT']
   if (directories) {
     fs.rmSync(directories.dataDir, { recursive: true, force: true })
   }
@@ -255,7 +236,6 @@ test('generate markdown with system info', async () => {
     '### 🤖 Assistant (deterministic-provider/deterministic-v2)',
   )
   expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
-  expect(markdown).toContain('**Started using deterministic-provider/deterministic-v2**')
 
   const normalized = normalizeMarkdown(markdown)
   expect(normalized).toMatchInlineSnapshot(`
@@ -265,7 +245,6 @@ test('generate markdown with system info', async () => {
 
     - **Created**: <date>
     - **Updated**: <date>
-    - **OpenCode Version**: v<version>
 
     ## Conversation
 
@@ -275,8 +254,6 @@ test('generate markdown with system info', async () => {
 
 
     ### 🤖 Assistant (deterministic-provider/deterministic-v2)
-
-    **Started using deterministic-provider/deterministic-v2**
 
     Hello! This is a deterministic markdown test response.
 
@@ -295,7 +272,8 @@ test('generate markdown without system info', async () => {
   })
 
   expect(errore.isOk(markdown)).toBe(true)
-  const md = errore.unwrap(markdown as string)
+  if (markdown instanceof Error) throw markdown
+  const md = markdown
   expect(md).toContain('# Markdown Test Session')
   expect(md).not.toContain('## Session Information')
   expect(md).toContain('## Conversation')
@@ -313,8 +291,6 @@ test('generate markdown without system info', async () => {
 
     ### 🤖 Assistant (deterministic-provider/deterministic-v2)
 
-    **Started using deterministic-provider/deterministic-v2**
-
     Hello! This is a deterministic markdown test response.
 
 
@@ -329,7 +305,8 @@ test('error handling for non-existent session', async () => {
 
   const result = await exporter.generate({ sessionID: badSessionID })
   expect(result).toBeInstanceOf(Error)
-  expect((result as Error).message).toContain(`Session ${badSessionID} not found`)
+  if (!(result instanceof Error)) throw new Error('Expected session error')
+  expect(result.message).toContain(`Session ${badSessionID} not found`)
 })
 
 test('getCompactSessionContext generates compact format', async () => {
@@ -383,7 +360,7 @@ test('compact tools: tool calls show one-liner with line count', async () => {
 
   // Compact mode: exact one-liner format with params and line count
   expect(md).toContain(
-    '> 🛠️ **bash** command=echo hello world, description=Print greeting',
+    '> 🛠️ **shell** command=echo hello world, description=Print greeting',
   )
   expect(md).toMatch(/\(\d+ lines?\)/)
   // Should NOT contain full output code blocks or input YAML
@@ -404,7 +381,7 @@ test('verbose tools: tool calls show full input and output', async () => {
   const md = errore.unwrap(result)
 
   // Verbose mode: full tool rendering with input YAML and output code block
-  expect(md).toContain('#### 🛠️ Tool: bash')
+  expect(md).toContain('#### 🛠️ Tool: shell')
   expect(md).toContain('**Input:**')
   expect(md).toContain('```yaml')
   expect(md).toContain('**Output:**')

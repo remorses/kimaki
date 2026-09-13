@@ -3,13 +3,17 @@
 // user messages, assistant responses, tool calls, and reasoning blocks.
 // Uses errore for type-safe error handling.
 
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from './opencode.js'
+import type { SessionMessageInfo } from '@opencode/client'
 import * as errore from 'errore'
 import YAML from 'yaml'
 import { formatDateTime } from './utils.js'
 import { extractNonXmlContent } from './xml.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { SessionNotFoundError, MessagesNotFoundError } from './errors.js'
+import { readV2AssistantToolPart, sessionMessagesAscending } from './message-formatting.js'
+import { listAllMessages } from './opencode-pagination.js'
+import { KIMAKI_INSTRUCTION_ENTRY_KEY } from './system-message.js'
 
 // Generic error for unexpected exceptions in async operations
 class UnexpectedError extends errore.createTaggedError({
@@ -19,6 +23,55 @@ class UnexpectedError extends errore.createTaggedError({
 const markdownLogger = createLogger(LogPrefix.MARKDOWN)
 
 const TOOL_OUTPUT_MAX_CHARS = 30_000
+
+function formatToolErrorText(error: unknown): string {
+  if (typeof error === 'string' && error) return error
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message
+  }
+  if (error === undefined || error === null) return 'Unknown error'
+  return JSON.stringify(error)
+}
+
+function toGenericSessionMessage(message: SessionMessageInfo) {
+  if (message.type === 'user') {
+    return {
+      info: { role: 'user' as const, id: message.id, time: message.time },
+      parts: [{ type: 'text' as const, text: message.text }],
+    }
+  }
+  if (message.type === 'assistant') {
+    return {
+      info: {
+        role: 'assistant' as const,
+        id: message.id,
+        time: message.time,
+        providerID: message.model.providerID,
+        modelID: message.model.id,
+      },
+      parts: message.content.map((part, index) => {
+        if (part.type === 'tool') {
+          const { input, output, status, error } = readV2AssistantToolPart(part)
+          return {
+            id: part.id,
+            type: 'tool' as const,
+            tool: part.name,
+            state: { status, input, output, error },
+          }
+        }
+        return {
+          id: `${message.id}:${index}`,
+          type: part.type,
+          text: part.text,
+        }
+      }),
+    }
+  }
+  return {
+    info: { role: message.type, id: message.id, time: message.time },
+    parts: [],
+  }
+}
 
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}
@@ -38,22 +91,27 @@ export class ShareMarkdown {
     const { sessionID, includeSystemInfo, lastAssistantOnly, compactTools = true } = options
 
     // Get session info
-    const sessionResponse = await this.client.session.get({
+    const session = await this.client.session.get({
       sessionID,
+    }).catch((error: unknown) => {
+      return new SessionNotFoundError({ sessionId: sessionID, cause: error })
     })
-    if (!sessionResponse.data) {
-      return new SessionNotFoundError({ sessionId: sessionID })
+    if (session instanceof Error) {
+      return session
     }
-    const session = sessionResponse.data
 
-    // Get all messages
-    const messagesResponse = await this.client.session.messages({
-      sessionID,
+    const messagesResult = await listAllMessages({
+      client: this.client,
+      sessionId: sessionID,
+      order: 'asc',
     })
-    if (!messagesResponse.data) {
-      return new MessagesNotFoundError({ sessionId: sessionID })
+    if (messagesResult instanceof Error) {
+      return new MessagesNotFoundError({
+        sessionId: sessionID,
+        cause: messagesResult,
+      })
     }
-    const messages = messagesResponse.data
+    const messages = sessionMessagesAscending(messagesResult).map(toGenericSessionMessage)
 
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
@@ -86,9 +144,7 @@ export class ShareMarkdown {
         lines.push(
           `- **Updated**: ${formatDateTime(new Date(session.time.updated))}`,
         )
-        if (session.version) {
-          lines.push(`- **OpenCode Version**: v${session.version}`)
-        }
+
         lines.push('')
       }
 
@@ -243,7 +299,7 @@ export class ShareMarkdown {
           lines.push(`#### ❌ Tool Error: ${part.tool}`)
           lines.push('')
           lines.push('```')
-          lines.push(part.state.error || 'Unknown error')
+          lines.push(formatToolErrorText(part.state.error))
           lines.push('```')
           lines.push('')
         }
@@ -276,7 +332,7 @@ export class ShareMarkdown {
       lines.push(`> 🛠️ **${part.tool}**${parts ? ` ${parts}` : ''}`)
       lines.push('')
     } else if (part.state.status === 'error') {
-      const errorText = (part.state.error || 'Unknown error').split('\n')[0].slice(0, 120)
+      const errorText = (formatToolErrorText(part.state.error).split('\n')[0] ?? '').slice(0, 120)
       lines.push(`> ❌ **${part.tool}** — ${errorText}`)
       lines.push('')
     }
@@ -338,11 +394,13 @@ export async function getCompactSessionContext({
   includeSystemPrompt?: boolean
   maxMessages?: number
 }): Promise<UnexpectedError | string> {
-  const messagesResponse = await client.session
-    .messages({
+  const messagesResponse = await client.message
+    .list({
       sessionID: sessionId,
+      limit: maxMessages,
+      order: 'desc',
     })
-    .catch((e) => {
+    .catch((e: unknown) => {
       markdownLogger.error('Failed to get compact session context:', e)
       return new UnexpectedError({
         message: 'Failed to get compact session context',
@@ -350,30 +408,25 @@ export async function getCompactSessionContext({
       })
     })
   if (messagesResponse instanceof Error) return messagesResponse
-  const messages = messagesResponse.data || []
+  const messages = sessionMessagesAscending(messagesResponse.data).map(toGenericSessionMessage)
 
   const lines: string[] = []
 
-  // Get system prompt if requested
-  // Note: OpenCode SDK doesn't expose system prompt directly. We try multiple approaches:
-  // 1. session.system field (if available in future SDK versions)
-  // 2. synthetic text part in first assistant message (current approach)
-  if (includeSystemPrompt && messages.length > 0) {
-    const firstAssistant = messages.find((m) => m.info.role === 'assistant')
-    if (firstAssistant) {
-      // look for text part marked as synthetic (system prompt)
-      const systemPart = (firstAssistant.parts || []).find(
-        (p) => p.type === 'text' && (p as any).synthetic === true,
-      )
-      if (systemPart && 'text' in systemPart && systemPart.text) {
-        lines.push('[System Prompt]')
-        const truncated = systemPart.text.slice(0, 3000)
-        lines.push(truncated)
-        if (systemPart.text.length > 3000) {
-          lines.push('...(truncated)')
-        }
-        lines.push('')
+  // Get system prompt if requested. In native v2 the Kimaki system prompt is a
+  // session instruction entry (key 'kimaki'), not a synthetic message part.
+  if (includeSystemPrompt) {
+    const entries = await client.session.instructions.entry
+      .list({ sessionID: sessionId })
+      .catch(() => null)
+    const kimakiEntry = entries?.find((entry) => entry.key === KIMAKI_INSTRUCTION_ENTRY_KEY)
+    const systemPrompt = typeof kimakiEntry?.value === 'string' ? kimakiEntry.value : ''
+    if (systemPrompt) {
+      lines.push('[System Prompt]')
+      lines.push(systemPrompt.slice(0, 3000))
+      if (systemPrompt.length > 3000) {
+        lines.push('...(truncated)')
       }
+      lines.push('')
     }
   }
 
@@ -394,7 +447,7 @@ export async function getCompactSessionContext({
       // Get assistant text parts (non-synthetic, non-empty)
       const textParts = (msg.parts || [])
         .filter(
-          (p) => p.type === 'text' && !p.synthetic && p.text,
+          (p) => p.type === 'text' && Boolean(p.text),
         )
         .map((p) => (p.type === 'text' ? p.text : ''))
         .filter(Boolean)
@@ -444,11 +497,25 @@ export async function getCompactSessionContext({
 export async function getLastSessionId({
   client,
   excludeSessionId,
+  directory,
 }: {
   client: OpencodeClient
   excludeSessionId?: string
+  directory?: string
 }): Promise<UnexpectedError | (string | null)> {
-  const sessionsResponse = await client.session.list().catch((e) => {
+  const requestedDirectory = directory || await (async () => {
+    if (!excludeSessionId) return null
+    const session = await client.session.get({ sessionID: excludeSessionId }).catch(() => null)
+    return session?.location.directory || null
+  })()
+  if (!requestedDirectory) {
+    return new UnexpectedError({ message: 'A project directory is required to list sessions' })
+  }
+  const sessionsResponse = await client.session.list({
+    directory: requestedDirectory,
+    limit: 2,
+    order: 'desc',
+  }).catch((e: unknown) => {
     markdownLogger.error('Failed to get last session:', e)
     return new UnexpectedError({
       message: 'Failed to get last session',

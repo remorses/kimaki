@@ -1,30 +1,53 @@
 // Tests for session-stable system prompt generation and per-turn prompt context.
 
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import {
-  deleteSessionSystemPrompt,
   getOpencodePromptContext,
   getOpencodeSystemMessage,
-  getSessionSystemPromptPath,
+  KIMAKI_INSTRUCTION_ENTRY_KEY,
   KIMAKI_SYSTEM_PROMPT_MARKER,
-  readSessionSystemPrompt,
-  writeSessionSystemPrompt,
 } from './system-message.js'
 
-const tempDirs: string[] = []
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => {
-      return fs.promises.rm(dir, { recursive: true, force: true })
-    }),
-  )
-})
-
 describe('system-message', () => {
+  test('instruction entry key is a valid OpenCode api key', () => {
+    expect(KIMAKI_INSTRUCTION_ENTRY_KEY).toMatch(/^[a-z0-9][a-z0-9._-]*$/)
+  })
+
+  test('generated system prompt JSON stays under the 256 KiB instruction-entry limit', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_xxxxxxxxxxxxxxxxxxxxxxxxxx',
+      channelId: '1422625308523102348',
+      guildId: '1422625037164351591',
+      threadId: '1547648937639280712',
+      channelTopic: 'example topic',
+      agents: [
+        { name: 'build', description: 'The default build agent' },
+        { name: 'plan', description: 'Plan mode' },
+      ],
+      userId: '535922349652836367',
+      parentSessionId: 'ses_parentparentparentparent',
+      scheduledTask: {
+        taskId: 12,
+        scheduleKind: 'cron',
+        cronExpr: '0 9 * * 1',
+        timezone: 'UTC',
+      },
+      dataDir: '/Users/morse/.kimaki',
+      critiqueEnabled: true,
+    })
+    const jsonBytes = Buffer.byteLength(JSON.stringify(message), 'utf8')
+    expect(jsonBytes).toBeLessThan(256 * 1024)
+  })
+
+  test('requires kimaki upload for Discord images, not markdown', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('NEVER show images with markdown')
+    expect(message).toContain('Discord does not render local markdown images')
+    expect(message).toContain('ALWAYS upload them with `kimaki upload-to-discord`')
+  })
+
   test('requires reading the report-bugs guide before filing kimaki issues', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
@@ -48,6 +71,30 @@ describe('system-message', () => {
     expect(message).toContain('<callout accent="#f59e0b">')
   })
 
+  test('tells the model the sleep tool result is not a wake', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('The tool result is not a wake')
+    expect(message).toContain('Woke after sleeping until')
+    expect(message).toContain(
+      'If you still need to wake later after answering, call `kimaki_sleep` again',
+    )
+    expect(message).not.toContain('After wake, continue the wait reason')
+  })
+
+  test('tells the model to stay quiet between tool calls', () => {
+    const message = getOpencodeSystemMessage({
+      sessionId: 'ses_123',
+    })
+    expect(message).toContain('## Discord output')
+    expect(message).toContain('Be concise')
+    expect(message).toContain('Do not narrate between tool calls')
+    expect(message).toContain(
+      'Do not output text until you are ready to give the user the final answer for this turn',
+    )
+  })
+
   test('requires interactive tools after all text, using exact tool names', () => {
     const message = getOpencodeSystemMessage({
       sessionId: 'ses_123',
@@ -60,64 +107,21 @@ describe('system-message', () => {
     expect(message).toContain('`kimaki_sleep`')
   })
 
-  test('tells the model to ping the user on the final reply', () => {
+  test('includes Discord ids from plugin context args', () => {
     const message = getOpencodeSystemMessage({
-      sessionId: 'ses_123',
+      sessionId: 'ses_plugin',
+      channelId: 'chan_1',
+      threadId: 'thr_1',
+      guildId: 'guild_1',
+      dataDir: '/tmp/kimaki-data',
     })
-    expect(message).toContain('## ending a turn')
-    expect(message).toContain('the last line of the final reply MUST ping the current user')
-    expect(message).toContain('`<@535922349652836367> tests passed`')
-    expect(message).toContain('Do not ping after tool output, mid-turn text, questions, action buttons, file upload, or sleep')
-  })
-
-  test('persists and reads session system prompt for command path', async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
-    tempDirs.push(dataDir)
-    const sessionId = 'ses_command_system'
-    const system = getOpencodeSystemMessage({ sessionId })
-
-    await writeSessionSystemPrompt({ sessionId, system, dataDir })
-
-    const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
-    expect(filePath).toBe(
-      path.join(dataDir, 'session-system', `${sessionId}.txt`),
-    )
-    await expect(
-      readSessionSystemPrompt({ sessionId, dataDir }),
-    ).resolves.toBe(system)
-    expect(system).toContain(KIMAKI_SYSTEM_PROMPT_MARKER)
-    expect(system).toContain('kimaki upload-to-discord --session')
-
-    const fileMode = (await fs.promises.stat(filePath)).mode & 0o777
-    const dirMode = (await fs.promises.stat(path.dirname(filePath))).mode & 0o777
-    expect(fileMode).toBe(0o600)
-    expect(dirMode).toBe(0o700)
-
-    await deleteSessionSystemPrompt({ sessionId, dataDir })
-    await expect(
-      readSessionSystemPrompt({ sessionId, dataDir }),
-    ).resolves.toBeNull()
-  })
-
-  test('readSessionSystemPrompt returns null when missing', async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
-    tempDirs.push(dataDir)
-    await expect(
-      readSessionSystemPrompt({ sessionId: 'ses_missing', dataDir }),
-    ).resolves.toBeNull()
-  })
-
-  test('readSessionSystemPrompt rethrows non-ENOENT errors', async () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
-    tempDirs.push(dataDir)
-    const sessionId = 'ses_blocked'
-    const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
-    await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
-    // Path exists as a directory so readFile fails with EISDIR, not ENOENT.
-    await fs.promises.mkdir(filePath)
-    await expect(
-      readSessionSystemPrompt({ sessionId, dataDir }),
-    ).rejects.toMatchObject({ code: 'EISDIR' })
+    expect(message).toContain(KIMAKI_SYSTEM_PROMPT_MARKER)
+    expect(message).toContain('ses_plugin')
+    expect(message).toContain('chan_1')
+    expect(message).toContain('thr_1')
+    expect(message).toContain('guild_1')
+    expect(message).toContain('/tmp/kimaki-data/kimaki.log')
+    expect(message).toContain('kimaki upload-to-discord --session')
   })
 
   test('includes all-projects session search example', () => {
@@ -126,8 +130,9 @@ describe('system-message', () => {
       channelId: 'chan_123',
     })
     expect(message).toContain('kimaki session search "auth timeout" --all')
+    expect(message).toContain('kimaki session search "auth timeout" --days 0')
     expect(message).toContain(
-      'Use `--all` to search every locally registered project',
+      'Defaults to this project and the last 14 days. Use `--days 0` for all time. Use `--all` to search every locally registered project',
     )
   })
 
@@ -259,7 +264,6 @@ describe('system-message', () => {
       channelId: 'chan_123',
       guildId: 'guild_123',
       threadId: 'thread_123',
-      username: 'Tommy',
       channelTopic: 'Investigate prompt cache behavior',
       agents: [
         { name: 'plan', description: 'planning only' },
@@ -278,12 +282,18 @@ describe('system-message', () => {
       "
       The user is reading your messages from inside Discord, via kimaki.dev
 
-      ## bash tool
+      ## Discord output
 
-      When calling the bash tool, always include these extra fields alongside \`command\`:
+      Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
+      Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
+      Exceptions: when a tool requires user-visible text first (\`question\`, \`kimaki_action_buttons\`, \`kimaki_file_upload\`, \`kimaki_sleep\`), write that required text, then call the tool.
+
+      ## shell tool
+
+      When calling the shell tool, always include these extra fields alongside \`command\`:
 
       \`\`\`ts
-      interface BashToolInput {
+      interface ShellToolInput {
         command: string
         /** Short 5-10 word summary of what this command does */
         description: string
@@ -294,8 +304,8 @@ describe('system-message', () => {
       }
       \`\`\`
 
-      \`description\` is shown in Discord when the bash command is longer than 50 characters.
-      \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
+      \`description\` is shown in Discord when the shell command is longer than 50 characters.
+      \`hasSideEffect\` distinguishes essential shell calls from read-only ones in low-verbosity mode.
 
       Your current OpenCode session ID is: ses_123
       Your current Discord channel ID is: chan_123
@@ -334,6 +344,8 @@ describe('system-message', () => {
 
       kimaki upload-to-discord --session ses_123 <file1> [file2] ...
 
+      NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`kimaki upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
+
       ## generating audio from text
 
       When the user asks you to generate audio of some text so they can listen instead of reading, use \`kimaki tts\` to create a speech file and \`kimaki upload-to-discord\` to send it to the thread. Only use this when the user explicitly asks for audio.
@@ -360,7 +372,9 @@ describe('system-message', () => {
       Use \`kimaki_sleep\` to pause this session for hours or days, then continue when the time is reached. The sleep is stored in SQLite and survives bot restarts.
       Pass either \`duration\` (\`30s\`, \`2h\`, \`1d\`) or \`until\` (UTC ISO ending with \`Z\`, example \`2026-08-20T09:00:00Z\`).
       You MUST call \`kimaki_sleep\` LAST, after ALL text. Do not call more tools after it.
-      A new user message cancels the sleep. After wake, continue the wait reason.
+      A new user message cancels the sleep. If you still need to wake later after answering, call \`kimaki_sleep\` again with \`until\` set to the original UTC time.
+      The tool result is not a wake. After it succeeds, write one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
+      Wake is a later Discord message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
 
       ## archiving the current thread
 
@@ -388,7 +402,7 @@ describe('system-message', () => {
       The current Discord thread title is in the per-turn \`<discord-user thread-name="..." />\` metadata.
       This updates the OpenCode title. Discord follows automatically.
       Do not retitle every turn. Discord rate-limits thread renames.
-      Keep titles short. Do not add emoji. Do not copy ⬦, btw:, or Fork: prefixes.
+      Keep titles short. Do not add emoji. Do not copy ⻟, btw:, or Fork: prefixes.
 
       ## discord user mentions
 
@@ -400,19 +414,6 @@ describe('system-message', () => {
       kimaki user list --guild guild_123 --query "username"
 
       This returns user IDs you can use for Discord mentions. It can fail when Server Members Intent is disabled, so prefer IDs from existing Discord metadata or raw mentions when possible.
-
-      ## ending a turn
-
-      When your turn is done, the last line of the final reply MUST ping the current user and add a short summary of what just happened.
-      Use the Discord user ID from the per-turn \`<discord-user user-id="..." />\` metadata:
-
-      \`<@535922349652836367> tests passed\`
-
-      Rules:
-      - Ping only on the final reply of a completed turn, so Discord shows a red sidebar dot for finished sessions
-      - Keep the summary to one short sentence so it shows in the Discord notification
-      - Do not ping after tool output, mid-turn text, questions, action buttons, file upload, or sleep
-      - Do not ping if you are about to keep working
 
       ## starting new sessions from CLI
 
@@ -639,10 +640,13 @@ describe('system-message', () => {
       kimaki session list --active
       \`\`\`
 
-      To search past sessions (supports plain text or /regex/flags). Defaults to this project. Use \`--all\` to search every locally registered project:
+      Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
+
+      To search past sessions (supports plain text or /regex/flags). Defaults to this project and the last 14 days. Use \`--days 0\` for all time. Use \`--all\` to search every locally registered project:
 
       \`\`\`bash
       kimaki session search "auth timeout"
+      kimaki session search "auth timeout" --days 0
       kimaki session search "/error\\s+42/i"
       kimaki session search "rate limit" --project /path/to/project
       kimaki session search "/panic|crash/i" --channel <channel_id>
@@ -856,7 +860,7 @@ describe('system-message', () => {
 
       ## running dev servers with tunnel access
 
-      ALWAYS use \`kimaki tunnel\` when starting any dev server. NEVER run \`pnpm dev\`, \`npm run dev\`, or any dev server command without wrapping it in \`kimaki tunnel\`. Always invoke Kimaki directly as \`kimaki\`, never via \`npx\` or \`bunx\`. The user is on Discord, not at the terminal — localhost URLs are useless to them. They need a tunnel URL to access the site.
+      When starting a local dev server that the Discord user should open in a browser, prefer wrapping it in \`kimaki tunnel\` so they get a public URL. Localhost URLs are useless from Discord. Invoke Kimaki directly as \`kimaki\`, not via \`npx\` or \`bunx\`.
 
       Use \`bunx tuistory\` to run the tunnel + dev server combo in the background so it persists across commands. This is preferable to raw shell backgrounding because you can wait for real output, read logs, and interact with the running process.
 

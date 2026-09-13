@@ -108,10 +108,8 @@ e2eTest('queue + interrupt drain ordering', () => {
         client,
       })
 
-      const statusResponse = await client.session.status({
-        directory: ctx.directories.projectDirectory,
-      })
-      expect(statusResponse.data?.[sessionId]?.type).toBe('busy')
+      const statusResponse = await client.session.active()
+      expect(statusResponse[sessionId]?.type).toBe('running')
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: continue-after-archive',
@@ -136,9 +134,9 @@ e2eTest('queue + interrupt drain ordering', () => {
         "--- from: user (interrupt-tester)
         Reply with exactly: setup-archive-drain
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
         --- from: assistant (TestBot)
@@ -148,10 +146,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: continue-after-archive
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: archived-queue-survives
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⺩**interrupt-tester:** Reply with exactly: archived-queue-survives
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
     20_000,
@@ -244,9 +242,9 @@ e2eTest('queue + interrupt drain ordering', () => {
         "--- from: user (interrupt-tester)
         Reply with exactly: setup-interrupt-drain
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -256,10 +254,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: interrupt-now
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: queued-behind-slow
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⺩**interrupt-tester:** Reply with exactly: queued-behind-slow
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 
       // 7. Assert the interrupt message got its own ok reply between the
@@ -273,7 +271,7 @@ e2eTest('queue + interrupt drain ordering', () => {
       expect(interruptUserLine).toBeGreaterThan(-1)
 
       const queueDispatchLine = lines.findIndex((line) => {
-        return line.includes('» **interrupt-tester:** Reply with exactly: queued-behind-slow')
+        return line.includes('⺩**interrupt-tester:** Reply with exactly: queued-behind-slow')
       })
       expect(queueDispatchLine).toBeGreaterThan(-1)
 

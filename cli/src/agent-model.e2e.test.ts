@@ -21,10 +21,10 @@ import {
   test,
   expect,
 } from 'vitest'
-import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder } from 'discord.js'
+import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
-  buildDeterministicOpencodeConfig,
+  buildDeterministicOpencode2Config,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 import { setDataDir } from './config.js'
@@ -42,6 +42,7 @@ import {
   getSessionModel,
   getSessionAgent,
   getChannelAgent,
+  getChannelModel,
   setSessionModel,
   type VerbosityLevel,
 } from './database.js'
@@ -49,15 +50,17 @@ import { getDb } from './db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import { getOpencodeClient, initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
   initTestGitRepo,
+  isFooterMessage,
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
 import { buildQuickAgentCommandDescription } from './commands/agent.js'
+import { buildQuickAgentSlashCommand } from './discord-command-registration.js'
 
 
 const TEST_USER_ID = '200000000000000920'
@@ -101,9 +104,11 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
-const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
+  const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
 const COMMAND_SYSTEM_CHECK_TEMPLATE =
   'Reply with exactly: command-system-check'
+const CHAT_SYSTEM_CHECK_TEMPLATE =
+  'Reply with exactly: chat-system-check'
 
 function createDeterministicMatchers(): DeterministicMatcher[] {
   const systemContextMatcher: DeterministicMatcher = {
@@ -138,6 +143,34 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   // instruction (upload helper) so we know the real session system prompt was
   // injected — not just any string that happens to mention kimaki.dev.
   // Without the fix this never fires and the bot replies "ok" from the fallback.
+  const chatSystemMatcher: DeterministicMatcher = {
+    id: 'chat-system-check',
+    priority: 26,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: CHAT_SYSTEM_CHECK_TEMPLATE,
+      promptTextIncludes: 'kimaki upload-to-discord --session',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'chat-system-reply' },
+        {
+          type: 'text-delta',
+          id: 'chat-system-reply',
+          delta: 'chat-system-ok',
+        },
+        { type: 'text-end', id: 'chat-system-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 0],
+    },
+  }
+
   const commandSystemMatcher: DeterministicMatcher = {
     id: 'command-system-check',
     priority: 25,
@@ -219,6 +252,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   return [
+    chatSystemMatcher,
     commandSystemMatcher,
     systemContextMatcher,
     replyContextMatcher,
@@ -269,7 +303,7 @@ describe('agent model resolution', () => {
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text', sessionFootersEnabled: true })
+    store.setState({ defaultVerbosity: 'tools_and_text' })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,
@@ -311,35 +345,52 @@ describe('agent model resolution', () => {
       )
       .toString()
 
-    // Build base config with default model
     const opencodeConfig = {
-      ...buildDeterministicOpencodeConfig({
+      ...buildDeterministicOpencode2Config({
         providerName: PROVIDER_NAME,
-        providerNpm,
+        providerPackage: `aisdk:${providerNpm}`,
         model: DEFAULT_MODEL,
-        smallModel: DEFAULT_MODEL,
+        extraModels: [AGENT_MODEL, PLAN_AGENT_MODEL, CHANNEL_MODEL],
         settings: {
           strict: false,
           matchers: createDeterministicMatchers(),
         },
       }),
-      // OpenCode command used to verify session.command still gets kimaki system
-      command: {
+      commands: {
         [COMMAND_SYSTEM_CHECK_NAME]: {
           description: 'Test command for kimaki system prompt injection',
           template: COMMAND_SYSTEM_CHECK_TEMPLATE,
         },
       },
+      agents: {
+        'test-agent': {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+          model: `${PROVIDER_NAME}/${AGENT_MODEL}`,
+        },
+        plan: {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+          model: `${PROVIDER_NAME}/${PLAN_AGENT_MODEL}`,
+        },
+        plain: {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+        },
+      },
     }
 
-    // Add extra models to the provider so opencode accepts them
-    const providerConfig = opencodeConfig.provider[PROVIDER_NAME]
+    const providerConfig = opencodeConfig.providers[PROVIDER_NAME]
     if (!providerConfig) {
       throw new Error(`Missing deterministic provider config for ${PROVIDER_NAME}`)
     }
-    providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
-    providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
-    providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
+    const planModel = providerConfig.models[PLAN_AGENT_MODEL]
+    if (!planModel) {
+      throw new Error(`Missing deterministic model ${PLAN_AGENT_MODEL}`)
+    }
+    Object.assign(planModel, {
+      variants: [{ id: 'high' }, { id: 'max' }],
+    })
 
     fs.writeFileSync(
       path.join(directories.projectDirectory, 'opencode.json'),
@@ -400,22 +451,13 @@ describe('agent model resolution', () => {
     // Register quick agent slash commands so /plan-agent and /test-agent-agent
     // are resolvable by handleQuickAgentCommand via guild.commands.fetch().
     const agentCommands = ['test-agent', 'plan', 'plain'].map((agentName) => {
-      return new SlashCommandBuilder()
-        .setName(`${agentName}-agent`)
-        .setDescription(
-          buildQuickAgentCommandDescription({
-            agentName,
-            description: `Switch to ${agentName} agent`,
-          }),
-        )
-        .setDMPermission(false)
-        .addStringOption((opt) =>
-          opt
-            .setName('prompt')
-            .setDescription('Send a prompt with this agent')
-            .setRequired(false),
-        )
-        .toJSON()
+      return buildQuickAgentSlashCommand({
+        commandName: `${agentName}-agent`,
+        description: buildQuickAgentCommandDescription({
+          agentName,
+          description: `Switch to ${agentName} agent`,
+        }),
+      }).toJSON()
     })
     const rest = new REST({ version: '10', api: discord.restUrl }).setToken(
       discord.botToken,
@@ -431,6 +473,38 @@ describe('agent model resolution', () => {
     )
     if (warmup instanceof Error) {
       throw warmup
+    }
+    const client = getOpencodeClient(directories.projectDirectory)
+    if (!client) {
+      throw new Error('OpenCode client missing after warmup')
+    }
+    const deadline = Date.now() + 5_000
+    let agents: Array<{ name: string; model?: { id?: string } }> = []
+    while (Date.now() < deadline) {
+      const agentsResponse = await client.agent.list({
+        location: { directory: directories.projectDirectory },
+      })
+      agents = agentsResponse.data ?? []
+      const testAgent = agents.find((agent) => agent.name.toLowerCase() === 'test-agent')
+      const planAgent = agents.find((agent) => agent.name.toLowerCase() === 'plan')
+      if (
+        testAgent?.model?.id === AGENT_MODEL
+        && planAgent?.model?.id === PLAN_AGENT_MODEL
+      ) {
+        break
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100)
+      })
+    }
+    const loaded = agents.map((agent) => {
+      return `${agent.name}:${agent.model?.id ?? 'none'}`
+    })
+    if (!loaded.some((entry) => entry.toLowerCase() === `test-agent:${AGENT_MODEL}`)) {
+      throw new Error(`test-agent model not loaded: ${loaded.join(', ')}`)
+    }
+    if (!loaded.some((entry) => entry.toLowerCase() === `plan:${PLAN_AGENT_MODEL}`)) {
+      throw new Error(`plan agent model not loaded: ${loaded.join(', ')}`)
     }
   }, 20_000)
 
@@ -459,7 +533,7 @@ describe('agent model resolution', () => {
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
     if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity, sessionFootersEnabled: false })
+      store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
@@ -500,7 +574,7 @@ describe('agent model resolution', () => {
       const footerMessage = messages.find((message) => {
         return (
           message.author.id === discord.botUserId &&
-          message.content.startsWith('*')
+          isFooterMessage({ message, botUserId: discord.botUserId })
         )
       })
 
@@ -508,9 +582,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: agent-model-check
         --- from: assistant (TestBot)
-        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -565,10 +639,37 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
-        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         system-context-ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
       `)
+    },
+    15_000,
+  )
+
+  test(
+    'chat prompt path includes kimaki system prompt',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: CHAT_SYSTEM_CHECK_TEMPLATE,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === CHAT_SYSTEM_CHECK_TEMPLATE
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'chat-system-ok',
+        timeout: 4_000,
+      })
+
+      expect(await discord.thread(thread.id).text()).toContain('chat-system-ok')
     },
     15_000,
   )
@@ -700,7 +801,7 @@ describe('agent model resolution', () => {
       const footerMessage = messages.find((message) => {
         return (
           message.author.id === discord.botUserId &&
-          message.content.startsWith('*')
+          isFooterMessage({ message, botUserId: discord.botUserId })
         )
       })
 
@@ -708,9 +809,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
-        *using deterministic-provider/channel-model-v2*
+        > *using deterministic-provider/channel-model-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2* <@200000000000000920>"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -755,16 +856,16 @@ describe('agent model resolution', () => {
       })
       const footer = messages.find((message) => {
         return message.author.id === discord.botUserId
-          && message.content.startsWith('*')
+          && isFooterMessage({ message, botUserId: discord.botUserId })
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: user (agent-model-tester)
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
-        *using deterministic-provider/channel-model-v2*
+        > *using deterministic-provider/channel-model-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2* <@200000000000000920>"
       `)
       expect(footer?.content).toContain(CHANNEL_MODEL)
       expect(footer?.content).not.toContain(DEFAULT_MODEL)
@@ -850,7 +951,7 @@ describe('agent model resolution', () => {
         Reusing context from <#SOURCE_THREAD> to answer prompt...
         Reply with exactly: btw-model-check
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2* <@200000000000000920>"
       `)
       expect(forkedSessionModel).toMatchInlineSnapshot(`
         {
@@ -893,7 +994,7 @@ describe('agent model resolution', () => {
       const firstMessages = await discord.thread(thread.id).getMessages()
       const firstFooter = firstMessages.find((m) => {
         return (
-          m.author.id === discord.botUserId && m.content.startsWith('*')
+          isFooterMessage({ message: m, botUserId: discord.botUserId })
         )
       })
       expect(firstFooter).toBeDefined()
@@ -929,14 +1030,14 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: first-thread-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         --- from: user (agent-model-tester)
         Reply with exactly: second-thread-msg
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
       `)
 
       const secondMessages = await discord.thread(thread.id).getMessages()
@@ -944,7 +1045,7 @@ describe('agent model resolution', () => {
         .reverse()
         .find((m) => {
           return (
-            m.author.id === discord.botUserId && m.content.startsWith('*')
+            isFooterMessage({ message: m, botUserId: discord.botUserId })
           )
         })
       expect(secondFooter).toBeDefined()
@@ -996,11 +1097,116 @@ describe('agent model resolution', () => {
       expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('test-agent')
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: assistant (TestBot)
-        » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
-        *using deterministic-provider/plan-model-v2 ⋅ plan*
+        ⺩**agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent with prompt persists a supported thinking variant',
+    async () => {
+      const prompt = 'Reply with exactly: inline-plan-agent-variant-msg'
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'plan-agent',
+          options: [
+            { name: 'prompt', type: 3, value: prompt },
+            { name: 'variant', type: 3, value: 'high' },
+          ],
+        })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => t.name === prompt,
+      })
+
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
+
+      const sessionId = await getThreadSession(thread.id)
+      expect(sessionId).toBeDefined()
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: assistant (TestBot)
+        ⺩**agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
+        ok
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+      `)
+      expect(sessionId ? await getSessionModel(sessionId) : undefined).toMatchInlineSnapshot(`
+        {
+          "modelId": "deterministic-provider/plan-model-v2",
+          "variant": "high",
+        }
+      `)
+    },
+    20_000,
+  )
+
+  test(
+    '/plan-agent variant persists on the channel without a prompt',
+    async () => {
+      const db = await getDb()
+      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
+
+      const { id: interactionId } = await discord
+        .channel(TEXT_CHANNEL_ID)
+        .user(TEST_USER_ID)
+        .runSlashCommand({
+          name: 'plan-agent',
+          options: [{ name: 'variant', type: 3, value: 'max' }],
+        })
+
+      await discord
+        .channel(TEXT_CHANNEL_ID)
+        .waitForInteractionAck({ interactionId, timeout: 4_000 })
+
+      const start = Date.now()
+      let confirmation = ''
+      while (Date.now() - start < 4_000) {
+        const messages = await discord.channel(TEXT_CHANNEL_ID).getMessages()
+        const match = [...messages].reverse().find((message) => {
+          return (
+            message.author.id === discord.botUserId &&
+            message.content.includes('Variant: **max**')
+          )
+        })
+        if (match) {
+          confirmation = match.content
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+
+      expect(confirmation).toMatchInlineSnapshot(`
+        "Switched to **plan** agent for this channel (was **test-agent**)
+        Model: *deterministic-provider/plan-model-v2* (agent "plan")
+        Variant: **max**
+        All new sessions will use this agent."
+      `)
+      expect(await getChannelAgent(TEXT_CHANNEL_ID)).toBe('plan')
+      expect(await getChannelModel(TEXT_CHANNEL_ID)).toMatchInlineSnapshot(`
+        {
+          "modelId": "deterministic-provider/plan-model-v2",
+          "variant": "max",
+        }
+      `)
+
+      await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, TEXT_CHANNEL_ID))
     },
     20_000,
   )
@@ -1054,12 +1260,12 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: inline-existing-first-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
-        » **agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        ⺩**agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
     },
     20_000,
@@ -1094,7 +1300,7 @@ describe('agent model resolution', () => {
       const firstFooter = (await discord.thread(thread.id).getMessages()).find(
         (m) => {
           return (
-            m.author.id === discord.botUserId && m.content.startsWith('*')
+            isFooterMessage({ message: m, botUserId: discord.botUserId })
           )
         },
       )
@@ -1126,9 +1332,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: switch-in-thread-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
@@ -1136,14 +1342,14 @@ describe('agent model resolution', () => {
         Reply with exactly: after-switch-msg
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
 
       const secondFooter = [...(await discord.thread(thread.id).getMessages())]
         .reverse()
         .find((m) => {
           return (
-            m.author.id === discord.botUserId && m.content.startsWith('*')
+            isFooterMessage({ message: m, botUserId: discord.botUserId })
           )
         })
       expect(secondFooter).toBeDefined()
@@ -1200,9 +1406,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: race-switch-first-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         --- from: user (agent-model-tester)
         Reply with exactly: race-switch-follow-up
         --- from: assistant (TestBot)
@@ -1210,14 +1416,14 @@ describe('agent model resolution', () => {
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
 
       const secondFooter = [...(await discord.thread(thread.id).getMessages())]
         .reverse()
         .find((m) => {
           return (
-            m.author.id === discord.botUserId && m.content.startsWith('*')
+            isFooterMessage({ message: m, botUserId: discord.botUserId })
           )
         })
       expect(secondFooter).toBeDefined()
@@ -1263,15 +1469,15 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: race-channel-follow-up
         --- from: assistant (TestBot)
-        *using deterministic-provider/plan-model-v2 ⋅ plan*
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
       `)
 
       const footer = [...(await discord.thread(thread.id).getMessages())]
         .reverse()
         .find((m) => {
-          return m.author.id === discord.botUserId && m.content.startsWith('*')
+          return isFooterMessage({ message: m, botUserId: discord.botUserId })
         })
       expect(footer).toBeDefined()
       expect(footer!.content).toContain(PLAN_AGENT_MODEL)
@@ -1324,9 +1530,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: refresh-agent-model-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/plan-model-v2 ⋅ plan*
+        > *using deterministic-provider/plan-model-v2 ⋅ plan*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>
         Using **plan** agent for this session
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message."
@@ -1377,9 +1583,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: channel-vs-agent-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/agent-model-v2 ⋅ test-agent*
+        > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message."
@@ -1432,9 +1638,9 @@ describe('agent model resolution', () => {
         "--- from: user (agent-model-tester)
         Reply with exactly: plain-agent-override-msg
         --- from: assistant (TestBot)
-        *using deterministic-provider/channel-model-v2*
+        > *using deterministic-provider/channel-model-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2* <@200000000000000920>
         Switched to **plain** agent for this session
         Model: *deterministic-provider/channel-model-v2* (channel override)
         This model comes from a channel override. Use /model and press Clear override if you want this agent's model.

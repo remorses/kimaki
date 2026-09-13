@@ -6,10 +6,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type {
-  OpencodeClient,
-  Part,
-} from '@opencode-ai/sdk/v2'
+import type { DiscordSessionPart } from './message-formatting.js'
 import {
   getChannelVerbosity,
   getPartMessageIds,
@@ -25,15 +22,21 @@ import {
   formatPart,
   collectSessionChunks,
   batchChunksForDiscord,
+  getLastTextPartIdsForAssistantTurns,
+  QUEUE_PREFIX,
+  sessionMessagesToGeneric,
+  sessionMessagesAscending,
   type SessionChunk,
 } from './message-formatting.js'
 import {
   initializeOpencodeForDirectory,
+  type OpencodeClient,
 } from './opencode.js'
 import { isEssentialToolPart } from './session-handler/thread-session-runtime.js'
 import { notifyError } from './sentry.js'
 import { store } from './store.js'
 import { extractNonXmlContent } from './xml.js'
+import { listAllMessages } from './opencode-pagination.js'
 
 
 const logger = createLogger(LogPrefix.OPENCODE)
@@ -52,15 +55,13 @@ type RenderableUserTextPart = {
   text: string
 }
 
-type SessionMessagesResponse = Awaited<
-  ReturnType<OpencodeClient['session']['messages']>
->
-type SessionMessage = NonNullable<SessionMessagesResponse['data']>[number]
+type SessionMessage = SessionMessageLike
 export type SessionMessageLike = {
   info: {
     role: string
+    time?: { created: number }
   }
-  parts: Part[]
+  parts: DiscordSessionPart[]
 }
 
 type DiscordOriginMetadata = {
@@ -79,11 +80,8 @@ type DirectorySyncTarget = {
 
 let externalSyncInterval: ReturnType<typeof setInterval> | null = null
 
-function isSyntheticTextPart(part: Extract<Part, { type: 'text' }>): boolean {
-  const candidate = part as Extract<Part, { type: 'text' }> & {
-    synthetic?: unknown
-  }
-  return candidate.synthetic === true
+function isSyntheticTextPart(part: Extract<DiscordSessionPart, { type: 'text' }>): boolean {
+  return part.synthetic === true
 }
 
 function parseDiscordOriginMetadata(text: string): DiscordOriginMetadata | null {
@@ -160,6 +158,30 @@ export function getRenderableUserTextParts({
   })
 }
 
+export function getIgnoredNoticeTextParts({
+  message,
+}: {
+  message: SessionMessageLike
+}): RenderableUserTextPart[] {
+  if (message.info.role !== 'user') {
+    return []
+  }
+
+  return message.parts.flatMap((part) => {
+    if (part.type !== 'text') {
+      return [] as RenderableUserTextPart[]
+    }
+    if (part.ignored !== true || isSyntheticTextPart(part)) {
+      return [] as RenderableUserTextPart[]
+    }
+    const text = part.text?.trim()
+    if (!text) {
+      return [] as RenderableUserTextPart[]
+    }
+    return [{ id: part.id, text }]
+  })
+}
+
 function getExternalUserMirrorText({
   username,
   prompt,
@@ -167,7 +189,7 @@ function getExternalUserMirrorText({
   username: string
   prompt: string
 }): string {
-  return `» **${username}:** ${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
+  return `${QUEUE_PREFIX}**${username}:** ${prompt.slice(0, 1000)}${prompt.length > 1000 ? '...' : ''}`
 }
 
 // Pure derivation: is the latest user turn from Discord?
@@ -181,8 +203,14 @@ export function isLatestUserTurnFromDiscord({
 }: {
   messages: SessionMessageLike[]
 }): boolean {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]!
+  const ascending = messages.every((message) => message.info.time)
+    ? sessionMessagesAscending(messages.map((message) => ({
+        ...message,
+        time: message.info.time ?? { created: 0 },
+      })))
+    : messages
+  for (let i = ascending.length - 1; i >= 0; i--) {
+    const message = ascending[i]!
     if (message.info.role !== 'user') {
       continue
     }
@@ -202,7 +230,7 @@ function shouldMirrorAssistantPart({
   part,
   verbosity,
 }: {
-  part: Part
+  part: DiscordSessionPart
   verbosity: 'tools_and_text' | 'text_and_essential_tools' | 'text_only'
 }): boolean {
   if (verbosity === 'text_only') {
@@ -255,6 +283,18 @@ function sortSessionsByRecency<T extends SessionWithTime>(sessions: T[]): T[] {
   return [...sessions].sort((left, right) => {
     return getSessionRecencyTimestamp(right) - getSessionRecencyTimestamp(left)
   })
+}
+
+function selectSessionsForSync<T extends SessionWithTime>({
+  sessions,
+  startMs,
+}: {
+  sessions: T[]
+  startMs: number
+}): T[] {
+  return sortSessionsByRecency(sessions.filter((session) => {
+    return getSessionRecencyTimestamp(session) >= startMs
+  }))
 }
 
 function groupTrackedChannelsByDirectory(
@@ -370,9 +410,24 @@ function collectUnsyncedChunks({
 }): { chunks: SessionChunk[]; directMappings: DirectPartMapping[] } {
   const chunks: SessionChunk[] = []
   const directMappings: DirectPartMapping[] = []
+  const lastTextPartIds = getLastTextPartIdsForAssistantTurns(messages)
 
   for (const message of messages) {
     if (message.info.role === 'user') {
+      const ignoredNoticeParts = getIgnoredNoticeTextParts({ message }).filter((part) => {
+        return !syncedPartIds.has(part.id)
+      })
+      if (ignoredNoticeParts.length > 0) {
+        chunks.push({
+          partIds: ignoredNoticeParts.map((part) => {
+            return part.id
+          }),
+          content: ignoredNoticeParts.map((part) => {
+            return part.text
+          }).join('\n\n'),
+          kind: 'text',
+        })
+      }
       const renderableParts = getRenderableUserTextParts({ message })
       const unsyncedParts = renderableParts.filter((p) => {
         return !syncedPartIds.has(p.id)
@@ -419,6 +474,7 @@ function collectUnsyncedChunks({
     const { chunks: assistantChunks } = collectSessionChunks({
       messages: [{ info: message.info, parts: filteredParts }],
       skipPartIds: syncedPartIds,
+      lastTextPartIds,
     })
     // Mark empty-content parts as synced (collectSessionChunks skips them)
     for (const part of filteredParts) {
@@ -452,19 +508,16 @@ async function syncSessionToThread({
   sessionTitle?: string | null
   signal: AbortSignal
 }): Promise<void> {
-  const messagesResponse = await client.session.messages({
-    sessionID: sessionId,
-    directory,
-  }).catch((error) => {
-    return new Error(`Failed to fetch messages for session ${sessionId}`, {
-      cause: error,
-    })
+  const messagesResult = await listAllMessages({
+    client,
+    sessionId,
+    order: 'asc',
   })
-  if (messagesResponse instanceof Error) {
-    throw messagesResponse
-  }
+  if (messagesResult instanceof Error) throw messagesResult
   if (signal.aborted) return
-  const messages = messagesResponse.data || []
+  const messages = sessionMessagesToGeneric(
+    sessionMessagesAscending(messagesResult),
+  )
 
   // Pure derivation from opencode events: if the latest user turn has
   // <discord-user /> metadata, kimaki's thread runtime owns this session.
@@ -528,7 +581,7 @@ async function pulseTypingForBusySessions({
   statuses: Record<string, { type: string }>
 }): Promise<void> {
   for (const [sessionId, status] of Object.entries(statuses)) {
-    if (status.type !== 'busy') {
+    if (status.type !== 'running') {
       continue
     }
     const threadId = await getThreadIdBySessionId(sessionId)
@@ -621,9 +674,9 @@ async function syncDirectoryInner({
   const client = clientResult()
   const sessionsResponse = await client.session.list({
     directory,
-    start: startMs,
     limit: EXTERNAL_SYNC_MAX_SESSIONS,
-  }).catch((error) => {
+    order: 'desc',
+  }).catch((error: unknown) => {
     return new Error(`Failed to list sessions for ${directory}`, {
       cause: error,
     })
@@ -634,15 +687,13 @@ async function syncDirectoryInner({
   }
   if (signal.aborted) return
 
-  const statusesResponse = await client.session.status({
-    directory,
-  }).catch(() => {
+  const statusesResponse = await client.session.active().catch(() => {
     return null
   })
-  if (statusesResponse?.data) {
+  if (statusesResponse) {
     await pulseTypingForBusySessions({
       discordClient,
-      statuses: statusesResponse.data as Record<string, { type: string }>,
+      statuses: statusesResponse,
     }).catch(() => {})
   }
   if (signal.aborted) return
@@ -654,7 +705,7 @@ async function syncDirectoryInner({
     }
     return !/subagent\)\s*$/i.test(title)
   })
-  const sorted = sortSessionsByRecency(sessions)
+  const sorted = selectSessionsForSync({ sessions, startMs })
 
   for (const session of sorted) {
     if (signal.aborted) return
@@ -760,6 +811,7 @@ export const externalOpencodeSyncInternals = {
   getSessionThreadName,
   groupTrackedChannelsByDirectory,
   sortSessionsByRecency,
+  selectSessionsForSync,
   parseDiscordOriginMetadata,
   getDiscordOriginMetadataFromMessage,
   isLatestUserTurnFromDiscord,

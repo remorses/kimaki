@@ -95,7 +95,7 @@ describe('queue drain after question select answer', () => {
       })
       const pending = await waitForPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 8_000,
+        timeoutMs: 4_000,
       })
       const questionMessage = questionMessages.find((message) => {
         return message.content.includes('How to proceed?')
@@ -120,8 +120,9 @@ describe('queue drain after question select answer', () => {
       await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
-        text: `» **question-select-tester:** ${firstQueuedPrompt}`,
-        timeout: 8_000,
+        text: `⺩**question-select-tester:** ${firstQueuedPrompt}`,
+        timeout: 4_000,
+        clamp: false,
       })
 
       const { id: secondQueueInteractionId } = await th.user(TEST_USER_ID)
@@ -137,7 +138,7 @@ describe('queue drain after question select answer', () => {
       await expectNoBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
-        text: `» **question-select-tester:** ${secondQueuedPrompt}`,
+        text: `⺩**question-select-tester:** ${secondQueuedPrompt}`,
         timeout: 200,
       })
 
@@ -154,22 +155,25 @@ describe('queue drain after question select answer', () => {
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
-        afterMessageIncludes: `» **question-select-tester:** ${firstQueuedPrompt}`,
+        timeout: 4_000,
+        afterMessageIncludes: `⺩**question-select-tester:** ${firstQueuedPrompt}`,
         afterAuthorId: ctx.discord.botUserId,
+        clamp: false,
       })
       await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
-        text: `» **question-select-tester:** ${secondQueuedPrompt}`,
-        timeout: 8_000,
+        text: `⺩**question-select-tester:** ${secondQueuedPrompt}`,
+        timeout: 4_000,
+        clamp: false,
       })
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
-        afterMessageIncludes: `» **question-select-tester:** ${secondQueuedPrompt}`,
+        timeout: 4_000,
+        afterMessageIncludes: `⺩**question-select-tester:** ${secondQueuedPrompt}`,
         afterAuthorId: ctx.discord.botUserId,
+        clamp: false,
       })
 
       const timeline = await th.text({ showInteractions: true })
@@ -177,28 +181,29 @@ describe('queue drain after question select answer', () => {
         "--- from: user (question-select-tester)
         QUESTION_SELECT_QUEUE_MARKER
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         **Select action**
         How to proceed?
         ✓ _Alpha_
         [user interaction]
-        » **question-select-tester:** QUESTION_SELECT_DRAIN_FIRST_MARKER
+        ⺩**question-select-tester:** QUESTION_SELECT_DRAIN_FIRST_MARKER
         Queued message (position 1)
         [user interaction]
         Queued message (position 1)
         [user selects dropdown: 0]
-        » **question-select-tester:** Alpha
+        ⺩**question-select-tester:** Alpha
+        tool done
         question-drain-first
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **question-select-tester:** Reply with exactly: post-question-second
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ⺩**question-select-tester:** Reply with exactly: post-question-second
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
       expect(timeline).toContain('How to proceed?')
       expect(timeline).toContain('[user selects dropdown: 0]')
-      expect(timeline).toContain(`» **question-select-tester:** ${firstQueuedPrompt}`)
+      expect(timeline).toContain(`⺩**question-select-tester:** ${firstQueuedPrompt}`)
       expect(timeline).toContain('question-drain-first')
-      expect(timeline).toContain(`» **question-select-tester:** ${secondQueuedPrompt}`)
+      expect(timeline).toContain(`⺩**question-select-tester:** ${secondQueuedPrompt}`)
       expect(timeline).toContain('ok')
     },
     15_000,

@@ -23,6 +23,7 @@ import {
 import {
   collectSessionChunks,
   batchChunksForDiscord,
+  sessionMessagesToGeneric,
 } from '../message-formatting.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
@@ -195,10 +196,21 @@ export async function handleForkSubagentSelectMenu(
     return
   }
 
+  const parentMessages = await getClient().message.list({
+    sessionID: selectedSessionId,
+    limit: 1,
+    order: 'desc',
+  }).catch(() => null)
+  const boundaryMessageID = parentMessages?.data[0]?.id
+  if (!boundaryMessageID) {
+    await interaction.editReply('Failed to fork session')
+    return
+  }
   const forkResponse = await getClient().session.fork({
     sessionID: selectedSessionId,
-  })
-  if (!forkResponse.data) {
+    boundary: { type: 'through' },
+  }).catch(() => null)
+  if (!forkResponse) {
     await interaction.editReply('Failed to fork session')
     return
   }
@@ -209,7 +221,7 @@ export async function handleForkSubagentSelectMenu(
     return
   }
 
-  const forkedSession = forkResponse.data
+  const forkedSession = forkResponse
   const forkedThread = await textChannel.threads.create({
     name: `Fork: ${selectedSubagent?.description || selectedSubagent?.subagentType || 'subagent session'}`.slice(0, 100),
     autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
@@ -232,12 +244,13 @@ export async function handleForkSubagentSelectMenu(
   )
 
   try {
-    const messagesResponse = await getClient().session.messages({
+    const messagesResponse = await getClient().message.list({
       sessionID: forkedSession.id,
+      order: 'asc',
     })
     if (messagesResponse.data) {
       const { chunks } = collectSessionChunks({
-        messages: messagesResponse.data,
+        messages: sessionMessagesToGeneric(messagesResponse.data),
         limit: 30,
       })
       const batched = batchChunksForDiscord(chunks)

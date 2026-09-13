@@ -148,8 +148,14 @@ export async function handleLastSessionsCommand({
   const tableMarkdown = buildSessionTable({ rows })
   const segments = splitTablesFromMarkdown(tableMarkdown)
 
-  const allComponents: APIMessageTopLevelComponent[] = segments.flatMap(
-    (segment) => {
+  const btwNote: APITextDisplayComponent = {
+    type: ComponentType.TextDisplay,
+    content:
+      'Titles prefixed `btw:` are side sessions that answer a related question. They are not duplicate sessions.',
+  }
+  const allComponents: APIMessageTopLevelComponent[] = [
+    btwNote,
+    ...segments.flatMap((segment) => {
       if (segment.type === 'components') {
         return segment.components
       }
@@ -158,8 +164,8 @@ export async function handleLastSessionsCommand({
         content: segment.text,
       }
       return [textDisplay]
-    },
-  )
+    }),
+  ]
 
   const { components } = truncateComponents(allComponents)
 

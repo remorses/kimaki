@@ -5,7 +5,7 @@ import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
-import type { OpencodeClient, Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from '../opencode.js'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -15,16 +15,18 @@ import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
 import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getThreadWorktreeOrWorkspace, getAllTextChannelDirectories } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
-import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories } from '../session-search.js'
+import { parseSessionSearchPattern, collectSessionSearchMatches, validateSessionSearchScope, resolveSessionSearchDirectories, parseSessionSearchDays, sessionSearchMinUpdated, SESSION_SEARCH_DEFAULT_DAYS, type SessionSearchMatch } from '../session-search.js'
+import { sessionMessagesToGeneric } from '../message-formatting.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
 import { formatTimeAgo } from '../commands/worktrees.js'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
-import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
+import { serializeOpencodeEventsJsonl } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { OpenCodeSdkError } from '../errors.js'
+import { listAllMessages, listAllSessions } from '../opencode-pagination.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, validateWorktreeDirectory } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -44,6 +46,12 @@ import {
 } from '../cli-runner.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
+const persistedSessionEventSchema = z.object({
+  type: z.string(),
+  data: z.unknown().optional(),
+  location: z.unknown().optional(),
+  properties: z.unknown().optional(),
+}).passthrough()
 const cli = goke()
 
 async function resolveSessionDirectoryFromDatabase({
@@ -110,24 +118,29 @@ cli
         process.exit(EXIT_NO_RESTART)
       }
 
-      const sessionsResponse = await getClient().session.list()
-      const sessions = sessionsResponse.data || []
+      const sessions = await listAllSessions({
+        client: getClient(),
+        directory: projectDirectory,
+        order: 'desc',
+      })
+      if (sessions instanceof Error) {
+        cliLogger.error('Failed to list OpenCode sessions:', sessions.message)
+        process.exit(EXIT_NO_RESTART)
+      }
       const statuses = await (async () => {
         if (!options.active) return null
-        const response = await getClient().session.status({
-          directory: projectDirectory,
-        })
-        if (response.error) {
+        const response = await getClient().session.active().catch(() => null)
+        if (!response) {
           cliLogger.error('Failed to list active sessions')
           process.exit(EXIT_NO_RESTART)
         }
-        return response.data || {}
+        return response
       })()
       const selectedSessions = sessions.filter((session) => {
         if (session.id === options.exclude) return false
         if (!options.active) return true
         const status = statuses?.[session.id]
-        return Boolean(status && status.type !== 'idle')
+        return Boolean(status)
       })
 
       if (selectedSessions.length === 0) {
@@ -170,7 +183,7 @@ cli
           return {
             id: session.id,
             title: session.title || 'Untitled Session',
-            directory: session.directory,
+            directory: session.location.directory,
             updated: new Date(session.time.updated).toISOString(),
             source: sessionToThread.has(session.id) ? 'kimaki' : 'opencode',
             threadId: sessionToThread.get(session.id) || null,
@@ -196,7 +209,7 @@ cli
           ? ` | status: ${statuses?.[session.id]?.type || 'busy'}`
           : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}${statusInfo}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.location.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}${statusInfo}`,
         )
       }
 
@@ -326,23 +339,21 @@ cli
       // project.list() returns all known projects globally from any OpenCode server,
       // but session.list/get are scoped to the server's own project. So we try each.
       cliLogger.log('Session not in current project, searching all projects...')
-      const projectsResponse = await getClient().project.list()
-      const projects = projectsResponse.data || []
+      const projects = await getClient().project.list()
       const otherProjects = projects
-        .filter((p) => path.resolve(p.worktree) !== projectDirectory)
-        .filter((p) => {
+        .filter((project) => path.resolve(project.canonical) !== projectDirectory)
+        .filter((project) => {
           try {
-            fs.accessSync(p.worktree, fs.constants.R_OK)
+            fs.accessSync(project.canonical, fs.constants.R_OK)
             return true
           } catch {
             return false
           }
         })
-        // Sort by most recently created first to find sessions faster
         .sort((a, b) => b.time.created - a.time.created)
 
       for (const project of otherProjects) {
-        const dir = project.worktree
+        const dir = project.canonical
         cliLogger.log(`Trying project: ${dir}`)
         const otherClient = await initializeOpencodeForDirectory(dir)
         if (otherClient instanceof Error) continue
@@ -404,14 +415,19 @@ cli
 cli
   .command(
     'session search <query>',
-    'Search past sessions for text or /regex/flags in one project, or all registered projects with `--all`',
+    `Search past sessions for text or /regex/flags. Defaults to the last ${SESSION_SEARCH_DEFAULT_DAYS} days; use --days 0 for all time. Add --all for every locally registered project.`,
   )
   .option('--project <path>', 'Project directory (defaults to cwd)')
   .option('--channel <channelId>', 'Resolve project from a Discord channel ID')
   .option('--all', 'Search every locally registered project')
+  .option(
+    '--days <n>',
+    `Only search sessions updated in the last n days (default: ${SESSION_SEARCH_DEFAULT_DAYS}; 0 = all time)`,
+  )
   .option('--limit <n>', 'Maximum matched sessions to return (default: 20)')
   .option('--json', 'Output as JSON')
   .example('kimaki session search "auth timeout"')
+  .example('kimaki session search "auth timeout" --days 0')
   .example('kimaki session search "auth timeout" --all')
   .action(async (query, options) => {
     try {
@@ -441,6 +457,15 @@ cli
         cliLogger.error(limit.message)
         process.exit(EXIT_NO_RESTART)
       }
+
+      const days = parseSessionSearchDays(
+        typeof options.days === 'string' ? options.days : undefined,
+      )
+      if (days instanceof Error) {
+        cliLogger.error(days.message)
+        process.exit(EXIT_NO_RESTART)
+      }
+      const minUpdated = sessionSearchMinUpdated({ days })
 
       const explicitDirectory = await (async (): Promise<string | Error | undefined> => {
         if (options.all) {
@@ -521,29 +546,64 @@ cli
         updated: number
       }> = []
 
-      for (const projectDirectory of existingDirectories) {
-        cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
-        const getClient = await initializeOpencodeForDirectory(projectDirectory)
-        if (getClient instanceof Error) {
+      const listedDirectories = await Promise.all(
+        existingDirectories.map(async (projectDirectory) => {
+          cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
+          const getClient = await initializeOpencodeForDirectory(projectDirectory)
+          if (getClient instanceof Error) {
+            return { projectDirectory, getClient, sessions: [] }
+          }
+          const sessions = await listAllSessions({
+            client: getClient(),
+            directory: projectDirectory,
+            order: 'desc',
+            stopWhen:
+              minUpdated === undefined
+                ? undefined
+                : (session) => session.time.updated < minUpdated,
+          })
+          return {
+            projectDirectory,
+            getClient,
+            sessions,
+          }
+        }),
+      )
+      for (const listed of listedDirectories) {
+        if (listed.getClient instanceof Error) {
           if (options.all) {
             cliLogger.warn(
-              `Skipping ${projectDirectory}: failed to connect to OpenCode: ${getClient.message}`,
+              `Skipping ${listed.projectDirectory}: failed to connect to OpenCode: ${listed.getClient.message}`,
             )
             continue
           }
-          cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+          cliLogger.error(
+            'Failed to connect to OpenCode:',
+            listed.getClient.message,
+          )
           process.exit(EXIT_NO_RESTART)
         }
-        searchedDirectories.push(projectDirectory)
-
-        const sessionsResponse = await getClient().session.list()
-        const sessions = sessionsResponse.data || []
-        for (const session of sessions) {
-          clientsBySessionId.set(session.id, getClient)
+        if (listed.sessions instanceof Error) {
+          if (options.all) {
+            cliLogger.warn(
+              `Skipping ${listed.projectDirectory}: failed to list OpenCode sessions: ${listed.sessions.message}`,
+            )
+            continue
+          }
+          cliLogger.error(
+            'Failed to list OpenCode sessions:',
+            listed.sessions.message,
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
+        searchedDirectories.push(listed.projectDirectory)
+        for (const session of listed.sessions) {
+          if (clientsBySessionId.has(session.id)) continue
+          clientsBySessionId.set(session.id, listed.getClient)
           searchableSessions.push({
             id: session.id,
             title: session.title || 'Untitled Session',
-            directory: session.directory || projectDirectory,
+            directory: session.location.directory || listed.projectDirectory,
             updated: session.time.updated,
           })
         }
@@ -564,27 +624,55 @@ cli
           .map((row) => [row.session_id, row.thread_id]),
       )
 
+      const scopeLabel = options.all
+        ? `${searchedDirectories.length} project(s)`
+        : searchedDirectories[0] || path.resolve('.')
+      const daysLabel =
+        days === 0 ? 'all time' : `the last ${days} day${days === 1 ? '' : 's'}`
+      const printMatch = (match: SessionSearchMatch) => {
+        const threadInfo = match.threadId ? ` | thread: ${match.threadId}` : ''
+        console.log(
+          `${match.id} | ${match.title} | ${match.updated} | ${match.source}${threadInfo}`,
+        )
+        console.log(`  Directory: ${match.directory}`)
+        match.snippets.forEach((snippet) => {
+          console.log(`  - ${snippet}`)
+        })
+      }
+
+      let printedHeader = false
       const { matches: matchedSessions, scannedSessions } =
         await collectSessionSearchMatches({
           sessions: searchableSessions,
           searchPattern,
           sessionToThread,
           limit,
+          minUpdated,
+          onMatch: options.json
+            ? undefined
+            : (match) => {
+                if (!printedHeader) {
+                  printedHeader = true
+                  cliLogger.log(
+                    `Found matching session(s) for ${searchPattern.raw} in ${scopeLabel} (${daysLabel})`,
+                  )
+                }
+                printMatch(match)
+              },
           loadMessages: async (session) => {
             const getClient = clientsBySessionId.get(session.id)
             if (!getClient) {
               return []
             }
-            const messagesResponse = await getClient().session.messages({
-              sessionID: session.id,
+            const messages = await listAllMessages({
+              client: getClient(),
+              sessionId: session.id,
+              order: 'desc',
             })
-            return messagesResponse.data || []
+            if (messages instanceof Error) throw messages
+            return sessionMessagesToGeneric(messages)
           },
         })
-
-      const scopeLabel = options.all
-        ? `${searchedDirectories.length} project(s)`
-        : searchedDirectories[0] || path.resolve('.')
 
       if (options.json) {
         console.log(
@@ -593,6 +681,7 @@ cli
               query: searchPattern.raw,
               mode: searchPattern.mode,
               all: Boolean(options.all),
+              days,
               projectDirectories: searchedDirectories,
               scannedSessions,
               matches: matchedSessions,
@@ -605,25 +694,12 @@ cli
       }
 
       if (matchedSessions.length === 0) {
+        const cutoffHint =
+          days === 0 ? '' : '. Use --days 0 to search all time'
         cliLogger.log(
-          `No matches found for ${searchPattern.raw} in ${scopeLabel} (${scannedSessions} sessions scanned)`,
+          `No matches found for ${searchPattern.raw} in ${scopeLabel} (${scannedSessions} sessions scanned, ${daysLabel})${cutoffHint}`,
         )
         process.exit(0)
-      }
-
-      cliLogger.log(
-        `Found ${matchedSessions.length} matching session(s) for ${searchPattern.raw} in ${scopeLabel}`,
-      )
-
-      for (const match of matchedSessions) {
-        const threadInfo = match.threadId ? ` | thread: ${match.threadId}` : ''
-        console.log(
-          `${match.id} | ${match.title} | ${match.updated} | ${match.source}${threadInfo}`,
-        )
-        console.log(`  Directory: ${match.directory}`)
-        match.snippets.forEach((snippet) => {
-          console.log(`  - ${snippet}`)
-        })
       }
 
       process.exit(0)
@@ -679,7 +755,7 @@ cli
     const parsedRows = rows.flatMap((row) => {
       const parsed = errore.try(
         () => {
-          return JSON.parse(row.event_json) as OpenCodeEvent
+          return persistedSessionEventSchema.parse(JSON.parse(row.event_json))
         },
         (error) => {
           return new Error('Failed to parse persisted event JSON', {
@@ -704,32 +780,12 @@ cli
       process.exit(EXIT_NO_RESTART)
     }
 
-    const projectDirectory = parsedRows.reduce((directory, { event }) => {
-      if (directory) {
-        return directory
-      }
-      if (event.type !== 'session.updated') {
-        return directory
-      }
-      return event.properties.info.directory
-    }, '')
-
-    const lines = parsedRows.map(({ row, event }) => {
-      return JSON.stringify(
-        buildOpencodeEventLogLine({
-          timestamp: Number(row.timestamp),
-          threadId: row.thread_id,
-          projectDirectory,
-          event,
-        }),
-      )
-    })
-    const jsonl = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`
+    const jsonl = serializeOpencodeEventsJsonl(parsedRows.map(({ event }) => event))
 
     fs.mkdirSync(path.dirname(outPath), { recursive: true })
     fs.writeFileSync(outPath, jsonl, 'utf8')
     cliLogger.log(
-      `Exported ${lines.length} events from ${sessionId} to ${outPath}`,
+      `Exported ${parsedRows.length} events from ${sessionId} to ${outPath}`,
     )
     process.exit(0)
   })
@@ -858,9 +914,9 @@ cli
       // Don't pass directory — the server resolves sessions by ID regardless
       // of the x-opencode-directory header, matching archiveThread's pattern.
       // This avoids issues when --cwd was used (session directory != project directory).
-      const abortResult = await client.session.abort({
+      const abortResult = await client.session.interrupt({
         sessionID: sessionId,
-      }).catch((e) => new Error('Failed to abort session', { cause: e }))
+      }).catch((e: unknown) => new Error('Failed to abort session', { cause: e }))
       if (abortResult instanceof Error) {
         cliLogger.error(abortResult.message)
         process.exit(EXIT_NO_RESTART)
@@ -946,19 +1002,15 @@ cli
       }
 
       const updateResult = await serverResult()
-        .session.update({
+        .session.rename({
           sessionID: sessionId,
           title: trimmedTitle,
         })
-        .catch((e) =>
-          new OpenCodeSdkError({ operation: 'session.update', cause: e }),
+        .catch((e: unknown) =>
+          new OpenCodeSdkError({ operation: 'session.rename', cause: e }),
         )
       if (updateResult instanceof Error) {
         cliLogger.error(updateResult.message)
-        process.exit(EXIT_NO_RESTART)
-      }
-      if (updateResult.error) {
-        cliLogger.error('OpenCode rejected the session title update')
         process.exit(EXIT_NO_RESTART)
       }
 

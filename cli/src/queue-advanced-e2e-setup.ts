@@ -3,12 +3,11 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import url from 'node:url'
 import { beforeAll, afterAll, afterEach, expect } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits, Partials } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
-  buildDeterministicOpencodeConfig,
+  buildDeterministicOpencode2Config,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 import { initTestGitRepo } from './test-utils.js'
@@ -245,7 +244,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'plugin-timeout-sleep',
     priority: 100,
     when: {
-      latestUserTextIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+      latestUserTextRegex: '^PLUGIN_TIMEOUT_SLEEP_MARKER',
     },
     then: {
       parts: [
@@ -268,7 +267,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     priority: 105,
     when: {
       lastMessageRole: 'user',
-      latestUserTextIncludes: 'PERMISSION_TYPING_MARKER',
+      latestUserTextRegex: '^PERMISSION_TYPING_MARKER',
     },
     then: {
       parts: [
@@ -285,7 +284,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           toolCallId: 'permission-typing-read-call',
           toolName: 'read',
           input: JSON.stringify({
-            filePath: '/Users/morse/.zprofile',
+            path: '/Users/morse/.zprofile',
           }),
         },
         {
@@ -301,7 +300,8 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'permission-typing-followup',
     priority: 104,
     when: {
-      latestUserTextIncludes: 'PERMISSION_TYPING_MARKER',
+      lastMessageRole: 'tool',
+      latestUserTextRegex: '^PERMISSION_TYPING_MARKER',
       rawPromptIncludes: 'requesting external read permission',
     },
     then: {
@@ -345,7 +345,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
           type: 'tool-call',
           toolCallId: 'external-directory-read-call',
           toolName: 'read',
-          input: JSON.stringify({ filePath: EXTERNAL_DIRECTORY_PROBE_FILE }),
+          input: JSON.stringify({ path: EXTERNAL_DIRECTORY_PROBE_FILE }),
         },
         {
           type: 'finish',
@@ -365,7 +365,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     priority: 107,
     when: {
       latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
-      rawPromptIncludes: 'prevents you from using this specific tool call',
+      rawPromptIncludes: 'Permission denied',
     },
     then: {
       parts: [
@@ -390,8 +390,8 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'external-directory-probe-followup',
     priority: 105,
     when: {
+      lastMessageRole: 'tool',
       latestUserTextIncludes: 'EXTERNAL_DIRECTORY_PROBE_MARKER',
-      rawPromptIncludes: 'reading external directory',
     },
     then: {
       parts: [
@@ -579,7 +579,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'tool-call-footer-bash',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'echo tool-call-footer-test',
             description: 'Echo for footer test',
@@ -621,7 +621,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     priority: 111,
     when: {
       lastMessageRole: 'user',
-      latestUserTextIncludes: 'UNDO_FILE_MARKER',
+      latestUserTextRegex: '^UNDO_FILE_MARKER',
     },
     then: {
       parts: [
@@ -632,7 +632,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'undo-file-bash',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'mkdir -p tmp && printf created > tmp/undo-marker.txt',
             description: 'Create undo marker file',
@@ -651,8 +651,8 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     id: 'undo-file-followup',
     priority: 112,
     when: {
+      lastMessageRole: 'tool',
       latestUserTextIncludes: 'UNDO_FILE_MARKER',
-      rawPromptIncludes: 'creating undo file',
     },
     then: {
       parts: [
@@ -691,7 +691,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'multi-tool-bash-1',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'echo search-done',
             description: 'Search codebase',
@@ -700,7 +700,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'multi-tool-bash-2',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'echo read-done',
             description: 'Read config file',
@@ -709,7 +709,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'multi-tool-bash-3',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'echo fix-done',
             description: 'Apply fix',
@@ -776,7 +776,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'chain-step1-bash',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'echo chain-step-1-output',
             description: 'Read config',
@@ -807,7 +807,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'chain-step2-bash',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'echo chain-step-2-output',
             description: 'Analyze results',
@@ -838,7 +838,7 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
         {
           type: 'tool-call',
           toolCallId: 'chain-step3-bash',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'echo chain-step-3-output',
             description: 'Apply fix',
@@ -942,15 +942,14 @@ export function setupQueueAdvancedSuite({
   // still raise an external_directory permission prompt. Off by default, which
   // matches the shipped default of allowing every directory.
   restrictExternalDirectories?: boolean
-  // Extra `permission` block written into the project's opencode.json, as a
-  // real user would. Used to prove user rules still beat kimaki's generated
-  // config instead of being overridden by session-level rules.
+  // Extra rules written into the project's opencode.json `permissions` array.
+  // v2 last-match-wins, so these must come after kimaki's generated allow rules.
   projectPermission?: Record<string, unknown>
 }): QueueAdvancedContext {
   const ctx: QueueAdvancedContext = {
-    directories: undefined as unknown as ReturnType<typeof createRunDirectories>,
-    discord: undefined as unknown as DigitalDiscord,
-    botClient: undefined as unknown as Client,
+    directories: undefined!,
+    discord: undefined!,
+    botClient: undefined!,
     testStartTime: Date.now(),
   }
 
@@ -971,11 +970,7 @@ export function setupQueueAdvancedSuite({
     setDataDir(ctx.directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
     previousRestrictExternalDirectories = store.getState().restrictExternalDirectories
-    store.setState({
-      defaultVerbosity: 'tools_and_text',
-      restrictExternalDirectories,
-      sessionFootersEnabled: true,
-    })
+    store.setState({ defaultVerbosity: 'tools_and_text', restrictExternalDirectories })
 
     const digitalDiscordDbPath = path.join(
       ctx.directories.dataDir,
@@ -993,28 +988,43 @@ export function setupQueueAdvancedSuite({
 
     await ctx.discord.start()
 
-    const providerNpm = url
-      .pathToFileURL(
-        path.resolve(process.cwd(), '..', 'opencode-deterministic-provider', 'src', 'index.ts'),
-      )
-      .toString()
-
-    const opencodeConfig = buildDeterministicOpencodeConfig({
+    const opencodeConfig = buildDeterministicOpencode2Config({
       providerName: 'deterministic-provider',
-      providerNpm,
       model: 'deterministic-v2',
-      smallModel: 'deterministic-v3',
+      extraModels: ['deterministic-v3'],
       settings: {
         strict: false,
         matchers: [...createDeterministicMatchers(), ...extraMatchers],
       },
+      permissions: [
+        { action: 'shell', resource: '*', effect: 'allow' },
+        { action: 'edit', resource: '*', effect: 'allow' },
+        { action: 'question', resource: '*', effect: 'allow' },
+        ...(restrictExternalDirectories
+          ? []
+          : [{ action: 'external_directory' as const, resource: '*', effect: 'allow' as const }]),
+      ],
     })
+    const extraPermissions = (() => {
+      const raw = projectPermission?.permissions
+      if (!Array.isArray(raw)) return []
+      return raw.filter((rule): rule is { action: string; resource: string; effect: string } => {
+        if (!rule || typeof rule !== 'object') return false
+        if (!('action' in rule) || !('resource' in rule) || !('effect' in rule)) return false
+        return typeof rule.action === 'string' && typeof rule.resource === 'string' && typeof rule.effect === 'string'
+      })
+    })()
     fs.writeFileSync(
       path.join(ctx.directories.projectDirectory, 'opencode.json'),
       JSON.stringify(
-        projectPermission
-          ? { ...opencodeConfig, permission: projectPermission }
-          : opencodeConfig,
+        {
+          ...opencodeConfig,
+          ...projectPermission,
+          permissions: [
+            ...(opencodeConfig.permissions ?? []),
+            ...extraPermissions,
+          ],
+        },
         null,
         2,
       ),
@@ -1049,7 +1059,7 @@ export function setupQueueAdvancedSuite({
     if (warmup instanceof Error) {
       throw warmup
     }
-  }, 20_000)
+  }, 60_000)
 
   afterAll(async () => {
     if (ctx.directories) {
@@ -1078,7 +1088,6 @@ export function setupQueueAdvancedSuite({
     if (previousDefaultVerbosity) {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
-    store.setState({ sessionFootersEnabled: false })
     if (previousRestrictExternalDirectories !== null) {
       store.setState({
         restrictExternalDirectories: previousRestrictExternalDirectories,
@@ -1087,7 +1096,7 @@ export function setupQueueAdvancedSuite({
     if (ctx.directories) {
       fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true })
     }
-  }, 5_000)
+  }, 30_000)
 
   afterEach(async () => {
     const threadIds = [...store.getState().threads.keys()]
@@ -1098,7 +1107,7 @@ export function setupQueueAdvancedSuite({
       projectDirectory: ctx.directories.projectDirectory,
       testStartTime: ctx.testStartTime,
     })
-  }, 5_000)
+  }, 15_000)
 
   return ctx
 }

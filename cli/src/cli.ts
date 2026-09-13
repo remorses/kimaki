@@ -17,7 +17,6 @@ import {
 import { getCurrentVersion } from './upgrade.js'
 import { store } from './store.js'
 import { publicOpencodeBindRequiresPassword } from './opencode.js'
-import multioauthCommands from './commands/multioauth.js'
 import botCommands from './cli-commands/bot.js'
 import maintenanceCommands from './cli-commands/maintenance.js'
 import miscCommands from './cli-commands/misc.js'
@@ -34,8 +33,6 @@ import {
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke('kimaki')
-cli.use(multioauthCommands)
-
 process.title = 'kimaki'
 
 cli
@@ -75,8 +72,8 @@ cli
     'Disable automatic diff upload to critique.work in system prompts',
   )
   .option(
-    '--session-footers',
-    'Post a run footer after each completed assistant turn (folder, branch, duration, context, model). Off by default',
+    '--skip-footer-mentions',
+    'Do not mention the thread creator in final session footers',
   )
   .option(
     '--auto-restart',
@@ -158,7 +155,7 @@ cli
       verbosity?: string
       mentionMode?: boolean
       noCritique?: boolean
-      sessionFooters?: boolean
+      skipFooterMentions?: boolean
       allowAllUsers?: boolean
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
@@ -314,7 +311,7 @@ cli
           }),
           ...(options.mentionMode && { defaultMentionMode: true }),
           ...(options.noCritique && { critiqueEnabled: false }),
-          ...(options.sessionFooters && { sessionFootersEnabled: true }),
+          ...(options.skipFooterMentions && { footerMentionsEnabled: false }),
           ...(options.allowAllUsers && { allowAllUsers: true }),
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
@@ -365,9 +362,9 @@ cli
             'Critique disabled: diffs will not be auto-uploaded to critique.work',
           )
         }
-        if (options.sessionFooters) {
+        if (options.skipFooterMentions) {
           cliLogger.log(
-            'Session footers enabled: completed turns post folder, branch, duration, context, and model',
+            'Footer mentions disabled: final session footers will not mention thread creators',
           )
         }
         if (options.noAutoUpgrade) {

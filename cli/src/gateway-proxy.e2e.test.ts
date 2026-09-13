@@ -259,7 +259,7 @@ describeIf('gateway-proxy e2e', () => {
     process.env['KIMAKI_VITEST'] = '1'
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'text_only', sessionFootersEnabled: true })
+    store.setState({ defaultVerbosity: 'text_only' })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,
@@ -384,7 +384,7 @@ describeIf('gateway-proxy e2e', () => {
     delete process.env['KIMAKI_DB_URL']
     delete process.env['KIMAKI_VITEST']
     if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity, sessionFootersEnabled: false })
+      store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
@@ -420,9 +420,9 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         hello from gateway proxy test
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         gateway-proxy-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>"
       `)
       expect(reply).toBeDefined()
       expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)
@@ -456,14 +456,14 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         hello from gateway proxy test
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         gateway-proxy-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
         gateway-proxy-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>"
       `)
       expect(reply).toBeDefined()
       expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)
@@ -497,14 +497,14 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         hello from gateway proxy test
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         gateway-proxy-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
         gateway-proxy-reply
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>
         --- from: user (proxy-tester)
         !echo proxy-shell-test
         --- from: assistant (TestBot)
@@ -542,7 +542,7 @@ describeIf('gateway-proxy e2e', () => {
         "--- from: user (proxy-tester)
         second message through proxy
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*"
+        > *using deterministic-provider/deterministic-v2*"
       `)
       expect(reply).toBeDefined()
       expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)

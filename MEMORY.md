@@ -9,12 +9,12 @@ centralized injection point for any cross-cutting prompt transformation
 
 1. Discord chat messages → `discord-bot.ts` MessageCreate → `preprocess*Message` → `enqueueWithPreprocess`
 2. `/new-session` slash → `commands/session.ts` → `enqueueIncoming` directly
-3. `/queue` slash → posts Discord message with `» **user:** ...` prefix → path #1
-4. `kimaki send --thread` (existing thread) → posts `» **kimaki-cli:** <prompt>` → path #1
+3. `/queue` slash → posts Discord message with `⺩**user:** ...` prefix → path #1
+4. `kimaki send --thread` (existing thread) → posts `⺩**kimaki-cli:** <prompt>` → path #1
 5. `kimaki send --channel` (new thread) → raw starter message → bot `ThreadCreate` handler → `enqueueIncoming` with preprocess callback
 6. Scheduled tasks (`task-runner.ts`) → posts Discord messages like #4/#5
 
-Prefix conventions: `» **<username>:** ` is used for queued reposts and
+Prefix conventions: `⺩**<username>:** ` is used for queued reposts and
 CLI-injected messages in existing threads. New-thread flows (channel-level
 `kimaki send` and channel scheduled tasks) post the raw prompt without
 prefix and rely on an embed marker (`ThreadStartMarker` YAML) for metadata.
@@ -44,8 +44,8 @@ skip the wrapping when detection succeeds.
 ## Prefer line-based detection over prefix stripping
 
 When adding a transformation that needs to match a user-intent pattern in
-prompts that sometimes carry programmatic prefixes (`» **kimaki-cli:** ...`,
-`» **user:** ...`, `Context from thread: ...`), do NOT try to regex-strip
+prompts that sometimes carry programmatic prefixes (`⺩**kimaki-cli:** ...`,
+`⺩**user:** ...`, `Context from thread: ...`), do NOT try to regex-strip
 every possible prefix before matching. That creates maintenance burden
 (new prefix formats silently break detection) and gets the semantics
 wrong when usernames contain regex metacharacters.
@@ -157,3 +157,31 @@ do not set `external_directory` inside the generated `agent.explore` block.
 A session never needs an allow rule for its own working directory —
 `containsPath` in `tool/external-directory.ts` skips the gate for paths inside
 the active instance.
+
+## Discord leftover slash text fills the first string option
+
+Typed text after `/command …` is not extra chat. Discord puts it in the **first
+string option**, even if later string options exist. `/plan-agent fix the bug`
+fills `prompt` while `variant` stays a named option. Do not collapse extra
+options to keep leftover filling. Leftover filling fails when that first option
+is not free text (autocomplete, choices, or the user must pick an option).
+
+## v2 agent names vs slash commands
+
+v2 built-in agents use capitalized names (`Plan`, `Build`). Kimaki slash
+commands stay lowercase (`/plan-agent`). Match agents case-insensitively, then
+pass `agent.id` to `session.switchAgent`. Passing the display name `Plan` fails
+with `Agent not found`.
+
+## Do not wait for SSE inside dispatchAction
+
+`handleEvent` runs on the same action queue as `session.prompt`. Awaiting
+`waitForEvent` inside `dispatchAction` deadlocks: the interrupt never reaches
+the buffer. Append lifecycle events in the SSE listener before queueing
+`handleEvent`. Await abort HTTP and settled events outside `dispatchAction`.
+
+## v2 forms can be idle
+
+A pending v2 question form can leave `isSessionBusy` false. Do not drain the
+local queue while `pendingQuestionContexts` has an entry. On dismiss, cancel
+pending forms with `form.list` + `form.cancel` before the next prompt.

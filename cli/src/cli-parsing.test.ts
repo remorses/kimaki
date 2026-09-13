@@ -10,15 +10,11 @@ async function parseWithGoke(argv: string[]) {
     "cli.command('send', 'Send a message').option('-c, --channel <channelId>', 'Discord channel ID').option('--thread <threadId>', 'Thread ID').option('--session <sessionId>', 'Session ID').option('--send-at <schedule>', 'Schedule')",
     "cli.command('session archive <threadId>', 'Archive a thread')",
     "cli.command('session title <title>', 'Update title').option('--session <sessionId>', 'Session ID').option('--thread <threadId>', 'Thread ID')",
-    "cli.command('session search <query>', 'Search sessions').option('--channel <channelId>', 'Discord channel ID').option('--project <path>', 'Project path').option('--all', 'Search all registered projects')",
+    "cli.command('session search <query>', 'Search sessions').option('--channel <channelId>', 'Discord channel ID').option('--project <path>', 'Project path').option('--all', 'Search all registered projects').option('--days <n>', 'Only search recent sessions')",
     "cli.command('session export-events-jsonl', 'Export in-memory events to JSONL').option('--session <sessionId>', 'Session ID').option('--out <file>', 'Output path')",
     "cli.command('add-project', 'Add a project').option('-g, --guild <guildId>', 'Discord guild/server ID')",
     "cli.command('task delete <id>', 'Delete task')",
     "cli.command('task edit <id>', 'Edit task').option('-u, --user <user>', 'Discord user')",
-    "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
-    "cli.command('multioauth anthropic remove <indexOrEmail>', 'Remove stored Anthropic account')",
-    "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
-    "cli.command('multioauth openai remove <indexOrEmail>', 'Remove stored OpenAI account')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
@@ -33,32 +29,11 @@ async function parseWithGoke(argv: string[]) {
   }
 }
 
-async function getHelpOutput() {
-  const script = [
-    "import { goke } from 'goke'",
-    'const stdout = { text: \'\', write(data) { this.text += String(data) } }',
-    "const cli = goke('kimaki', { stdout })",
-    "cli.command('send', 'Send a message')",
-    "cli.command('multioauth list', 'List all OAuth accounts')",
-    "cli.command('multioauth anthropic list', 'List stored Anthropic accounts')",
-    "cli.command('multioauth openai list', 'List stored OpenAI accounts')",
-    'cli.help()',
-    "cli.parse(['node', 'kimaki', '--help'], { run: false })",
-    'process.stdout.write(stdout.text)',
-  ].join(';')
-
-  const { stdout } = await execAsync(`node --input-type=module -e ${JSON.stringify(script)}`, {
-    cwd: import.meta.dirname,
-    timeout: 10_000,
-  })
-  return stdout
-}
-
 async function parseRootBotOptions(argv: string[]) {
   const script = [
     "import { goke } from 'goke'",
     'const cli = goke(\'kimaki\')',
-    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--session-footers', 'Post a run footer after each completed assistant turn')",
+    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--skip-footer-mentions', 'Do not mention the thread creator in final footers')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
@@ -165,6 +140,14 @@ describe('goke CLI ID parsing', () => {
     expect(result.options.all).toBe(true)
   })
 
+  test('parses session search --days as a string', async () => {
+    const result = await parseWithGoke(
+      ['node', 'kimaki', 'session', 'search', 'auth timeout', '--days', '0'],
+    )
+
+    expect(result.options.days).toBe('0')
+  })
+
   test('keeps session export options as strings', async () => {
     const sessionId = '001111222233334444'
     const outPath = './tmp/session-events.jsonl'
@@ -221,28 +204,6 @@ describe('goke CLI ID parsing', () => {
     expect(result.options.user).toBe('')
   })
 
-  test('multioauth account remove parses index and email as strings', async () => {
-    const indexResult = await parseWithGoke(
-      ['node', 'kimaki', 'multioauth', 'anthropic', 'remove', '2'],
-    )
-
-    const emailResult = await parseWithGoke(
-      ['node', 'kimaki', 'multioauth', 'openai', 'remove', 'user@example.com'],
-    )
-
-    expect(indexResult.args[0]).toBe('2')
-    expect(typeof indexResult.args[0]).toBe('string')
-    expect(emailResult.args[0]).toBe('user@example.com')
-    expect(typeof emailResult.args[0]).toBe('string')
-  })
-
-  test('multioauth commands are included in help output', async () => {
-    const stdout = await getHelpOutput()
-
-    expect(stdout).toContain('send')
-    expect(stdout).toContain('multioauth')
-  })
-
   test('merge-worktree parses strategy and target branch', async () => {
     const result = await maintenanceCommands.parse(
       [
@@ -283,14 +244,14 @@ describe('goke CLI ID parsing', () => {
       'node',
       'kimaki',
       '--no-analytics',
-      '--session-footers',
+      '--skip-footer-mentions',
     ])
 
     expect(result.options).toMatchInlineSnapshot(`
       {
         "--": [],
         "noAnalytics": true,
-        "sessionFooters": true,
+        "skipFooterMentions": true,
       }
     `)
   })

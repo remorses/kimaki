@@ -8,6 +8,7 @@ import {
 } from './queue-advanced-e2e-setup.js'
 import {
   getMessageVisibleText,
+  isFooterMessage,
   waitForBotMessageContaining,
   waitForFooterMessage,
 } from './test-utils.js'
@@ -98,18 +99,16 @@ e2eTest('queue advanced: typing interrupt', () => {
         if (index <= finalReplyIndex) {
           return false
         }
-        return message.author.id === ctx.discord.botUserId
-          && message.content.startsWith('*')
-          && message.content.includes('⋅')
+        return isFooterMessage({ message, botUserId: ctx.discord.botUserId })
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -118,7 +117,7 @@ e2eTest('queue advanced: typing interrupt', () => {
         Reply with exactly: typing-stop-interrupt-final
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 
       const timeline = await th.text({ showTyping: true })

@@ -12,6 +12,7 @@ import {
 import { getThreadState } from './session-handler/thread-runtime-state.js'
 import { setSessionModel } from './database.js'
 import {
+  isFooterMessage,
   waitForFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
@@ -73,6 +74,7 @@ e2eTest('queue advanced: abort and retry', () => {
         text: 'starting sleep',
         afterUserMessageIncludes: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
         timeout: 4_000,
+        clamp: false,
       })
 
       const runtime = getRuntime(thread.id)
@@ -92,7 +94,8 @@ e2eTest('queue advanced: abort and retry', () => {
         threadId: thread.id,
         userId: TEST_USER_ID,
         userMessageIncludes: 'papa',
-        timeout: 8_000,
+        timeout: 4_000,
+        clamp: false,
       })
 
       const afterBotMessages = after.filter((m) => {
@@ -102,9 +105,10 @@ e2eTest('queue advanced: abort and retry', () => {
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
+        timeout: 4_000,
         afterMessageIncludes: 'papa',
         afterAuthorId: TEST_USER_ID,
+        clamp: false,
       })
 
       // Assert ordering invariants instead of exact snapshot — the papa reply
@@ -191,9 +195,7 @@ e2eTest('queue advanced: abort and retry', () => {
         const msgs = await th.getMessages()
         const newMsgs = msgs.slice(baselineCount)
         const hasFooter = newMsgs.some((m) => {
-          return m.author.id === ctx.discord.botUserId
-            && m.content.startsWith('*')
-            && m.content.includes('⋅')
+          return isFooterMessage({ message: m, botUserId: ctx.discord.botUserId })
         })
         expect(hasFooter).toBe(false)
       }
@@ -202,9 +204,9 @@ e2eTest('queue advanced: abort and retry', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: abort-no-footer-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
       `)
@@ -373,7 +375,7 @@ e2eTest('queue advanced: abort and retry', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: force-abort-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"
       `)

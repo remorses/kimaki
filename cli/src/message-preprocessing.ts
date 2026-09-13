@@ -1,6 +1,7 @@
 // Message pre-processing pipeline for incoming Discord messages.
 // Extracts prompt text, voice transcription, file/text attachments, and
 // session context from a Discord Message before handing off to the runtime.
+// Voice side/fresh-chat requests dispatch to separate threads instead.
 //
 // This module exists so discord-bot.ts stays a thin event router and the
 // expensive async work (voice transcription, context fetch, attachment
@@ -11,6 +12,7 @@ import type { Message, ThreadChannel } from 'discord.js'
 import { DiscordOperationError, OpenCodeSdkError } from './errors.js'
 import type { DiscordFileAttachment } from './message-formatting.js'
 import type { PreprocessResult } from './session-handler/thread-session-runtime.js'
+import { getOrCreateRuntime } from './session-handler/thread-session-runtime.js'
 import type { AgentInfo, RepliedMessageContext } from './system-message.js'
 import {
   resolveMentions,
@@ -21,7 +23,11 @@ import { processVoiceAttachment } from './voice-handler.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { getCompactSessionContext, getLastSessionId } from './markdown.js'
-import { getThreadSession } from './database.js'
+import { getThreadSession, getThreadWorktreeOrWorkspace } from './database.js'
+import { resolveWorkingDirectory, resolveTextChannel, sendThreadMessage } from './discord-utils.js'
+import { forkSessionToBtwThread } from './commands/btw.js'
+import { createNewSessionThread } from './commands/session.js'
+import type { TranscriptionResult } from './voice.js'
 import * as errore from 'errore'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -32,6 +38,96 @@ const voiceLogger = createLogger(LogPrefix.VOICE)
 export const VOICE_MESSAGE_TRANSCRIPTION_PREFIX =
   'Voice message transcription from Discord user:\n'
 
+// Dispatch before returning a prompt so the source runtime never receives the side request.
+async function routeVoiceSession({
+  voiceResult,
+  message,
+  thread,
+  appId,
+}: {
+  voiceResult: TranscriptionResult | null
+  message: Message
+  thread: ThreadChannel
+  appId?: string
+}): Promise<boolean> {
+  if (!voiceResult?.sessionAction) return false
+  const resolved = await resolveWorkingDirectory({ channel: thread })
+  if (!resolved) {
+    await sendThreadMessage(thread, 'Could not determine project directory. Use /add-project to configure it, then retry.')
+    return true
+  }
+  const images = await getFileAttachments(message)
+  const textAttachments = await getTextAttachments(message)
+  const caption = resolveMentions(message).trim()
+  const prompt = [caption, voiceResult.transcription, textAttachments]
+    .filter((part) => part?.trim())
+    .join('\n\n')
+  const modelPrompt = [caption, `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`, textAttachments]
+    .filter((part) => part?.trim())
+    .join('\n\n')
+  if (voiceResult.sessionAction === 'btw') {
+    const result = await forkSessionToBtwThread({
+      sourceThread: thread,
+      projectDirectory: resolved.projectDirectory,
+      sdkDirectory: resolved.workingDirectory,
+      prompt,
+      modelPrompt,
+      images,
+      agent: voiceResult.agent,
+      userId: message.author.id,
+      username: message.member?.displayName || message.author.displayName,
+      appId,
+    })
+      .catch((cause) => new DiscordOperationError({ operation: 'forkVoiceSession', cause }))
+    if (result instanceof Error) {
+      logger.error('Voice side chat failed:', result)
+      await sendThreadMessage(thread, `${result.message}. Start a session first, then retry with /btw.`)
+      return true
+    }
+    await sendThreadMessage(thread, `Session forked! Continue in ${result.thread.toString()}`)
+    return true
+  }
+  const textChannel = await resolveTextChannel(thread)
+  if (!textChannel) {
+    await sendThreadMessage(thread, 'Could not resolve parent text channel. Retry /new-session in the project channel.')
+    return true
+  }
+  const result = await createNewSessionThread({
+    textChannel,
+    projectDirectory: resolved.projectDirectory,
+    prompt,
+    userId: message.author.id,
+    sourceWorkspace: await getThreadWorktreeOrWorkspace(thread.id),
+  }).catch((cause) => new DiscordOperationError({ operation: 'createVoiceSessionThread', cause }))
+  if (result instanceof Error) {
+    logger.error('Voice new session failed:', result)
+    await sendThreadMessage(thread, `${result.message}. Retry with /new-session.`)
+    return true
+  }
+  await sendThreadMessage(thread, `Created new session in ${result.toString()}`)
+  const runtime = getOrCreateRuntime({
+    threadId: result.id,
+    thread: result,
+    projectDirectory: resolved.projectDirectory,
+    sdkDirectory: resolved.workingDirectory,
+    channelId: textChannel.id,
+    appId,
+  })
+  await runtime.enqueueIncoming({
+    prompt: modelPrompt,
+    images,
+    agent: voiceResult.agent,
+    userId: message.author.id,
+    username: message.member?.displayName || message.author.displayName,
+    appId,
+    mode: 'opencode',
+  }).catch(async (error) => {
+    logger.error('Voice session dispatch failed:', error)
+    await sendThreadMessage(result, 'Could not send the request to OpenCode. Send your request again in this thread.')
+  })
+  return true
+}
+
 /** Fetch available agents from OpenCode for voice transcription agent selection. */
 async function fetchAvailableAgents(
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>,
@@ -40,8 +136,8 @@ async function fetchAvailableAgents(
   if (getClient instanceof Error) {
     return []
   }
-  const result = await getClient().app.agents({ directory })
-    .catch((e) => new OpenCodeSdkError({ operation: 'app.agents', cause: e }))
+  const result = await getClient().agent.list({ location: { directory } })
+    .catch((e) => new OpenCodeSdkError({ operation: 'agent.list', cause: e }))
   if (result instanceof Error) {
     return []
   }
@@ -245,7 +341,15 @@ export async function preprocessExistingThreadMessage({
     currentSessionContext,
     lastSessionContext,
     agents,
+    canForkSession: true,
   })
+  if (voiceResult instanceof Error) {
+    voiceLogger.warn('Voice request not dispatched:', voiceResult)
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
+  if (await routeVoiceSession({ voiceResult, message, thread, appId })) {
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
   if (voiceResult) {
     messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }
@@ -327,6 +431,13 @@ export async function preprocessNewSessionMessage({
     appId,
     agents,
   })
+  if (voiceResult instanceof Error) {
+    voiceLogger.warn('Voice request not dispatched:', voiceResult)
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
+  if (await routeVoiceSession({ voiceResult, message, thread, appId })) {
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
   if (voiceResult) {
     prompt = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }
@@ -424,6 +535,10 @@ export async function preprocessNewThreadMessage({
     appId,
     agents,
   })
+  if (voiceResult instanceof Error) {
+    voiceLogger.warn('Voice request not dispatched:', voiceResult)
+    return { prompt: '', mode: 'opencode', skip: true }
+  }
   if (voiceResult) {
     messageContent = `${VOICE_MESSAGE_TRANSCRIPTION_PREFIX}${voiceResult.transcription}`
   }

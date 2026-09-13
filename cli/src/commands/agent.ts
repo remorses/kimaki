@@ -2,6 +2,7 @@
 // Also provides quick agent commands like /plan-agent, /build-agent that switch instantly.
 // When a prompt is provided to a quick agent command (e.g. /plan-agent "fix the bug"),
 // the prompt is sent with that agent and the session keeps that agent afterwards.
+// Optional last `variant` option sets the model thinking level for that agent.
 
 import {
   ChatInputCommandInteraction,
@@ -18,6 +19,9 @@ import crypto from 'node:crypto'
 import {
   setChannelAgent,
   setSessionAgent,
+  setSessionModel,
+  setChannelModel,
+  getChannelModel,
   clearSessionModel,
   getThreadSession,
   getSessionAgent,
@@ -28,6 +32,7 @@ import { initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveTextChannel,
   resolveWorkingDirectory,
+  resolveProjectDirectoryFromAutocomplete,
   getKimakiMetadata,
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
@@ -49,7 +54,15 @@ import {
   worktreeCreatingMessage,
 } from './new-worktree.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
+import { QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
+import {
+  getThinkingValuesForModel,
+  resolveRequestedThinkingVariant,
+  thinkingProvidersFromListedModels,
+} from '../thinking-utils.js'
+import type { AutocompleteContext } from './types.js'
+import { OpenCodeSdkError } from '../errors.js'
 
 const agentLogger = createLogger(LogPrefix.AGENT)
 
@@ -260,7 +273,6 @@ export async function setAgentForContext({
   context: AgentCommandContext
   agentName: string
 }): Promise<void> {
-  await waitForCurrentThreadIngress()
   if (context.isThread && context.sessionId) {
     await setSessionAgent(context.sessionId, agentName)
     // Clear session model so the new agent's model takes effect
@@ -272,7 +284,65 @@ export async function setAgentForContext({
     await setChannelAgent(context.channelId, agentName)
     agentLogger.log(`Set agent ${agentName} for channel ${context.channelId}`)
   }
-  releaseCurrentThreadIngress()
+}
+
+async function applyQuickAgentVariant({
+  context,
+  agentName,
+  variant,
+}: {
+  context: AgentCommandContext
+  agentName: string
+  variant: string
+}): Promise<string | undefined> {
+  const modelInfo = await resolveAgentModelInfo({ context, agentName })
+  if (modelInfo.type === 'none') {
+    agentLogger.warn(
+      `[AGENT] Skipping variant ${variant}: no model for agent ${agentName}`,
+    )
+    return undefined
+  }
+
+  const getClient = await initializeOpencodeForDirectory(context.dir)
+  if (getClient instanceof Error) return undefined
+
+  const modelsResponse = await getClient()
+    .model.list({ location: { directory: context.workingDirectory } })
+    .catch((e: unknown) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+  if (modelsResponse instanceof Error || !modelsResponse.data) {
+    agentLogger.warn(`[AGENT] Skipping variant ${variant}: provider list failed`)
+    return undefined
+  }
+
+  const matchedVariant = resolveRequestedThinkingVariant({
+    requestedValue: variant,
+    providers: thinkingProvidersFromListedModels({ models: [...modelsResponse.data] }),
+    providerId: modelInfo.providerID,
+    modelId: modelInfo.modelID,
+  })
+  if (!matchedVariant) {
+    agentLogger.warn(
+      `[AGENT] Skipping variant ${variant}: not supported by ${modelInfo.model}`,
+    )
+    return undefined
+  }
+
+  if (context.isThread && context.sessionId) {
+    await setSessionModel({
+      sessionId: context.sessionId,
+      modelId: modelInfo.model,
+      variant: matchedVariant,
+    })
+    return matchedVariant
+  }
+
+  const existing = await getChannelModel(context.channelId)
+  await setChannelModel({
+    channelId: context.channelId,
+    modelId: existing?.modelId ?? modelInfo.model,
+    variant: matchedVariant,
+  })
+  return matchedVariant
 }
 
 function formatAgentModelLine(modelInfo: CurrentModelInfo): string {
@@ -293,21 +363,24 @@ function formatAgentPreferenceReply({
   previousAgentName,
   modelInfo,
   scope,
+  variant,
 }: {
   agentName: string
   previousAgentName?: string
   modelInfo: CurrentModelInfo
   scope: 'session' | 'channel'
+  variant?: string
 }): string {
   const sameAgent = previousAgentName === agentName
   const verb = sameAgent ? 'Using' : 'Switched to'
   const previousText =
     !sameAgent && previousAgentName ? ` (was **${previousAgentName}**)` : ''
   const modelText = formatAgentModelLine(modelInfo)
+  const variantText = variant ? `\nVariant: **${variant}**` : ''
   if (scope === 'session') {
-    return `${verb} **${agentName}** agent for this session${previousText}${modelText}\nThe agent will change on the next message.`
+    return `${verb} **${agentName}** agent for this session${previousText}${modelText}${variantText}\nThe agent will change on the next message.`
   }
-  return `${verb} **${agentName}** agent for this channel${previousText}${modelText}\nAll new sessions will use this agent.`
+  return `${verb} **${agentName}** agent for this channel${previousText}${modelText}${variantText}\nAll new sessions will use this agent.`
 }
 
 async function resolveAgentModelInfo({
@@ -350,8 +423,8 @@ export async function handleAgentCommand({
       return
     }
 
-    const agentsResponse = await getClient().app.agents({
-      directory: context.workingDirectory,
+    const agentsResponse = await getClient().agent.list({
+      location: { directory: context.workingDirectory },
     })
 
     if (!agentsResponse.data || agentsResponse.data.length === 0) {
@@ -458,7 +531,12 @@ export async function handleAgentSelectMenu(
     const previousAgentName =
       previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
-    await setAgentForContext({ context, agentName: selectedAgent })
+    await waitForCurrentThreadIngress()
+    try {
+      await setAgentForContext({ context, agentName: selectedAgent })
+    } finally {
+      releaseCurrentThreadIngress()
+    }
     const modelInfo = await resolveAgentModelInfo({
       context,
       agentName: selectedAgent,
@@ -504,10 +582,17 @@ export async function handleQuickAgentCommand({
 }): Promise<void> {
   const fallbackAgentName = command.commandName.replace(/-agent$/, '')
   const prompt = command.options.getString('prompt') || undefined
+  const variant = command.options.getString('variant') || undefined
 
   // Prompt mode: send the prompt with this agent immediately.
   if (prompt) {
-    return handleQuickAgentWithPrompt({ command, appId, fallbackAgentName, prompt })
+    return handleQuickAgentWithPrompt({
+      command,
+      appId,
+      fallbackAgentName,
+      prompt,
+      variant,
+    })
   }
 
   // No prompt: switch the persistent agent preference (original behavior).
@@ -535,23 +620,39 @@ export async function handleQuickAgentCommand({
     const previousAgentName =
       previousAgent.type !== 'none' ? previousAgent.agent : undefined
 
-    await setAgentForContext({ context, agentName: resolvedAgentName })
-
-    const modelInfo = await resolveAgentModelInfo({
-      context,
-      agentName: resolvedAgentName,
-    })
-    const scope =
-      context.isThread && context.sessionId ? 'session' : 'channel'
-
-    await command.editReply({
-      content: formatAgentPreferenceReply({
+    await waitForCurrentThreadIngress()
+    try {
+      await setAgentForContext({ context, agentName: resolvedAgentName })
+      const modelInfo = await resolveAgentModelInfo({
+        context,
         agentName: resolvedAgentName,
-        previousAgentName,
-        modelInfo,
-        scope,
-      }),
-    })
+      })
+      const appliedVariant = variant
+        ? await applyQuickAgentVariant({
+            context,
+            agentName: resolvedAgentName,
+            variant,
+          })
+        : undefined
+      const scope =
+        context.isThread && context.sessionId ? 'session' : 'channel'
+      const unsupportedVariantNote =
+        variant && !appliedVariant
+          ? `\nVariant **${variant}** is not supported by this agent's model.`
+          : ''
+
+      await command.editReply({
+        content: `${formatAgentPreferenceReply({
+          agentName: resolvedAgentName,
+          previousAgentName,
+          modelInfo,
+          scope,
+          variant: appliedVariant,
+        })}${unsupportedVariantNote}`,
+      })
+    } finally {
+      releaseCurrentThreadIngress()
+    }
   } catch (error) {
     agentLogger.error('Error in quick agent command:', error)
     await command.editReply({
@@ -571,11 +672,13 @@ async function handleQuickAgentWithPrompt({
   appId,
   fallbackAgentName,
   prompt,
+  variant,
 }: {
   command: ChatInputCommandInteraction
   appId: string
   fallbackAgentName: string
   prompt: string
+  variant?: string
 }): Promise<void> {
   const channel = command.channel
   if (!channel) {
@@ -621,7 +724,7 @@ async function handleQuickAgentWithPrompt({
 
     // Visible reply showing the one-shot prompt (not ephemeral, so it appears in thread).
     await command.reply({
-      content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
+      content: `${QUEUE_PREFIX}**${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
@@ -632,6 +735,7 @@ async function handleQuickAgentWithPrompt({
       agent: resolvedAgentName,
       appId,
       mode: 'opencode',
+      variant,
     })
   } else if (channel.type === ChannelType.GuildText) {
     // In a channel: create a new thread and enqueue with the requested agent.
@@ -668,7 +772,7 @@ async function handleQuickAgentWithPrompt({
       : baseThreadName
 
     const starterMessage = await channel.send({
-      content: `» **${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
+      content: `${QUEUE_PREFIX}**${command.user.displayName}** (${resolvedAgentName}): ${displayText}`,
       flags: SILENT_MESSAGE_FLAGS,
     })
 
@@ -731,6 +835,7 @@ async function handleQuickAgentWithPrompt({
       agent: resolvedAgentName,
       appId,
       mode: 'opencode',
+      variant,
     })
   } else {
     await command.reply({
@@ -738,4 +843,70 @@ async function handleQuickAgentWithPrompt({
       flags: MessageFlags.Ephemeral,
     })
   }
+}
+
+export async function handleQuickAgentAutocomplete({
+  interaction,
+}: AutocompleteContext): Promise<void> {
+  if (interaction.options.getFocused(true).name !== 'variant') {
+    await interaction.respond([])
+    return
+  }
+
+  const focusedValue = interaction.options.getFocused().trim().toLowerCase()
+  const projectDirectory = await resolveProjectDirectoryFromAutocomplete(interaction)
+  if (!projectDirectory) {
+    await interaction.respond([])
+    return
+  }
+
+  const getClient = await initializeOpencodeForDirectory(projectDirectory)
+  if (getClient instanceof Error) {
+    await interaction.respond([])
+    return
+  }
+
+  const [providersResponse, agentsResponse] = await Promise.all([
+    getClient()
+      .model.list({ location: { directory: projectDirectory } })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'model.list', cause: e })),
+    getClient()
+      .agent.list({ location: { directory: projectDirectory } })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'agent.list', cause: e })),
+  ])
+  if (providersResponse instanceof Error || agentsResponse instanceof Error) {
+    agentLogger.warn('[AUTOCOMPLETE] Failed to fetch variant choices')
+    await interaction.respond([])
+    return
+  }
+  if (!providersResponse.data || !agentsResponse.data) {
+    await interaction.respond([])
+    return
+  }
+
+  const resolvedAgentName =
+    parseQuickAgentNameFromDescription(interaction.command?.description) ||
+    interaction.commandName.replace(/-agent$/, '')
+  const agent = agentsResponse.data.find((candidate) => candidate.name === resolvedAgentName)
+  const agentModel = agent?.model
+  if (!agentModel) {
+    await interaction.respond([])
+    return
+  }
+
+  const variants = getThinkingValuesForModel({
+    providers: thinkingProvidersFromListedModels({ models: [...providersResponse.data] }),
+    providerId: agentModel.providerID,
+    modelId: agentModel.id,
+  }).filter((variant) => {
+    if (!focusedValue) return true
+    return variant.toLowerCase().includes(focusedValue)
+  })
+
+  await interaction.respond(
+    variants.slice(0, 25).map((variant) => ({
+      name: variant.slice(0, 100),
+      value: variant,
+    })),
+  )
 }

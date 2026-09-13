@@ -460,37 +460,24 @@ for live user-session debugging (without restarting with env vars), export the p
 
 use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `cli/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
 
-runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. the buffer stores a compacted event shape to avoid memory spikes.
+runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. long string values are truncated before storage to avoid memory spikes, but the native OpenCode event shape is preserved.
 
-the compacted buffer strips/truncates these large fields:
-
-- `message.updated` user events: strip `info.system`, `info.summary`, `info.tools`
-- `message.part.updated` text/reasoning/snapshot: truncate long text fields
-- `message.part.updated` `step-start.snapshot`: truncate
-- `message.part.updated` tool states: replace `state.input` with `{}`
-- `message.part.updated` completed tool output: truncate `state.output`
-- `message.part.updated` completed tool attachments: strip `state.attachments`
-- `message.part.updated` pending `state.raw` and error `state.error`: truncate
-
-the jsonl line is intentionally minimal: `{ timestamp, threadId, projectDirectory, event }`.
+each jsonl line is one raw OpenCode event. do not wrap events with Kimaki metadata.
 
 use `jq` to inspect these files quickly:
 
 ```bash
 # list event type counts for one session file
-jq -r '.event.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
+jq -r '.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
 
-# show only session lifecycle events (status/idle/error)
-jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# show execution lifecycle events
+jq -r 'select(.type | startswith("session.execution.")) | [.created, .type, .data.sessionID, .data.executionID] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
-# filter by a specific event type (example: message.part.updated)
-jq -r 'select(.event.type=="message.part.updated")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
-
-# filter by event subtype (example: session.status idle)
-jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# filter by a specific event type
+jq -r 'select(.type=="session.tool.called")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
 # show timestamps + event types
-jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+jq -r '[.created, .type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 ```
 
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
@@ -652,15 +639,15 @@ sometimes we need to interrupt the opencode session and restart it. for example 
 
 ## how kimaki messages look like in Discord
 
-Kimaki works by creating threads on the first user message. The bot then replies in that thread. Text parts have no prefix and use classic Discord content so they stay full width. Tool parts use classic Discord content too. When a tool follows text, or text follows a tool, that new message is Components V2 with a leading Separator then the part text. Consecutive same-kind parts stay classic content. Messages never end with a separator.
+Kimaki works by creating threads on the first user message. The bot then replies in that thread. New sessions start with a quoted silent banner like `> *using anthropic/claude-sonnet-4 ⋅ plan*`. Text parts have no prefix and use classic Discord content so they stay full width. Short earlier text in a turn (at most two lines, no callout) can be quoted when a later text part arrives. Longer text, callouts, and text flushed because of a question, sleep, or action-button tool stay full width. Tool parts use classic Discord content too. When the displayed part kind changes between text and tool, Kimaki starts the next part with a blank line. Consecutive same-kind parts have no extra blank line.
 
-tool parts are also displayed in Discord as messages, either prefixed with ┣ or ◼︎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⬦. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking`, file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
+tool parts are also displayed in Discord as messages, either prefixed with ▏ or ▎ for file edits or writes. we also display context usage info like percentage of context used at 10% windows, prefixed with ⻟. the tool calls displayed depend on the verbosity parameter. the default skips tool parts for parts like `thinking` (prefixed ⺪), file reads and non `sideEffect` bash parts (sideEffect is a param passed by the model).
 
-at assistant message normal completion the system prompt tells the agent to end with a ping plus a short summary, like `<@userId> tests passed`. that ping is the completion notification. a metadata footer like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6` is off by default and only posted when kimaki is started with `--session-footers`. we should not show this footer on interruptions or aborts.
+at assistant message normal completion we also display a quoted footer message like `> *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*`. with folder, branch, time, context used, model id. we should not show this message on interruptions or aborts.
 
 we also support voice user messages, these are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
 
-we also support a /queue command to queue user messages to be sent at current session end. each queue confirmation has a Remove button to drop that item. when the message ends we will display a message by the bot with content like `» Tommy: content` for the queued user message being sent.
+we also support a /queue command to queue user messages to be sent at current session end. each queue confirmation has a Remove button to drop that item. when the message ends we will display a message by the bot with content like `⺩Tommy: content` for the queued user message being sent.
 
 this information is useful for your tests. you can use this knowledge to write tests, tests should use expect and find messages that match a specific pattern.
 

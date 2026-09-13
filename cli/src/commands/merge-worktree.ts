@@ -30,6 +30,10 @@ import {
   TargetDirtyWorktreeError,
   NothingToMergeError,
 } from '../errors.js'
+import {
+  LEGACY_WORKTREE_PREFIX,
+  WORKTREE_PREFIX,
+} from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 
@@ -37,16 +41,24 @@ function quoteShellArg(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
 
-/** Worktree thread title prefix - indicates unmerged worktree */
-export const WORKTREE_PREFIX = '⬦ '
+export { WORKTREE_PREFIX }
+
+function worktreePrefixLength(name: string) {
+  if (name.startsWith(WORKTREE_PREFIX)) return WORKTREE_PREFIX.length
+  if (name.startsWith(LEGACY_WORKTREE_PREFIX)) {
+    return LEGACY_WORKTREE_PREFIX.length
+  }
+  return 0
+}
 
 async function removeWorktreePrefixFromTitle(
   thread: ThreadChannel,
 ): Promise<void> {
-  if (!thread.name.startsWith(WORKTREE_PREFIX)) {
+  const prefixLength = worktreePrefixLength(thread.name)
+  if (!prefixLength) {
     return
   }
-  const newName = thread.name.slice(WORKTREE_PREFIX.length)
+  const newName = thread.name.slice(prefixLength)
   const timeoutMs = 5000
   await Promise.race([
     thread.setName(newName).catch((e) => {
@@ -185,8 +197,9 @@ export async function handleMergeWorktreeCommand({
     }
 
     if (result instanceof RebaseConflictError) {
-      const mergedThreadName = thread.name.startsWith(WORKTREE_PREFIX)
-        ? thread.name.slice(WORKTREE_PREFIX.length)
+      const prefixLength = worktreePrefixLength(thread.name)
+      const mergedThreadName = prefixLength
+        ? thread.name.slice(prefixLength)
         : thread.name
       const mergeCommand = [
         'kimaki merge-worktree',

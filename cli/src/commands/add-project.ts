@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
-  findChannelsByDirectory,
+  findRegisteredTextChannelForDirectory,
   getAllTextChannelDirectories,
 } from '../database.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
@@ -36,34 +36,25 @@ export async function handleAddProjectCommand({
       return
     }
 
-    const projectsResponse = await getClient().project.list({})
-    if (!projectsResponse.data) {
-      await command.editReply('Failed to fetch projects')
-      return
-    }
-
-    const project = projectsResponse.data.find((p) => p.id === projectId)
+    const projects = await getClient().project.list()
+    const project = projects.find((candidate) => candidate.id === projectId)
 
     if (!project) {
       await command.editReply('Project not found')
       return
     }
 
-    const directory = project.worktree
+    const directory = project.canonical
 
     if (!fs.existsSync(directory)) {
       await command.editReply(`Directory does not exist: ${directory}`)
       return
     }
 
-    const existingChannels = await findChannelsByDirectory({
-      directory,
-      channelType: 'text',
-    })
-
-    if (existingChannels.length > 0) {
+    const existingChannel = await findRegisteredTextChannelForDirectory(directory)
+    if (existingChannel) {
       await command.editReply(
-        `A channel already exists for this directory: <#${existingChannels[0]!.channel_id}>`,
+        `A channel already exists for this directory: <#${existingChannel.channel_id}>`,
       )
       return
     }
@@ -103,20 +94,16 @@ export async function handleAddProjectAutocomplete({
       return
     }
 
-    const projectsResponse = await getClient().project.list({})
-    if (!projectsResponse.data) {
-      await interaction.respond([])
-      return
-    }
+    const listedProjects = await getClient().project.list()
 
     const existingDirs = await getAllTextChannelDirectories()
     const existingDirSet = new Set(existingDirs)
 
-    const availableProjects = projectsResponse.data.filter((project) => {
-      if (existingDirSet.has(project.worktree)) {
+    const availableProjects = listedProjects.filter((project) => {
+      if (existingDirSet.has(project.canonical)) {
         return false
       }
-      if (path.basename(project.worktree).startsWith('opencode-test-')) {
+      if (path.basename(project.canonical).startsWith('opencode-test-')) {
         return false
       }
       return true
@@ -124,8 +111,8 @@ export async function handleAddProjectAutocomplete({
 
     const projects = availableProjects
       .filter((project) => {
-        const baseName = path.basename(project.worktree)
-        const searchText = `${baseName} ${project.worktree}`.toLowerCase()
+        const baseName = path.basename(project.canonical)
+        const searchText = `${baseName} ${project.canonical}`.toLowerCase()
         return searchText.includes(focusedValue.toLowerCase())
       })
       .sort((a, b) => {
@@ -135,7 +122,7 @@ export async function handleAddProjectAutocomplete({
       })
       .slice(0, 25)
       .map((project) => {
-        const name = `${path.basename(project.worktree)} (${abbreviatePath(project.worktree)})`
+        const name = `${path.basename(project.canonical)} (${abbreviatePath(project.canonical)})`
         return {
           name: name.length > 100 ? name.slice(0, 99) + '…' : name,
           value: project.id,

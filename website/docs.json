@@ -112,6 +112,13 @@
         ]
       },
       {
+        "group": "Tools",
+        "icon": "lucide:wrench",
+        "pages": [
+          "discord-colored-text-generator"
+        ]
+      },
+      {
         "group": "Legal",
         "icon": "lucide:scale",
         "pages": [

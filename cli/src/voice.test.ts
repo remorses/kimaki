@@ -10,6 +10,7 @@ import {
   extractTranscription,
   normalizeAudioMediaType,
   getOpenAIAudioConversionStrategy,
+  buildTranscriptionTool,
 } from './voice.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -110,6 +111,47 @@ describe('voice attachment detection', () => {
 })
 
 describe('extractTranscription', () => {
+  test('only offers contextual routing when a source session exists', () => {
+    expect(buildTranscriptionTool({}).inputSchema).toMatchObject({
+      properties: { sessionAction: { enum: ['new-session'] } },
+    })
+    expect(buildTranscriptionTool({ canForkSession: true }).inputSchema).toMatchObject({
+      properties: { sessionAction: { enum: ['btw', 'new-session'] } },
+    })
+    expect(JSON.stringify(buildTranscriptionTool({ canForkSession: true })))
+      .not.toContain('by the way')
+  })
+
+  test.each(['btw', 'new-session'])('extracts %s routing without queueing', (sessionAction) => {
+    const result = extractTranscription([{
+      type: 'tool-call',
+      toolCallId: 'routing',
+      toolName: 'transcriptionResult',
+      input: JSON.stringify({
+        transcription: 'Explain the authentication flow',
+        sessionAction,
+        queueMessage: true,
+        agent: 'plan',
+      }),
+    }])
+    expect(result).toEqual({
+      transcription: 'Explain the authentication flow',
+      sessionAction,
+      queueMessage: false,
+      agent: 'plan',
+    })
+  })
+
+  test('ignores unknown session routing', () => {
+    const result = extractTranscription([{
+      type: 'tool-call',
+      toolCallId: 'routing',
+      toolName: 'transcriptionResult',
+      input: JSON.stringify({ transcription: 'Keep working', sessionAction: 'invalid' }),
+    }])
+    expect(result).toEqual({ transcription: 'Keep working', queueMessage: false, agent: undefined })
+  })
+
   test('extracts transcription from tool call', () => {
     const result = extractTranscription([
       {
@@ -123,6 +165,7 @@ describe('extractTranscription', () => {
       {
         "agent": undefined,
         "queueMessage": false,
+        "sessionAction": undefined,
         "transcription": "hello world",
       }
     `)
@@ -144,6 +187,7 @@ describe('extractTranscription', () => {
       {
         "agent": undefined,
         "queueMessage": true,
+        "sessionAction": undefined,
         "transcription": "Fix the login bug in auth.ts",
       }
     `)

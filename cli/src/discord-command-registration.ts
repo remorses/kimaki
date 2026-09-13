@@ -8,7 +8,11 @@ import {
   Routes,
   SlashCommandBuilder,
 } from 'discord.js'
-import type { Command as OpencodeCommand } from '@opencode-ai/sdk/v2'
+export type OpencodeCommand = {
+  name: string
+  description?: string
+  source?: string
+}
 import { createDiscordRest } from './discord-urls.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { store, type RegisteredUserCommand } from './store.js'
@@ -63,6 +67,32 @@ async function clearGlobalCommands({
 // Truncate to 100 so @sapphire/shapeshift validation never throws.
 function truncateCommandDescription(description: string): string {
   return description.slice(0, 100)
+}
+
+export function buildQuickAgentSlashCommand({
+  commandName,
+  description,
+}: {
+  commandName: string
+  description: string
+}) {
+  return new SlashCommandBuilder()
+    .setName(commandName)
+    .setDescription(truncateCommandDescription(description))
+    .setDMPermission(false)
+    .addStringOption((opt) =>
+      opt
+        .setName('prompt')
+        .setDescription('Send a prompt with this agent')
+        .setRequired(false),
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName('variant')
+        .setDescription('Model thinking level for this agent')
+        .setRequired(false)
+        .setAutocomplete(true),
+    )
 }
 
 export async function registerCommands({
@@ -272,11 +302,6 @@ export async function registerCommands({
       .setDMPermission(false)
       .toJSON(),
 
-    new SlashCommandBuilder()
-      .setName('share')
-      .setDescription(truncateCommandDescription('Share the current session as a public URL'))
-      .setDMPermission(false)
-      .toJSON(),
     new SlashCommandBuilder()
       .setName('diff')
       .setDescription(truncateCommandDescription('Show git diff as a shareable URL'))
@@ -505,17 +530,7 @@ export async function registerCommands({
     })
 
     commands.push(
-      new SlashCommandBuilder()
-        .setName(commandName)
-        .setDescription(truncateCommandDescription(description))
-        .setDMPermission(false)
-        .addStringOption((opt) =>
-          opt
-            .setName('prompt')
-            .setDescription('Send a prompt with this agent')
-            .setRequired(false),
-        )
-        .toJSON(),
+      buildQuickAgentSlashCommand({ commandName, description }).toJSON(),
     )
   }
 
@@ -569,7 +584,9 @@ export async function registerCommands({
       name: cmd.name,
       discordCommandName: commandName,
       description,
-      source: cmd.source,
+      source: cmd.source === 'skill' || cmd.source === 'mcp' || cmd.source === 'command'
+        ? cmd.source
+        : undefined,
     })
 
     commands.push(

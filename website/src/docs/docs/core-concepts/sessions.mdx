@@ -16,7 +16,9 @@ Every thread is a session, and Kimaki gives you a full set of commands to manage
 
 - **`/resume <session>`** — reopen any earlier session; autocomplete suggests recent ones.
 - **`/new-session`** — start a new session, optionally with mentioned files and a chosen agent.
-- **`/last-sessions`** — a quick cross-project list of what you were last working on.
+- **`/last-sessions`** — a quick cross-project list of what you were last working on. Titles prefixed **`btw:`** are [side-question forks](../features/btw.mdx). They answer a related question in parallel and are not duplicate sessions.
+
+The CLI equivalent is **`kimaki session list --active`**.
 
 ## Forking
 
@@ -47,9 +49,7 @@ Long sessions fill the model's context window. Keep them healthy:
 - **`/context-usage`** — show token usage and the percentage of the context window used.
 - **`/compact`** — summarize the conversation so far to free up context while keeping the gist.
 
-Kimaki also shows context usage automatically in the thread at roughly 10% increments (prefixed `⬦`).
-The agent ends a finished turn by pinging you with a short summary, which creates the Discord sidebar notification.
-Start Kimaki with `--session-footers` if you also want the old metadata line like `kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus`.
+Kimaki also shows context usage automatically in the thread at roughly 10% increments (prefixed `⻟`), and at the end of each assistant turn in a quoted footer like `> *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus*`.
 
 ## Undo and redo
 

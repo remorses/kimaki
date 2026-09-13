@@ -1,15 +1,38 @@
 // Tests for parsePermissionRules() from opencode.ts
 import { describe, test, expect } from 'vitest'
-import { parsePermissionRules } from './opencode.js'
+import path from 'node:path'
+import { buildSessionPermissions, parsePermissionRules } from './opencode.js'
 
 describe('parsePermissionRules', () => {
-  test('simple tool:action format', () => {
-    expect(parsePermissionRules(['bash:deny'])).toMatchInlineSnapshot(`
+  test('returns native rules and preserves colons in resources', () => {
+    expect(parsePermissionRules(['shell:git *:ALLOW', 'edit:C:/repo/*:deny'])).toEqual([
+      { action: 'shell', resource: 'git *', effect: 'allow' },
+      { action: 'edit', resource: 'C:/repo/*', effect: 'deny' },
+    ])
+  })
+  test('maps legacy tool aliases to native v2 actions', () => {
+    expect(parsePermissionRules(['bash:deny', 'task:allow', 'write:ask', 'patch:src/*:deny']))
+      .toMatchInlineSnapshot(`
       [
         {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "bash",
+          "action": "shell",
+          "effect": "deny",
+          "resource": "*",
+        },
+        {
+          "action": "subagent",
+          "effect": "allow",
+          "resource": "*",
+        },
+        {
+          "action": "edit",
+          "effect": "ask",
+          "resource": "*",
+        },
+        {
+          "action": "edit",
+          "effect": "deny",
+          "resource": "src/*",
         },
       ]
     `)
@@ -19,19 +42,19 @@ describe('parsePermissionRules', () => {
     expect(parsePermissionRules(['bash:deny', 'edit:deny', 'read:allow'])).toMatchInlineSnapshot(`
       [
         {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "bash",
+          "action": "shell",
+          "effect": "deny",
+          "resource": "*",
         },
         {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "edit",
+          "action": "edit",
+          "effect": "deny",
+          "resource": "*",
         },
         {
-          "action": "allow",
-          "pattern": "*",
-          "permission": "read",
+          "action": "read",
+          "effect": "allow",
+          "resource": "*",
         },
       ]
     `)
@@ -41,9 +64,9 @@ describe('parsePermissionRules', () => {
     expect(parsePermissionRules(['bash:git *:allow'])).toMatchInlineSnapshot(`
       [
         {
-          "action": "allow",
-          "pattern": "git *",
-          "permission": "bash",
+          "action": "shell",
+          "effect": "allow",
+          "resource": "git *",
         },
       ]
     `)
@@ -53,9 +76,9 @@ describe('parsePermissionRules', () => {
     expect(parsePermissionRules(['*:deny'])).toMatchInlineSnapshot(`
       [
         {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "*",
+          "action": "*",
+          "effect": "deny",
+          "resource": "*",
         },
       ]
     `)
@@ -65,14 +88,14 @@ describe('parsePermissionRules', () => {
     expect(parsePermissionRules(['bash:DENY', 'edit:Allow'])).toMatchInlineSnapshot(`
       [
         {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "bash",
+          "action": "shell",
+          "effect": "deny",
+          "resource": "*",
         },
         {
-          "action": "allow",
-          "pattern": "*",
-          "permission": "edit",
+          "action": "edit",
+          "effect": "allow",
+          "resource": "*",
         },
       ]
     `)
@@ -82,9 +105,9 @@ describe('parsePermissionRules', () => {
     expect(parsePermissionRules([' bash : deny '])).toMatchInlineSnapshot(`
       [
         {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "bash",
+          "action": "shell",
+          "effect": "deny",
+          "resource": "*",
         },
       ]
     `)
@@ -105,9 +128,9 @@ describe('parsePermissionRules', () => {
     expect(parsePermissionRules([123, null, 'bash:deny'])).toMatchInlineSnapshot(`
       [
         {
-          "action": "deny",
-          "pattern": "*",
-          "permission": "bash",
+          "action": "shell",
+          "effect": "deny",
+          "resource": "*",
         },
       ]
     `)
@@ -117,11 +140,65 @@ describe('parsePermissionRules', () => {
     expect(parsePermissionRules(['webfetch:ask'])).toMatchInlineSnapshot(`
       [
         {
-          "action": "ask",
-          "pattern": "*",
-          "permission": "webfetch",
+          "action": "webfetch",
+          "effect": "ask",
+          "resource": "*",
         },
       ]
     `)
+  })
+})
+
+describe('buildSessionPermissions', () => {
+  test('leaves ordinary sessions under agent and project policy', () => {
+    expect(buildSessionPermissions({ directory: '/repo' })).toEqual([])
+    expect(
+      buildSessionPermissions({ directory: '/repo', originalRepoDirectory: '/repo/' }),
+    ).toEqual([])
+  })
+
+  test('denies both absolute and relative original-checkout file resources', () => {
+    const permissions = buildSessionPermissions({
+      directory: '/worktrees/task',
+      originalRepoDirectory: '/repo',
+    })
+    expect(permissions).toEqual([
+      { action: 'external_directory', resource: '/repo/*', effect: 'deny' },
+      ...['read', 'edit'].flatMap((action) => {
+        return ['/repo', '/repo/*', '../../repo', '../../repo/*'].map((resource) => {
+          return { action, resource, effect: 'deny' }
+        })
+      }),
+    ])
+  })
+
+  test('covers siblings when the worktree is inside the original checkout', () => {
+    const permissions = buildSessionPermissions({
+      directory: '/repo/.worktrees/task',
+      originalRepoDirectory: '/repo',
+    })
+    expect(permissions).toContainEqual({ action: 'edit', resource: '../*', effect: 'deny' })
+    expect(permissions.every((rule) => rule.effect === 'deny')).toBe(true)
+    expect(permissions.some((rule) => rule.resource === '*')).toBe(false)
+  })
+
+  test('normalizes Windows paths before creating native rules', () => {
+    const permissions = buildSessionPermissions({
+      directory: 'C:\\worktrees\\task',
+      originalRepoDirectory: 'C:\\repo\\',
+    })
+    expect(permissions).toContainEqual({ action: 'edit', resource: '../../repo/*', effect: 'deny' })
+    expect(permissions).toContainEqual({
+      action: 'external_directory',
+      resource: 'C:/repo/*',
+      effect: 'deny',
+    })
+    expect(permissions.some((rule) => rule.resource.includes('\\'))).toBe(false)
+    expect(
+      buildSessionPermissions({
+        directory: path.resolve('/repo'),
+        originalRepoDirectory: path.resolve('/repo'),
+      }),
+    ).toEqual([])
   })
 })

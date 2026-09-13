@@ -1,12 +1,15 @@
-import { PermissionsBitField, type Message } from 'discord.js'
+import { PermissionsBitField } from 'discord.js'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   hasKimakiAdminPermission,
   hasKimakiBotPermission,
   raceDiscordRename,
+  resolveFooterMentionUserId,
   resolveGuildMessageMember,
+  resolveThreadFooterMentionUserId,
   splitMarkdownForDiscord,
 } from './discord-utils.js'
+import type { ThreadChannel } from 'discord.js'
 import { store } from './store.js'
 
 describe('splitMarkdownForDiscord', () => {
@@ -252,7 +255,7 @@ describe('resolveGuildMessageMember', () => {
       member,
       author: { id: 'member-id' },
       id: 'message-id',
-    } as unknown as Message
+    }
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(member)
   })
@@ -262,7 +265,7 @@ describe('resolveGuildMessageMember', () => {
     const message = {
       guild: {
         members: {
-          fetch(id: string) {
+          fetch: (id: string) => {
             expect(id).toBe('member-id')
             return Promise.resolve(member)
           },
@@ -271,7 +274,7 @@ describe('resolveGuildMessageMember', () => {
       member: null,
       author: { id: 'member-id' },
       id: 'message-id',
-    } as unknown as Message
+    }
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(member)
   })
@@ -280,17 +283,169 @@ describe('resolveGuildMessageMember', () => {
     const message = {
       guild: {
         members: {
-          fetch() {
-            return Promise.reject(new Error('missing member'))
-          },
+          fetch: () => Promise.reject(new Error('missing member')),
         },
       },
       member: null,
       author: { id: 'member-id' },
       id: 'message-id',
-    } as unknown as Message
+    }
 
     await expect(resolveGuildMessageMember(message)).resolves.toBe(null)
+  })
+})
+
+describe('resolveFooterMentionUserId', () => {
+  test('uses the session user when it is not the bot', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: 'user-1',
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      members: [
+        { id: 'bot-1', bot: true, joinedTimestamp: 1 },
+        { id: 'user-2', bot: false, joinedTimestamp: 2 },
+      ],
+    })).toBe('user-1')
+  })
+
+  test('skips bots and uses the earliest human member when the bot created the thread', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: 'bot-1',
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      members: [
+        { id: 'bot-1', bot: true, joinedTimestamp: 1 },
+        { id: 'other-bot', bot: true, joinedTimestamp: 2 },
+        { id: 'user-3', bot: false, joinedTimestamp: 4 },
+        { id: 'user-2', bot: false, joinedTimestamp: 3 },
+      ],
+    })).toBe('user-2')
+  })
+
+  test('does not mention anyone when the bot created the thread and no human member exists', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: 'bot-1',
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      members: [
+        { id: 'bot-1', bot: true, joinedTimestamp: 1 },
+        { id: 'other-bot', bot: true, joinedTimestamp: 2 },
+      ],
+    })).toBeUndefined()
+  })
+
+  test('uses the first human member when the bot created the thread and no session user is set', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: undefined,
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      members: [
+        { id: 'bot-1', bot: true, joinedTimestamp: 1 },
+        { id: 'user-2', bot: false, joinedTimestamp: 2 },
+      ],
+    })).toBe('user-2')
+  })
+
+  test('does not mention a member whose bot flag is unknown', () => {
+    expect(resolveFooterMentionUserId({
+      sessionUserId: undefined,
+      botUserId: 'bot-1',
+      threadOwnerId: 'bot-1',
+      members: [
+        { id: 'bot-1', bot: true, joinedTimestamp: 1 },
+        { id: 'maybe-user', joinedTimestamp: 2 },
+      ],
+    })).toBeUndefined()
+  })
+})
+
+function fakeThread({
+  ownerId,
+  botUserId,
+  members,
+  onFetch,
+}: {
+  ownerId: string
+  botUserId: string
+  members: Array<{ id: string; bot?: boolean; joinedTimestamp?: number | null }>
+  onFetch?: () => Promise<Map<string, { id: string; user?: { bot?: boolean }; joinedTimestamp?: number | null }>>
+}): ThreadChannel {
+  const cache = new Map(members.map((member) => [
+    member.id,
+    {
+      id: member.id,
+      user: member.bot === undefined ? undefined : { bot: member.bot },
+      joinedTimestamp: member.joinedTimestamp ?? null,
+    },
+  ]))
+  return {
+    ownerId,
+    client: { user: { id: botUserId } },
+    members: {
+      cache,
+      fetch: onFetch ?? (() => {
+        throw new Error('should not fetch thread members')
+      }),
+    },
+  } as ThreadChannel
+}
+
+describe('resolveThreadFooterMentionUserId', () => {
+  test('does not fetch when a human session user is already known', async () => {
+    await expect(resolveThreadFooterMentionUserId({
+      sessionUserId: 'user-1',
+      thread: fakeThread({
+        ownerId: 'bot-1',
+        botUserId: 'bot-1',
+        members: [{ id: 'bot-1', bot: true }],
+      }),
+    })).resolves.toBe('user-1')
+  })
+
+  test('does not fetch when the thread owner is not the bot', async () => {
+    await expect(resolveThreadFooterMentionUserId({
+      sessionUserId: undefined,
+      thread: fakeThread({
+        ownerId: 'user-1',
+        botUserId: 'bot-1',
+        members: [{ id: 'user-1', bot: false }],
+      }),
+    })).resolves.toBeUndefined()
+  })
+
+  test('uses cached humans without fetching', async () => {
+    await expect(resolveThreadFooterMentionUserId({
+      sessionUserId: undefined,
+      thread: fakeThread({
+        ownerId: 'bot-1',
+        botUserId: 'bot-1',
+        members: [
+          { id: 'bot-1', bot: true, joinedTimestamp: 1 },
+          { id: 'user-2', bot: false, joinedTimestamp: 2 },
+        ],
+      }),
+    })).resolves.toBe('user-2')
+  })
+
+  test('fetches only when the bot owns the thread and no human is cached', async () => {
+    let fetched = false
+    const thread = fakeThread({
+      ownerId: 'bot-1',
+      botUserId: 'bot-1',
+      members: [{ id: 'bot-1', bot: true, joinedTimestamp: 1 }],
+      onFetch: async () => {
+        fetched = true
+        return new Map([
+          ['bot-1', { id: 'bot-1', user: { bot: true }, joinedTimestamp: 1 }],
+          ['user-2', { id: 'user-2', user: { bot: false }, joinedTimestamp: 2 }],
+        ])
+      },
+    })
+    await expect(resolveThreadFooterMentionUserId({
+      sessionUserId: undefined,
+      thread,
+    })).resolves.toBe('user-2')
+    expect(fetched).toBe(true)
   })
 })
 

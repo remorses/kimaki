@@ -71,7 +71,7 @@ export async function handleAbortCommand({
   // wake would still fire later and restart a session the user just stopped.
   await cancelSessionSleepForThread({ threadId: channel.id })
 
-  // abortActiveRun delegates to session.abort(), run settlement stays event-driven.
+  // abortActiveRun delegates to session.interrupt(); run settlement stays event-driven.
   const runtime = getRuntime(channel.id)
   if (runtime) {
     runtime.abortActiveRun('user-requested')
@@ -85,7 +85,7 @@ export async function handleAbortCommand({
     try {
       const client = getOpencodeClient(workingDirectory)
       if (client) {
-        await client.session.abort({ sessionID: sessionId, directory: workingDirectory })
+        await client.session.interrupt({ sessionID: sessionId })
       }
     } catch (error) {
       logger.error('[ABORT] API abort failed:', error)

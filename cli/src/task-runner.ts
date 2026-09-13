@@ -27,6 +27,7 @@ import {
   markSessionSleepFailed,
 } from './database.js'
 import { execAsync } from './exec-async.js'
+import { QUEUE_PREFIX } from './message-formatting.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
 import { createLogger, formatErrorWithStack, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
@@ -99,7 +100,7 @@ async function executeThreadScheduledTask({
   const embed = [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
-  const prefixedPrompt = `» **kimaki-cli:**\n${prompt}`
+  const prefixedPrompt = `${QUEUE_PREFIX}**kimaki-cli:**\n${prompt}`
 
   // Re-join the user before posting, so the message they get notified about is
   // in a thread they are already a member of. Works on archived threads too;
@@ -424,15 +425,12 @@ async function hasRunningSession(task: ScheduledTask): Promise<boolean | Error> 
     }
     const getClient = await initializeOpencodeForDirectory(run.project_directory)
     if (getClient instanceof Error) return getClient
-    const statusResponse = await getClient().session.status({
-      directory: run.project_directory,
-    }).catch((error) => new Error('Failed to check scheduled session status', {
+    const statusResponse = await getClient().session.active().catch((error: unknown) => new Error('Failed to check scheduled session status', {
       cause: error,
     }))
     if (statusResponse instanceof Error) return statusResponse
-    if (statusResponse.error) return new Error('Failed to check scheduled session status')
-    const status = statusResponse.data?.[run.session_id]
-    if (status && status.type !== 'idle') {
+    const status = statusResponse[run.session_id]
+    if (status) {
       active = true
       continue
     }

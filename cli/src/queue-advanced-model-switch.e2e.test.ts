@@ -11,6 +11,7 @@ import {
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
 import {
+  isFooterMessage,
   waitForBotMessageContaining,
   waitForBotReplyAfterUserMessage,
   waitForFooterMessage,
@@ -320,32 +321,29 @@ describe('queue advanced: /model with interrupt recovery', () => {
       })
 
       const footer = [...finalMessages].reverse().find((message) => {
-        return message.author.id === ctx.discord.botUserId
-          && message.content.startsWith('*')
-          && message.content.includes('⋅')
+        return isFooterMessage({ message, botUserId: ctx.discord.botUserId })
       })
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-model-switch-tester)
         Reply with exactly: model-switcher-setup
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         Model set for this session:
-        **Deterministic Provider** / **deterministic-v3**
+        **deterministic-provider** / **deterministic-v3**
         \`deterministic-provider/deterministic-v3\`
         _Restarting current request with new model..._
         _Tip: create [agent .md files](https://kimaki.dev/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_
         --- from: user (queue-model-switch-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
-        ok
         starting sleep 100
         --- from: user (queue-model-switch-tester)
         Reply with exactly: model-switcher-followup
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v3*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v3* <@200000000000000991>"
       `)
 
       expect(footer).toBeDefined()
@@ -357,25 +355,18 @@ describe('queue advanced: /model with interrupt recovery', () => {
       if (getClient instanceof Error) {
         throw getClient
       }
-      const sessionMessagesResponse = await getClient().session.messages({
+      const sessionMessagesResponse = await getClient().message.list({
         sessionID: sessionId,
-        directory: ctx.directories.projectDirectory,
       })
-      const sessionMessages = sessionMessagesResponse.data || []
+      const sessionMessages = sessionMessagesResponse.data
       const emptyUserMessagesWithDefaultModel = sessionMessages.filter((message) => {
-        if (message.info.role !== 'user') {
+        if (message.type !== 'user') {
           return false
         }
-        const hasNonEmptyTextPart = message.parts.some((part) => {
-          if (part.type !== 'text') {
-            return false
-          }
-          return part.text.trim().length > 0
-        })
-        if (hasNonEmptyTextPart) {
+        if (message.text.trim().length > 0) {
           return false
         }
-        return message.info.model.modelID === 'deterministic-v2'
+        return false
       })
       expect(emptyUserMessagesWithDefaultModel.length).toBe(0)
     },

@@ -15,6 +15,7 @@ import { InvalidModelError } from '../errors.js'
 import {
   clearModelListCache,
   formatDisplayedModelId,
+  getConfiguredModel,
   getProviderModelName,
   listModels,
   parseModelId,
@@ -307,6 +308,23 @@ describe('parseModelId', () => {
   })
 })
 
+describe('getConfiguredModel', () => {
+  test('reads the last configured model from the v2 config entry array', () => {
+    expect(
+      getConfiguredModel([
+        { type: 'document', info: { model: 'anthropic/claude-sonnet-4-6' } },
+        { type: 'directory', path: '/tmp/project' },
+        {
+          type: 'document',
+          info: {
+            model: { providerID: 'openai', model: 'gpt-5.6', variant: 'high' },
+          },
+        },
+      ]),
+    ).toEqual({ providerID: 'openai', modelID: 'gpt-5.6' })
+  })
+})
+
 describe('validateModelIdAgainstList', () => {
   test('accepts a connected listed model', () => {
     expect(
@@ -366,26 +384,25 @@ function fakeGetClient(options?: {
 }) {
   let failed = false
   return () => ({
-    provider: {
+    plugin: {
+      awaitActivation: async () => {},
+    },
+    model: {
       list: async () => {
         if (options?.calls) options.calls.count += 1
         if (options?.failOnce && !failed) {
           failed = true
-          throw new Error('provider.list failed')
+          throw new Error('model.list failed')
         }
         return {
-          data: {
-            all: [
-              {
-                id: 'anthropic',
-                models: {
-                  'claude-opus-4-6': { name: 'Claude Opus 4.6' },
-                },
-              },
-            ],
-            connected: ['anthropic'],
-            default: {},
-          },
+          data: [
+            {
+              providerID: 'anthropic',
+              modelID: 'claude-opus-4-6',
+              name: 'Claude Opus 4.6',
+              enabled: true,
+            },
+          ],
         }
       },
     },
@@ -432,6 +449,62 @@ describe('listModels', () => {
     expect(calls.count).toBe(2)
   })
 
+  test('does not cache an empty connected model list', async () => {
+    const calls = { count: 0 }
+    const getClient = (() => ({
+      plugin: {
+        awaitActivation: async () => {},
+      },
+      model: {
+        list: async () => {
+          calls.count += 1
+          if (calls.count === 1) {
+            return {
+              data: [
+                {
+                  providerID: 'subrouter',
+                  modelID: 'default',
+                  name: 'default',
+                  enabled: false,
+                },
+              ],
+            }
+          }
+          return {
+            data: [
+              {
+                providerID: 'deterministic-provider',
+                modelID: 'deterministic-v2',
+                name: 'deterministic-v2',
+                enabled: true,
+              },
+            ],
+          }
+        },
+      },
+    })) as never
+    const first = await listModels({ getClient, directory: '/tmp/project-empty' })
+    expect(first).not.toBeInstanceOf(Error)
+    if (first instanceof Error) throw first
+    expect(first.every((model) => !model.connected)).toBe(true)
+    const second = await listModels({ getClient, directory: '/tmp/project-empty' })
+    expect(second).not.toBeInstanceOf(Error)
+    if (second instanceof Error) throw second
+    expect({ calls: calls.count, second }).toMatchInlineSnapshot(`
+      {
+        "calls": 2,
+        "second": [
+          {
+            "connected": true,
+            "modelID": "deterministic-v2",
+            "name": "deterministic-v2",
+            "providerID": "deterministic-provider",
+          },
+        ],
+      }
+    `)
+  })
+
   test('does not cache failed fetches', async () => {
     const calls = { count: 0 }
     const getClient = fakeGetClient({ calls, failOnce: true }) as never
@@ -445,23 +518,30 @@ describe('listModels', () => {
   test('does not restore a pending result after the cache is cleared', async () => {
     const calls = { count: 0 }
     const firstResponse = Promise.withResolvers<{
-      data: {
-        all: Array<{ id: string; models: Record<string, { name: string }> }>
-        connected: string[]
-        default: Record<string, string>
-      }
+      data: Array<{
+        providerID: string
+        modelID: string
+        name: string
+        enabled: boolean
+      }>
     }>()
     const getClient = (() => ({
-      provider: {
+      plugin: {
+        awaitActivation: async () => {},
+      },
+      model: {
         list: () => {
           calls.count += 1
           if (calls.count === 1) return firstResponse.promise
           return Promise.resolve({
-            data: {
-              all: [{ id: 'openai', models: { 'gpt-5.5': { name: 'GPT-5.5' } } }],
-              connected: ['openai'],
-              default: {},
-            },
+            data: [
+              {
+                providerID: 'openai',
+                modelID: 'gpt-5.5',
+                name: 'GPT-5.5',
+                enabled: true,
+              },
+            ],
           })
         },
       },
@@ -470,16 +550,14 @@ describe('listModels', () => {
     const pending = listModels({ getClient, directory: '/tmp/project-a' })
     clearModelListCache()
     firstResponse.resolve({
-      data: {
-        all: [
-          {
-            id: 'anthropic',
-            models: { 'claude-opus-4-6': { name: 'Claude Opus 4.6' } },
-          },
-        ],
-        connected: ['anthropic'],
-        default: {},
-      },
+      data: [
+        {
+          providerID: 'anthropic',
+          modelID: 'claude-opus-4-6',
+          name: 'Claude Opus 4.6',
+          enabled: true,
+        },
+      ],
     })
     await pending
 

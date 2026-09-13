@@ -40,7 +40,6 @@ import { handleCreateNewProjectCommand } from './commands/create-new-project.js'
 import { handlePermissionButton } from './commands/permissions.js'
 import { handleAbortCommand } from './commands/abort.js'
 import { handleCompactCommand } from './commands/compact.js'
-import { handleShareCommand } from './commands/share.js'
 import { handleDiffCommand } from './commands/diff.js'
 import {
   handleForkCommand,
@@ -76,6 +75,7 @@ import {
   handleAgentCommand,
   handleAgentSelectMenu,
   handleQuickAgentCommand,
+  handleQuickAgentAutocomplete,
 } from './commands/agent.js'
 import { handleAskQuestionSelectMenu } from './commands/ask-question.js'
 import {
@@ -121,13 +121,6 @@ import {
 } from './session-handler/thread-session-runtime.js'
 
 const interactionLogger = createLogger(LogPrefix.INTERACTION)
-
-/** Setup commands that should reply with guidance when used in
- * non-project channels, instead of silently ignoring. */
-const SETUP_COMMANDS = new Set([
-  'add-project',
-  'create-new-project',
-])
 
 function serialIngressChannelId(interaction: Interaction): string | undefined {
   if (!interaction.isChatInputCommand()) {
@@ -215,14 +208,9 @@ export function registerInteractionHandler({
         // Multi-machine routing: only handle interactions for channels owned
         // by this machine (have a project directory configured in local db).
         // If not owned, silently return so the other machine handles it.
-        // Setup commands (create-new-project, add-project) bypass this check
-        // because they are designed to run from any channel — they create new
-        // project channels rather than requiring one to already exist.
-        const isSetupCommand =
-          interaction.isChatInputCommand() &&
-          SETUP_COMMANDS.has(interaction.commandName)
+        // Setup commands must not let an unconfigured server grant itself host access.
         const owned = await isInteractionOwnedByThisMachine(interaction)
-        if (!owned && !isSetupCommand) {
+        if (!owned) {
           interactionLogger.log(
             `[IGNORED] Channel ${interaction.channelId} has no project directory configured, skipping interaction`,
           )
@@ -267,6 +255,13 @@ export function registerInteractionHandler({
               return
 
             default:
+              if (
+                interaction.commandName.endsWith('-agent') &&
+                interaction.commandName !== 'agent'
+              ) {
+                await handleQuickAgentAutocomplete({ interaction, appId })
+                return
+              }
               await interaction.respond([])
               return
           }
@@ -345,10 +340,6 @@ export function registerInteractionHandler({
 
             case 'compact':
               await handleCompactCommand({ command: interaction, appId })
-              return
-
-            case 'share':
-              await handleShareCommand({ command: interaction, appId })
               return
 
             case 'diff':

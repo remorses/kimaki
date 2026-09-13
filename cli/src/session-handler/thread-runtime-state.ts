@@ -38,11 +38,12 @@ export type QueuedMessage = {
   // When set, dispatches via session.command() instead of session.prompt().
   // Used by /queue-command and user-defined slash commands.
   command?: { name: string; arguments: string }
-  // First-dispatch-only overrides — used when creating a new session.
-  // Subsequent queue drains ignore these since the session already exists.
-  // Set by --agent/--model/--permission flags on kimaki send or slash commands.
+  // Per-item overrides set by --agent/--model/--permission flags on kimaki send
+  // or slash commands.
   agent?: string
   model?: string
+  // Thinking-level variant from `/xxx-agent variant:`.
+  variant?: string
   // Raw permission rule strings ("tool:action" or "tool:pattern:action").
   // Parsed and merged into session permissions on creation.
   permissions?: string[]
@@ -65,6 +66,7 @@ export type QueuedMessage = {
   // list can show which sessions were started by scheduled tasks.
   sessionStartScheduleKind?: 'at' | 'cron'
   sessionStartScheduledTaskId?: number
+  sessionStartScheduledTaskRunId?: number
   // Product analytics turn source (discord/cli/scheduled/retry).
   analyticsSource?: 'discord' | 'cli' | 'scheduled' | 'retry'
 }
@@ -123,12 +125,6 @@ export function initialThreadState(): ThreadRunState {
   }
 }
 
-// ── Derived helpers (compute, never store) ───────────────────────
-
-export function hasQueue(t: ThreadRunState): boolean {
-  return t.queueItems.length > 0
-}
-
 // ── Pure transition helpers ──────────────────────────────────────
 // Immutable: produces new Map + new ThreadRunState object each time.
 
@@ -183,6 +179,7 @@ export function setSessionUsername(threadId: string, username: string): void {
 }
 
 export function setSessionUserId(threadId: string, userId: string): void {
+  if (!userId) return
   updateThread(threadId, (t) => {
     if (t.sessionUserId) {
       return t

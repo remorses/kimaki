@@ -154,7 +154,7 @@ describe('kimaki send --channel thread creation', () => {
     process.env['KIMAKI_LOCK_PORT'] = String(lockPort)
     setDataDir(directories.dataDir)
     previousDefaultVerbosity = store.getState().defaultVerbosity
-    store.setState({ defaultVerbosity: 'tools_and_text', sessionFootersEnabled: true })
+    store.setState({ defaultVerbosity: 'tools_and_text' })
 
     const digitalDiscordDbPath = path.join(
       directories.dataDir,
@@ -299,7 +299,7 @@ describe('kimaki send --channel thread creation', () => {
     delete process.env['KIMAKI_LOCK_PORT']
     delete process.env['KIMAKI_DB_URL']
     if (previousDefaultVerbosity) {
-      store.setState({ defaultVerbosity: previousDefaultVerbosity, sessionFootersEnabled: false })
+      store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
       fs.rmSync(directories.dataDir, { recursive: true, force: true })
@@ -410,9 +410,9 @@ describe('kimaki send --channel thread creation', () => {
         "--- from: user (cli-send-tester)
         thread empty content seed
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         caught-by-model
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000830>
         --- from: user (cli-send-tester)
         --- from: assistant (TestBot)
         I can see you sent a message, but Discord did not include its text.

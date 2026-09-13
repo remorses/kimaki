@@ -17,12 +17,13 @@ import type {
   ThreadChannel,
 } from 'discord.js'
 const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from './opencode.js'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
-import { leadingSeparatorComponents, splitTablesFromMarkdown } from './format-tables.js'
+import { splitTablesFromMarkdown } from './format-tables.js'
 import {
-  shouldLeadWithSeparator,
+  sessionPartContent,
+  shouldLeadWithBlankLine,
   type SessionChunk,
 } from './message-formatting.js'
 import { getChannelDirectory, getThreadWorktreeOrWorkspace } from './database.js'
@@ -100,13 +101,21 @@ export function hasKimakiAdminPermission(
   return isOwner || isAdmin || canManageServer || hasKimakiRole
 }
 
-export async function resolveGuildMessageMember(
-  message: Message,
-): Promise<GuildMemberType | null> {
+export async function resolveGuildMessageMember<TMember>(
+  message: {
+    id: string
+    author: { id: string }
+    member?: TMember | null
+    guild?: { members: object } | null
+  },
+): Promise<TMember | null> {
   if (!message.guild) return null
   if (message.member) return message.member
 
-  const fetchedMember = await message.guild.members
+  const members = message.guild.members as {
+    fetch(id: string): Promise<TMember>
+  }
+  const fetchedMember = await members
     .fetch(message.author.id)
     .catch((e) => new Error('Failed to fetch guild member', { cause: e }))
   if (fetchedMember instanceof Error) {
@@ -243,14 +252,14 @@ export async function archiveThread({
         const sessionResponse = await client.session.get({
           sessionID: sessionId,
         })
-        if (!sessionResponse.data) {
+        if (!sessionResponse.title) {
           return
         }
-        const currentTitle = sessionResponse.data.title || ''
+        const currentTitle = sessionResponse.title
         const newTitle = currentTitle.startsWith('📁')
           ? currentTitle
           : `📁 ${currentTitle}`.trim()
-        await client.session.update({
+        await client.session.rename({
           sessionID: sessionId,
           title: newTitle,
         })
@@ -329,6 +338,91 @@ export async function ensureThreadMember({
       })
     })
   if (addMemberResult instanceof Error) return addMemberResult
+}
+
+export type FooterMentionMember = {
+  id: string
+  bot?: boolean
+  joinedTimestamp?: number | null
+}
+
+export function resolveFooterMentionUserId({
+  sessionUserId,
+  botUserId,
+  threadOwnerId,
+  members,
+}: {
+  sessionUserId: string | undefined
+  botUserId: string | undefined
+  threadOwnerId: string | undefined
+  members: FooterMentionMember[]
+}): string | undefined {
+  if (sessionUserId && sessionUserId !== botUserId) return sessionUserId
+  if (!botUserId || threadOwnerId !== botUserId) return undefined
+  const humans = members
+    .filter((member) => member.id && member.id !== botUserId && member.bot === false)
+    .sort((a, b) => {
+      const aJoined = a.joinedTimestamp ?? Number.POSITIVE_INFINITY
+      const bJoined = b.joinedTimestamp ?? Number.POSITIVE_INFINITY
+      if (aJoined !== bJoined) return aJoined - bJoined
+      return a.id.localeCompare(b.id)
+    })
+  return humans[0]?.id
+}
+
+function footerMentionMembersFromCache(thread: ThreadChannel): FooterMentionMember[] {
+  return [...thread.members.cache.values()].map((member) => ({
+    id: member.id,
+    bot: member.user?.bot,
+    joinedTimestamp: member.joinedTimestamp ?? null,
+  }))
+}
+
+export async function resolveThreadFooterMentionUserId({
+  sessionUserId,
+  thread,
+}: {
+  sessionUserId: string | undefined
+  thread: ThreadChannel
+}): Promise<string | undefined> {
+  const botUserId = thread.client.user?.id
+  if (sessionUserId && sessionUserId !== botUserId) return sessionUserId
+  if (!botUserId || thread.ownerId !== botUserId) return undefined
+
+  const cached = footerMentionMembersFromCache(thread)
+  if (cached.some((member) => member.bot === false && member.id !== botUserId)) {
+    return resolveFooterMentionUserId({
+      sessionUserId,
+      botUserId,
+      threadOwnerId: thread.ownerId ?? undefined,
+      members: cached,
+    })
+  }
+
+  const fetched = await thread.members.fetch().catch((e) => {
+    return new DiscordOperationError({ operation: 'fetchThreadMembers', cause: e })
+  })
+  if (fetched instanceof Error) {
+    discordLogger.warn(`[FOOTER] Failed to fetch thread members: ${fetched.message}`)
+    return resolveFooterMentionUserId({
+      sessionUserId,
+      botUserId,
+      threadOwnerId: thread.ownerId ?? undefined,
+      members: cached,
+    })
+  }
+
+  const members = [...fetched.values()].map((member) => ({
+    id: member.id,
+    bot: member.user?.bot,
+    joinedTimestamp: member.joinedTimestamp ?? null,
+  }))
+  return resolveFooterMentionUserId({
+    sessionUserId,
+    botUserId,
+    threadOwnerId: thread.ownerId ?? undefined,
+    members,
+  })
 }
 
 /** Remove Discord mentions from text so they don't appear in thread titles */
@@ -629,18 +723,20 @@ export function splitMarkdownForDiscord({
   return chunks
 }
 
-export async function sendThreadMessage(
-  thread: ThreadChannel,
+export async function sendThreadMessage<TMessage extends { id: string }>(
+  thread: {
+    send(...args: Parameters<ThreadChannel['send']>): Promise<TMessage>
+  },
   content: string,
   options?: { flags?: number },
-): Promise<Message> {
+): Promise<TMessage> {
   const MAX_LENGTH = 2000
 
   // Split content into text and CV2 component segments (tables → Container components)
   const segments = splitTablesFromMarkdown(content)
   const baseFlags = options?.flags ?? SILENT_MESSAGE_FLAGS
 
-  let firstMessage: Message | undefined
+  let firstMessage: TMessage | undefined
 
   for (const segment of segments) {
     if (segment.type === 'components') {
@@ -698,18 +794,18 @@ export async function sendSessionPartMessage(
   thread: ThreadChannel,
   content: string,
   options?: {
-    leadWithSeparator?: boolean
+    leadWithBlankLine?: boolean
     flags?: number
   },
 ): Promise<Message> {
-  if (options?.leadWithSeparator === true) {
-    const baseFlags = options.flags ?? SILENT_MESSAGE_FLAGS
-    await thread.send({
-      components: leadingSeparatorComponents(),
-      flags: MessageFlags.IsComponentsV2 | baseFlags,
-    })
-  }
-  return sendThreadMessage(thread, content, { flags: options?.flags })
+  return sendThreadMessage(
+    thread,
+    sessionPartContent({
+      content,
+      leadWithBlankLine: options?.leadWithBlankLine === true,
+    }),
+    { flags: options?.flags },
+  )
 }
 
 export async function sendSessionPartBatches({
@@ -723,7 +819,7 @@ export async function sendSessionPartBatches({
   let previousKind: SessionChunk['kind'] | undefined
   for (const batch of batches) {
     const message = await sendSessionPartMessage(thread, batch.content, {
-      leadWithSeparator: shouldLeadWithSeparator({
+      leadWithBlankLine: shouldLeadWithBlankLine({
         previousKind,
         nextKind: batch.kind,
       }),

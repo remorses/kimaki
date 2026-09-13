@@ -16,48 +16,13 @@ import {
   MessageFlags,
 } from 'discord.js'
 import crypto from 'node:crypto'
-import type { OpencodeClient, PermissionRequest } from '@opencode-ai/sdk/v2'
+import type { PermissionRequest } from '@opencode/client'
 import { getOpencodeClient } from '../opencode.js'
 import { getPermissionTimeoutMs } from '../config.js'
 import { NOTIFY_MESSAGE_FLAGS } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 
 const logger = createLogger(LogPrefix.PERMISSIONS)
-
-async function resumeSessionIfIdleAfterPermission({
-  client,
-  sessionId,
-  directory,
-}: {
-  client: OpencodeClient
-  sessionId: string
-  directory: string
-}): Promise<Error | boolean> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, 100)
-  })
-
-  const statusResponse = await client.session.status({ directory })
-  if (statusResponse.error) {
-    return new Error('Failed to check session status')
-  }
-
-  const sessionStatus = statusResponse.data?.[sessionId]
-  if (!sessionStatus || sessionStatus.type !== 'idle') {
-    return false
-  }
-
-  const resumeResponse = await client.session.promptAsync({
-    sessionID: sessionId,
-    directory,
-    parts: [],
-  })
-  if (resumeResponse.error) {
-    return new Error('Failed to resume session')
-  }
-
-  return true
-}
 
 function wildcardMatch({
   value,
@@ -102,6 +67,20 @@ export function compactPermissionPatterns(patterns: string[]): string[] {
       return wildcardMatch({ value: pattern, pattern: candidate })
     })
   })
+}
+
+export function canGroupPermissionRequests({
+  permission,
+  existing,
+}: {
+  permission: PermissionRequest
+  existing: PermissionRequest
+}): boolean {
+  // Replies are session-scoped, and "always" saves the first request's save list.
+  return permission.sessionID === existing.sessionID
+    && permission.action === existing.action
+    && JSON.stringify([...new Set(permission.save ?? [])].sort()) === JSON.stringify([...new Set(existing.save ?? [])].sort())
+    && arePatternsCoveredBy({ patterns: permission.resources, coveringPatterns: existing.resources })
 }
 
 type PendingPermissionContext = {
@@ -183,8 +162,8 @@ export async function showPermissionButtons({
       await Promise.all(
         requestIds.map((requestId) => {
           return client.permission.reply({
+            sessionID: ctx.permission.sessionID,
             requestID: requestId,
-            directory: ctx.directory,
             reply: 'reject',
             message: timeoutFeedback,
           })
@@ -200,7 +179,7 @@ export async function showPermissionButtons({
     }
   }, ttlMs).unref()
 
-  const patternStr = compactPermissionPatterns(permission.patterns).join(', ')
+  const patternStr = compactPermissionPatterns(permission.resources).join(', ')
 
   // Build 3 buttons for permission actions
   const acceptButton = new ButtonBuilder()
@@ -212,6 +191,7 @@ export async function showPermissionButtons({
     .setCustomId(`permission_always:${contextHash}`)
     .setLabel('Accept Always')
     .setStyle(ButtonStyle.Success)
+    .setDisabled(!permission.save?.length)
 
   const denyButton = new ButtonBuilder()
     .setCustomId(`permission_reject:${contextHash}`)
@@ -226,13 +206,13 @@ export async function showPermissionButtons({
 
   const subtaskLine = subtaskLabel ? `**From:** \`${subtaskLabel}\`\n` : ''
   const externalDirLine =
-    permission.permission === 'external_directory'
+    permission.action === 'external_directory'
       ? `Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n`
       : ''
   const fullContent =
     `⚠️ **Permission Required**\n` +
     subtaskLine +
-    `**Type:** \`${permission.permission}\`\n` +
+    `**Type:** \`${permission.action}\`\n` +
     externalDirLine +
     (patternStr ? `**Pattern:** \`${patternStr}\`` : '')
   const permissionMessage = await thread.send({
@@ -261,15 +241,15 @@ function updatePermissionMessage({
   context.thread.messages
     .fetch(context.messageId)
     .then((message) => {
-      const patternStr = compactPermissionPatterns(context.permission.patterns).join(', ')
+      const patternStr = compactPermissionPatterns(context.permission.resources).join(', ')
       const externalDirLine =
-        context.permission.permission === 'external_directory'
+        context.permission.action === 'external_directory'
           ? 'Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)\n'
           : ''
       return message.edit({
         content:
           `⚠️ **Permission Required**\n` +
-          `**Type:** \`${context.permission.permission}\`\n` +
+          `**Type:** \`${context.permission.action}\`\n` +
           externalDirLine +
           (patternStr ? `**Pattern:** \`${patternStr}\`\n` : '') +
           status,
@@ -311,8 +291,8 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
     const result = await Promise.all(
       requestIds.map((requestId) => {
         return client.permission.reply({
+          sessionID: pendingContext.permission.sessionID,
           requestID: requestId,
-          directory: pendingContext.directory,
           reply: 'reject',
         })
       }),
@@ -386,26 +366,12 @@ export async function handlePermissionButton(
     await Promise.all(
       requestIds.map((requestId) => {
         return permClient.permission.reply({
+          sessionID: context.permission.sessionID,
           requestID: requestId,
-          directory: context.directory,
           reply: response,
         })
       }),
     )
-
-    if (response !== 'reject') {
-      const resumed = await resumeSessionIfIdleAfterPermission({
-        client: permClient,
-        sessionId: context.permission.sessionID,
-        directory: context.directory,
-      })
-      if (resumed instanceof Error) {
-        logger.error('Failed to resume idle session after permission:', resumed)
-      }
-      if (resumed === true) {
-        logger.log(`Resumed idle session after permission ${context.permission.id}`)
-      }
-    }
 
     // Context already removed by takePendingPermissionContext above.
 
@@ -440,19 +406,22 @@ export async function handlePermissionButton(
 
 export function addPermissionRequestToContext({
   contextHash,
-  requestId,
+  permission,
 }: {
   contextHash: string
-  requestId: string
+  permission: PermissionRequest
 }): boolean {
   const context = pendingPermissionContexts.get(contextHash)
   if (!context) {
     return false
   }
-  if (context.requestIds.includes(requestId)) {
+  if (!canGroupPermissionRequests({ permission, existing: context.permission })) {
     return false
   }
-  context.requestIds = [...context.requestIds, requestId]
+  if (context.requestIds.includes(permission.id)) {
+    return false
+  }
+  context.requestIds = [...context.requestIds, permission.id]
   pendingPermissionContexts.set(contextHash, context)
   return true
 }

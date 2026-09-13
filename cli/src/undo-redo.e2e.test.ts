@@ -91,19 +91,20 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         throw getClient
       }
 
-      const beforeMessages = await getClient().session.messages({
+      const beforeMessages = await getClient().message.list({
         sessionID: sessionId!,
-        directory: ctx.directories.projectDirectory,
+        order: 'asc',
       })
-      const beforeCount = (beforeMessages.data || []).length
+      const beforeCount = beforeMessages.data.length
       expect(beforeCount).toBeGreaterThan(0)
 
-      const beforeUserMessages = (beforeMessages.data || []).filter((m) => {
-        return m.info.role === 'user'
+      const beforeUserMessages = beforeMessages.data.filter((m) => {
+        return m.type === 'user'
       })
-      const beforeAssistantMessages = (beforeMessages.data || []).filter(
+      const lastUserMessage = beforeUserMessages.at(-1)
+      const beforeAssistantMessages = beforeMessages.data.filter(
         (m) => {
-          return m.info.role === 'assistant'
+          return m.type === 'assistant'
         },
       )
       expect(beforeUserMessages.length).toBeGreaterThan(0)
@@ -114,7 +115,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       const beforeSession = await getClient().session.get({
         sessionID: sessionId!,
       })
-      expect(beforeSession.data?.revert).toBeFalsy()
+      expect(beforeSession.revert).toBeFalsy()
 
       // 3. Run /undo command
       const { id: undoInteractionId } = await th
@@ -137,15 +138,15 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       const afterSession = await getClient().session.get({
         sessionID: sessionId!,
       })
-      expect(afterSession.data?.revert).toBeTruthy()
-      expect(afterSession.data?.revert?.messageID).toBeTruthy()
+      expect(afterSession.revert).toBeTruthy()
+      expect(afterSession.revert?.messageID).toBe(lastUserMessage?.id)
 
       // Messages should still exist (not deleted — cleanup happens on next prompt)
-      const afterMessages = await getClient().session.messages({
+      const afterMessages = await getClient().message.list({
         sessionID: sessionId!,
-        directory: ctx.directories.projectDirectory,
+        order: 'asc',
       })
-      expect((afterMessages.data || []).length).toBe(beforeCount)
+      expect(afterMessages.data.length).toBe(beforeCount)
 
       // 5. Send a new message — this triggers SessionRevert.cleanup()
       // which removes reverted messages before processing the new prompt
@@ -161,13 +162,13 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       })
 
       // 6. Verify reverted messages were cleaned up
-      const finalMessages = await getClient().session.messages({
+      const finalMessages = await getClient().message.list({
         sessionID: sessionId!,
-        directory: ctx.directories.projectDirectory,
+        order: 'asc',
       })
-      const finalAssistantMessages = (finalMessages.data || []).filter(
+      const finalAssistantMessages = finalMessages.data.filter(
         (m) => {
-          return m.info.role === 'assistant'
+          return m.type === 'assistant'
         },
       )
 
@@ -175,7 +176,7 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       // only the new one (from after-undo-message) should remain
       const originalAssistantStillExists = finalAssistantMessages.some(
         (m) => {
-          return m.parts.some((p) => {
+          return m.type === 'assistant' && m.content.some((p) => {
             return p.type === 'text' && p.text === 'ok'
           })
         },
@@ -192,26 +193,26 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
       const finalSession = await getClient().session.get({
         sessionID: sessionId!,
       })
-      expect(finalSession.data?.revert).toBeFalsy()
+      expect(finalSession.revert).toBeFalsy()
 
       // 7. Snapshot the Discord thread
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (undo-tester)
         UNDO_FILE_MARKER
         --- from: assistant (TestBot)
-        *using deterministic-provider/deterministic-v2*
+        > *using deterministic-provider/deterministic-v2*
         creating undo file
-        ---
-        ┣ bash _Create undo marker file_
-        ---
+
+        ▏shell _Create undo marker file_
+
         undo file created
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         Undone - reverted last assistant message
         --- from: user (undo-tester)
         Reply with exactly: after-undo-message
         --- from: assistant (TestBot)
         ok
-        *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },
     20_000,

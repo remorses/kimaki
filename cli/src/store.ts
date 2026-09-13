@@ -25,6 +25,7 @@ export type RegisteredUserCommand = {
 export type DeterministicTranscriptionConfig = {
   transcription: string
   queueMessage: boolean
+  sessionAction?: 'btw' | 'new-session'
   /** Exercise the production API-key prompt before returning the canned result. */
   requireApiKey?: boolean
   /** Agent name extracted from voice message. Only set if user explicitly requested an agent. */
@@ -67,12 +68,10 @@ export type KimakiState = {
   // Read by: system-message.ts (conditionally appends critique instructions).
   critiqueEnabled: boolean
 
-  // Whether to post the run footer (folder ⋅ branch ⋅ duration ⋅ context% ⋅ model)
-  // after a completed assistant turn. Off by default; the agent pings the user
-  // in the final reply instead. Can later become an enum of footer modes.
-  // Changes: set once at startup from --session-footers.
-  // Read by: ThreadSessionRuntime.handleNaturalAssistantCompletion().
-  sessionFootersEnabled: boolean
+  // Whether final session footers mention the thread creator.
+  // Changes: set once at startup from --skip-footer-mentions.
+  // Read by: ThreadSessionRuntime.emitFooter().
+  footerMentionsEnabled: boolean
 
   // User-specified skill whitelist. When non-empty, only these skill names
   // are injected into the model's system prompt (all others are hidden
@@ -205,7 +204,7 @@ export const store = createStore<KimakiState>(() => ({
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   critiqueEnabled: true,
-  sessionFootersEnabled: false,
+  footerMentionsEnabled: true,
   enabledSkills: [],
   disabledSkills: [],
   allowedMentions: ['users'],

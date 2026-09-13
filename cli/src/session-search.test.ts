@@ -5,8 +5,10 @@ import {
   buildSessionSearchSnippet,
   collectSessionSearchMatches,
   findFirstSessionSearchHit,
+  parseSessionSearchDays,
   parseSessionSearchPattern,
   resolveSessionSearchDirectories,
+  sessionSearchMinUpdated,
   validateSessionSearchScope,
 } from './session-search.js'
 
@@ -100,6 +102,157 @@ describe('session search helpers', () => {
     ).toEqual(['/tmp/website'])
   })
 
+  test('defaults --days to 14 and treats 0 as all time', () => {
+    expect(parseSessionSearchDays(undefined)).toBe(14)
+    expect(parseSessionSearchDays('0')).toBe(0)
+    expect(parseSessionSearchDays('7')).toBe(7)
+    expect(parseSessionSearchDays('-1')).toBeInstanceOf(Error)
+    expect(parseSessionSearchDays('nope')).toBeInstanceOf(Error)
+    expect(sessionSearchMinUpdated({ days: 0, now: 1_000 })).toBeUndefined()
+    expect(sessionSearchMinUpdated({ days: 14, now: 1_000 })).toBe(
+      1_000 - 14 * 24 * 60 * 60 * 1000,
+    )
+  })
+
+  test('skips sessions older than minUpdated without loading messages', async () => {
+    const parsed = parseSessionSearchPattern('auth timeout')
+    if (parsed instanceof Error) {
+      throw parsed
+    }
+
+    const now = 1_000_000_000_000
+    const minUpdated = now - 14 * 24 * 60 * 60 * 1000
+    const loaded: string[] = []
+    const result = await collectSessionSearchMatches({
+      sessions: [
+        {
+          id: 'ses_new',
+          title: 'new hit',
+          directory: '/tmp/kimaki',
+          updated: now,
+        },
+        {
+          id: 'ses_old',
+          title: 'old hit',
+          directory: '/tmp/website',
+          updated: minUpdated - 1,
+        },
+      ],
+      searchPattern: parsed,
+      sessionToThread: new Map(),
+      limit: 20,
+      minUpdated,
+      loadMessages: async (session) => {
+        loaded.push(session.id)
+        return [
+          {
+            info: { role: 'user' },
+            parts: [{ type: 'text', text: 'auth timeout', synthetic: false }],
+          },
+        ]
+      },
+    })
+
+    expect(loaded).toEqual(['ses_new'])
+    expect(result.scannedSessions).toBe(1)
+    expect(result.matches.map((match) => match.id)).toEqual(['ses_new'])
+  })
+
+  test('loads old matching sessions when minUpdated is unset', async () => {
+    const parsed = parseSessionSearchPattern('auth timeout')
+    if (parsed instanceof Error) {
+      throw parsed
+    }
+
+    const loaded: string[] = []
+    const result = await collectSessionSearchMatches({
+      sessions: [
+        {
+          id: 'ses_old',
+          title: 'old hit',
+          directory: '/tmp/website',
+          updated: 1,
+        },
+      ],
+      searchPattern: parsed,
+      sessionToThread: new Map(),
+      limit: 20,
+      loadMessages: async (session) => {
+        loaded.push(session.id)
+        return [
+          {
+            info: { role: 'user' },
+            parts: [{ type: 'text', text: 'auth timeout', synthetic: false }],
+          },
+        ]
+      },
+    })
+
+    expect(loaded).toEqual(['ses_old'])
+    expect(result.matches.map((match) => match.id)).toEqual(['ses_old'])
+  })
+
+  test('loads messages in parallel but keeps newest matches first', async () => {
+    const parsed = parseSessionSearchPattern('auth timeout')
+    if (parsed instanceof Error) {
+      throw parsed
+    }
+
+    let inFlight = 0
+    let maxInFlight = 0
+    const streamed: string[] = []
+    const result = await collectSessionSearchMatches({
+      sessions: [
+        {
+          id: 'ses_new',
+          title: 'new hit',
+          directory: '/tmp/kimaki',
+          updated: 3,
+        },
+        {
+          id: 'ses_mid',
+          title: 'mid hit',
+          directory: '/tmp/cli',
+          updated: 2,
+        },
+        {
+          id: 'ses_old',
+          title: 'old hit',
+          directory: '/tmp/website',
+          updated: 1,
+        },
+      ],
+      searchPattern: parsed,
+      sessionToThread: new Map(),
+      limit: 2,
+      concurrency: 3,
+      onMatch: (match) => {
+        streamed.push(match.id)
+      },
+      loadMessages: async (session) => {
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((resolve) => {
+          setTimeout(resolve, session.id === 'ses_new' ? 40 : 5)
+        })
+        inFlight--
+        return [
+          {
+            info: { role: 'user' },
+            parts: [{ type: 'text', text: 'auth timeout', synthetic: false }],
+          },
+        ]
+      },
+    })
+
+    expect(maxInFlight).toBeGreaterThan(1)
+    expect(result.matches.map((match) => match.id)).toEqual([
+      'ses_new',
+      'ses_mid',
+    ])
+    expect(streamed).toEqual(['ses_new', 'ses_mid'])
+  })
+
   test('collects newest matches across projects up to the global limit', async () => {
     const parsed = parseSessionSearchPattern('auth timeout')
     if (parsed instanceof Error) {
@@ -163,6 +316,7 @@ describe('session search helpers', () => {
         ['ses_mid', 'thread_mid'],
       ]),
       limit: 2,
+      concurrency: 1,
     })
 
     expect(result.scannedSessions).toBe(3)
