@@ -147,6 +147,30 @@ export function discordToolPartId({
   return `${messageID}:tool:${toolId}`
 }
 
+const HIDDEN_READONLY_TOOLS = [
+  'read',
+  'glob',
+  'grep',
+  'describe-media',
+  'todoread',
+]
+
+export function isEssentialToolName(toolName: string): boolean {
+  return !HIDDEN_READONLY_TOOLS.some((name) => {
+    return toolName === name || toolName.endsWith(`_${name}`)
+  })
+}
+
+export function isShellToolName(toolName: string): boolean {
+  return toolName === 'shell' || toolName === 'bash'
+}
+
+export function isEssentialToolPart(part: DiscordSessionPart): boolean {
+  if (part.type !== 'tool' || !isEssentialToolName(part.tool)) return false
+  if (!isShellToolName(part.tool)) return true
+  return part.state.input?.hasSideEffect !== false
+}
+
 function parseToolInput(input: unknown): Record<string, unknown> {
   if (typeof input === 'string') {
     const parsed = errore.try(() => JSON.parse(input) as Record<string, unknown>)
