@@ -63,17 +63,17 @@ Before upload, **remove secrets** such as tokens, API keys, cookies, and unrelat
 
 ### Inspect the jsonl
 
-Each line is `{ timestamp, threadId, projectDirectory, event }`. Read it before you write the issue.
+Each line is one raw OpenCode event. Read it before you write the issue.
 
 ```bash
 # event type counts
-jq -r '.event.type' ./tmp/ses_xxx.jsonl | sort | uniq -c
+jq -r '.type' ./tmp/ses_xxx.jsonl | sort | uniq -c
 
 # lifecycle only
-jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ./tmp/ses_xxx.jsonl
+jq -r 'select(.type | startswith("session.execution.")) | [.created, .type, .data.sessionID, .data.executionID] | @tsv' ./tmp/ses_xxx.jsonl
 
 # timestamps + types
-jq -r '[.timestamp, .event.type] | @tsv' ./tmp/ses_xxx.jsonl
+jq -r '[.created, .type] | @tsv' ./tmp/ses_xxx.jsonl
 ```
 
 If the stream does not contain the event you expected, say that. Do not invent a cause.
@@ -124,8 +124,8 @@ Keep it short. Use facts from the jsonl and log.
 2. ...
 
 **What the files show:**
-- jsonl line N: `session.status` busy at <timestamp>
-- jsonl line M: `session.idle` then a footer message was posted
+- jsonl line N: `session.execution.started` at <created>
+- jsonl line M: `session.execution.interrupted` then a footer message was posted
 - log: <exact error line>
 
 **What I expected:**

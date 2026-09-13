@@ -296,7 +296,184 @@ use this to write tests that find messages matching specific patterns.
 - voice messages are transcribed with another model and sent with prefix `Transcribed message:`, shown by the bot.
 - /queue queues a user message for the end of the current run. each queue confirmation has a Remove button. when it is sent, the bot shows `» Tommy: content`.
 
-# session runtime
+to manually trigger a heap snapshot at any time:
+
+```bash
+kill -SIGUSR1 <PID>
+```
+
+snapshots are saved as `heap-<date>-<sizeMB>MB.heapsnapshot` in `~/.kimaki/heap-snapshots/`.
+open them in Chrome DevTools (Memory tab > Load) to inspect what is holding memory.
+there is a 5 minute cooldown between automatic snapshots to avoid disk spam.
+
+signal summary:
+
+- `SIGUSR1`: write heap snapshot to disk
+- `SIGUSR2`: graceful restart (existing)
+
+the implementation is in `cli/src/heap-monitor.ts`.
+
+## live cpu profiling
+
+to capture a CPU profile from a **running** kimaki bot without restarting, type this in the same terminal and press Enter:
+
+```
+cpuprof
+```
+
+type `cpuprof` again to stop, or wait **20 seconds** for auto-stop. the profile is written to `<dataDir>/cpu-profiles/cpu-<date>.cpuprofile` (default `~/.kimaki/cpu-profiles/`).
+
+open the file in Chrome DevTools (Performance tab > Load) or:
+
+```bash
+bunx profano ~/.kimaki/cpu-profiles/cpu-*.cpuprofile
+```
+
+this uses `node:inspector` `Profiler.start` / `Profiler.stop` inside the bot process. it does not use SIGUSR1 (that remains heap snapshots). stdin must be a TTY; piped stdin is ignored.
+
+the implementation is in `cli/src/cpu-profiler.ts`.
+
+## cpu profiling tests
+
+set `VITEST_CPU_PROF=1` to generate `.cpuprofile` files when running vitest. profiles land in `cli/tmp/cpu-profiles/`. always run a single test file to avoid hanging the machine — the config forces `maxForks: 1` when profiling.
+
+```bash
+# run one test file with profiling
+cd cli
+VITEST_CPU_PROF=1 pnpm test --run src/some-file.e2e.test.ts
+```
+
+to get a top-down self-time report without opening a browser, use profano:
+
+```bash
+bunx profano tmp/cpu-profiles/CPU.*.cpuprofile
+```
+
+for an interactive flame chart in the browser, use cpupro:
+
+```bash
+npx cpupro tmp/cpu-profiles/CPU.*.cpuprofile
+```
+
+## goke cli
+
+this project uses goke (not cac) for CLI parsing. goke auto-infers option types from `.option()` calls. never add manual type annotations to `.action()` callback options. just use `.action(async (options) => { ... })` and let goke infer the types.
+
+## logging
+
+always try to use logger instead of console. so logs in the cli look uniform and pretty
+
+for the log prefixes always use short names
+
+kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). the log file is reset on every bot startup, so it only contains logs from the current run. file logging works in all environments (dev and production).
+
+to debug opencode event ordering, set `KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1`. this writes jsonl files under `<dataDir>/opencode-session-events/` (one file per session id, like `ses_xxx.jsonl`). use `KIMAKI_OPENCODE_SESSION_EVENTS_DIR` to override the output directory.
+
+For example when running a test to debug events: `KIMAKI_OPENCODE_SESSION_EVENTS_DIR=./tmp/kimaki-test-3423 KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1 pnpm test test-file.test.ts -t test-name`
+
+for live user-session debugging (without restarting with env vars), export the persisted session event buffer from sqlite with:
+
+`kimaki session export-events-jsonl --session <session_id> --out ./tmp/session-events.jsonl`
+
+use this when debugging session-state regressions (for example footer appearing after abort). the exported jsonl can be copied into `cli/src/session-handler/event-stream-fixtures/` and used to add/update `event-stream-state.test.ts` coverage for pure derivation helpers.
+
+runtime note: `ThreadSessionRuntime` keeps the last 1000 opencode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. long string values are truncated before storage to avoid memory spikes, but the native OpenCode event shape is preserved.
+
+each jsonl line is one raw OpenCode event. do not wrap events with Kimaki metadata.
+
+use `jq` to inspect these files quickly:
+
+```bash
+# list event type counts for one session file
+jq -r '.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
+
+# show execution lifecycle events
+jq -r 'select(.type | startswith("session.execution.")) | [.created, .type, .data.sessionID, .data.executionID] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+
+# filter by a specific event type
+jq -r 'select(.type=="session.tool.called")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+
+# show timestamps + event types
+jq -r '[.created, .type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+```
+
+for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
+
+## product analytics (Strada)
+
+anonymous install-level product events go to Strada via `cli/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` fires on `session.idle` (each turn end, including abort and subagents) with billed token breakdowns so total Kimaki token usage can be summed.
+
+- prod project slug: `kimaki`
+- local/dev bot (this repo `cli/.env`): `kimaki-local`
+- disable: `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`
+- query with `strada` CLI; login as the org owner (t.de Google account)
+
+full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-paste SQL: see `docs/strada-product-analytics.md`.
+
+## kimaki command shim (`~/.kimaki/bin/kimaki`)
+
+`ensureKimakiCommandShim()` in `cli/src/opencode-command.ts` generates a shell script at `~/.kimaki/bin/kimaki` (or `kimaki.cmd` on Windows) every time the bot starts. it captures `process.execPath`, `process.execArgv`, and `process.argv[1]` into an `exec` one-liner so the shim always mirrors the current process.
+
+the shim directory is prepended to `PATH` in the env passed to the opencode server process (`cli/src/opencode.ts`). this lets AI agent sessions run `kimaki send`, `kimaki upload-to-discord`, `kimaki tunnel`, etc. as regular shell commands via the bash tool, regardless of how kimaki was installed (npx, global install, local dev).
+
+in local dev the shim contains tsx loader flags (`--require` / `--import`) because the bot was launched with tsx against the raw `.ts` entry point. in production (npm package) there are no tsx flags and the entry script is the compiled `bin.js`. the shim just reflects however the current process was started; there is no special-casing.
+
+## opencode plugin and env vars
+
+the opencode plugin (`cli/src/kimaki-opencode-plugin.ts`) runs inside the **opencode server process**, not the kimaki bot process. this means `config.ts` state (like `getDataDir()`, etc.) is not available there.
+
+**CRITICAL: never export utility functions from `kimaki-opencode-plugin.ts`.** opencode's plugin loader calls every exported function in the module as a plugin initializer. if you export a helper like `condenseMemoryMd(content: string)`, it will be called with a PluginInput object instead of a string and crash. only the plugin entrypoint function should be exported. move any utilities to separate files (e.g. `condense-memory.ts`) and import them.
+
+we should architecture our opencode plugins as many separate plugins to make them readable and easy to understand. every export will be interpreted as a different plugin.
+
+to pass bot-process state to the plugin, use `KIMAKI_*` env vars set in `opencode.ts` when spawning the server process. current env vars:
+
+- `KIMAKI_DATA_DIR`: data directory path
+- `KIMAKI_LOCK_PORT`: lock server port for bot communication
+
+the plugin does NOT receive `KIMAKI_BOT_TOKEN`. discord REST operations (user listing, thread archiving) are handled by CLI commands (`kimaki user list`, `kimaki session archive`) which resolve credentials from the database via `resolveBotCredentials()`. this avoids leaking gateway credentials into child process environments.
+
+when adding new bot-side config that the plugin needs, add it as a `KIMAKI_*` env var in `opencode.ts` spawn env and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin.
+
+**NEVER use `console.log`, `console.error`, or any `console.*` in plugin code.** opencode captures plugin stdout/stderr and it pollutes the opencode server output, breaking structured logging. plugins must be silent — fail gracefully and return null/undefined on errors instead of logging.
+
+OpenCode plugin files must also avoid importing `cli/src/logger.ts`. That logger pulls in `@clack/prompts` / `picocolors`, which can fail under the plugin loader's ESM/CJS interop. For plugin code, use a separate plugin-safe logger module that only appends to the kimaki log file and never writes to stdout/stderr.
+
+## skills folder
+
+skills lives at the repository root in `skills/`. build and publish scripts copy it into `cli/skills/` so the npm package still ships the bundled skills. some skills are synced from github repos. see cli/scripts/sync-skills.ts. so never manually update synced copies. instead if need to update them start kimaki threads on those project, found via kimaki cli.
+
+## discord-digital-twin e2e style
+
+when writing discord e2e tests, prefer adding reusable automation methods to `DigitalDiscord` instead of creating per-test helper functions in kimaki.
+
+always import from `discord-digital-twin/src` so we dont need to compile that package before using it.
+
+aim for a playwright-like style in tests:
+
+- actor methods for actions: `discord.user(userId).sendMessage(...)`, `runSlashCommand(...)`, `clickButton(...)`, etc
+- separate wait methods for assertions: `discord.waitForThread(...)`, `discord.waitForBotReply(...)`, `discord.waitForInteractionAck(...)`
+
+if a kimaki test needs a new interaction primitive, first add it to `discord-digital-twin/src/index.ts` and cover it in `discord-digital-twin/tests/*` so future tests can reuse it.
+
+always add `expect(await th.text()).toMatchInlineSnapshot()` (or `discord.channel(id).text()` / `discord.thread(id).text()`) in every test that creates or modifies messages. place it **before** other expects so it updates even when a test fails. this gives both agents and humans a quick textual snapshot of what happened in Discord during the test, making failures easy to diagnose. use deterministic message content (no `Date.now()` or random values) so snapshots stay stable across runs. for tests that don't create messages (metadata, typing, guild routes), the snapshot can be skipped.
+
+## e2e testing learnings
+
+see `docs/e2e-testing-learnings.md` for detailed lessons. key points:
+
+- **always assert on Discord messages (what the user sees), not internal state or logs.** use digital-discord helpers like `th.getMessages()`, `waitForBotReply`, `waitForBotReplyAfterUserMessage`, `waitForBotMessageContaining` to verify actual Discord thread content. never use `getLogEntriesSince` + string matching for test expectations — logs are brittle, can bleed across sequential tests, and don't verify actual behavior. use `getLogEntriesSince` only in `onTestFailed` for diagnostics.
+- e2e tests use `opencode-deterministic-provider` which returns canned responses instantly (no real LLM). write poll timeouts as **4s** and polling interval **100ms**. the only real latency is opencode server startup (`beforeAll`, 60s is fine) and intentional `partDelaysMs` in matchers.
+- the wait helpers in `test-utils.ts` clamp every timeout into **8s..10s** under vitest. the first turn against a fresh opencode server costs 2-4s (session create, config and agent discovery, provider load, kimaki plugin load), so a literal 4s budget made the first assertion of a file fail randomly. a wait only burns its full budget when the test is already failing, so the floor costs nothing on green runs. tests asserting something never appears must use their own polling loop instead of these helpers.
+- deterministic provider matchers can still trigger **real tool execution** when they emit `tool-call` parts (for example `bash` + `sleep`). do not use long sleeps (`sleep 500` means 500 seconds). prefer `partDelaysMs` for timing windows in tests.
+- avoid broad matchers like only `lastMessageRole: 'tool'` in shared e2e matcher lists. always scope with an explicit marker (`rawPromptIncludes`, exact latest user text, etc.) or they can cascade across unrelated turns and create flaky tests.
+- prefer `latestUserTextIncludes` over `rawPromptIncludes` for deterministic matcher markers that should only trigger once. `rawPromptIncludes` scans full session history, so after abort+retry in the same session the old marker re-fires and causes deadlocks or timeouts. `latestUserTextIncludes` only checks the most recent user message.
+- prefer content-aware polling ("does this user message have a bot reply after it?") over count-based polling (`waitForBotMessageCount`). count-based is fragile when sessions get interrupted/aborted because error messages satisfy the count early.
+- bot replies can be error messages, not just LLM content. verify ordering by position, not content matching.
+- test logs are suppressed by default (`KIMAKI_VITEST=1` in vitest.config.ts). to debug a failing test, rerun with `KIMAKI_TEST_LOGS=1` to see all kimaki logger output in the terminal. example: `KIMAKI_TEST_LOGS=1 pnpm test --run src/thread-message-queue.e2e.test.ts`. only run one test at a time with logs enabled to see clear logs and save context window.
+- if total duration of an e2e test file exceeds **~10 seconds**, split into a new file so vitest parallelizes across files.
+- `afterAll` should clean up opencode sessions via `session.list()` + `session.delete()` to avoid accumulation across runs.
+- to assert something doesn't appear in Discord (e.g. no footer after abort), poll `th.getMessages()` in a loop: sleep 20ms, max 10 iterations. everything is deterministic so 200ms total is enough. fail immediately if the unwanted message appears.
 
 ## event handler architecture
 
