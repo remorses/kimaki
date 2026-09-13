@@ -29,6 +29,7 @@ import {
   getChannelDirectory,
   startDiscordBot,
   initializeOpencodeForDirectory,
+  assertCompatibleOpencodeVersion,
   createProjectChannels,
   createDefaultKimakiChannel,
   type ChannelWithTags,
@@ -1613,6 +1614,12 @@ export async function run({
       possiblePathsWindows: ['~\\.bun\\bin\\bun.exe'],
     }),
   ])
+
+  const opencodeVersionCheck = await assertCompatibleOpencodeVersion()
+  if (opencodeVersionCheck instanceof Error) {
+    cliLogger.error(opencodeVersionCheck.message)
+    process.exit(EXIT_NO_RESTART)
+  }
 
 
   if (store.getState().autoUpgradeEnabled) {

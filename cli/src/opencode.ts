@@ -99,15 +99,18 @@ import {
   ServerStartError,
   ServerNotReadyError,
   FetchError,
+  OpencodeIncompatibleVersionError,
   type OpenCodeErrors,
 } from './errors.js'
 import {
   ensureKimakiCommandShim,
+  getIncompatibleOpencodeVersionError,
   getPathEnvKey,
   getSpawnCommandAndArgs,
   prependPathEntry,
   selectResolvedCommand,
 } from './opencode-command.js'
+import { execAsync } from './exec-async.js'
 import { computeSkillPermission } from './skill-filter.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
@@ -561,6 +564,36 @@ export function resolveOpencodeCommand(): string {
   opencodeLogger.log(`Resolved opencode binary: ${result}`)
   return result
 }
+
+export async function assertCompatibleOpencodeVersion({
+  resolvedCommand = resolveOpencodeCommand(),
+}: {
+  resolvedCommand?: string
+} = {}): Promise<OpencodeIncompatibleVersionError | true> {
+  const { command, args, windowsVerbatimArguments } = getSpawnCommandAndArgs({
+    resolvedCommand,
+    baseArgs: ['--version'],
+  })
+  const result = await execAsync(
+    { command, args },
+    {
+      timeout: 5000,
+      encoding: 'utf8',
+      windowsVerbatimArguments,
+    },
+  ).catch((cause) => {
+    return new Error('Failed to read OpenCode version', { cause })
+  })
+  if (result instanceof Error) {
+    opencodeLogger.warn(result.message)
+    return true
+  }
+  const incompatible = getIncompatibleOpencodeVersionError(
+    `${result.stdout}\n${result.stderr}`,
+  )
+  if (incompatible) return incompatible
+  return true
+}
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -629,7 +662,9 @@ async function waitForServer({
 // external_directory: '*' allow unless --restrict-directories is set).
 
 // In-flight promise to prevent concurrent startups from racing
-let startingServer: Promise<ServerStartError | SingleServer> | null = null
+let startingServer: Promise<
+  ServerStartError | OpencodeIncompatibleVersionError | SingleServer
+> | null = null
 let preferredStartupDirectory: string | null = null
 
 function ensureOpencodeHomeDirectories({
@@ -691,7 +726,7 @@ async function ensureSingleServer({
   directory,
 }: {
   directory?: string
-} = {}): Promise<ServerStartError | SingleServer> {
+} = {}): Promise<ServerStartError | OpencodeIncompatibleVersionError | SingleServer> {
   const startupDirectory = directory || preferredStartupDirectory || undefined
   if (singleServer && !singleServer.process?.killed) {
     return singleServer
@@ -714,6 +749,9 @@ async function ensureSingleServer({
       singleServer = discovered
       return discovered
     }
+
+    const compatibility = await assertCompatibleOpencodeVersion()
+    if (compatibility instanceof Error) return compatibility
 
     return startSingleServer({ directory: startupDirectory })
   })()

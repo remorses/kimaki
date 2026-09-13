@@ -116,7 +116,7 @@ export {
   closeDatabase,
   getChannelDirectory,
 } from './database.js'
-export { initializeOpencodeForDirectory } from './opencode.js'
+export { initializeOpencodeForDirectory, assertCompatibleOpencodeVersion } from './opencode.js'
 export {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,

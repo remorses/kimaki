@@ -5,8 +5,46 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { OpencodeIncompatibleVersionError } from './errors.js'
 
 const WINDOWS_CMD_SHIM_REGEX = /\.(cmd|bat)$/i
+const OPENCODE_SEMVER_REGEX = /(\d+)\.(\d+)\.(\d+)/
+
+// Kimaki still talks to OpenCode 1.x. Flip this to 1 after the v2 port ships.
+export const INCOMPATIBLE_OPENCODE_MAJOR_VERSION = 2
+
+export function parseOpencodeVersion(output: string): {
+  major: number
+  minor: number
+  patch: number
+  raw: string
+} | null {
+  const match = output.match(OPENCODE_SEMVER_REGEX)
+  if (!match) return null
+  const raw = match[0]
+  const major = Number(match[1])
+  const minor = Number(match[2])
+  const patch = Number(match[3])
+  if (!Number.isInteger(major) || !Number.isInteger(minor) || !Number.isInteger(patch)) {
+    return null
+  }
+  return { major, minor, patch, raw }
+}
+
+export function isIncompatibleOpencodeMajor({
+  major,
+}: {
+  major: number
+}): boolean {
+  return major === INCOMPATIBLE_OPENCODE_MAJOR_VERSION
+}
+
+export function getIncompatibleOpencodeVersionError(output: string) {
+  const parsed = parseOpencodeVersion(output)
+  if (!parsed) return null
+  if (!isIncompatibleOpencodeMajor(parsed)) return null
+  return new OpencodeIncompatibleVersionError({ version: parsed.raw })
+}
 
 function quotePosixShellSegment(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`
