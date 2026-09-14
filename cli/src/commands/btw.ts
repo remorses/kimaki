@@ -150,6 +150,7 @@ export async function forkSessionToBtwThread({
     sdkDirectory,
     channelId,
     appId,
+    sessionId: forkedSession.id,
   })
   await runtime.enqueueIncoming({
     prompt: wrappedPrompt,

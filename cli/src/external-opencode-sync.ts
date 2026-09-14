@@ -31,7 +31,7 @@ import {
 import {
   initializeOpencodeForDirectory,
 } from './opencode.js'
-import { isEssentialToolPart } from './session-handler/thread-session-runtime.js'
+import { getRuntime, isEssentialToolPart } from './session-handler/thread-session-runtime.js'
 import { notifyError } from './sentry.js'
 import { store } from './store.js'
 import { extractNonXmlContent } from './xml.js'
@@ -60,6 +60,9 @@ type SessionMessage = NonNullable<SessionMessagesResponse['data']>[number]
 export type SessionMessageLike = {
   info: {
     role: string
+    summary?: unknown
+    mode?: string
+    agent?: string
   }
   parts: Part[]
 }
@@ -81,10 +84,7 @@ type DirectorySyncTarget = {
 let externalSyncInterval: ReturnType<typeof setInterval> | null = null
 
 function isSyntheticTextPart(part: Extract<Part, { type: 'text' }>): boolean {
-  const candidate = part as Extract<Part, { type: 'text' }> & {
-    synthetic?: unknown
-  }
-  return candidate.synthetic === true
+  return part.synthetic === true
 }
 
 function parseDiscordOriginMetadata(text: string): DiscordOriginMetadata | null {
@@ -161,6 +161,40 @@ export function getRenderableUserTextParts({
   })
 }
 
+function hasCompactionContinueMetadata(part: Extract<Part, { type: 'text' }>): boolean {
+  return part.metadata?.compaction_continue === true
+}
+
+export function isInternalOpenCodeUserMessage({
+  message,
+}: {
+  message: SessionMessageLike
+}): boolean {
+  if (message.info.role !== 'user') {
+    return false
+  }
+  return message.parts.some((part) => {
+    if (part.type === 'compaction') {
+      return true
+    }
+    if (part.type !== 'text') {
+      return false
+    }
+    return isSyntheticTextPart(part) && hasCompactionContinueMetadata(part)
+  })
+}
+
+export function shouldSkipExternalAssistantMessage({
+  message,
+}: {
+  message: SessionMessageLike
+}): boolean {
+  if (message.info.role !== 'assistant') {
+    return false
+  }
+  return message.info.summary === true
+}
+
 export function getIgnoredNoticeTextParts({
   message,
 }: {
@@ -209,6 +243,9 @@ export function isLatestUserTurnFromDiscord({
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!
     if (message.info.role !== 'user') {
+      continue
+    }
+    if (isInternalOpenCodeUserMessage({ message })) {
       continue
     }
     const renderableParts = getRenderableUserTextParts({ message })
@@ -398,6 +435,9 @@ function collectUnsyncedChunks({
 
   for (const message of messages) {
     if (message.info.role === 'user') {
+      if (isInternalOpenCodeUserMessage({ message })) {
+        continue
+      }
       const ignoredNoticeParts = getIgnoredNoticeTextParts({ message }).filter((part) => {
         return !syncedPartIds.has(part.id)
       })
@@ -449,6 +489,9 @@ function collectUnsyncedChunks({
     }
 
     if (message.info.role !== 'assistant') {
+      continue
+    }
+    if (shouldSkipExternalAssistantMessage({ message })) {
       continue
     }
     // Filter assistant parts by verbosity before passing to shared collector
@@ -510,6 +553,11 @@ async function syncSessionToThread({
   // Skip external sync entirely. When the user resumes from CLI/TUI the
   // latest user turn will lack the tag, so sync picks it up naturally.
   if (isLatestUserTurnFromDiscord({ messages })) {
+    return
+  }
+
+  const existingThreadId = await getThreadIdBySessionId(sessionId)
+  if (existingThreadId && getRuntime(existingThreadId)) {
     return
   }
 
@@ -589,6 +637,22 @@ async function pulseTypingForBusySessions({
 }
 
 const EXTERNAL_SYNC_MAX_SESSIONS = 50
+
+export function isExternalSyncRootSession({
+  title,
+  parentID,
+}: {
+  title?: string | null
+  parentID?: string
+}): boolean {
+  if (parentID) {
+    return false
+  }
+  if (/^new session\s*-/i.test(title || '')) {
+    return false
+  }
+  return !/subagent\)\s*$/i.test(title || '')
+}
 
 // Tracks directories with an in-flight sync. When a directory times out,
 // its AbortController is aborted so the inner work stops producing side
@@ -687,11 +751,7 @@ async function syncDirectoryInner({
   if (signal.aborted) return
 
   const sessions = (sessionsResponse.data || []).filter((session) => {
-    const title = session.title || ''
-    if (/^new session\s*-/i.test(title)) {
-      return false
-    }
-    return !/subagent\)\s*$/i.test(title)
+    return isExternalSyncRootSession(session)
   })
   const sorted = sortSessionsByRecency(sessions)
 
@@ -802,4 +862,6 @@ export const externalOpencodeSyncInternals = {
   parseDiscordOriginMetadata,
   getDiscordOriginMetadataFromMessage,
   isLatestUserTurnFromDiscord,
+  isInternalOpenCodeUserMessage,
+  shouldSkipExternalAssistantMessage,
 }

@@ -570,17 +570,13 @@ export async function assertCompatibleOpencodeVersion({
 }: {
   resolvedCommand?: string
 } = {}): Promise<OpencodeIncompatibleVersionError | true> {
-  const { command, args, windowsVerbatimArguments } = getSpawnCommandAndArgs({
+  const { command, args } = getSpawnCommandAndArgs({
     resolvedCommand,
     baseArgs: ['--version'],
   })
   const result = await execAsync(
     { command, args },
-    {
-      timeout: 5000,
-      encoding: 'utf8',
-      windowsVerbatimArguments,
-    },
+    { timeout: 5000, encoding: 'utf8' },
   ).catch((cause) => {
     return new Error('Failed to read OpenCode version', { cause })
   })

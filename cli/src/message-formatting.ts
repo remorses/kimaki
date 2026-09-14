@@ -846,7 +846,8 @@ export function formatPart(part: Part, prefix?: string): string {
   if (
     part.type === 'step-start' ||
     part.type === 'step-finish' ||
-    part.type === 'patch'
+    part.type === 'patch' ||
+    part.type === 'compaction'
   ) {
     return ''
   }

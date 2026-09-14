@@ -4,7 +4,10 @@ import { describe, expect, test } from 'vitest'
 import {
   getIgnoredNoticeTextParts,
   getRenderableUserTextParts,
+  isExternalSyncRootSession,
+  isInternalOpenCodeUserMessage,
   isLatestUserTurnFromDiscord,
+  shouldSkipExternalAssistantMessage,
   type SessionMessageLike,
 } from './external-opencode-sync.js'
 
@@ -34,6 +37,16 @@ function textMessage({
 }
 
 describe('external OpenCode user-message filtering', () => {
+  test('does not sync task child sessions into Discord', () => {
+    expect(isExternalSyncRootSession({
+      title: 'Design shader visual stack',
+      parentID: 'ses_parent',
+    })).toBe(false)
+    expect(isExternalSyncRootSession({
+      title: 'Main session',
+    })).toBe(true)
+  })
+
   test('keeps normal external user text renderable', () => {
     const message = textMessage({ text: 'Run the tests' })
 
@@ -115,5 +128,121 @@ describe('external OpenCode user-message filtering', () => {
     expect(
       isLatestUserTurnFromDiscord({ messages: [discordMessage, notice] }),
     ).toBe(true)
+  })
+
+  test('skips compaction user messages when deciding Discord ownership', () => {
+    const discordMessage: SessionMessageLike = {
+      info: { role: 'user' },
+      parts: [
+        {
+          id: 'part-2',
+          sessionID: 'session-1',
+          messageID: 'message-2',
+          type: 'text',
+          text: '<discord-user name="Tommy" />',
+          synthetic: true,
+        },
+        {
+          id: 'part-3',
+          sessionID: 'session-1',
+          messageID: 'message-2',
+          type: 'text',
+          text: 'Fix the tabs',
+        },
+      ],
+    }
+    const compactionUser: SessionMessageLike = {
+      info: { role: 'user' },
+      parts: [
+        {
+          id: 'part-4',
+          sessionID: 'session-1',
+          messageID: 'message-4',
+          type: 'compaction',
+          auto: true,
+        },
+      ],
+    }
+
+    expect(isInternalOpenCodeUserMessage({ message: compactionUser })).toBe(true)
+    expect(
+      isLatestUserTurnFromDiscord({ messages: [discordMessage, compactionUser] }),
+    ).toBe(true)
+  })
+
+  test('skips compaction continue users when deciding Discord ownership', () => {
+    const discordMessage: SessionMessageLike = {
+      info: { role: 'user' },
+      parts: [
+        {
+          id: 'part-2',
+          sessionID: 'session-1',
+          messageID: 'message-2',
+          type: 'text',
+          text: '<discord-user name="Tommy" />',
+          synthetic: true,
+        },
+        {
+          id: 'part-3',
+          sessionID: 'session-1',
+          messageID: 'message-2',
+          type: 'text',
+          text: 'Fix the tabs',
+        },
+      ],
+    }
+    const continueUser: SessionMessageLike = {
+      info: { role: 'user' },
+      parts: [
+        {
+          id: 'part-5',
+          sessionID: 'session-1',
+          messageID: 'message-5',
+          type: 'text',
+          text: 'Continue if you have next steps',
+          synthetic: true,
+          metadata: { compaction_continue: true },
+        },
+      ],
+    }
+
+    expect(isInternalOpenCodeUserMessage({ message: continueUser })).toBe(true)
+    expect(
+      isLatestUserTurnFromDiscord({ messages: [discordMessage, continueUser] }),
+    ).toBe(true)
+  })
+
+  test('skips compaction summary assistants from external mirroring', () => {
+    expect(shouldSkipExternalAssistantMessage({
+      message: {
+        info: { role: 'assistant', summary: true },
+        parts: [
+          {
+            id: 'part-6',
+            sessionID: 'session-1',
+            messageID: 'message-6',
+            type: 'text',
+            text: 'internal compaction summary must not reach Discord',
+          },
+        ],
+      },
+    })).toBe(true)
+  })
+
+  test('does not skip a user-facing assistant just because the agent is named compaction', () => {
+    expect(shouldSkipExternalAssistantMessage({
+      message: {
+        info: { role: 'assistant', agent: 'compaction' },
+        parts: [
+          {
+            id: 'part-7',
+            sessionID: 'session-1',
+            messageID: 'message-7',
+            type: 'text',
+            text: 'user-facing reply',
+          },
+        ],
+      },
+    })).toBe(false)
   })
 })

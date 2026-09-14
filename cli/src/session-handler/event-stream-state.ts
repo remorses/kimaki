@@ -35,6 +35,44 @@ export function getEventBufferSessionId(event: EventBufferEvent): string | undef
 type AssistantMessage = Extract<OpenCodeMessage, { role: 'assistant' }>
 type UserMessage = Extract<OpenCodeMessage, { role: 'user' }>
 
+function isCompactionContinuePart(part: Part): boolean {
+  if (part.type !== 'text') {
+    return false
+  }
+  return part.synthetic === true && part.metadata?.compaction_continue === true
+}
+
+function isInternalOpenCodeUserMessageId({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = 0; i <= end; i++) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.part.updated') {
+      continue
+    }
+    const part = event.properties.part
+    if (part.sessionID !== sessionId || part.messageID !== messageId) {
+      continue
+    }
+    if (part.type === 'compaction') {
+      return true
+    }
+    if (isCompactionContinuePart(part)) {
+      return true
+    }
+  }
+  return false
+}
+
 function isUserFacingAssistantMessage(message: AssistantMessage): boolean {
   return message.summary !== true
 }
@@ -415,6 +453,14 @@ export function getLatestUserMessage({
     }
     const info = event.properties.info
     if (info.sessionID !== sessionId || info.role !== 'user') {
+      continue
+    }
+    if (isInternalOpenCodeUserMessageId({
+      events,
+      sessionId,
+      messageId: info.id,
+      upToIndex: end,
+    })) {
       continue
     }
     if (!latestUserMessage) {
@@ -1304,8 +1350,14 @@ export function shouldBufferSessionEvent({
   }
 
   const eventSessionId = getEventBufferSessionId(event)
-  if (!eventSessionId || !mainSessionId) {
+  if (!eventSessionId) {
     return true
+  }
+  // A new /btw thread registers the SSE listener before ensureSession.
+  // Until the child session id is bound, drop every scoped event so the
+  // parent clone flood cannot fill this buffer first.
+  if (!mainSessionId) {
+    return false
   }
   if (eventSessionId === mainSessionId) {
     return true

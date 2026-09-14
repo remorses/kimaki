@@ -24,6 +24,7 @@ import {
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
   getAssistantMessageKind,
+  getLatestUserMessage,
   isSummaryAssistantMessage,
   isSessionBusy,
   isAssistantTextReadyForQuestion,
@@ -469,6 +470,45 @@ describe('compaction summary during an active user turn', () => {
       events: completedEvents,
       sessionId,
     })).toBe(true)
+  })
+
+  test('compaction user messages do not steal the latest user-facing turn', () => {
+    const compactionUserId = 'msg_compaction_user'
+    const events = [
+      ...activeEvents,
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: compactionUserId,
+            sessionID: sessionId,
+            role: 'user',
+            time: { created: 6 },
+            agent: 'build',
+            model: { providerID: 'test-provider', modelID: 'reply-model' },
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          sessionID: sessionId,
+          part: {
+            id: 'prt_compaction',
+            sessionID: sessionId,
+            messageID: compactionUserId,
+            type: 'compaction',
+            auto: true,
+          },
+        },
+      }),
+    ]
+    expect(getLatestUserMessage({ events, sessionId })?.id).toBe(userMessageId)
+    expect(getAssistantMessageIdsForLatestUserTurn({
+      events,
+      sessionId,
+    })).toEqual(new Set([replyMessageId]))
   })
 })
 
@@ -2038,5 +2078,32 @@ describe('shouldBufferSessionEvent', () => {
       mainSessionId,
       isKnownChildSession: () => false,
     })).toBe(false)
+  })
+
+  test('drops scoped events until the thread session id is bound', () => {
+    const parentBusy = eventEntry({
+      type: 'session.status',
+      properties: {
+        sessionID: mainSessionId,
+        status: { type: 'busy' },
+      },
+    }).event
+    const toast = eventEntry({
+      type: 'tui.toast.show',
+      properties: {
+        title: 'ok',
+        message: 'done',
+        variant: 'info',
+      },
+    }).event
+
+    expect(shouldBufferSessionEvent({
+      event: parentBusy,
+      isKnownChildSession: () => false,
+    })).toBe(false)
+    expect(shouldBufferSessionEvent({
+      event: toast,
+      isKnownChildSession: () => false,
+    })).toBe(true)
   })
 })

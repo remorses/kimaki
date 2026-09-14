@@ -293,6 +293,7 @@ export type RuntimeOptions = {
   sdkDirectory: string
   channelId?: string
   appId?: string
+  sessionId?: string
 }
 
 export function getOrCreateRuntime(
@@ -305,9 +306,15 @@ export function getOrCreateRuntime(
         `[RUNTIME] Ignoring sdkDirectory change for existing thread ${opts.threadId}: ${existing.sdkDirectory} → ${opts.sdkDirectory}`,
       )
     }
+    if (opts.sessionId && !existing.state?.sessionId) {
+      threadState.setSessionId(opts.threadId, opts.sessionId)
+    }
     return existing
   }
   threadState.ensureThread(opts.threadId) // add to global store
+  if (opts.sessionId) {
+    threadState.setSessionId(opts.threadId, opts.sessionId)
+  }
   const runtime = new ThreadSessionRuntime(opts)
   runtimes.set(opts.threadId, runtime)
   return runtime
