@@ -4636,8 +4636,9 @@ export class ThreadSessionRuntime {
       } else if (sessionResponse.data) {
         session = sessionResponse.data
       } else {
+        const sdkMessage = extractSdkErrorMessage(sessionResponse.error)
         logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}, response=${JSON.stringify(sessionResponse)}`,
+          `[ENSURE SESSION] session.get returned no data for ${sessionId}: ${sdkMessage}, response=${JSON.stringify(sessionResponse)}`,
         )
       }
     }
@@ -4668,35 +4669,37 @@ export class ThreadSessionRuntime {
           { cause: createResult },
         )
       }
-      session = createResult.data
-      if (!session) {
-        logger.warn(
-          `[ENSURE SESSION] session.create returned no data, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
+      if (createResult.error || !createResult.data) {
+        const errorMessage = extractSdkErrorMessage(createResult.error)
+        logger.error(
+          `[ENSURE SESSION] session.create failed: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
+        )
+        return new Error(
+          `Failed to create session: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
         )
       }
+      session = createResult.data
       // Insert DB row immediately so the external-sync poller sees
       // source='kimaki' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
-      if (session) {
-        await setThreadSession(this.thread.id, session.id)
-        if (injectionGuardPatterns?.length) {
-          writeInjectionGuardConfig({
-            sessionId: session.id,
-            scanPatterns: injectionGuardPatterns,
-          })
-        }
-        const worktree = await getThreadWorktreeOrWorkspace(this.thread.id)
-        trackEvent('session_created', {
-          has_worktree: Boolean(worktree),
-          source: sessionStartScheduleKind ? 'scheduled' : 'discord',
+      await setThreadSession(this.thread.id, session.id)
+      if (injectionGuardPatterns?.length) {
+        writeInjectionGuardConfig({
+          sessionId: session.id,
+          scanPatterns: injectionGuardPatterns,
         })
       }
+      const worktree = await getThreadWorktreeOrWorkspace(this.thread.id)
+      trackEvent('session_created', {
+        has_worktree: Boolean(worktree),
+        source: sessionStartScheduleKind ? 'scheduled' : 'discord',
+      })
       createdNewSession = true
     }
 
     if (!session) {
       return new Error(
-        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}. session.create returned empty data, check the [ENSURE SESSION] warn log above for the full response body`,
+        `Failed to create or get session: threadId=${this.thread.id}, channelId=${this.channelId}, directory=${directory}, sdkDirectory=${this.sdkDirectory}, existingSessionId=${sessionId ?? 'none'}, createdNewSession=${createdNewSession}`,
       )
     }
 

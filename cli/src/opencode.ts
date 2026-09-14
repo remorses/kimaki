@@ -1458,7 +1458,7 @@ export function getOpencodeClient(directory: string): OpencodeClient | null {
 //   - EffectHttpApiErrorBadRequest: { _tag: "BadRequest" } (no message)
 //   - some routes also surface { errors: [...] }
 export type SdkErrorResponse = {
-  data?: { message?: string } | null
+  data?: { message?: string; ref?: string } | null
   message?: string
   errors?: unknown[]
   _tag?: string
@@ -1475,7 +1475,9 @@ export function extractSdkErrorMessage(error: SdkErrorResponse | null | undefine
   }
 
   if (error.data?.message) {
-    return error.data.message
+    const name = error.name ? `${error.name}: ` : ''
+    const ref = error.data.ref ? ` (${error.data.ref})` : ''
+    return `${name}${error.data.message}${ref}`
   }
 
   if (error.message) {
@@ -1488,6 +1490,10 @@ export function extractSdkErrorMessage(error: SdkErrorResponse | null | undefine
 
   if (error._tag) {
     return error._tag
+  }
+
+  if (error.name) {
+    return error.name
   }
 
   return 'Unknown OpenCode API error'
