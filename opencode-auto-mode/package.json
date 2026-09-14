@@ -1,6 +1,6 @@
 {
   "name": "@kimaki/automode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "OpenCode plugin that gates tool execution with a two-stage LLM classifier, like Claude Code auto mode.",
   "main": "./dist/index.js",

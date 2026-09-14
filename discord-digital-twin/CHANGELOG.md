@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+1. **Include Components V2 text in message snapshots.** `getMessageVisibleText()` walks nested components, including `Separator` as `---`, so e2e snapshots show Discord layout that lives in components instead of `content`.
+
 ## 0.1.1
 
 1. **`deleteMessage()` on user actors** — simulates real Discord `MESSAGE_DELETE` gateway events in e2e tests, enabling tests for queue-on-delete and similar message lifecycle flows.
