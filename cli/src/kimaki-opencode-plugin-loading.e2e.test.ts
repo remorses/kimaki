@@ -11,7 +11,7 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { PROVIDER_IDS, type ConfigFile } from '@subrouter/cli'
+import { PROVIDER_IDS, type AuthFile } from '@subrouter/cli'
 import { resolveOpencodeCommand } from './opencode.js'
 import { getSpawnCommandAndArgs } from './opencode-command.js'
 import { chooseLockPort } from './test-utils.js'
@@ -199,10 +199,10 @@ test('authorize and callback add an opencode-go subscription', async () => {
   })
 
   expect(callbackResponse.ok).toBe(true)
-  const config = JSON.parse(
-    fs.readFileSync(path.join(subrouterHome, 'config.json'), 'utf8'),
-  ) as ConfigFile
-  expect(config.providers['opencode-go']?.accounts).toMatchObject([
+  const auth = JSON.parse(
+    fs.readFileSync(path.join(subrouterHome, 'auth.json'), 'utf8'),
+  ) as AuthFile
+  expect(auth.providers['opencode-go']?.accounts).toMatchObject([
     { type: 'api', key: 'zen-key-1' },
   ])
 })
