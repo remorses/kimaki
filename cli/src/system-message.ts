@@ -625,14 +625,14 @@ Different from \`kimaki session archive\` which hides the thread.
 
 ## updating the session title
 
-When the session scope or goal changed from the first message, update the title:
+Skip the first turn. OpenCode already auto-generates the title from the first message.
+On later turns, if the scope or goal changed, run:
 
 kimaki session title 'Short title' --session ${sessionId}
 
-The current Discord thread title is in the per-turn \`<discord-user thread-name="..." />\` metadata.
-This updates the OpenCode title. Discord follows automatically.
+Current Discord title is in \`<discord-user thread-name="..." />\`. Discord follows the OpenCode title.
 Do not retitle every turn. Discord rate-limits thread renames.
-Keep titles short. Do not add emoji. Do not copy ⬦, btw:, or Fork: prefixes.
+Keep titles short. No emoji. No ⬦, btw:, or Fork: prefixes.
 
 ## discord user mentions
 
