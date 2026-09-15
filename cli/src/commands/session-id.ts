@@ -1,4 +1,4 @@
-// /session-id command - Show current session ID and an opencode attach command.
+// /session-id command - Show current session ID, Discord thread ID, and an opencode attach command.
 
 import {
   ChannelType,
@@ -72,7 +72,7 @@ export async function handleSessionIdCommand({
 
   if (!sessionId) {
     await command.reply({
-      content: 'No active session in this thread',
+      content: `No active session in this thread\n**Thread ID:** \`${channel.id}\``,
       flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
     })
     return
@@ -85,7 +85,7 @@ export async function handleSessionIdCommand({
     const getClient = await initializeOpencodeForDirectory(projectDirectory)
     if (getClient instanceof Error) {
       await command.editReply({
-        content: `Session ID: \`${sessionId}\`\nFailed to resolve OpenCode server port: ${getClient.message}`,
+        content: `**Session ID:** \`${sessionId}\`\n**Thread ID:** \`${channel.id}\`\nFailed to resolve OpenCode server port: ${getClient.message}`,
       })
       return
     }
@@ -94,7 +94,7 @@ export async function handleSessionIdCommand({
 
   if (!port) {
     await command.editReply({
-      content: `Session ID: \`${sessionId}\`\nCould not determine OpenCode server port`,
+      content: `**Session ID:** \`${sessionId}\`\n**Thread ID:** \`${channel.id}\`\nCould not determine OpenCode server port`,
     })
     return
   }
@@ -103,7 +103,7 @@ export async function handleSessionIdCommand({
   const attachCommand = `opencode attach ${attachUrl} --session ${sessionId} --dir ${shellQuote(workingDirectory)}`
 
   await command.editReply({
-    content: `**Session ID:** \`${sessionId}\`\n**Attach command:**\n\`\`\`bash\n${attachCommand}\n\`\`\``,
+    content: `**Session ID:** \`${sessionId}\`\n**Thread ID:** \`${channel.id}\`\n**Attach command:**\n\`\`\`bash\n${attachCommand}\n\`\`\``,
   })
   logger.log(`Session ID shown for thread ${channel.id}: ${sessionId}`)
 }
