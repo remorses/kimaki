@@ -565,6 +565,197 @@ describe('session-concurrent-messages-serialized', () => {
   })
 })
 
+describe('ignored plugin notices do not steal the current Discord turn', () => {
+  const sessionId = 'ses_notice'
+  const userMessageId = 'msg_user'
+  const replyMessageId = 'msg_asst'
+  const noticeMessageId = 'msg_notice'
+  const events: EventBufferEntry[] = [
+    eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: userMessageId,
+          sessionID: sessionId,
+          role: 'user',
+          time: { created: 1 },
+          agent: 'build',
+          model: { providerID: 'test-provider', modelID: 'reply-model' },
+        },
+      },
+    }),
+    eventEntry({
+      type: 'message.part.updated',
+      properties: {
+        sessionID: sessionId,
+        part: {
+          id: 'prt_prompt',
+          sessionID: sessionId,
+          messageID: userMessageId,
+          type: 'text',
+          text: 'see how we display in discord tool calls',
+        },
+      },
+    }),
+    eventEntry({
+      type: 'message.part.updated',
+      properties: {
+        sessionID: sessionId,
+        part: {
+          id: 'prt_branch',
+          sessionID: sessionId,
+          messageID: userMessageId,
+          type: 'text',
+          text: '\n[current git branch is main]\n',
+          synthetic: true,
+        },
+      },
+    }),
+    eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: replyMessageId,
+          sessionID: sessionId,
+          role: 'assistant',
+          parentID: userMessageId,
+          time: { created: 2 },
+          modelID: 'reply-model',
+          providerID: 'test-provider',
+          mode: 'build',
+          agent: 'build',
+          path: { cwd: '/test', root: '/test' },
+          cost: 1,
+          tokens: {
+            input: 10,
+            output: 1,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+        },
+      },
+    }),
+    eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: noticeMessageId,
+          sessionID: sessionId,
+          role: 'user',
+          time: { created: 3 },
+          agent: 'build',
+          model: { providerID: 'subrouter', modelID: 'build' },
+        },
+      },
+    }),
+    eventEntry({
+      type: 'message.part.updated',
+      properties: {
+        sessionID: sessionId,
+        part: {
+          id: 'prt_notice',
+          sessionID: sessionId,
+          messageID: noticeMessageId,
+          type: 'text',
+          text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+          ignored: true,
+        },
+      },
+    }),
+  ]
+
+  test('keeps the real user prompt as the latest turn', () => {
+    expect(getLatestUserMessage({ events, sessionId })?.id).toBe(userMessageId)
+    expect(getAssistantMessageIdsForLatestUserTurn({
+      events,
+      sessionId,
+    })).toEqual(new Set([replyMessageId]))
+  })
+
+  test('keeps a file prompt with an ignored notice as the latest turn', () => {
+    const fileUserId = 'msg_file_user'
+    const fileAssistantId = 'msg_file_asst'
+    const fileEvents: EventBufferEntry[] = [
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: fileUserId,
+            sessionID: sessionId,
+            role: 'user',
+            time: { created: 4 },
+            agent: 'build',
+            model: { providerID: 'test-provider', modelID: 'reply-model' },
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          sessionID: sessionId,
+          part: {
+            id: 'prt_file',
+            sessionID: sessionId,
+            messageID: fileUserId,
+            type: 'file',
+            mime: 'image/png',
+            filename: 'shot.png',
+            url: 'https://example.com/shot.png',
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          sessionID: sessionId,
+          part: {
+            id: 'prt_file_notice',
+            sessionID: sessionId,
+            messageID: fileUserId,
+            type: 'text',
+            text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+            ignored: true,
+          },
+        },
+      }),
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: fileAssistantId,
+            sessionID: sessionId,
+            role: 'assistant',
+            parentID: fileUserId,
+            time: { created: 5 },
+            modelID: 'reply-model',
+            providerID: 'test-provider',
+            mode: 'build',
+            agent: 'build',
+            path: { cwd: '/test', root: '/test' },
+            cost: 1,
+            tokens: {
+              input: 10,
+              output: 1,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+          },
+        },
+      }),
+    ]
+    expect(getLatestUserMessage({ events: fileEvents, sessionId })?.id).toBe(fileUserId)
+    expect(getAssistantMessageIdsForLatestUserTurn({
+      events: fileEvents,
+      sessionId,
+    })).toEqual(new Set([fileAssistantId]))
+  })
+})
+
 describe('session-tool-call-noisy-stream', () => {
   const events = loadFixture('session-tool-call-noisy-stream.jsonl')
   const sessionId = getSessionId(events)

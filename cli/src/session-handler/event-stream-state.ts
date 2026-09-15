@@ -54,6 +54,9 @@ function isInternalOpenCodeUserMessageId({
   upToIndex?: number
 }): boolean {
   const end = upToIndex ?? events.length - 1
+  let sawPart = false
+  let hasUserTurnInput = false
+  let hasIgnoredNotice = false
   for (let i = 0; i <= end; i++) {
     const event = events[i]?.event
     if (event?.type !== 'message.part.updated') {
@@ -63,14 +66,29 @@ function isInternalOpenCodeUserMessageId({
     if (part.sessionID !== sessionId || part.messageID !== messageId) {
       continue
     }
+    sawPart = true
     if (part.type === 'compaction') {
       return true
     }
     if (isCompactionContinuePart(part)) {
       return true
     }
+    if (part.type === 'text') {
+      if (part.synthetic === true) {
+        continue
+      }
+      if (part.ignored === true) {
+        hasIgnoredNotice = true
+        continue
+      }
+      if (part.text?.trim()) {
+        hasUserTurnInput = true
+      }
+      continue
+    }
+    hasUserTurnInput = true
   }
-  return false
+  return sawPart && hasIgnoredNotice && !hasUserTurnInput
 }
 
 function isUserFacingAssistantMessage(message: AssistantMessage): boolean {

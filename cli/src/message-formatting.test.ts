@@ -48,6 +48,32 @@ describe('formatPart', () => {
     `)
   })
 
+  test('synthetic user context stays hidden', () => {
+    const part: Part = {
+      id: 'prt_branch',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_user',
+      text: '\n[current git branch is main]\n',
+      synthetic: true,
+    }
+    expect(formatPart(part)).toBe('')
+  })
+
+  test('ignored plugin notices stay visible', () => {
+    const part: Part = {
+      id: 'prt_notice',
+      type: 'text',
+      sessionID: 'ses_test',
+      messageID: 'msg_notice',
+      text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+      ignored: true,
+    }
+    expect(formatPart(part)).toBe(
+      'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
+    )
+  })
+
 })
 
 describe('asDiscordQuote', () => {
@@ -412,10 +438,12 @@ describe('collectSessionChunks', () => {
     id,
     text,
     messageID,
+    synthetic,
   }: {
     id: string
     text: string
     messageID: string
+    synthetic?: boolean
   }): Part {
     return {
       id,
@@ -423,8 +451,29 @@ describe('collectSessionChunks', () => {
       sessionID: 'ses_test',
       messageID,
       text,
+      synthetic,
     }
   }
+
+  test('skips synthetic text parts', () => {
+    const { chunks } = collectSessionChunks({
+      messages: [
+        {
+          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
+          parts: [
+            textPart({
+              id: 'branch',
+              text: '\n[current git branch is main]\n',
+              messageID: 'msg_1',
+              synthetic: true,
+            }),
+            textPart({ id: 't1', text: 'working', messageID: 'msg_1' }),
+          ],
+        },
+      ],
+    })
+    expect(chunks.map((chunk) => chunk.content)).toEqual(['> working'])
+  })
 
   test('quotes short text throughout a turn', () => {
     const { chunks } = collectSessionChunks({

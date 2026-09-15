@@ -1872,6 +1872,9 @@ export class ThreadSessionRuntime {
     if (part.type === 'text' && !part.time?.end && mode === 'progress') {
       return false
     }
+    if (part.type === 'text' && part.synthetic === true) {
+      return false
+    }
     return true
   }
 
@@ -1883,7 +1886,7 @@ export class ThreadSessionRuntime {
     if (messageIds.length > 0) {
       return messageIds.flatMap((id) => this.getBufferedParts(id))
     }
-    return [...this.partBuffer.keys()].flatMap((id) => this.getBufferedParts(id))
+    return []
   }
 
   private async flushCurrentTurnParts({
@@ -2200,6 +2203,15 @@ export class ThreadSessionRuntime {
     if (messageKind === 'summary') {
       this.clearBufferedPartsForMessages([part.messageID])
       logger.info(`[SKIP] message.part.updated for compaction summary ${part.messageID}`)
+      return
+    }
+
+    if (part.type === 'text' && part.synthetic === true) {
+      return
+    }
+
+    if (part.type === 'text' && part.ignored === true) {
+      await this.sendPartMessage({ part, repulseTyping: false })
       return
     }
 

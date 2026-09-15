@@ -824,6 +824,7 @@ export function formatPart(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
+    if (part.synthetic === true) return ''
     const text = part.text?.trim()
     if (!text) return ''
     if (prefix) {
