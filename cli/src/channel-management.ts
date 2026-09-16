@@ -6,6 +6,7 @@ import {
   ChannelType,
   type CategoryChannel,
   type Guild,
+  type GuildBasedChannel,
   type TextChannel,
 } from 'discord.js'
 import fs from 'node:fs'
@@ -15,6 +16,9 @@ import {
   setChannelDirectory,
   findChannelsByDirectory,
   listTrackedTextChannels,
+  getGuildCategories,
+  setGuildCategoryId,
+  setGuildAudioCategoryId,
 } from './database.js'
 import { getProjectsDir } from './config.js'
 import { execAsync } from './worktrees.js'
@@ -66,60 +70,183 @@ async function trackProjectRegistered({
 
 const logger = createLogger(LogPrefix.CHANNEL)
 
-export async function ensureKimakiCategory(
-  guild: Guild,
-  botName?: string,
-): Promise<CategoryChannel> {
-  // Skip appending bot name if it's already "kimaki" to avoid "Kimaki kimaki"
+function defaultCategoryName(botName?: string) {
   const isKimakiBot = botName?.toLowerCase() === 'kimaki'
-  const categoryName = botName && !isKimakiBot ? `Kimaki ${botName}` : 'Kimaki'
+  return botName && !isKimakiBot ? `Kimaki ${botName}` : 'Kimaki'
+}
 
-  const existingCategory = guild.channels.cache.find(
-    (channel): channel is CategoryChannel => {
-      if (channel.type !== ChannelType.GuildCategory) {
-        return false
-      }
+function defaultAudioCategoryName(botName?: string) {
+  const isKimakiBot = botName?.toLowerCase() === 'kimaki'
+  return botName && !isKimakiBot ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
+}
 
-      return channel.name.toLowerCase() === categoryName.toLowerCase()
-    },
-  )
+function defaultKimakiChannelName({
+  botName,
+  isGatewayMode,
+}: {
+  botName?: string
+  isGatewayMode: boolean
+}) {
+  if (isGatewayMode || !botName) return 'kimaki'
+  const sanitized = botName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+  if (!sanitized || sanitized === 'kimaki') return 'kimaki'
+  return `kimaki-${sanitized}`.slice(0, 100)
+}
 
-  if (existingCategory) {
-    return existingCategory
+const categoryEnsures = new Map<string, Promise<CategoryChannel>>()
+
+function ensureCategorySerialized({
+  key,
+  run,
+}: {
+  key: string
+  run: () => Promise<CategoryChannel>
+}) {
+  const existing = categoryEnsures.get(key)
+  if (existing) return existing
+  const promise = run().finally(() => {
+    if (categoryEnsures.get(key) === promise) {
+      categoryEnsures.delete(key)
+    }
+  })
+  categoryEnsures.set(key, promise)
+  return promise
+}
+
+function isUnknownDiscordChannel(error: unknown) {
+  const code = error instanceof Error ? Reflect.get(error, 'code') : undefined
+  const status = error instanceof Error ? Reflect.get(error, 'status') : undefined
+  return code === 10003 || status === 404
+}
+
+function isCategoryChannel(
+  channel: GuildBasedChannel | null | undefined,
+): channel is CategoryChannel {
+  return channel?.type === ChannelType.GuildCategory
+}
+
+async function fetchCategoryById(
+  guild: Guild,
+  categoryId: string,
+): Promise<CategoryChannel | null> {
+  const cached = guild.channels.cache.get(categoryId)
+  if (isCategoryChannel(cached)) return cached
+  try {
+    const fetched = await guild.channels.fetch(categoryId)
+    return isCategoryChannel(fetched) ? fetched : null
+  } catch (error) {
+    if (isUnknownDiscordChannel(error)) return null
+    throw error
+  }
+}
+
+async function adoptParentFromTrackedChannels({
+  guild,
+  channelType,
+}: {
+  guild: Guild
+  channelType: 'text' | 'voice'
+}): Promise<CategoryChannel | null> {
+  const mappings = await findChannelsByDirectory({ channelType })
+  const channels = await guild.channels.fetch()
+  for (const row of mappings) {
+    if (row.guild_id && row.guild_id !== guild.id) continue
+    const channel = channels.get(row.channel_id)
+    if (!channel?.parentId) continue
+    const parent = await fetchCategoryById(guild, channel.parentId)
+    if (parent) return parent
+  }
+  return null
+}
+
+async function createAndBindCategory({
+  guild,
+  name,
+  kind,
+}: {
+  guild: Guild
+  name: string
+  kind: 'text' | 'audio'
+}): Promise<CategoryChannel> {
+  const created = await guild.channels.create({
+    name,
+    type: ChannelType.GuildCategory,
+  })
+  if (kind === 'audio') {
+    await setGuildAudioCategoryId({
+      guildId: guild.id,
+      audioCategoryId: created.id,
+    })
+  } else {
+    await setGuildCategoryId({ guildId: guild.id, categoryId: created.id })
+  }
+  return created
+}
+
+async function resolveKimakiCategory(guild: Guild, botName?: string) {
+  const stored = await getGuildCategories(guild.id)
+  if (stored?.category_id) {
+    const existing = await fetchCategoryById(guild, stored.category_id)
+    if (existing) return existing
   }
 
-  return guild.channels.create({
-    name: categoryName,
-    type: ChannelType.GuildCategory,
+  const adopted = await adoptParentFromTrackedChannels({
+    guild,
+    channelType: 'text',
+  })
+  if (adopted) {
+    await setGuildCategoryId({ guildId: guild.id, categoryId: adopted.id })
+    return adopted
+  }
+
+  return createAndBindCategory({
+    guild,
+    name: defaultCategoryName(botName),
+    kind: 'text',
   })
 }
 
-export async function ensureKimakiAudioCategory(
-  guild: Guild,
-  botName?: string,
-): Promise<CategoryChannel> {
-  // Skip appending bot name if it's already "kimaki" to avoid "Kimaki Audio kimaki"
-  const isKimakiBot = botName?.toLowerCase() === 'kimaki'
-  const categoryName =
-    botName && !isKimakiBot ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
-
-  const existingCategory = guild.channels.cache.find(
-    (channel): channel is CategoryChannel => {
-      if (channel.type !== ChannelType.GuildCategory) {
-        return false
-      }
-
-      return channel.name.toLowerCase() === categoryName.toLowerCase()
-    },
-  )
-
-  if (existingCategory) {
-    return existingCategory
+async function resolveKimakiAudioCategory(guild: Guild, botName?: string) {
+  const stored = await getGuildCategories(guild.id)
+  if (stored?.audio_category_id) {
+    const existing = await fetchCategoryById(guild, stored.audio_category_id)
+    if (existing) return existing
   }
 
-  return guild.channels.create({
-    name: categoryName,
-    type: ChannelType.GuildCategory,
+  const adopted = await adoptParentFromTrackedChannels({
+    guild,
+    channelType: 'voice',
+  })
+  if (adopted) {
+    await setGuildAudioCategoryId({
+      guildId: guild.id,
+      audioCategoryId: adopted.id,
+    })
+    return adopted
+  }
+
+  return createAndBindCategory({
+    guild,
+    name: defaultAudioCategoryName(botName),
+    kind: 'audio',
+  })
+}
+
+export function ensureKimakiCategory(guild: Guild, botName?: string) {
+  return ensureCategorySerialized({
+    key: `${guild.id}:text`,
+    run: () => resolveKimakiCategory(guild, botName),
+  })
+}
+
+export function ensureKimakiAudioCategory(guild: Guild, botName?: string) {
+  return ensureCategorySerialized({
+    key: `${guild.id}:audio`,
+    run: () => resolveKimakiAudioCategory(guild, botName),
   })
 }
 
@@ -159,6 +286,7 @@ export async function createProjectChannels({
     channelId: textChannel.id,
     directory: projectDirectory,
     channelType: 'text',
+    guildId: guild.id,
   })
   await trackProjectRegistered({
     projectKind: 'user',
@@ -180,6 +308,7 @@ export async function createProjectChannels({
       channelId: voiceChannel.id,
       directory: projectDirectory,
       channelType: 'voice',
+      guildId: guild.id,
     })
 
     voiceChannelId = voiceChannel.id
@@ -253,8 +382,9 @@ const DEFAULT_CHANNEL_TOPIC =
  * Directory is ~/.kimaki/projects/kimaki, git-initialized with a .gitignore.
  *
  * Idempotency: checks the database for an existing channel mapped to the
- * kimaki projects directory. Also scans guild channels by name+category
- * as a fallback for channels created before DB mapping existed.
+ * kimaki projects directory. Also scans this machine's category for the
+ * exact default channel name as a fallback for channels created before
+ * DB mapping existed.
  */
 export async function createDefaultKimakiChannel({
   guild,
@@ -329,11 +459,9 @@ export async function createDefaultKimakiChannel({
     return null
   }
 
-  // 2. Fallback: detect existing channel by name+category.
-  // If a "kimaki" channel already exists in the guild but is NOT in our local
-  // DB, it was likely created by another kimaki instance (different machine).
-  // Do NOT adopt it — just skip channel creation entirely to avoid both
-  // instances fighting over the same channel.
+  // 2. Fallback: detect an existing default channel in THIS machine's group.
+  // A #kimaki channel in another machine's group is ignored.
+  const channelName = defaultKimakiChannelName({ botName, isGatewayMode })
   const kimakiCategory = await ensureKimakiCategory(guild, botName)
   const existingByName = guild.channels.cache.find((ch): ch is TextChannel => {
     if (ch.type !== ChannelType.GuildText) {
@@ -342,11 +470,11 @@ export async function createDefaultKimakiChannel({
     if (ch.parentId !== kimakiCategory.id) {
       return false
     }
-    return ch.name === 'kimaki' || ch.name.startsWith('kimaki-')
+    return ch.name === channelName
   })
   if (existingByName) {
     logger.log(
-      `Found existing default kimaki channel by name: ${existingByName.id}, but it is not in our DB — skipping (likely owned by another kimaki instance)`,
+      `Found existing default kimaki channel by name: ${existingByName.id}. Skipping recreation.`,
     )
     return null
   }
@@ -369,22 +497,6 @@ export async function createDefaultKimakiChannel({
   if (!fs.existsSync(gitignorePath)) {
     fs.writeFileSync(gitignorePath, DEFAULT_GITIGNORE)
   }
-
-  // Channel name: "kimaki-{botName}" for self-hosted, "kimaki" for gateway
-  const channelName = (() => {
-    if (isGatewayMode || !botName) {
-      return 'kimaki'
-    }
-    const sanitized = botName
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-    if (!sanitized || sanitized === 'kimaki') {
-      return 'kimaki'
-    }
-    return `kimaki-${sanitized}`.slice(0, 100)
-  })()
 
   const textChannel = await guild.channels.create({
     name: channelName,

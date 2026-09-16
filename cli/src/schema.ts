@@ -79,6 +79,15 @@ export const channel_directories = sqliteCore.sqliteTable('channel_directories',
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
+// One Discord category pair per guild for this machine. Look up by snowflake
+// id, never by name, so a rename still routes new channels here.
+export const guild_categories = sqliteCore.sqliteTable('guild_categories', {
+  guild_id: sqliteCore.text('guild_id').primaryKey().notNull(),
+  category_id: sqliteCore.text('category_id'),
+  audio_category_id: sqliteCore.text('audio_category_id'),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+})
+
 export const bot_api_keys = sqliteCore.sqliteTable('bot_api_keys', {
   app_id: sqliteCore.text('app_id').primaryKey().notNull().references(() => bot_tokens.app_id, { onUpdate: 'cascade' }),
   gemini_api_key: sqliteCore.text('gemini_api_key'),
@@ -281,6 +290,7 @@ export const relations = defineRelations({
   thread_worktrees,
   thread_workspaces,
   channel_directories,
+  guild_categories,
   channel_models,
   session_models,
   channel_agents,
@@ -324,6 +334,7 @@ export const relations = defineRelations({
   thread_workspaces: {
     thread: r.one.thread_sessions({ from: r.thread_workspaces.thread_id, to: r.thread_sessions.thread_id }),
   },
+  guild_categories: {},
   channel_directories: {
     channel_model: r.one.channel_models({ from: r.channel_directories.channel_id, to: r.channel_models.channel_id }),
     channel_agent: r.one.channel_agents({ from: r.channel_directories.channel_id, to: r.channel_agents.channel_id }),

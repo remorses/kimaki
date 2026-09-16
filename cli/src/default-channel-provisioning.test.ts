@@ -104,10 +104,11 @@ for (const setup of ['legacy mapping', 'explicit onboarding']) {
     const guild = client.guilds.cache.get(trustedGuildId)!
     if (setup === 'legacy mapping') {
       await setChannelDirectory({ channelId: projectChannelId, directory, channelType: 'text' })
+      expect((await findChannelsByDirectory({}))[0]?.guild_id).toBeNull()
     } else {
       await createProjectChannels({ guild, projectDirectory: path.join(directory, 'project'), analyticsSource: 'onboarding' })
+      expect((await findChannelsByDirectory({}))[0]?.guild_id).toBe(trustedGuildId)
     }
-    expect((await findChannelsByDirectory({}))[0]?.guild_id).toBeNull()
     // Fetching actual guild channels must work even when startup cache is empty.
     guild.channels.cache.clear()
     const created = await ensureDefaultChannelsWithWelcome({

@@ -1157,6 +1157,68 @@ export async function listTrackedTextChannels(): Promise<Array<{ channel_id: str
   })
 }
 
+export type GuildCategoryRow = {
+  guild_id: string
+  category_id: string | null
+  audio_category_id: string | null
+}
+
+export async function getGuildCategories(guildId: string): Promise<GuildCategoryRow | null> {
+  const db = await getDb()
+  const row = await db.query.guild_categories.findFirst({ where: { guild_id: guildId } })
+  if (!row) return null
+  return {
+    guild_id: row.guild_id,
+    category_id: row.category_id,
+    audio_category_id: row.audio_category_id,
+  }
+}
+
+export async function listGuildCategoryIds(): Promise<string[]> {
+  const db = await getDb()
+  const rows = await db.query.guild_categories.findMany({
+    columns: { category_id: true, audio_category_id: true },
+  })
+  const ids = new Set<string>()
+  for (const row of rows) {
+    if (row.category_id) ids.add(row.category_id)
+    if (row.audio_category_id) ids.add(row.audio_category_id)
+  }
+  return [...ids]
+}
+
+export async function setGuildCategoryId({
+  guildId,
+  categoryId,
+}: {
+  guildId: string
+  categoryId: string
+}) {
+  const db = await getDb()
+  await db.insert(schema.guild_categories)
+    .values({ guild_id: guildId, category_id: categoryId })
+    .onConflictDoUpdate({
+      target: schema.guild_categories.guild_id,
+      set: { category_id: categoryId },
+    })
+}
+
+export async function setGuildAudioCategoryId({
+  guildId,
+  audioCategoryId,
+}: {
+  guildId: string
+  audioCategoryId: string
+}) {
+  const db = await getDb()
+  await db.insert(schema.guild_categories)
+    .values({ guild_id: guildId, audio_category_id: audioCategoryId })
+    .onConflictDoUpdate({
+      target: schema.guild_categories.guild_id,
+      set: { audio_category_id: audioCategoryId },
+    })
+}
+
 export async function deleteChannelDirectoriesByDirectory(directory: string) {
   const db = await getDb()
   await db.delete(schema.channel_directories).where(orm.eq(schema.channel_directories.directory, directory))

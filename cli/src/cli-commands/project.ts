@@ -13,7 +13,7 @@ import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
 import { getDefaultKimakiDirectory } from '../channel-management.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, findRegisteredTextChannelForDirectory, formatProjectAlreadyRegisteredError } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, getDb, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, findRegisteredTextChannelForDirectory, formatProjectAlreadyRegisteredError, listGuildCategoryIds } from '../database.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -152,7 +152,7 @@ cli
     'List all registered projects with their Discord channels',
   )
   .option('--json', 'Output as JSON')
-  .option('--all', 'Include remote projects from other machines (scans Kimaki category in Discord)')
+  .option('--all', 'Include remote projects from other machines (scans Kimaki groups in Discord)')
   .option('-g, --guild <guildId>', 'Discord guild/server ID to scan (used with --all when no local projects exist)')
   .option('--prune', 'Remove stale entries whose Discord channel no longer exists')
   .action(async (options) => {
@@ -239,6 +239,7 @@ cli
       }
 
       let guildScanFailures = 0
+      const storedCategoryIds = new Set(await listGuildCategoryIds())
       for (const guildId of uniqueGuildIds) {
         try {
           const guildChannels = (await rest.get(Routes.guildChannels(guildId))) as Array<{
@@ -248,10 +249,14 @@ cli
             parent_id: string | null
           }>
 
-          // Find Kimaki category channels (type 4 = GuildCategory)
+          // Kimaki groups: name still starts with Kimaki, or this machine stored the id
+          // after a rename. Other machines' renamed groups cannot be found by name.
           const kimakiCategoryIds = new Set(
             guildChannels
-              .filter((ch) => ch.type === 4 && /^kimaki(\s|$)/i.test(ch.name))
+              .filter((ch) =>
+                ch.type === 4 &&
+                (/^kimaki(\s|$)/i.test(ch.name) || storedCategoryIds.has(ch.id)),
+              )
               .map((ch) => ch.id),
           )
 

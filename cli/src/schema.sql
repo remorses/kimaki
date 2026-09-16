@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS `global_models` (
 	CONSTRAINT `fk_global_models_app_id_bot_tokens_app_id_fk` FOREIGN KEY (`app_id`) REFERENCES `bot_tokens`(`app_id`) ON UPDATE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `guild_categories` (
+	`guild_id` text PRIMARY KEY,
+	`category_id` text,
+	`audio_category_id` text,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `ipc_requests` (
 	`id` text PRIMARY KEY,
 	`type` text NOT NULL,
