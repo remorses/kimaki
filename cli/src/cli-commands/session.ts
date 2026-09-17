@@ -5,7 +5,7 @@ import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
-import type { OpencodeClient, Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient, Event as OpenCodeEvent, Session as OpenCodeSession } from '@opencode-ai/sdk/v2'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -85,6 +85,33 @@ async function resolveSessionDirectoryFromDatabase({
   )
 }
 
+// Total token footprint of a session (input + output + reasoning + cache).
+function getSessionTokenTotal(tokens: {
+  input: number
+  output: number
+  reasoning: number
+  cache: { read: number; write: number }
+}): number {
+  return (
+    tokens.input +
+    tokens.output +
+    tokens.reasoning +
+    tokens.cache.read +
+    tokens.cache.write
+  )
+}
+
+// Compact token count: 1234 -> "1k", 200000 -> "200k", 1_500_000 -> "1.5M".
+function formatTokenCount(count: number): string {
+  if (count >= 1_000_000) {
+    return `${(count / 1_000_000).toFixed(1)}M`
+  }
+  if (count >= 1_000) {
+    return `${Math.round(count / 1_000)}k`
+  }
+  return String(count)
+}
+
 cli
   .command(
     'session list',
@@ -94,45 +121,93 @@ cli
     '--project <path>',
     'Project directory to list sessions for (defaults to cwd)',
   )
+  .option('--all', 'List sessions across every locally registered project')
   .option('--active', 'Only list active sessions; exits 1 when none remain')
   .option('--exclude <sessionId>', 'Exclude one session ID from the results')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
     try {
-      const projectDirectory = path.resolve(options.project || '.')
-
       await initDatabase()
 
-      cliLogger.log('Connecting to OpenCode server...')
-      const getClient = await initializeOpencodeForDirectory(projectDirectory)
-      if (getClient instanceof Error) {
-        cliLogger.error('Failed to connect to OpenCode:', getClient.message)
+      if (options.all && options.project) {
+        cliLogger.error('Use either --all or --project, not both')
         process.exit(EXIT_NO_RESTART)
       }
 
-      const sessionsResponse = await getClient().session.list()
-      const sessions = sessionsResponse.data || []
-      const statuses = await (async () => {
-        if (!options.active) return null
-        const response = await getClient().session.status({
-          directory: projectDirectory,
-        })
-        if (response.error) {
-          cliLogger.error('Failed to list active sessions')
+      const projectDirectories = options.all
+        ? Array.from(
+            new Set(
+              (await getAllTextChannelDirectories()).map((directory) =>
+                path.resolve(directory),
+              ),
+            ),
+          )
+        : [path.resolve(options.project || '.')]
+
+      if (projectDirectories.length === 0) {
+        cliLogger.error(
+          'No registered project directories found. Add a project with `kimaki project add`.',
+        )
+        process.exit(EXIT_NO_RESTART)
+      }
+
+      // Connect to each project's OpenCode server and gather sessions plus
+      // their live idle/busy status. Only session.list + session.status are
+      // called per project so the command stays fast; per-session token totals
+      // come straight from the session objects with no message fetching.
+      type GatheredSession = {
+        session: OpenCodeSession
+        projectDirectory: string
+        status: 'idle' | 'busy'
+      }
+
+      const gathered: GatheredSession[] = []
+      for (const projectDirectory of projectDirectories) {
+        cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
+        const getClient = await initializeOpencodeForDirectory(projectDirectory)
+        if (getClient instanceof Error) {
+          if (options.all) {
+            cliLogger.warn(
+              `Skipping ${projectDirectory}: failed to connect to OpenCode: ${getClient.message}`,
+            )
+            continue
+          }
+          cliLogger.error('Failed to connect to OpenCode:', getClient.message)
           process.exit(EXIT_NO_RESTART)
         }
-        return response.data || {}
-      })()
-      const selectedSessions = sessions.filter((session) => {
-        if (session.id === options.exclude) return false
-        if (!options.active) return true
-        const status = statuses?.[session.id]
-        return Boolean(status && status.type !== 'idle')
-      })
 
-      if (selectedSessions.length === 0) {
+        const client = getClient()
+        const [sessionsResponse, statusResponse] = await Promise.all([
+          client.session.list(),
+          client.session.status({ directory: projectDirectory }).catch(() => null),
+        ])
+
+        const statuses = statusResponse?.data || {}
+
+        for (const session of sessionsResponse.data || []) {
+          const status = statuses[session.id]
+          gathered.push({
+            session,
+            projectDirectory,
+            status: status && status.type !== 'idle' ? 'busy' : 'idle',
+          })
+        }
+      }
+
+      const selected = gathered
+        .filter((entry) => {
+          if (entry.session.id === options.exclude) return false
+          if (options.active && entry.status !== 'busy') return false
+          return true
+        })
+        .sort((a, b) => b.session.time.updated - a.session.time.updated)
+
+      if (selected.length === 0) {
         if (options.json) console.log('[]')
-        else cliLogger.log(options.active ? 'No active sessions found' : 'No sessions found')
+        else
+          cliLogger.log(
+            options.active ? 'No active sessions found' : 'No sessions found',
+          )
         process.exit(options.active ? 1 : 0)
       }
 
@@ -147,7 +222,7 @@ cli
           .map((row) => [row.session_id, row.thread_id]),
       )
       const sessionStartSources = await getSessionStartSourcesBySessionIds(
-        selectedSessions.map((session) => session.id),
+        selected.map((entry) => entry.session.id),
       )
 
       const scheduleModeLabel = ({
@@ -161,8 +236,19 @@ cli
         return 'cron'
       }
 
+      // Token footprint straight from the session object (no message fetch).
+      // Session.tokens is a per-session aggregate, so it is reported as a token
+      // count rather than a context-window percentage.
+      const contextInfo = (entry: GatheredSession): number | null => {
+        const tokens = entry.session.tokens
+        if (!tokens) return null
+        const total = getSessionTokenTotal(tokens)
+        return total > 0 ? total : null
+      }
+
       if (options.json) {
-        const output = selectedSessions.map((session) => {
+        const output = selected.map((entry) => {
+          const session = entry.session
           const startSource = sessionStartSources.get(session.id)
           const startedBy = startSource
             ? `scheduled-${scheduleModeLabel({ scheduleKind: startSource.schedule_kind })}`
@@ -174,16 +260,19 @@ cli
             updated: new Date(session.time.updated).toISOString(),
             source: sessionToThread.has(session.id) ? 'kimaki' : 'opencode',
             threadId: sessionToThread.get(session.id) || null,
+            status: entry.status,
+            model: session.model?.id || null,
+            tokens: contextInfo(entry),
             startedBy,
             scheduledTaskId: startSource?.scheduled_task_id || null,
-            status: options.active ? statuses?.[session.id]?.type || 'busy' : undefined,
           }
         })
         console.log(JSON.stringify(output, null, 2))
         process.exit(0)
       }
 
-      for (const session of selectedSessions) {
+      for (const entry of selected) {
+        const session = entry.session
         const threadId = sessionToThread.get(session.id)
         const startSource = sessionStartSources.get(session.id)
         const source = threadId ? '(kimaki)' : '(opencode)'
@@ -192,11 +281,11 @@ cli
           : ''
         const updatedAt = new Date(session.time.updated).toISOString()
         const threadInfo = threadId ? ` | thread: ${threadId}` : ''
-        const statusInfo = options.active
-          ? ` | status: ${statuses?.[session.id]?.type || 'busy'}`
-          : ''
+        const statusInfo = ` | status: ${entry.status === 'busy' ? 'working' : 'idle'}`
+        const tokens = contextInfo(entry)
+        const tokensText = tokens ? ` | tokens: ${formatTokenCount(tokens)}` : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}${statusInfo}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.directory} | ${updatedAt} | ${source}${statusInfo}${tokensText}${threadInfo}${startedBy}`,
         )
       }
 

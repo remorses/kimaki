@@ -656,9 +656,14 @@ describe('system-message', () => {
       kimaki session list --json  # machine-readable output
       kimaki session list --project /path/to/project  # specific project
 
+      # List sessions across every locally registered project
+      kimaki session list --all
+
       # List only in-progress sessions. Exit status is 1 when none remain.
       kimaki session list --active
       \`\`\`
+
+      Each row shows the session title, project directory, \`status: working\` or \`status: idle\`, and \`tokens: N\` (total token footprint) when available. Kimaki-started sessions also show their Discord \`thread\` ID.
 
       Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
 
