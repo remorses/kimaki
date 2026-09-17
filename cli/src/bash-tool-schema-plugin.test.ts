@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'vitest'
 import {
   extendBashToolDefinition,
+  injectKimakiSessionEnv,
+  KIMAKI_SESSION_ID_ENV,
+  resolveUploadToDiscordSessionId,
   type ToolDefinitionOutput,
 } from './bash-tool-schema-plugin.js'
 
@@ -51,5 +54,31 @@ describe('extendBashToolDefinition', () => {
         "type": "object",
       }
     `)
+  })
+})
+
+describe('upload-to-discord session targeting', () => {
+  test('bash env uses the live OpenCode session, not a copied --session flag', () => {
+    const env: Record<string, string> = {}
+    injectKimakiSessionEnv({ sessionID: 'ses_child', env })
+    expect(env).toEqual({ [KIMAKI_SESSION_ID_ENV]: 'ses_child' })
+    expect(
+      resolveUploadToDiscordSessionId({
+        flagSessionId: 'ses_parent',
+        envSessionId: env[KIMAKI_SESSION_ID_ENV],
+      }),
+    ).toBe('ses_child')
+  })
+
+  test('falls back to --session when bash is not inside an OpenCode session', () => {
+    expect(
+      resolveUploadToDiscordSessionId({
+        flagSessionId: 'ses_parent',
+      }),
+    ).toBe('ses_parent')
+  })
+
+  test('returns undefined when neither live session nor flag is set', () => {
+    expect(resolveUploadToDiscordSessionId({})).toBeUndefined()
   })
 })

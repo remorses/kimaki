@@ -1084,6 +1084,8 @@ describe('system-message', () => {
   test('moves per-turn discord metadata into synthetic prompt context', () => {
     expect(
       getOpencodePromptContext({
+        sessionId: 'ses_123',
+        threadId: 'thread_123',
         username: 'Tommy',
         userId: 'user_123',
         sourceMessageId: 'msg_123',
@@ -1103,6 +1105,11 @@ describe('system-message', () => {
       }),
     ).toMatchInlineSnapshot(`
       "<discord-user name="Tommy" user-id="user_123" message-id="msg_123" thread-id="thread_123" thread-name="Fix auth bug" />
+
+      <system-reminder>
+      Your current OpenCode session ID is: ses_123
+      Your current Discord thread ID is: thread_123
+      </system-reminder>
 
       This message was a reply to message
 

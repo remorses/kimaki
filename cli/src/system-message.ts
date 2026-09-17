@@ -392,6 +392,8 @@ function escapePromptText(value: string): string {
 }
 
 export function getOpencodePromptContext({
+  sessionId,
+  threadId,
   username,
   userId,
   sourceMessageId,
@@ -402,6 +404,8 @@ export function getOpencodePromptContext({
   currentAgent,
   worktreeChanged,
 }: {
+  sessionId?: string
+  threadId?: string
   username?: string
   userId?: string
   sourceMessageId?: string
@@ -429,6 +433,17 @@ export function getOpencodePromptContext({
       ? [` thread-name="${escapePromptAttribute(threadName)}"`]
       : []),
   ].join('')
+  const identityLines = [
+    ...(sessionId
+      ? [`Your current OpenCode session ID is: ${sessionId}`]
+      : []),
+    ...(threadId
+      ? [`Your current Discord thread ID is: ${threadId}`]
+      : []),
+  ]
+  const identityReminder = identityLines.length > 0
+    ? `<system-reminder>\n${identityLines.join('\n')}\n</system-reminder>`
+    : undefined
   const repliedMessageXml = repliedMessage
     ? `This message was a reply to message
 
@@ -438,6 +453,7 @@ ${escapePromptText(repliedMessage.text)}
     : undefined
   const sections = [
     ...(userAttrs ? [`<discord-user${userAttrs} />`] : []),
+    ...(identityReminder ? [identityReminder] : []),
     ...(repliedMessageXml ? [repliedMessageXml] : []),
     ...(currentAgent
       ? [`<system-reminder>\nCurrent agent: ${currentAgent}\n</system-reminder>`]

@@ -3525,10 +3525,12 @@ export class ThreadSessionRuntime {
       })()
       const worktreeChanged = this.consumeWorktreePromptChange(worktree)
       const syntheticContext = getOpencodePromptContext({
+        sessionId: session.id,
+        threadId: this.thread.id,
         username: input.username,
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
-        sourceThreadId: input.sourceThreadId,
+        sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
         worktree,
@@ -4552,10 +4554,12 @@ export class ThreadSessionRuntime {
     })()
     const worktreeChanged = this.consumeWorktreePromptChange(worktree)
     const syntheticContext = getOpencodePromptContext({
+      sessionId: session.id,
+      threadId: this.thread.id,
       username: input.username,
       userId: input.userId,
       sourceMessageId: input.sourceMessageId,
-      sourceThreadId: input.sourceThreadId,
+      sourceThreadId: input.sourceThreadId || this.thread.id,
       threadName: this.thread.name || undefined,
       repliedMessage: input.repliedMessage,
       worktree,
@@ -4603,10 +4607,12 @@ export class ThreadSessionRuntime {
       // Append <discord-user /> tag to arguments so external sync can
       // detect this message came from Discord (same tag as promptAsync).
       const discordTag = getOpencodePromptContext({
+        sessionId: session.id,
+        threadId: this.thread.id,
         username: input.username,
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
-        sourceThreadId: input.sourceThreadId,
+        sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
       })
