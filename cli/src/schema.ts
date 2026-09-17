@@ -39,6 +39,15 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
+export const thread_queue_items = sqliteCore.sqliteTable('thread_queue_items', {
+  queue_id: sqliteCore.text('queue_id').primaryKey().notNull(),
+  thread_id: sqliteCore.text('thread_id').notNull(),
+  payload_json: sqliteCore.text('payload_json').notNull(),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  sqliteCore.index('thread_queue_items_thread_id_created_at_queue_id_idx').on(table.thread_id, table.created_at, table.queue_id),
+])
+
 export const session_events = sqliteCore.sqliteTable('session_events', {
   id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
   session_id: sqliteCore.text('session_id').notNull(),
@@ -283,6 +292,7 @@ export const ipc_requests = sqliteCore.sqliteTable('ipc_requests', {
 
 export const relations = defineRelations({
   thread_sessions,
+  thread_queue_items,
   session_events,
   part_messages,
   bot_tokens,
@@ -314,6 +324,7 @@ export const relations = defineRelations({
     thread_workspace: r.one.thread_workspaces({ from: r.thread_sessions.thread_id, to: r.thread_workspaces.thread_id }),
     ipc_requests: r.many.ipc_requests(),
   },
+  thread_queue_items: {},
   session_events: {
     thread: r.one.thread_sessions({ from: r.session_events.thread_id, to: r.thread_sessions.thread_id }),
   },

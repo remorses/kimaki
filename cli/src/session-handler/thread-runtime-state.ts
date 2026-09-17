@@ -210,6 +210,11 @@ export function enqueueItem(threadId: string, item: QueuedMessage): void {
   }))
 }
 
+export function replaceQueueItems(threadId: string, items: QueuedMessage[]): void {
+  ensureThread(threadId)
+  updateThread(threadId, (t) => ({ ...t, queueItems: items }))
+}
+
 // Atomic dequeue: read + write in one setState call to prevent
 // a concurrent enqueue between read and write from losing items.
 export function dequeueItem(threadId: string): QueuedMessage | undefined {

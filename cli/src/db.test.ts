@@ -11,11 +11,16 @@ import * as schema from './schema.js'
 import {
   appendSessionEventsSinceLastTimestamp,
   createPendingWorkspace,
+  deleteThreadQueueItem,
   getDueSessionSleeps,
   getSessionEventSnapshot,
   getSessionModel,
   getSessionSleep,
+  insertThreadQueueItem,
+  listAllThreadQueueItems,
+  listThreadQueueItems,
   setSessionModel,
+  updateThreadQueueItemPayload,
   upsertSessionSleep,
 } from './database.js'
 import { createClient } from '@libsql/client'
@@ -46,6 +51,44 @@ describe('getDb', () => {
     ].map((match) => match[1])
     expect(new Set(tablesFromSql)).toEqual(new Set(tablesFromTs))
     expect(tablesFromSql).toContain('session_sleeps')
+    expect(tablesFromSql).toContain('thread_queue_items')
+  })
+
+  test('persists local queue items in FIFO order', async () => {
+    const db = await getDb()
+    const threadId = `test-queue-thread-${crypto.randomUUID()}`
+    const firstId = `queue-${crypto.randomUUID()}`
+    const secondId = `queue-${crypto.randomUUID()}`
+
+    await insertThreadQueueItem({
+      queueId: firstId,
+      threadId,
+      payloadJson: JSON.stringify({ prompt: 'first', userId: '1', username: 'tommy' }),
+    })
+    await insertThreadQueueItem({
+      queueId: secondId,
+      threadId,
+      payloadJson: JSON.stringify({ prompt: 'second', userId: '1', username: 'tommy' }),
+    })
+
+    const rows = await listThreadQueueItems(threadId)
+    expect(rows.map((row) => JSON.parse(row.payload_json).prompt)).toEqual([
+      'first',
+      'second',
+    ])
+
+    await updateThreadQueueItemPayload({
+      queueId: firstId,
+      payloadJson: JSON.stringify({ prompt: 'first-edited', userId: '1', username: 'tommy' }),
+    })
+    await deleteThreadQueueItem(secondId)
+
+    const after = await listAllThreadQueueItems()
+    const remaining = after.filter((row) => row.thread_id === threadId)
+    expect(remaining).toHaveLength(1)
+    expect(JSON.parse(remaining[0]!.payload_json).prompt).toBe('first-edited')
+
+    await db.delete(schema.thread_queue_items).where(orm.eq(schema.thread_queue_items.thread_id, threadId))
   })
 
   test('removes part_messages rows whose thread_sessions parent is gone', async () => {

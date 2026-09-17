@@ -90,6 +90,7 @@ import {
   getRuntime,
   getOrCreateRuntime,
   disposeRuntime,
+  restorePersistedLocalQueues,
   reserveThreadIngress,
   runInThreadIngressSlot,
 } from './session-handler/thread-session-runtime.js'
@@ -354,6 +355,14 @@ export async function startDiscordBot({
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
     startExternalOpencodeSessionSync({ discordClient: c })
+    await restorePersistedLocalQueues({
+      discordClient: c,
+      appId: currentAppId,
+    }).catch((error) => {
+      discordLogger.warn(
+        `Failed to restore persisted local queues: ${error instanceof Error ? error.stack : String(error)}`,
+      )
+    })
 
     // Channel logging is informational only; do it in background so startup stays responsive.
     void (async () => {
@@ -1177,7 +1186,7 @@ export async function startDiscordBot({
 
       // If the edit removed the queue suffix, remove the item from the queue.
       // If the suffix is still present, update the prompt.
-      const result = runtime.updateQueuedMessage(
+      const result = await runtime.updateQueuedMessage(
         message.id,
         forceQueue ? prompt : '',
       )
@@ -1222,7 +1231,7 @@ export async function startDiscordBot({
       const runtime = getRuntime(channel.id)
       if (!runtime) return
 
-      const removed = runtime.removeQueuedMessage(message.id)
+      const removed = await runtime.removeQueuedMessage(message.id)
       if (!removed) return
 
       discordLogger.log(

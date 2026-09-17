@@ -7,6 +7,7 @@ import {
   ButtonStyle,
   ChannelType,
   MessageFlags,
+  type ButtonInteraction,
   type ThreadChannel,
 } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
@@ -19,58 +20,88 @@ import {
   getOrCreateRuntime,
   getRuntime,
 } from '../session-handler/thread-session-runtime.js'
-import {
-  buildHtmlActionCustomId,
-  registerHtmlAction,
-} from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
 
-function buildQueueRemoveRow({
+export const QUEUE_REMOVE_CUSTOM_ID_PREFIX = 'queue_remove:'
+
+export function buildQueueRemoveCustomId({
   threadId,
   queueId,
-  position,
 }: {
   threadId: string
   queueId: string
-  position?: number
+}): string {
+  return `${QUEUE_REMOVE_CUSTOM_ID_PREFIX}${threadId}:${queueId}`
+}
+
+export function parseQueueRemoveCustomId(customId: string): {
+  threadId: string
+  queueId: string
+} | undefined {
+  if (!customId.startsWith(QUEUE_REMOVE_CUSTOM_ID_PREFIX)) {
+    return undefined
+  }
+  const rest = customId.slice(QUEUE_REMOVE_CUSTOM_ID_PREFIX.length)
+  const separator = rest.indexOf(':')
+  if (separator <= 0 || separator >= rest.length - 1) {
+    return undefined
+  }
+  return {
+    threadId: rest.slice(0, separator),
+    queueId: rest.slice(separator + 1),
+  }
+}
+
+function buildQueueRemoveRow({
+  threadId,
+  queueId,
+}: {
+  threadId: string
+  queueId: string
 }) {
-  const actionId = registerHtmlAction({
-    ownerKey: `queue-remove:${threadId}:${queueId}`,
-    threadId,
-    run: async ({ interaction }) => {
-      const removed = getRuntime(threadId)?.removeQueueItemById(queueId)
-      if (!removed) {
-        await interaction.editReply({
-          content: position
-            ? `Queued message at position ${position} is no longer in the queue`
-            : 'Queued message is no longer in the queue',
-          components: [],
-        })
-        return
-      }
-
-      const label = removed.command
-        ? `/${removed.command.name}`
-        : removed.prompt.slice(0, 120)
-      await interaction.editReply({
-        content: `Removed queued message${position ? ` (was position ${position})` : ''}: ${label}`,
-        components: [],
-      })
-      logger.log(
-        `[QUEUE] User ${interaction.user.displayName} removed queued item ${queueId} in thread ${threadId}`,
-      )
-    },
-  })
-
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(buildHtmlActionCustomId(actionId))
+      .setCustomId(buildQueueRemoveCustomId({ threadId, queueId }))
       .setLabel('Remove from queue')
       .setStyle(ButtonStyle.Secondary),
+  )
+}
+
+export async function handleQueueRemoveButton(
+  interaction: ButtonInteraction,
+): Promise<void> {
+  const parsed = parseQueueRemoveCustomId(interaction.customId)
+  if (!parsed) {
+    await interaction.reply({
+      content: 'Invalid queue remove button',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
+  await interaction.deferUpdate()
+  const removed = await getRuntime(parsed.threadId)?.removeQueueItemById(parsed.queueId)
+  if (!removed) {
+    await interaction.editReply({
+      content: 'Queued message is no longer in the queue',
+      components: [],
+    })
+    return
+  }
+
+  const label = removed.command
+    ? `/${removed.command.name}`
+    : removed.prompt.slice(0, 120)
+  await interaction.editReply({
+    content: `Removed queued message: ${label}`,
+    components: [],
+  })
+  logger.log(
+    `[QUEUE] User ${interaction.user.displayName} removed queued item ${parsed.queueId} in thread ${parsed.threadId}`,
   )
 }
 
@@ -150,7 +181,6 @@ export async function handleQueueCommand({
         buildQueueRemoveRow({
           threadId: thread.id,
           queueId: enqueueResult.queueId,
-          position: enqueueResult.position,
         }),
       ],
       flags: SILENT_MESSAGE_FLAGS,
@@ -205,7 +235,7 @@ export async function handleClearQueueCommand({
   }
 
   if (position !== undefined) {
-    const removed = runtime?.removeQueuePosition(position)
+    const removed = await runtime?.removeQueuePosition(position)
     if (!removed) {
       await command.reply({
         content: `No queued message at position ${position}`,
@@ -225,7 +255,7 @@ export async function handleClearQueueCommand({
     return
   }
 
-  const cleared = runtime?.clearQueue() ?? []
+  const cleared = await runtime?.clearQueue() ?? []
 
   const lines = cleared.map((item, i) => {
     const label = item.command
@@ -342,7 +372,6 @@ export async function handleQueueCommandCommand({
         buildQueueRemoveRow({
           threadId: thread.id,
           queueId: enqueueResult.queueId,
-          position: enqueueResult.position,
         }),
       ],
       flags: SILENT_MESSAGE_FLAGS,

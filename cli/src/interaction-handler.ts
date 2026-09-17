@@ -90,6 +90,8 @@ import {
   handleClearQueueCommand,
   handleQueueCommandCommand,
   handleQueueCommandAutocomplete,
+  handleQueueRemoveButton,
+  QUEUE_REMOVE_CUSTOM_ID_PREFIX,
 } from './commands/queue.js'
 import { handleUndoCommand, handleRedoCommand } from './commands/undo-redo.js'
 import { handleUserCommand } from './commands/user-command.js'
@@ -561,6 +563,11 @@ export function registerInteractionHandler({
 
           if (customId.startsWith('action_button:')) {
             await handleActionButton(interaction)
+            return
+          }
+
+          if (customId.startsWith(QUEUE_REMOVE_CUSTOM_ID_PREFIX)) {
+            await handleQueueRemoveButton(interaction)
             return
           }
 

@@ -823,6 +823,65 @@ export async function getThreadSession(threadId: string) {
   return (await db.query.thread_sessions.findFirst({ where: { thread_id: threadId } }))?.session_id
 }
 
+export async function insertThreadQueueItem({
+  queueId,
+  threadId,
+  payloadJson,
+}: {
+  queueId: string
+  threadId: string
+  payloadJson: string
+}) {
+  const db = await getDb()
+  await db.insert(schema.thread_queue_items).values({
+    queue_id: queueId,
+    thread_id: threadId,
+    payload_json: payloadJson,
+  })
+}
+
+export async function listThreadQueueItems(threadId: string) {
+  const db = await getDb()
+  return db.query.thread_queue_items.findMany({
+    where: { thread_id: threadId },
+    orderBy: { created_at: 'asc', queue_id: 'asc' },
+  })
+}
+
+export async function listAllThreadQueueItems() {
+  const db = await getDb()
+  return db.query.thread_queue_items.findMany({
+    orderBy: { created_at: 'asc', queue_id: 'asc' },
+  })
+}
+
+export async function deleteThreadQueueItem(queueId: string) {
+  const db = await getDb()
+  await db.delete(schema.thread_queue_items).where(
+    orm.eq(schema.thread_queue_items.queue_id, queueId),
+  )
+}
+
+export async function deleteThreadQueueItems(threadId: string) {
+  const db = await getDb()
+  await db.delete(schema.thread_queue_items).where(
+    orm.eq(schema.thread_queue_items.thread_id, threadId),
+  )
+}
+
+export async function updateThreadQueueItemPayload({
+  queueId,
+  payloadJson,
+}: {
+  queueId: string
+  payloadJson: string
+}) {
+  const db = await getDb()
+  await db.update(schema.thread_queue_items)
+    .set({ payload_json: payloadJson })
+    .where(orm.eq(schema.thread_queue_items.queue_id, queueId))
+}
+
 export async function setThreadSession(threadId: string, sessionId: string) {
   await upsertThreadSession({ threadId, sessionId, source: 'kimaki' })
 }
