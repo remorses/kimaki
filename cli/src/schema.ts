@@ -40,12 +40,13 @@ export const thread_sessions = sqliteCore.sqliteTable('thread_sessions', {
 })
 
 export const thread_queue_items = sqliteCore.sqliteTable('thread_queue_items', {
-  queue_id: sqliteCore.text('queue_id').primaryKey().notNull(),
+  id: sqliteCore.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
+  queue_id: sqliteCore.text('queue_id').notNull().unique(),
   thread_id: sqliteCore.text('thread_id').notNull(),
   payload_json: sqliteCore.text('payload_json').notNull(),
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 }, (table) => [
-  sqliteCore.index('thread_queue_items_thread_id_created_at_queue_id_idx').on(table.thread_id, table.created_at, table.queue_id),
+  sqliteCore.index('thread_queue_items_thread_id_id_idx').on(table.thread_id, table.id),
 ])
 
 export const session_events = sqliteCore.sqliteTable('session_events', {

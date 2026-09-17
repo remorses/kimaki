@@ -11,7 +11,7 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import type { AutocompleteContext, CommandContext } from './types.js'
-import { getThreadSession } from '../database.js'
+import { deleteThreadQueueItem, getThreadSession } from '../database.js'
 import {
   resolveWorkingDirectory,
   SILENT_MESSAGE_FLAGS,
@@ -27,6 +27,32 @@ import { store } from '../store.js'
 const logger = createLogger(LogPrefix.QUEUE)
 
 export const QUEUE_REMOVE_CUSTOM_ID_PREFIX = 'queue_remove:'
+
+async function deleteThreadQueueItemWithoutRuntime(queueId: string) {
+  const row = await deleteThreadQueueItem(queueId).catch((error) => {
+    logger.error(
+      `[QUEUE] Failed to delete persisted queue item ${queueId}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    return undefined
+  })
+  if (!row) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(row.payload_json) as {
+      prompt?: string
+      username?: string
+      command?: { name: string }
+    }
+    return {
+      prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
+      username: typeof parsed.username === 'string' ? parsed.username : '',
+      command: parsed.command,
+    }
+  } catch {
+    return { prompt: '', username: '' }
+  }
+}
 
 export function buildQueueRemoveCustomId({
   threadId,
@@ -83,8 +109,19 @@ export async function handleQueueRemoveButton(
     return
   }
 
+  if (interaction.channelId && interaction.channelId !== parsed.threadId) {
+    await interaction.reply({
+      content: 'This queue button does not belong to this thread',
+      flags: MessageFlags.Ephemeral,
+    })
+    return
+  }
+
   await interaction.deferUpdate()
-  const removed = await getRuntime(parsed.threadId)?.removeQueueItemById(parsed.queueId)
+  const runtime = getRuntime(parsed.threadId)
+  const removed = runtime
+    ? await runtime.removeQueueItemById(parsed.queueId)
+    : await deleteThreadQueueItemWithoutRuntime(parsed.queueId)
   if (!removed) {
     await interaction.editReply({
       content: 'Queued message is no longer in the queue',

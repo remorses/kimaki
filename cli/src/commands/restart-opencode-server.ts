@@ -20,7 +20,10 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { disposeRuntimesForDirectory } from '../session-handler/thread-session-runtime.js'
+import {
+  disposeRuntimesForDirectory,
+  restorePersistedLocalQueues,
+} from '../session-handler/thread-session-runtime.js'
 import { registerCommands, type AgentInfo } from '../discord-command-registration.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
@@ -104,6 +107,14 @@ export async function handleRestartOpencodeServerCommand({
     content: `Opencode server **restarted** successfully${abortMsg}. Re-registering slash commands...`,
   })
   logger.log('[RESTART] Shared opencode server restarted')
+  await restorePersistedLocalQueues({
+    discordClient: command.client,
+    appId,
+  }).catch((error) => {
+    logger.warn(
+      `[RESTART] Failed to restore persisted queues: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  })
 
   // Re-register Discord slash commands after restart so new/changed
   // commands, agents, and plugins are picked up immediately.

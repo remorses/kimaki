@@ -1,5 +1,5 @@
 ---
-'kimaki': minor
+'kimaki': patch
 ---
 
 Keep `/queue` messages across bot restarts.

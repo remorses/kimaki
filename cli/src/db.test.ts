@@ -91,6 +91,75 @@ describe('getDb', () => {
     await db.delete(schema.thread_queue_items).where(orm.eq(schema.thread_queue_items.thread_id, threadId))
   })
 
+  test('rebuilds thread_queue_items that still use queue_id as the primary key', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-legacy-queue-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      const client = createClient({ url: `file:${dbPath}` })
+      await client.execute(`
+        CREATE TABLE thread_queue_items (
+          queue_id text PRIMARY KEY,
+          thread_id text NOT NULL,
+          payload_json text NOT NULL,
+          created_at datetime DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      await client.execute(`
+        CREATE INDEX thread_queue_items_thread_id_created_at_queue_id_idx
+        ON thread_queue_items (thread_id, created_at, queue_id)
+      `)
+      await client.execute(`
+        INSERT INTO thread_queue_items (queue_id, thread_id, payload_json, created_at)
+        VALUES
+          ('queue-second', 'thr-legacy-queue', '{"prompt":"second"}', '2026-09-17 10:00:02'),
+          ('queue-first', 'thr-legacy-queue', '{"prompt":"first"}', '2026-09-17 10:00:01')
+      `)
+      client.close()
+
+      process.env['KIMAKI_DB_URL'] = `file:${dbPath}`
+      await getDb()
+
+      const rows = await listThreadQueueItems('thr-legacy-queue')
+      expect(rows.map((row) => JSON.parse(row.payload_json).prompt)).toEqual([
+        'first',
+        'second',
+      ])
+      expect(rows.map((row) => row.id)).toEqual([1, 2])
+
+      await insertThreadQueueItem({
+        queueId: 'queue-third',
+        threadId: 'thr-legacy-queue',
+        payloadJson: JSON.stringify({ prompt: 'third' }),
+      })
+      const after = await listThreadQueueItems('thr-legacy-queue')
+      expect(after.map((row) => JSON.parse(row.payload_json).prompt)).toEqual([
+        'first',
+        'second',
+        'third',
+      ])
+    } finally {
+      await closeDb()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
   test('removes part_messages rows whose thread_sessions parent is gone', async () => {
     await closeDb()
 

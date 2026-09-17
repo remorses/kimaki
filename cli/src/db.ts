@@ -111,6 +111,40 @@ async function initializeDb(): Promise<KimakiDb> {
   return db
 }
 
+async function rebuildLegacyThreadQueueItems(client: Client) {
+  const info = await client.execute('PRAGMA table_info(thread_queue_items)').catch(() => undefined)
+  if (!info) {
+    return
+  }
+  const columns = new Set(info.rows.map((row) => String(row.name)))
+  if (columns.has('id')) {
+    return
+  }
+  if (!columns.has('queue_id')) {
+    return
+  }
+  await client.execute('ALTER TABLE thread_queue_items RENAME TO thread_queue_items_legacy')
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS thread_queue_items (
+      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      queue_id text NOT NULL UNIQUE,
+      thread_id text NOT NULL,
+      payload_json text NOT NULL,
+      created_at datetime DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await client.execute(`
+    INSERT INTO thread_queue_items (queue_id, thread_id, payload_json, created_at)
+    SELECT queue_id, thread_id, payload_json, created_at
+    FROM thread_queue_items_legacy
+    ORDER BY created_at, queue_id
+  `)
+  await client.execute('DROP TABLE thread_queue_items_legacy')
+  await client.execute(
+    'CREATE INDEX IF NOT EXISTS thread_queue_items_thread_id_id_idx ON thread_queue_items (thread_id, id)',
+  )
+}
+
 // CREATE TABLE IF NOT EXISTS cannot drop columns. The first two session_sleeps
 // shapes kept thread_id NOT NULL and posted_at. Inserts now omit thread_id, so
 // existing DBs fail with SQLITE_CONSTRAINT_NOTNULL until those columns go away.
@@ -135,6 +169,10 @@ async function migrateSchema({
   db: KimakiDb
   client: Client
 }): Promise<void> {
+  // schema.sql CREATE TABLE IF NOT EXISTS cannot change the primary key.
+  // Rebuild first so CREATE INDEX (... id) does not hit the old queue_id table.
+  await rebuildLegacyThreadQueueItems(client)
+
   const schemaPath = path.join(__dirname, '../src/schema.sql')
   const sql = fs.readFileSync(schemaPath, 'utf-8')
   const statements = sql

@@ -844,22 +844,23 @@ export async function listThreadQueueItems(threadId: string) {
   const db = await getDb()
   return db.query.thread_queue_items.findMany({
     where: { thread_id: threadId },
-    orderBy: { created_at: 'asc', queue_id: 'asc' },
+    orderBy: { id: 'asc' },
   })
 }
 
 export async function listAllThreadQueueItems() {
   const db = await getDb()
   return db.query.thread_queue_items.findMany({
-    orderBy: { created_at: 'asc', queue_id: 'asc' },
+    orderBy: { id: 'asc' },
   })
 }
 
 export async function deleteThreadQueueItem(queueId: string) {
   const db = await getDb()
-  await db.delete(schema.thread_queue_items).where(
+  const rows = await db.delete(schema.thread_queue_items).where(
     orm.eq(schema.thread_queue_items.queue_id, queueId),
-  )
+  ).returning()
+  return rows[0]
 }
 
 export async function deleteThreadQueueItems(threadId: string) {

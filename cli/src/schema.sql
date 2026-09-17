@@ -196,7 +196,8 @@ CREATE TABLE IF NOT EXISTS `session_start_sources` (
 );
 
 CREATE TABLE IF NOT EXISTS `thread_queue_items` (
-	`queue_id` text PRIMARY KEY,
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`queue_id` text NOT NULL UNIQUE,
 	`thread_id` text NOT NULL,
 	`payload_json` text NOT NULL,
 	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
@@ -247,4 +248,4 @@ CREATE INDEX IF NOT EXISTS `session_events_session_id_timestamp_event_index_id_i
 CREATE INDEX IF NOT EXISTS `session_events_thread_id_timestamp_event_index_id_idx` ON `session_events` (`thread_id`,`timestamp`,`event_index`,`id`);
 CREATE INDEX IF NOT EXISTS `session_sleeps_status_wake_at_idx` ON `session_sleeps` (`status`,`wake_at`);
 CREATE INDEX IF NOT EXISTS `session_start_sources_scheduled_task_id_idx` ON `session_start_sources` (`scheduled_task_id`);
-CREATE INDEX IF NOT EXISTS `thread_queue_items_thread_id_created_at_queue_id_idx` ON `thread_queue_items` (`thread_id`,`created_at`,`queue_id`);
+CREATE INDEX IF NOT EXISTS `thread_queue_items_thread_id_id_idx` ON `thread_queue_items` (`thread_id`,`id`);

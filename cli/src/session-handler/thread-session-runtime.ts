@@ -365,54 +365,38 @@ export async function restorePersistedLocalQueues({
     if (items.length === 0) {
       continue
     }
-    const current = threadState.getThreadState(threadId)?.queueItems ?? []
-    const currentIds = new Set(current.flatMap((item) => item.queueId ? [item.queueId] : []))
-    threadState.replaceQueueItems(threadId, [
-      ...items.filter((item) => item.queueId && !currentIds.has(item.queueId)),
-      ...current,
-    ])
-  }
-  for (const [threadId, items] of byThread) {
-    if (items.length === 0) {
-      continue
-    }
-    const existing = runtimes.get(threadId)
-    if (existing) {
-      await existing.dispatchAction(() => {
-        return existing.tryDrainRestoredQueue()
+    let runtime = runtimes.get(threadId)
+    if (!runtime) {
+      const fetched = await discordClient.channels.fetch(threadId).catch((error) => {
+        logger.warn(
+          `[QUEUE] Failed to fetch thread ${threadId} for restored queue: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        return null
       })
-      continue
-    }
+      if (!fetched?.isThread()) {
+        logger.warn(`[QUEUE] Skipping restored queue for missing thread ${threadId}`)
+        continue
+      }
 
-    const fetched = await discordClient.channels.fetch(threadId).catch((error) => {
-      logger.warn(
-        `[QUEUE] Failed to fetch thread ${threadId} for restored queue: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return null
-    })
-    if (!fetched?.isThread()) {
-      logger.warn(`[QUEUE] Skipping restored queue for missing thread ${threadId}`)
-      continue
-    }
+      const resolved = await resolveWorkingDirectory({ channel: fetched })
+      if (!resolved) {
+        logger.warn(`[QUEUE] Skipping restored queue for thread ${threadId}: no project directory`)
+        continue
+      }
 
-    const resolved = await resolveWorkingDirectory({ channel: fetched })
-    if (!resolved) {
-      logger.warn(`[QUEUE] Skipping restored queue for thread ${threadId}: no project directory`)
-      continue
+      const sessionId = await getThreadSession(threadId)
+      runtime = getOrCreateRuntime({
+        threadId,
+        thread: fetched,
+        projectDirectory: resolved.projectDirectory,
+        sdkDirectory: resolved.workingDirectory,
+        channelId: fetched.parentId || fetched.id,
+        appId,
+        sessionId,
+      })
     }
-
-    const sessionId = await getThreadSession(threadId)
-    const runtime = getOrCreateRuntime({
-      threadId,
-      thread: fetched,
-      projectDirectory: resolved.projectDirectory,
-      sdkDirectory: resolved.workingDirectory,
-      channelId: fetched.parentId || fetched.id,
-      appId,
-      sessionId,
-    })
     await runtime.dispatchAction(() => {
-      return runtime.tryDrainRestoredQueue()
+      return runtime.mergeRestoredQueueAndDrain(items)
     })
   }
 }
@@ -897,6 +881,7 @@ export class ThreadSessionRuntime {
 
   // Set to true by dispose(). Guards against queued work running after cleanup.
   private disposed = false
+  private dispatchingQueueId: string | undefined
 
   // Typing indicator scheduler handles.
   // `typingKeepaliveTimeout` is the 7s keepalive loop while a run stays busy.
@@ -4018,54 +4003,71 @@ export class ThreadSessionRuntime {
 
   /** Clear all queued messages. Returns the removed items. */
   async clearQueue(): Promise<threadState.QueuedMessage[]> {
-    const persistResult = await deleteThreadQueueItems(this.threadId).catch((error) => {
-      return new Error('Failed to clear persisted queue', { cause: error })
+    let cleared: threadState.QueuedMessage[] = []
+    await this.dispatchAction(async () => {
+      const persistResult = await deleteThreadQueueItems(this.threadId).catch((error) => {
+        return new Error('Failed to clear persisted queue', { cause: error })
+      })
+      if (persistResult instanceof Error) {
+        logger.error(
+          `[QUEUE] Failed to clear persisted queue for thread ${this.threadId}: ${persistResult.message}`,
+        )
+        return
+      }
+      cleared = threadState.clearQueueItems(this.threadId)
     })
-    if (persistResult instanceof Error) {
-      logger.error(
-        `[QUEUE] Failed to clear persisted queue for thread ${this.threadId}: ${persistResult.message}`,
-      )
-      return []
-    }
-    return threadState.clearQueueItems(this.threadId)
+    return cleared
   }
 
   /** Remove a queued message by its 1-based position. */
   async removeQueuePosition(position: number): Promise<threadState.QueuedMessage | undefined> {
-    const current = this.state?.queueItems[position - 1]
-    if (!current) {
-      return undefined
-    }
-    if (current.queueId) {
-      const persistResult = await deleteThreadQueueItem(current.queueId).catch((error) => {
-        return new Error('Failed to delete persisted queue item', { cause: error })
-      })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to delete persisted queue item ${current.queueId}: ${persistResult.message}`,
-        )
-        return undefined
+    let removed: threadState.QueuedMessage | undefined
+    await this.dispatchAction(async () => {
+      const current = this.state?.queueItems[position - 1]
+      if (!current) {
+        return
       }
-    }
-    return threadState.removeQueueItemAtPosition(this.threadId, position)
+      if (current.queueId) {
+        const persistResult = await deleteThreadQueueItem(current.queueId).catch((error) => {
+          return new Error('Failed to delete persisted queue item', { cause: error })
+        })
+        if (persistResult instanceof Error) {
+          logger.error(
+            `[QUEUE] Failed to delete persisted queue item ${current.queueId}: ${persistResult.message}`,
+          )
+          return
+        }
+      }
+      removed = threadState.removeQueueItemAtPosition(this.threadId, position)
+    })
+    return removed
   }
 
   /** Remove a queued message by stable queue id. */
   async removeQueueItemById(queueId: string): Promise<threadState.QueuedMessage | undefined> {
-    const current = this.state?.queueItems.find((item) => item.queueId === queueId)
-    if (!current) {
-      return undefined
-    }
-    const persistResult = await deleteThreadQueueItem(queueId).catch((error) => {
-      return new Error('Failed to delete persisted queue item', { cause: error })
+    let removed: threadState.QueuedMessage | undefined
+    await this.dispatchAction(async () => {
+      const persistResult = await deleteThreadQueueItem(queueId).catch((error) => {
+        return new Error('Failed to delete persisted queue item', { cause: error })
+      })
+      if (persistResult instanceof Error) {
+        logger.error(
+          `[QUEUE] Failed to delete persisted queue item ${queueId}: ${persistResult.message}`,
+        )
+        return
+      }
+      removed = threadState.removeQueueItemById(this.threadId, queueId)
+      if (!removed && persistResult) {
+        const parsed = parseQueuedMessagePayload({
+          queueId: persistResult.queue_id,
+          payloadJson: persistResult.payload_json,
+        })
+        if (!(parsed instanceof Error)) {
+          removed = parsed
+        }
+      }
     })
-    if (persistResult instanceof Error) {
-      logger.error(
-        `[QUEUE] Failed to delete persisted queue item ${queueId}: ${persistResult.message}`,
-      )
-      return undefined
-    }
-    return threadState.removeQueueItemById(this.threadId, queueId)
+    return removed
   }
 
   /**
@@ -4078,99 +4080,146 @@ export class ThreadSessionRuntime {
     sourceMessageId: string,
     newPrompt: string,
   ): Promise<{ found: boolean; removed: boolean }> {
-    const trimmed = newPrompt.trim()
-    const original = this.state?.queueItems.find((item) => {
-      return item.sourceMessageId === sourceMessageId
-    })
-    if (!original) return { found: false, removed: false }
-    const queueId = original.queueId
-    if (queueId) {
-      const persistResult = trimmed
-        ? await updateThreadQueueItemPayload({
-          queueId,
-          payloadJson: JSON.stringify({ ...original, prompt: trimmed }),
-        }).catch((error) => {
-          return new Error('Failed to update persisted queue item', { cause: error })
-        })
-        : await deleteThreadQueueItem(queueId).catch((error) => {
-          return new Error('Failed to delete persisted queue item', { cause: error })
-        })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to persist queue update for ${queueId}: ${persistResult.message}`,
-        )
-        return { found: true, removed: false }
+    let result: { found: boolean; removed: boolean } = { found: false, removed: false }
+    await this.dispatchAction(async () => {
+      const trimmed = newPrompt.trim()
+      const original = this.state?.queueItems.find((item) => {
+        return item.sourceMessageId === sourceMessageId
+      })
+      if (!original) {
+        result = { found: false, removed: false }
+        return
       }
-    }
-    threadState.updateQueueItemBySourceMessageId(
-      this.threadId,
-      sourceMessageId,
-      (item) => {
-        if (!trimmed) return null
-        return { ...item, prompt: trimmed }
-      },
-    )
-    if (!trimmed) return { found: true, removed: true }
-    return { found: true, removed: false }
+      const queueId = original.queueId
+      if (queueId) {
+        const persistResult = trimmed
+          ? await updateThreadQueueItemPayload({
+            queueId,
+            payloadJson: JSON.stringify({ ...original, prompt: trimmed }),
+          }).catch((error) => {
+            return new Error('Failed to update persisted queue item', { cause: error })
+          })
+          : await deleteThreadQueueItem(queueId).catch((error) => {
+            return new Error('Failed to delete persisted queue item', { cause: error })
+          })
+        if (persistResult instanceof Error) {
+          logger.error(
+            `[QUEUE] Failed to persist queue update for ${queueId}: ${persistResult.message}`,
+          )
+          result = { found: true, removed: false }
+          return
+        }
+      }
+      threadState.updateQueueItemBySourceMessageId(
+        this.threadId,
+        sourceMessageId,
+        (item) => {
+          if (!trimmed) return null
+          return { ...item, prompt: trimmed }
+        },
+      )
+      result = trimmed
+        ? { found: true, removed: false }
+        : { found: true, removed: true }
+    })
+    return result
   }
 
   /** Remove a queued message identified by its Discord source message ID. */
   async removeQueuedMessage(
     sourceMessageId: string,
   ): Promise<threadState.QueuedMessage | undefined> {
-    const current = this.state?.queueItems.find((item) => {
-      return item.sourceMessageId === sourceMessageId
-    })
-    if (!current) {
-      return undefined
-    }
-    if (current.queueId) {
-      const persistResult = await deleteThreadQueueItem(current.queueId).catch((error) => {
-        return new Error('Failed to delete persisted queue item', { cause: error })
+    let removed: threadState.QueuedMessage | undefined
+    await this.dispatchAction(async () => {
+      const current = this.state?.queueItems.find((item) => {
+        return item.sourceMessageId === sourceMessageId
       })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to delete persisted queue item ${current.queueId}: ${persistResult.message}`,
-        )
-        return undefined
+      if (!current) {
+        return
       }
-    }
-    return threadState.updateQueueItemBySourceMessageId(
-      this.threadId,
-      sourceMessageId,
-      () => null,
-    )
+      if (current.queueId) {
+        const persistResult = await deleteThreadQueueItem(current.queueId).catch((error) => {
+          return new Error('Failed to delete persisted queue item', { cause: error })
+        })
+        if (persistResult instanceof Error) {
+          logger.error(
+            `[QUEUE] Failed to delete persisted queue item ${current.queueId}: ${persistResult.message}`,
+          )
+          return
+        }
+      }
+      removed = threadState.updateQueueItemBySourceMessageId(
+        this.threadId,
+        sourceMessageId,
+        () => null,
+      )
+    })
+    return removed
   }
 
-  async tryDrainRestoredQueue(): Promise<void> {
-    await this.hydrateLiveSessionStatus()
+  async mergeRestoredQueueAndDrain(items: QueuedMessage[]): Promise<void> {
+    const current = this.state?.queueItems ?? []
+    const currentIds = new Set(current.flatMap((item) => item.queueId ? [item.queueId] : []))
+    threadState.replaceQueueItems(this.threadId, [
+      ...items.filter((item) => item.queueId && !currentIds.has(item.queueId)),
+      ...current,
+    ])
+    const liveStatus = await this.hydrateLiveSessionStatus()
+    if (liveStatus === 'unavailable') {
+      return
+    }
     await this.tryDrainQueue({ showIndicator: true })
   }
 
-  private async hydrateLiveSessionStatus(): Promise<void> {
+  private async hydrateLiveSessionStatus(): Promise<'idle' | 'busy' | 'unavailable'> {
     const sessionId = this.state?.sessionId
     if (!sessionId) {
-      return
+      return 'idle'
     }
     await this.hydrateSessionEventsFromDatabase({ sessionId })
     const getClient = await initializeOpencodeForDirectory(this.sdkDirectory)
     if (getClient instanceof Error) {
-      this.markQueueDispatchIdle(sessionId)
-      return
+      logger.warn(
+        `[QUEUE] OpenCode unavailable while restoring queue for ${this.threadId}: ${getClient.message}`,
+      )
+      return 'unavailable'
     }
     const statusResponse = await getClient().session.status({
       directory: this.sdkDirectory,
-    }).catch(() => undefined)
+    }).catch((error) => {
+      logger.warn(
+        `[QUEUE] Failed to read session status while restoring queue for ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      return undefined
+    })
     if (!statusResponse || statusResponse.error) {
-      this.markQueueDispatchIdle(sessionId)
-      return
+      return 'unavailable'
     }
     const sessionStatus = statusResponse.data?.[sessionId]
     if (!sessionStatus || sessionStatus.type === 'idle') {
       this.markQueueDispatchIdle(sessionId)
-      return
+      return 'idle'
     }
     this.markQueueDispatchBusy(sessionId)
+    return 'busy'
+  }
+
+  private async acknowledgeAcceptedQueueItem(item: QueuedMessage): Promise<void> {
+    if (!item.queueId) {
+      return
+    }
+    await this.dispatchAction(async () => {
+      const persistResult = await deleteThreadQueueItem(item.queueId!).catch((error) => {
+        return new Error('Failed to delete persisted queue item', { cause: error })
+      })
+      if (persistResult instanceof Error) {
+        logger.error(
+          `[QUEUE] Failed to persist accept of ${item.queueId}: ${persistResult.message}`,
+        )
+        return
+      }
+      threadState.removeQueueItemById(this.threadId, item.queueId!)
+    })
   }
 
   // ── Queue Drain ─────────────────────────────────────────────
@@ -4205,23 +4254,11 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const nextQueued = thread.queueItems[0]
-    if (nextQueued?.queueId) {
-      const persistResult = await deleteThreadQueueItem(nextQueued.queueId).catch((error) => {
-        return new Error('Failed to delete persisted queue item', { cause: error })
-      })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to persist drain of ${nextQueued.queueId}: ${persistResult.message}`,
-        )
-        return
-      }
-    }
-
-    const next = threadState.dequeueItem(this.threadId)
+    const next = thread.queueItems.find((item) => item.queueId !== this.dispatchingQueueId)
     if (!next) {
       return
     }
+    this.dispatchingQueueId = next.queueId
 
     logger.log(
       `[QUEUE DRAIN] Processing queued message from ${next.username}`,
@@ -4250,13 +4287,23 @@ export class ThreadSessionRuntime {
     if (dispatchSessionId) {
       this.markQueueDispatchBusy(dispatchSessionId)
     }
-    void this.dispatchPrompt(next).catch(async (err) => {
+    let accepted = false
+    void this.dispatchPrompt(next).then(async (ok) => {
+      accepted = ok
+      if (ok) {
+        await this.acknowledgeAcceptedQueueItem(next)
+      }
+    }).catch(async (err) => {
       logger.error('[DISPATCH] Prompt dispatch failed:', err)
       void notifyError(err, 'Runtime prompt dispatch failed')
       if (dispatchSessionId) {
         this.markQueueDispatchIdle(dispatchSessionId)
       }
     }).finally(() => {
+      this.dispatchingQueueId = undefined
+      if (!accepted) {
+        return
+      }
       void this.dispatchAction(() => {
         return this.tryDrainQueue({ showIndicator: true })
       })
@@ -4268,7 +4315,7 @@ export class ThreadSessionRuntime {
   // The listener is already running, so this only handles
   // session ensure + model/agent + SDK call + state.
 
-  private async dispatchPrompt(input: QueuedMessage): Promise<void> {
+  private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
     this.lastSentPartKind = undefined
@@ -4291,8 +4338,7 @@ export class ThreadSessionRuntime {
       )
       // Show indicator: this dispatch failed, so the next queued message
       // has been waiting — the user needs to see which one is starting.
-      await this.tryDrainQueue({ showIndicator: true })
-      return
+      return false
     }
     const { session, getClient, createdNewSession } = sessionResult
 
@@ -4309,8 +4355,7 @@ export class ThreadSessionRuntime {
         `Failed to update session permissions: ${updatePermissionsResult.message}`,
         { flags: NOTIFY_MESSAGE_FLAGS },
       )
-      await this.tryDrainQueue({ showIndicator: true })
-      return
+      return false
     }
 
     // ── Resolve model + agent preferences ─────────────────────
@@ -4338,8 +4383,7 @@ export class ThreadSessionRuntime {
           `Failed to resolve model: ${validatedModel.message}`,
           { flags: NOTIFY_MESSAGE_FLAGS },
         )
-        await this.tryDrainQueue({ showIndicator: true })
-        return
+        return false
       }
     }
 
@@ -4368,9 +4412,7 @@ export class ThreadSessionRuntime {
         `Failed to resolve agent: ${earlyAgentResult.message}`,
         { flags: NOTIFY_MESSAGE_FLAGS },
       )
-      // Show indicator: dispatch failed mid-setup, next queued message was waiting.
-      await this.tryDrainQueue({ showIndicator: true })
-      return
+      return false
     }
     const earlyAgentPreference = earlyAgentResult.agentPreference
     const earlyAvailableAgents = earlyAgentResult.agents
@@ -4419,9 +4461,7 @@ export class ThreadSessionRuntime {
         `Failed to resolve model: ${earlyModelResult.message}`,
         { flags: NOTIFY_MESSAGE_FLAGS },
       )
-      // Show indicator: dispatch failed mid-setup, next queued message was waiting.
-      await this.tryDrainQueue({ showIndicator: true })
-      return
+      return false
     }
     const earlyModelParam = earlyModelResult
     if (!earlyModelParam) {
@@ -4430,9 +4470,7 @@ export class ThreadSessionRuntime {
         this.thread,
         'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
       )
-      // Show indicator: dispatch failed, next queued message was waiting.
-      await this.tryDrainQueue({ showIndicator: true })
-      return
+      return false
     }
 
     // Resolve thinking variant
@@ -4612,10 +4650,7 @@ export class ThreadSessionRuntime {
           `✗ Failed to prepare command system prompt: ${systemWriteResult.message}`,
           { flags: NOTIFY_MESSAGE_FLAGS },
         )
-        await this.dispatchAction(() => {
-          return this.tryDrainQueue({ showIndicator: true })
-        })
-        return
+        return false
       }
       const commandResponse = await getClient().session.command(
         {
@@ -4647,10 +4682,7 @@ export class ThreadSessionRuntime {
             '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
             { flags: NOTIFY_MESSAGE_FLAGS },
           )
-          await this.dispatchAction(() => {
-            return this.tryDrainQueue({ showIndicator: true })
-          })
-          return
+          return false
         }
 
         const commandErrorForAbortCheck: unknown = commandResponse
@@ -4659,7 +4691,7 @@ export class ThreadSessionRuntime {
             `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
           )
           this.stopTyping()
-          return
+          return true
         }
 
         logger.error(
@@ -4672,10 +4704,7 @@ export class ThreadSessionRuntime {
           `✗ Unexpected bot Error: ${commandResponse.message}`,
           { flags: NOTIFY_MESSAGE_FLAGS },
         )
-        await this.dispatchAction(() => {
-          return this.tryDrainQueue({ showIndicator: true })
-        })
-        return
+        return false
       }
 
       if (commandResponse.error) {
@@ -4685,7 +4714,7 @@ export class ThreadSessionRuntime {
             `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
           )
           this.stopTyping()
-          return
+          return true
         }
         const apiError = new Error(`OpenCode API error: ${errorMessage}`)
         logger.error(`[DISPATCH] ${apiError.message}`)
@@ -4694,10 +4723,7 @@ export class ThreadSessionRuntime {
         await sendThreadMessage(this.thread, `✗ ${apiError.message}`, {
           flags: NOTIFY_MESSAGE_FLAGS,
         })
-        await this.dispatchAction(() => {
-          return this.tryDrainQueue({ showIndicator: true })
-        })
-        return
+        return false
       }
 
       logger.log(`[DISPATCH] Successfully ran command for session ${session.id}`)
@@ -4707,7 +4733,7 @@ export class ThreadSessionRuntime {
         source: resolveTurnSource(input),
         agent: earlyAgentPreference,
       })
-      return
+      return true
     }
 
     await waitForGlobalEventListener()
@@ -4746,10 +4772,7 @@ export class ThreadSessionRuntime {
       await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`, {
         flags: NOTIFY_MESSAGE_FLAGS,
       })
-      await this.dispatchAction(() => {
-        return this.tryDrainQueue({ showIndicator: true })
-      })
-      return
+      return false
     }
 
     logger.log(
@@ -4761,6 +4784,7 @@ export class ThreadSessionRuntime {
       source: resolveTurnSource(input),
       agent: earlyAgentPreference,
     })
+    return true
   }
 
   // ── Session Ensure ──────────────────────────────────────────
