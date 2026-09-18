@@ -18,7 +18,3 @@
 	path = subrouter
 	url = https://github.com/remorses/subrouter
 	branch = main
-[submodule "opencode-v2"]
-	path = opencode-v2
-	url = https://github.com/anomalyco/opencode.git
-	branch = v2
