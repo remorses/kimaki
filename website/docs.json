@@ -87,6 +87,7 @@
         "group": "Guides",
         "icon": "lucide:book-open",
         "pages": [
+          "docs/guides/agent-machine-setup",
           "docs/guides/troubleshooting",
           "docs/guides/report-bugs",
           "docs/guides/ci-automation",

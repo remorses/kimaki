@@ -18,7 +18,6 @@ import {
   listTrackedTextChannels,
   getGuildCategories,
   setGuildCategoryId,
-  setGuildAudioCategoryId,
 } from './database.js'
 import { getProjectsDir } from './config.js'
 import { execAsync } from './worktrees.js'
@@ -70,14 +69,14 @@ async function trackProjectRegistered({
 
 const logger = createLogger(LogPrefix.CHANNEL)
 
-function defaultCategoryName(botName?: string) {
-  const isKimakiBot = botName?.toLowerCase() === 'kimaki'
-  return botName && !isKimakiBot ? `Kimaki ${botName}` : 'Kimaki'
-}
+type CategoryKind = 'text' | 'audio'
 
-function defaultAudioCategoryName(botName?: string) {
+function defaultCategoryName(kind: CategoryKind, botName?: string) {
   const isKimakiBot = botName?.toLowerCase() === 'kimaki'
-  return botName && !isKimakiBot ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
+  if (kind === 'audio') {
+    return botName && !isKimakiBot ? `Kimaki Audio ${botName}` : 'Kimaki Audio'
+  }
+  return botName && !isKimakiBot ? `Kimaki ${botName}` : 'Kimaki'
 }
 
 function defaultKimakiChannelName({
@@ -163,90 +162,58 @@ async function adoptParentFromTrackedChannels({
   return null
 }
 
-async function createAndBindCategory({
+async function resolveKimakiCategory({
   guild,
-  name,
   kind,
+  botName,
 }: {
   guild: Guild
-  name: string
-  kind: 'text' | 'audio'
-}): Promise<CategoryChannel> {
+  kind: CategoryKind
+  botName?: string
+}) {
+  const stored = await getGuildCategories(guild.id)
+  const storedId = kind === 'audio' ? stored?.audio_category_id : stored?.category_id
+  if (storedId) {
+    const existing = await fetchCategoryById(guild, storedId)
+    if (existing) return existing
+  }
+
+  const adopted = await adoptParentFromTrackedChannels({
+    guild,
+    channelType: kind === 'audio' ? 'voice' : 'text',
+  })
+  if (adopted) {
+    await setGuildCategoryId({
+      guildId: guild.id,
+      kind,
+      categoryId: adopted.id,
+    })
+    return adopted
+  }
+
   const created = await guild.channels.create({
-    name,
+    name: defaultCategoryName(kind, botName),
     type: ChannelType.GuildCategory,
   })
-  if (kind === 'audio') {
-    await setGuildAudioCategoryId({
-      guildId: guild.id,
-      audioCategoryId: created.id,
-    })
-  } else {
-    await setGuildCategoryId({ guildId: guild.id, categoryId: created.id })
-  }
+  await setGuildCategoryId({
+    guildId: guild.id,
+    kind,
+    categoryId: created.id,
+  })
   return created
-}
-
-async function resolveKimakiCategory(guild: Guild, botName?: string) {
-  const stored = await getGuildCategories(guild.id)
-  if (stored?.category_id) {
-    const existing = await fetchCategoryById(guild, stored.category_id)
-    if (existing) return existing
-  }
-
-  const adopted = await adoptParentFromTrackedChannels({
-    guild,
-    channelType: 'text',
-  })
-  if (adopted) {
-    await setGuildCategoryId({ guildId: guild.id, categoryId: adopted.id })
-    return adopted
-  }
-
-  return createAndBindCategory({
-    guild,
-    name: defaultCategoryName(botName),
-    kind: 'text',
-  })
-}
-
-async function resolveKimakiAudioCategory(guild: Guild, botName?: string) {
-  const stored = await getGuildCategories(guild.id)
-  if (stored?.audio_category_id) {
-    const existing = await fetchCategoryById(guild, stored.audio_category_id)
-    if (existing) return existing
-  }
-
-  const adopted = await adoptParentFromTrackedChannels({
-    guild,
-    channelType: 'voice',
-  })
-  if (adopted) {
-    await setGuildAudioCategoryId({
-      guildId: guild.id,
-      audioCategoryId: adopted.id,
-    })
-    return adopted
-  }
-
-  return createAndBindCategory({
-    guild,
-    name: defaultAudioCategoryName(botName),
-    kind: 'audio',
-  })
 }
 
 export function ensureKimakiCategory(guild: Guild, botName?: string) {
   return ensureCategorySerialized({
     key: `${guild.id}:text`,
-    run: () => resolveKimakiCategory(guild, botName),
+    run: () => resolveKimakiCategory({ guild, kind: 'text', botName }),
   })
 }
 
 export function ensureKimakiAudioCategory(guild: Guild, botName?: string) {
   return ensureCategorySerialized({
     key: `${guild.id}:audio`,
-    run: () => resolveKimakiAudioCategory(guild, botName),
+    run: () => resolveKimakiCategory({ guild, kind: 'audio', botName }),
   })
 }
 

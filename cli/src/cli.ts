@@ -25,6 +25,7 @@ import projectCommands from './cli-commands/project.js'
 import sendCommands from './cli-commands/send.js'
 import sessionCommands from './cli-commands/session.js'
 import taskCommands from './cli-commands/task.js'
+import threadCommands from './cli-commands/thread.js'
 import userCommands from './cli-commands/user.js'
 import {
   EXIT_NO_RESTART,
@@ -423,6 +424,7 @@ cli.use(miscCommands)
 cli.use(sendCommands)
 cli.use(taskCommands)
 cli.use(projectCommands)
+cli.use(threadCommands)
 cli.use(userCommands)
 cli.use(sessionCommands)
 cli.use(maintenanceCommands)

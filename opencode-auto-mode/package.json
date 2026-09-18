@@ -1,6 +1,6 @@
 {
   "name": "@kimaki/automode",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "OpenCode plugin that gates tool execution with a two-stage LLM classifier, like Claude Code auto mode.",
   "main": "./dist/index.js",
@@ -48,7 +48,12 @@
   "homepage": "https://github.com/remorses/kimaki",
   "bugs": "https://github.com/remorses/kimaki/issues",
   "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
+    "@ai-sdk/gateway": "4.0.85",
+    "ai": "7.0.105",
     "unbash": "^4.0.11"
   },
   "devDependencies": {

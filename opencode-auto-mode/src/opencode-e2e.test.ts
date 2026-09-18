@@ -170,9 +170,7 @@ beforeAll(async () => {
   }
   for (const [key, value] of Object.entries({
     ...xdg,
-    OPENCODE_AUTO_MODE: JSON.stringify({
-      model: 'deterministic-provider/deterministic-v2',
-    }),
+    OPENCODE_AUTO_MODE: JSON.stringify({ model: 'main' }),
   })) {
     savedEnv[key] = process.env[key]
     process.env[key] = value
@@ -216,9 +214,7 @@ beforeAll(async () => {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...xdg,
-    OPENCODE_AUTO_MODE: JSON.stringify({
-      model: 'deterministic-provider/deterministic-v2',
-    }),
+    OPENCODE_AUTO_MODE: JSON.stringify({ model: 'main' }),
   }
   delete env.KIMAKI
   serverProcess = spawn(opencode, ['serve', '--port', String(port), '--hostname', '127.0.0.1'], {

@@ -1249,33 +1249,25 @@ export async function listGuildCategoryIds(): Promise<string[]> {
 
 export async function setGuildCategoryId({
   guildId,
+  kind,
   categoryId,
 }: {
   guildId: string
+  kind: 'text' | 'audio'
   categoryId: string
 }) {
   const db = await getDb()
+  const values = kind === 'audio'
+    ? { guild_id: guildId, audio_category_id: categoryId }
+    : { guild_id: guildId, category_id: categoryId }
+  const set = kind === 'audio'
+    ? { audio_category_id: categoryId }
+    : { category_id: categoryId }
   await db.insert(schema.guild_categories)
-    .values({ guild_id: guildId, category_id: categoryId })
+    .values(values)
     .onConflictDoUpdate({
       target: schema.guild_categories.guild_id,
-      set: { category_id: categoryId },
-    })
-}
-
-export async function setGuildAudioCategoryId({
-  guildId,
-  audioCategoryId,
-}: {
-  guildId: string
-  audioCategoryId: string
-}) {
-  const db = await getDb()
-  await db.insert(schema.guild_categories)
-    .values({ guild_id: guildId, audio_category_id: audioCategoryId })
-    .onConflictDoUpdate({
-      target: schema.guild_categories.guild_id,
-      set: { audio_category_id: audioCategoryId },
+      set,
     })
 }
 

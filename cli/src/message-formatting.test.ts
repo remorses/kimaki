@@ -192,7 +192,7 @@ describe('planAssistantTurnFlush', () => {
     `)
   })
 
-  test('progress holds unfinished last text and following tools', () => {
+  test('progress sends tools immediately while unfinished text is held', () => {
     expect(
       plan([text('t1', 'status', false), tool('tool1')], 'progress'),
     ).toMatchInlineSnapshot(`
@@ -202,12 +202,55 @@ describe('planAssistantTurnFlush', () => {
             "id": "t1",
             "quoteText": false,
           },
+        ],
+        "send": [
           {
             "id": "tool1",
             "quoteText": false,
           },
         ],
+      }
+    `)
+  })
+
+  test('progress holds unfinished text only when nothing else is ready', () => {
+    expect(plan([text('t1', 'status', false)], 'progress')).toMatchInlineSnapshot(`
+      {
+        "hold": [
+          {
+            "id": "t1",
+            "quoteText": false,
+          },
+        ],
         "send": [],
+      }
+    `)
+  })
+
+  test('progress sends completed text and later tools while later text is still open', () => {
+    expect(
+      plan(
+        [text('t1', 'first'), text('t2', 'second', false), tool('tool1')],
+        'progress',
+      ),
+    ).toMatchInlineSnapshot(`
+      {
+        "hold": [
+          {
+            "id": "t2",
+            "quoteText": false,
+          },
+        ],
+        "send": [
+          {
+            "id": "t1",
+            "quoteText": true,
+          },
+          {
+            "id": "tool1",
+            "quoteText": false,
+          },
+        ],
       }
     `)
   })
@@ -360,6 +403,18 @@ describe('planAssistantTurnFlush', () => {
         'progress',
       ).send.find((entry) => entry.id === 't1'),
     ).toEqual({ id: 't1', quoteText: true })
+  })
+
+  test('progress keeps sleep-tool quote context after that tool is already sent', () => {
+    const parts = [text('t1', 'wait'), tool('sleep1', 'kimaki_sleep')]
+    expect(plan(parts, 'progress').send.find((entry) => entry.id === 't1')).toEqual({
+      id: 't1',
+      quoteText: false,
+    })
+    expect(plan([text('t1', 'wait')], 'progress').send.find((entry) => entry.id === 't1')).toEqual({
+      id: 't1',
+      quoteText: true,
+    })
   })
 
   test('progress does not quote earlier text before an interactive tool', () => {

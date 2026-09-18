@@ -91,6 +91,8 @@ The setup wizard gives you two options:
 
 Both modes work identically after setup. Keep the CLI running; it's the bridge between Discord and your machine.
 
+Agents installing Kimaki on a laptop or VPS should follow [Set up Kimaki from an agent](https://kimaki.dev/docs/guides/agent-machine-setup) instead of cloning this repo.
+
 ## Commands
 
 Kimaki ships a full set of slash commands and a CLI. The most common slash commands:

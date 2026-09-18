@@ -10,11 +10,11 @@ icon: server
 
 When you run `kimaki` on a computer, it spawns OpenCode servers for projects on that machine. The bot can only access directories on the machine where it's running.
 
-To control multiple machines:
+To control multiple machines, run **gateway mode** on each box and install the shared bot in the same Discord server. Agents should follow [Set up Kimaki from an agent](./agent-machine-setup.mdx).
 
-1. Create a separate Discord bot for each machine (or use gateway mode on each)
-2. Run `kimaki` on each machine
-3. Add all bots to the same Discord server
+1. Run `npx -y kimaki@latest --gateway` on each machine
+2. Authorize the install URL in the same Discord server
+3. Map projects with `kimaki project add` or `/add-project`
 
 Each channel shows which bot (machine) it's connected to. You can have channels from different machines in the same server, controlled by different bots.
 

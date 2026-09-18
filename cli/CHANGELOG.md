@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.29.0
+
+1. **Continue a thread on another computer with `kimaki thread list`.** Session IDs live only in the SQLite database and OpenCode server of the machine that created them, but Discord thread IDs work everywhere. Find a remote channel, list its threads, then send by thread ID:
+
+   ```bash
+   kimaki project list --all --json
+   kimaki thread list --channel <channel_id> --json
+   kimaki send --thread <thread_id> --prompt 'continue the work'
+   ```
+
+   The command lists active and recently archived public threads. Use `--thread`, not `--session`, for threads created on another machine. The system prompt now teaches agents to resolve a remote channel with `kimaki project list --all --json` (remote rows have no local directory, so `--project` and `--session` do not work for them).
+
+2. **Each Kimaki machine gets its own Discord group.** New project channels now go into a Discord category bound to this machine by snowflake id, stored in local SQLite. A second install in the same server creates another **Kimaki** group instead of sharing the first one. You can rename those groups; Kimaki still uses the stored id. Existing installs adopt the parent of channels they already created, so current projects stay put.
+
+3. **`/queue` messages now survive bot restarts.** Queued messages live in SQLite. After a restart, Kimaki restores them and sends the next one when the session is idle, keeping FIFO order. Remove-from-queue buttons still work after restart. This also fixes a startup crash on existing databases whose `thread_queue_items` table still used the old `queue_id` primary key (`SQLITE_ERROR: no such column: id`); Kimaki rebuilds that table before creating the new index.
+
+4. **Richer `kimaki session list`.** Every row now shows `status: working` or `status: idle`, plus `tokens: N` when available (read straight from the session object, so the command stays fast). New `--all` flag lists sessions across every locally registered project. `--json` output gains `status`, `model`, and `tokens`.
+
+   ```
+   ses_abc | Fix auth timeout | /path/to/repo | 2026-01-01T00:00:00Z | (kimaki) | status: working | tokens: 84k | thread: 123456789012345678
+   ```
+
+5. **`/session-id` now shows the Discord thread ID** next to the OpenCode session ID, so you can attach to the session from any machine.
+
+   ```
+   **Session ID:** `ses_abc`
+   **Thread ID:** `123456789012345678`
+   ```
+
+6. **Discord tool lines appear as soon as a tool starts.** Kimaki used to hold every part after unfinished assistant text, so a running tool waited for that text to end. Progress flush now holds only the open text part, so tool messages such as `┣ bash` show up immediately. Short text before sleep, question, or action-button tools still stays full width after those tools are sent.
+
+7. **Fixed Discord replies disappearing behind Subrouter provider notices.** Kimaki keeps assistant text, tool calls, and completion output attached to the active user turn while still hiding internal notice messages from turn selection.
+
+8. **Synthetic user prompt context no longer leaks into Discord.** Injected parts such as `[current git branch is main]` and `<discord-user />` stay hidden. Subrouter fallback notices still post as silent bot messages.
+
+9. **Fixed `kimaki upload-to-discord` posting into the parent thread from `/btw` and `/fork` sessions.** Forked sessions copy the parent system prompt, so `--session` still names the parent. Bash now injects the live OpenCode session ID and upload prefers it, and each turn repeats the live session ID and Discord thread ID in synthetic context.
+
+   ```bash
+   # still write --session; bash uploads to the current thread anyway
+   kimaki upload-to-discord --session ses_parent /tmp/shot.png
+   ```
+
+10. **Keep OpenCode subagents working when a model invents an invalid `task_id`.** Kimaki now strips task resume IDs that lack OpenCode's `ses` prefix before the `task` tool runs, so valid sessions still resume. Works around [anomalyco/opencode#49599](https://github.com/anomalyco/opencode/issues/49599), where Grok supplies random UUIDs for the optional field.
+
 ## 0.28.0
 
 1. **Make Discord turns easier to scan.** Assistant text no longer starts with a diamond. Text and tools stay full width. When the part kind changes, Kimaki starts the next part with a blank line. Consecutive same-kind parts stay adjacent.

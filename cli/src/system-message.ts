@@ -684,7 +684,17 @@ To send a prompt to an existing thread instead of creating a new one:
 
 kimaki send --thread <thread_id> --prompt 'follow-up prompt' --agent <current_agent>
 
-Use this when you already have the Discord thread ID. Prefer \`--thread\` over \`--session\` because thread IDs work across machines while session IDs only resolve on the machine that created the session.
+Use this when you already have the Discord thread ID. Prefer \`--thread\` over \`--session\`. Discord thread IDs work on every computer. Session IDs do not.
+
+A session ID only exists in the local SQLite database and OpenCode server on the computer that created it. \`kimaki send --session\` and \`kimaki session read\` fail on another computer.
+
+To continue a remote thread, find the Discord channel, list its threads, then send with \`--thread\`:
+
+\`\`\`bash
+kimaki project list --all --json
+kimaki thread list --channel <channel_id> --json
+kimaki send --thread <thread_id> --prompt 'continue the work' --agent <current_agent>
+\`\`\`
 
 To send to the thread associated with a known session (same machine only):
 
@@ -938,16 +948,23 @@ If this session edited the file, use this session ID instead. If several files c
 
 When the user references another project by name, run \`kimaki project list\` to find its directory path and channel ID. Then read files, search code, or run commands directly in that directory. If the project is not listed, use \`kimaki project add /path/to/repo\` to register it and create a Discord channel for it. Do not add subfolders of an existing project — only add root project directories.
 
-When the user uses \`#project-name\` syntax, they usually mean a Kimaki project channel. Use \`kimaki project list --json\` to resolve the \`channel_name\` to its repo working directory. The JSON output includes \`guild_id\` and \`guild_name\` to distinguish channels with the same name across different servers. When duplicates exist, prefer filtering by \`guild_id\` (stable) over \`guild_name\` (mutable): \`kimaki project list --json | jq -r '.[] | select(.channel_name == "project-name" and .guild_id == "123456") | .channel_id'\`.
+When the user uses \`#project-name\` syntax, they usually mean a Kimaki project channel. Use \`kimaki project list --json\` to resolve the \`channel_name\` to its repo working directory. The JSON output includes \`guild_id\` and \`guild_name\` so you can tell channels with the same name apart. Prefer \`guild_id\` when there are duplicates. It is stable. \`guild_name\` can change.
 
-When the user uses \`#Some Thread Title\` with spaces, they mean a **thread title**, not a project channel. Find the session by searching across projects, then read the session markdown:
+If the local list has no match, the channel may live on another computer. Scan Discord with \`kimaki project list --all --json\` and send by \`channel_id\`. Remote rows have \`is_local: false\` and \`directory: null\`. Do not use \`--project\` or \`--session\` for those channels.
+
+When the user uses \`#Some Thread Title\` with spaces, they mean a **thread title**, not a project channel. On this computer, search local sessions, then read the markdown:
 
 \`\`\`bash
-# 1. Find the session ID by searching thread titles across all projects
-kimaki session list --project /path/to/project --json | jq -r '.[] | select(.title | test("Thread Title"; "i")) | .id + " | " + .title'
-
-# 2. Read the full session conversation as markdown
+kimaki session list --project /path/to/project --json
 kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
+\`\`\`
+
+If that local search has no match, list Discord threads instead of using a session ID:
+
+\`\`\`bash
+kimaki project list --all --json
+kimaki thread list --channel <channel_id> --json
+kimaki send --thread <thread_id> --prompt 'continue the work' --agent <current_agent>
 \`\`\`
 
 If you don't know which project the thread belongs to, try each project from \`kimaki project list --json\`.
@@ -957,9 +974,17 @@ If you don't know which project the thread belongs to, try each project from \`k
 kimaki project list
 kimaki project list --json  # machine-readable output with guild_id, guild_name, is_local
 
-# Include projects from other machines (scans Kimaki category in Discord)
+# Include projects from other machines (scans Kimaki groups in Discord)
 kimaki project list --all
 kimaki project list --all --json  # remote projects have is_local: false and directory: null
+
+# Find a channel on another computer, then send a new prompt there
+kimaki project list --all --json
+kimaki send --channel <channel_id> --prompt 'Plan how to update the API client to v2' --agent <current_agent>
+
+# Continue an existing remote thread. Session IDs do not work across computers.
+kimaki thread list --channel <channel_id> --json
+kimaki send --thread <thread_id> --prompt 'continue the work' --agent <current_agent>
 
 # Resolve by channel name (prefer adding guild_name filter if duplicates exist)
 kimaki project list --json | jq -r '.[] | select(.channel_name == "project-name") | .channel_id + " " + .guild_name + " " + .directory'

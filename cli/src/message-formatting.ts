@@ -280,29 +280,23 @@ export function planAssistantTurnFlush<T extends {
   hold: Array<{ id: string; quoteText: boolean }>
   sendParts: Array<PlannedAssistantTurnPart<T>>
 } {
-  const lastText = parts.filter(isNonEmptyTextPart).at(-1)
-  const lastTextIndex = lastText
-    ? parts.findLastIndex((part) => part.id === lastText.id)
-    : -1
   const throughIndex = throughPartId
     ? parts.findIndex((part) => part.id === throughPartId)
     : -1
 
   const sendUntil = (() => {
-    if (mode === 'final') return parts.length
-    if (mode === 'interactive') {
-      if (throughIndex >= 0) return throughIndex + 1
-      return parts.length
-    }
-    if (!lastText) return parts.length
-    // Hold unfinished last text and anything after it so tool order stays intact.
-    if (!lastText.time?.end) return lastTextIndex
+    if (mode === 'interactive' && throughIndex >= 0) return throughIndex + 1
     return parts.length
   })()
 
   const sendParts: Array<PlannedAssistantTurnPart<T>> = []
   const holdParts: T[] = []
   for (const [index, part] of parts.entries()) {
+    // Live tools must not wait for the current text part to end.
+    if (mode === 'progress' && part.type === 'text' && !part.time?.end) {
+      holdParts.push(part)
+      continue
+    }
     if (index < sendUntil) {
       sendParts.push({
         part,

@@ -4,7 +4,7 @@
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import { AutoModeClassifier } from './classify.ts'
 import { CLASSIFIER_POLICY } from './classifier.ts'
-import { getDefaultConfig, loadConfig, resolveModel } from './config.ts'
+import { getDefaultConfig, loadConfig } from './config.ts'
 import { decide } from './decide.ts'
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -12,7 +12,29 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-async function loadUserText({
+type SessionMessage = {
+  info: {
+    role: string
+    model?: { providerID: string; modelID: string }
+    providerID?: string
+    modelID?: string
+    summary?: unknown
+  }
+  parts?: Array<{ type: string; text?: string }>
+}
+
+export function sessionContextFromMessages(messages: SessionMessage[]) {
+  const message = messages.findLast((entry) => entry.info.role === 'user')
+  if (!message?.info.model) return { kind: 'error' as const }
+  const userText = (message.parts ?? [])
+    .filter((part) => part.type === 'text' && typeof part.text === 'string' && part.text.trim())
+    .map((part) => part.text)
+    .join('\n')
+  if (!userText) return { kind: 'error' as const }
+  return { kind: 'ok' as const, userText, mainModel: message.info.model }
+}
+
+async function loadSessionContext({
   client,
   sessionID,
   directory,
@@ -27,17 +49,8 @@ async function loadUserText({
       query: { directory },
     })
     .catch(() => undefined)
-  const texts: string[] = []
-  for (const message of messages?.data ?? []) {
-    const info = (message as { info?: { role?: string } }).info
-    if (info?.role !== 'user') continue
-    for (const part of message.parts ?? []) {
-      if (part.type === 'text' && typeof part.text === 'string' && part.text.trim()) {
-        texts.push(part.text)
-      }
-    }
-  }
-  return texts.at(-1) ?? ''
+  if (!messages?.data) return { kind: 'error' as const }
+  return sessionContextFromMessages(messages.data)
 }
 
 export function createAutoModePlugin({ alwaysEnabled }: { alwaysEnabled: boolean }): Plugin {
@@ -50,19 +63,6 @@ export function createAutoModePlugin({ alwaysEnabled }: { alwaysEnabled: boolean
       client: input.client,
       directory: input.directory,
     })
-    const resolvedModelPromise = input.client.provider
-      .list({ query: { directory: input.directory } })
-      .then((providers) => {
-        const availableModels = new Set<string>()
-        for (const provider of providers.data?.all ?? []) {
-          for (const modelId of Object.keys(provider.models ?? {})) {
-            availableModels.add(`${provider.id}/${modelId}`)
-          }
-        }
-        return resolveModel({ config, availableModels })
-      })
-      .catch(() => config.model)
-
     return {
       'experimental.chat.system.transform': async (transformInput, output) => {
         if (!transformInput.sessionID) return
@@ -85,20 +85,25 @@ export function createAutoModePlugin({ alwaysEnabled }: { alwaysEnabled: boolean
         if (decision.kind === 'deny') {
           throw new Error(`[auto-mode] ${decision.reason}`)
         }
-        const resolvedModel = await resolvedModelPromise
-        const userText = await loadUserText({
+        const context = await loadSessionContext({
           client: input.client,
           sessionID: toolInput.sessionID,
           directory: input.directory,
         })
+        if (context.kind === 'error') {
+          throw new Error(
+            '[auto-mode] The current user turn could not be loaded; auto mode fails closed.',
+          )
+        }
         const result = await classifier
           .classify({
-            config: { ...config, model: resolvedModel },
+            config,
             input: {
               tool: toolInput.tool,
               args: output.args,
-              userText,
+              userText: context.userText,
             },
+            mainModel: context.mainModel,
           })
           .catch((error) => {
             const reason = error instanceof Error ? error.message : String(error)

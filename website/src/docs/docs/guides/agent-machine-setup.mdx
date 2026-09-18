@@ -1,0 +1,149 @@
+---
+$schema: https://holocron.so/frontmatter.json
+title: "Set up Kimaki from an agent"
+sidebarTitle: Agent setup
+description: "Install Kimaki on a laptop or VPS from an agent. Start gateway mode, authorize Discord, then map a project. Use Playwriter only when Chrome is already logged in."
+icon: lucide:bot
+prompt: |
+  Write an agent-facing setup guide from @/cli/src/cli-runner.ts gateway onboarding,
+  @/website/src/docs/docs/guides/docker.mdx, @/website/src/docs/docs/guides/programmatic-gateway.mdx,
+  and @/website/src/docs/docs/guides/advanced-setup.mdx.
+
+  Tell agents to read this page before installing Kimaki on a machine or Discord server.
+  Use npx kimaki@latest --gateway. No custom scripts. Cover SSH laptops, VPS Docker,
+  Discord authorize via Playwriter or asking the user, then project add.
+---
+
+Agents: **read this page first** when asked to install Kimaki on a machine or into a Discord server.
+
+Do not invent a Discord bot. Do not clone the GitHub repo unless the user asks for a source checkout. Run the **published CLI**.
+
+```bash
+npx -y kimaki@latest --gateway
+```
+
+```diagram
+  target machine                 browser already on Discord                 Discord
+ ┌──────────────────────┐       ┌───────────────────────────────┐       ┌─────────────┐
+ │ kimaki --gateway     │──────>│ install_url                   │──────>│ pick server │
+ │ wait for authorized  │       │ Playwriter, or send the user  │       │ Authorize   │
+ │ then project add     │<──────│ the URL                       │<──────│             │
+ └──────────────────────┘       └───────────────────────────────┘       └─────────────┘
+```
+
+## 1. Reach the machine
+
+Kimaki runs on the machine that holds the code. SSH there, or open a shell on that box.
+
+On a **Mac** you will control over SSH:
+
+1. Turn on **Remote Login**.
+2. Keep the Mac **awake and unlocked**. Ping can still work while SSH dies if the Mac slept or the lock screen is up.
+3. Disable sleep once SSH works:
+
+```bash
+sudo pmset -a sleep 0 disksleep 0 displaysleep 0
+```
+
+Need **Node 20+**. Then use `npx`. Do not write helper scripts.
+
+<Aside>
+<Note>
+A **second Kimaki** on the same machine needs its own data dir and lock port. See [Advanced Setup](./advanced-setup.mdx).
+</Note>
+</Aside>
+
+## 2. Start gateway mode
+
+Gateway mode uses the **shared Kimaki bot**. No Discord Developer Portal.
+
+```bash
+npx -y kimaki@latest --gateway
+```
+
+Leave that process running. It is the bridge.
+
+SSH and Docker have **no TTY**. Kimaki prints SSE lines on stdout. Watch for `install_url`:
+
+```
+data: {"type":"install_url","url":"https://kimaki.dev/discord-install?clientId=...&clientSecret=..."}
+```
+
+If the log scrolled away:
+
+```bash
+npx -y kimaki discord-install-url --gateway
+```
+
+<Aside>
+<Warning>
+That URL contains the **client secret**. Do not paste it in a public Discord channel. Authorization waits about **5 minutes**.
+</Warning>
+</Aside>
+
+## 3. Install the bot in Discord
+
+Open the install URL in a browser that is already logged into **Discord**. Pick the target server. Click **Authorize**.
+
+### Playwriter
+
+Use **Playwriter** only when you can drive Chrome on a machine that is already logged into Discord. That can be the agent machine, not the Kimaki machine.
+
+1. Open the install URL.
+2. Select the Discord server.
+3. Click **Continue**, then **Authorize**.
+4. Wait until the page reaches [kimaki.dev/install-success](https://kimaki.dev/install-success).
+
+If Playwriter is missing, Discord is not logged in, or OAuth is stuck, **stop**. Send the user the URL in a private place and ask them to Authorize.
+
+### After Authorize
+
+Watch the same Kimaki process:
+
+| Event         | Meaning                                 |
+| ------------- | --------------------------------------- |
+| `install_url` | Open this URL once                      |
+| `authorized`  | Discord install succeeded               |
+| `ready`       | Bot is connected and listening          |
+| `error`       | Read `message`. Do not wipe `~/.kimaki` |
+
+The bot creates its own Discord **group** on that machine. Do not create categories by hand.
+
+## 4. Map a project
+
+From another shell on the **same** machine, while the bot is still running:
+
+```bash
+npx -y kimaki project add /path/to/repo
+```
+
+Or in Discord: **`/add-project`**. Then **`/login`** so the agent has a model. See [Managing Projects](../configuration/projects.mdx) and [Models & Subscriptions](../getting-started/subscriptions.mdx).
+
+Confirm:
+
+```bash
+npx -y kimaki project list
+tail -n 50 ~/.kimaki/kimaki.log
+```
+
+You want `Discord bot is running!` and the new channel in `project list`.
+
+## 5. VPS or Docker
+
+On a **VPS**, prefer Docker with a persistent volume. Same gateway flow: copy `install_url` from `docker compose logs -f`, then Authorize.
+
+Follow [Deploy Kimaki on a VPS with Docker](./docker.mdx). Do not wrap that in extra scripts.
+
+Without Docker, SSH in and run the same `npx -y kimaki@latest --gateway` command. Keep the process alive with the host's usual supervisor (`systemd`, Docker `restart`, or a terminal multiplexer). Parse SSE the same way.
+
+Platforms that spawn Kimaki as a child process should read [Programmatic Gateway](./programmatic-gateway.mdx).
+
+## Rules
+
+- Use **`npx -y kimaki@latest --gateway`**. Do not install from git.
+- Do not create a Discord application unless the user asks for **self-hosted** mode.
+- Do not clone this repo to run Kimaki. Source checkouts lag npm.
+- Do not share the install URL in public chat.
+- Do not kill an existing Kimaki on the machine. Set `KIMAKI_LOCK_PORT` and `--data-dir` for a second instance.
+- Do not rename Discord groups by API unless the user asks. Kimaki stores the category **id**.
+- If `project add` fails with **50 channels** in a shared Kimaki group, the CLI is old. Upgrade with `npx -y kimaki@latest --gateway` instead of creating a group yourself.

@@ -570,6 +570,7 @@ describe('ignored plugin notices do not steal the current Discord turn', () => {
   const userMessageId = 'msg_user'
   const replyMessageId = 'msg_asst'
   const noticeMessageId = 'msg_notice'
+  const replyAfterNoticeMessageId = 'msg_asst_after_notice'
   const events: EventBufferEntry[] = [
     eventEntry({
       type: 'message.updated',
@@ -665,6 +666,32 @@ describe('ignored plugin notices do not steal the current Discord turn', () => {
         },
       },
     }),
+    eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: replyAfterNoticeMessageId,
+          sessionID: sessionId,
+          role: 'assistant',
+          parentID: noticeMessageId,
+          time: { created: 4, completed: 5 },
+          modelID: 'build',
+          providerID: 'subrouter',
+          mode: 'build',
+          agent: 'build',
+          path: { cwd: '/test', root: '/test' },
+          cost: 1,
+          tokens: {
+            input: 10,
+            output: 1,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          finish: 'stop',
+        },
+      },
+    }),
   ]
 
   test('keeps the real user prompt as the latest turn', () => {
@@ -672,7 +699,15 @@ describe('ignored plugin notices do not steal the current Discord turn', () => {
     expect(getAssistantMessageIdsForLatestUserTurn({
       events,
       sessionId,
-    })).toEqual(new Set([replyMessageId]))
+    })).toEqual(new Set([replyMessageId, replyAfterNoticeMessageId]))
+    expect(getLatestAssistantMessageIdForLatestUserTurn({
+      events,
+      sessionId,
+    })).toBe(replyAfterNoticeMessageId)
+    expect(doesLatestUserTurnHaveNaturalCompletion({
+      events,
+      sessionId,
+    })).toBe(true)
   })
 
   test('keeps a file prompt with an ignored notice as the latest turn', () => {

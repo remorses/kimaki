@@ -176,6 +176,8 @@ you should prefer never deleting or adding new fields. we rely in a schema.sql g
 
 if we added new fields on the schema then we would also need to update db.ts with manual sql migration code to keep existing users databases working.
 
+`CREATE TABLE IF NOT EXISTS` does not change an existing table. `schema.sql` still runs `CREATE INDEX` against that old shape. if a new index or unique constraint needs a new column or a new primary key, rebuild the table in `migrateSchema()` **before** executing `schema.sql`. otherwise existing DBs crash on startup, for example `SQLITE_ERROR: no such column: id`. always add a `db.test.ts` case that opens a legacy-shaped sqlite file and calls `getDb()`.
+
 ## prisma
 
 we use prisma to write type safe queries. the database schema is defined in `cli/schema.prisma`.

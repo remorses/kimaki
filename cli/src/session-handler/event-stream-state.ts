@@ -916,6 +916,40 @@ export function getAssistantMessageIdsForLatestUserTurn({
     return new Set<string>()
   }
   const end = upToIndex === undefined ? events.length : upToIndex + 1
+  const firstUserMessageIndexes = new Map<string, number>()
+  for (let i = 0; i < end; i++) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.updated') {
+      continue
+    }
+    const message = event.properties.info
+    if (
+      message.sessionID === sessionId
+      && message.role === 'user'
+      && !firstUserMessageIndexes.has(message.id)
+    ) {
+      firstUserMessageIndexes.set(message.id, i)
+    }
+  }
+
+  const latestUserMessageIndex = firstUserMessageIndexes.get(latestUserMessage.id)
+  const turnParentMessageIds = new Set([latestUserMessage.id])
+  if (latestUserMessageIndex !== undefined) {
+    for (const [messageId, messageIndex] of firstUserMessageIndexes) {
+      if (messageIndex < latestUserMessageIndex) {
+        continue
+      }
+      if (isInternalOpenCodeUserMessageId({
+        events,
+        sessionId,
+        messageId,
+        upToIndex,
+      })) {
+        turnParentMessageIds.add(messageId)
+      }
+    }
+  }
+
   const assistantMessageIds = new Set<string>()
   for (let i = 0; i < end; i++) {
     const entry = events[i]
@@ -933,7 +967,7 @@ export function getAssistantMessageIdsForLatestUserTurn({
     if (!isUserFacingAssistantMessage(msg)) {
       continue
     }
-    if (msg.parentID === latestUserMessage.id) {
+    if (turnParentMessageIds.has(msg.parentID)) {
       assistantMessageIds.add(msg.id)
     }
   }
@@ -976,12 +1010,12 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
   sessionId: string
   upToIndex?: number
 }): string | undefined {
-  const latestUserMessage = getLatestUserMessage({
+  const assistantMessageIds = getAssistantMessageIdsForLatestUserTurn({
     events,
     sessionId,
     upToIndex,
   })
-  if (!latestUserMessage) {
+  if (assistantMessageIds.size === 0) {
     return undefined
   }
   const end = upToIndex ?? events.length - 1
@@ -1004,7 +1038,7 @@ export function getLatestAssistantMessageIdForLatestUserTurn({
     if (!isUserFacingAssistantMessage(info)) {
       continue
     }
-    if (info.parentID !== latestUserMessage.id) {
+    if (!assistantMessageIds.has(info.id)) {
       continue
     }
     if (!latestAssistantMessage) {

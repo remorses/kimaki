@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0
+
+1. **Add TypeSafe AI Jev support through the Vercel AI Gateway and make it the default classifier.** Jev returns a typed allow probability, and auto mode blocks uncertain, invalid, or failed evaluations. Configure it with an optional allow-probability threshold:
+
+   ```json
+   {
+     "model": "typesafe-ai/jev",
+     "allowProbability": 0.9,
+     "timeoutMs": 8000
+   }
+   ```
+
+   Set `AI_GATEWAY_API_KEY` in the OpenCode process environment. To reuse the active model from the current OpenCode user turn instead:
+
+   ```json
+   {
+     "model": "main"
+   }
+   ```
+
+   Auto mode now accepts only `"typesafe-ai/jev"` and `"main"`. Replace any configured provider model ID, such as `"anthropic/claude-haiku-4-5"`, with one of these values.
+
 ## 0.1.1
 
 1. **Tighten skip and hard-deny paths.** Command substitutions, assignment prefixes, PATH-qualified binaries, sudo wrappers, and mutating forms of `git` / `rg` / `sed` / `find` / `awk` / `sort` / `printf` no longer auto-allow. Recursive `rm` of `/.` and `$HOME`, profile redirects, and `curl | cat | sh` hard-deny. Invalid config JSON fails closed. Only the latest user message counts as authorization.

@@ -2012,15 +2012,16 @@ export class ThreadSessionRuntime {
     skipPartId?: string
     repulseTyping?: boolean
   }): Promise<void> {
-    const parts = this.getCurrentTurnParts().filter((part) => {
-      return !this.state?.sentPartIds.has(part.id)
-    })
+    const parts = this.getCurrentTurnParts()
     const planned = planAssistantTurnFlush({
       parts,
       mode,
       throughPartId,
     })
     for (const { part, quoteText } of planned.sendParts) {
+      if (this.state?.sentPartIds.has(part.id)) {
+        continue
+      }
       if (skipPartId && part.id === skipPartId) {
         continue
       }
@@ -2360,11 +2361,8 @@ export class ThreadSessionRuntime {
       await this.flushCurrentTurnParts({
         mode: 'progress',
       })
-      const unsent = this.getCurrentTurnParts().filter((candidate) => {
-        return !this.state?.sentPartIds.has(candidate.id)
-      })
       const held = planAssistantTurnFlush({
-        parts: unsent,
+        parts: this.getCurrentTurnParts(),
         mode: 'progress',
       }).hold.some((entry) => entry.id === part.id)
       if (held) {

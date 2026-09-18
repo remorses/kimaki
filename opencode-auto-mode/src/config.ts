@@ -5,9 +5,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+export const JEV_MODEL = 'typesafe-ai/jev' as const
+
 export interface AutoModeConfig {
-  model: string
+  model: 'main' | typeof JEV_MODEL
   timeoutMs: number
+  allowProbability: number
 }
 
 export type ConfigLoad =
@@ -15,27 +18,18 @@ export type ConfigLoad =
   | { kind: 'enabled'; config: AutoModeConfig }
   | { kind: 'invalid'; reason: string }
 
-export const MODEL_PRIORITY: string[] = [
-  'anthropic/claude-haiku-4-5',
-  'anthropic/claude-haiku-4-5-20251001',
-  'openai/gpt-5.4-mini',
-  'openai/gpt-4.1-mini',
-  'google/gemini-2.5-flash',
-]
-
-const DEFAULTS: Omit<AutoModeConfig, 'model'> = {
+const DEFAULTS: AutoModeConfig = {
+  model: JEV_MODEL,
   timeoutMs: 8000,
+  allowProbability: 0.9,
 }
 
 const MIN_TIMEOUT_MS = 250
 const MAX_TIMEOUT_MS = 60_000
-const ALLOWED_KEYS = new Set(['model', 'timeoutMs'])
+const ALLOWED_KEYS = new Set(['model', 'timeoutMs', 'allowProbability'])
 
 export function getDefaultConfig(): AutoModeConfig {
-  return {
-    model: MODEL_PRIORITY[0]!,
-    ...DEFAULTS,
-  }
+  return { ...DEFAULTS }
 }
 
 export function loadConfig({ projectDir }: { projectDir: string }): ConfigLoad {
@@ -56,32 +50,9 @@ export function loadConfig({ projectDir }: { projectDir: string }): ConfigLoad {
   return { kind: 'enabled', config: validated.config }
 }
 
-export function resolveModel({
-  config,
-  availableModels,
-}: {
-  config: AutoModeConfig
-  availableModels: Set<string>
-}) {
-  if (availableModels.has(config.model)) return config.model
-  for (const model of MODEL_PRIORITY) {
-    if (availableModels.has(model)) return model
-  }
-  return config.model
-}
-
-export function parseModelId(model: string) {
-  const slashIndex = model.indexOf('/')
-  if (slashIndex === -1) {
-    return { providerID: 'openai', modelID: model }
-  }
-  return {
-    providerID: model.slice(0, slashIndex),
-    modelID: model.slice(slashIndex + 1),
-  }
-}
-
-function validateConfig(value: unknown): { kind: 'invalid'; reason: string } | { kind: 'ok'; config: AutoModeConfig } {
+function validateConfig(
+  value: unknown,
+): { kind: 'invalid'; reason: string } | { kind: 'ok'; config: AutoModeConfig } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { kind: 'invalid', reason: 'auto-mode config must be an object' }
   }
@@ -92,8 +63,8 @@ function validateConfig(value: unknown): { kind: 'invalid'; reason: string } | {
     }
   }
   const model = record.model
-  if (model !== undefined && (typeof model !== 'string' || model.trim() === '')) {
-    return { kind: 'invalid', reason: 'auto-mode model must be a non-empty string' }
+  if (model !== undefined && model !== 'main' && model !== JEV_MODEL) {
+    return { kind: 'invalid', reason: `auto-mode model must be "main" or "${JEV_MODEL}"` }
   }
   const timeoutMs = record.timeoutMs
   if (timeoutMs !== undefined) {
@@ -101,14 +72,32 @@ function validateConfig(value: unknown): { kind: 'invalid'; reason: string } | {
       return { kind: 'invalid', reason: 'auto-mode timeoutMs must be a number' }
     }
     if (timeoutMs < MIN_TIMEOUT_MS || timeoutMs > MAX_TIMEOUT_MS) {
-      return { kind: 'invalid', reason: `auto-mode timeoutMs must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}` }
+      return {
+        kind: 'invalid',
+        reason: `auto-mode timeoutMs must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`,
+      }
+    }
+  }
+  const allowProbability = record.allowProbability
+  if (
+    allowProbability !== undefined &&
+    (typeof allowProbability !== 'number' ||
+      !Number.isFinite(allowProbability) ||
+      allowProbability < 0 ||
+      allowProbability > 1)
+  ) {
+    return {
+      kind: 'invalid',
+      reason: 'auto-mode allowProbability must be a number between 0 and 1',
     }
   }
   return {
     kind: 'ok',
     config: {
-      model: typeof model === 'string' ? model : getDefaultConfig().model,
+      model: model === 'main' || model === JEV_MODEL ? model : DEFAULTS.model,
       timeoutMs: typeof timeoutMs === 'number' ? timeoutMs : DEFAULTS.timeoutMs,
+      allowProbability:
+        typeof allowProbability === 'number' ? allowProbability : DEFAULTS.allowProbability,
     },
   }
 }
@@ -124,14 +113,18 @@ function parsePartial(value: unknown, source: string): PartialLoad {
   }
   const validated = validateConfig(value)
   if (validated.kind === 'invalid') return validated
-  const record = value as { model?: string; timeoutMs?: number }
-  return {
-    kind: 'ok',
-    value: {
-      ...(typeof record.model === 'string' ? { model: record.model } : {}),
-      ...(typeof record.timeoutMs === 'number' ? { timeoutMs: record.timeoutMs } : {}),
-    },
+  const record = value as {
+    model?: AutoModeConfig['model']
+    timeoutMs?: number
+    allowProbability?: number
   }
+  const config: Partial<AutoModeConfig> = {}
+  if (record.model) config.model = record.model
+  if (typeof record.timeoutMs === 'number') config.timeoutMs = record.timeoutMs
+  if (typeof record.allowProbability === 'number') {
+    config.allowProbability = record.allowProbability
+  }
+  return { kind: 'ok', value: config }
 }
 
 function findConfigFile({ startDir }: { startDir: string }): PartialLoad {
@@ -149,9 +142,10 @@ function findConfigFile({ startDir }: { startDir: string }): PartialLoad {
         dir = path.dirname(dir)
         continue
       }
-      const reason = error instanceof SyntaxError
-        ? `Invalid JSON in ${configPath}`
-        : `Failed to read ${configPath}`
+      const reason =
+        error instanceof SyntaxError
+          ? `Invalid JSON in ${configPath}`
+          : `Failed to read ${configPath}`
       return { kind: 'invalid', reason }
     }
   }
