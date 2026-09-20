@@ -155,10 +155,14 @@ cli
       // their live idle/busy status. Only session.list + session.status are
       // called per project so the command stays fast; per-session token totals
       // come straight from the session objects with no message fetching.
+      // A session parked on a `question` tool reports session.status busy but
+      // is really waiting for the user, so it is not "active". Treat it as
+      // `showing-question` (excluded by --active) using OpenCode's
+      // server-authoritative pending-question list.
       type GatheredSession = {
         session: OpenCodeSession
         projectDirectory: string
-        status: 'idle' | 'busy'
+        status: 'idle' | 'busy' | 'showing-question'
       }
 
       const gathered: GatheredSession[] = []
@@ -177,19 +181,31 @@ cli
         }
 
         const client = getClient()
-        const [sessionsResponse, statusResponse] = await Promise.all([
+        const [sessionsResponse, statusResponse, questionsResponse] = await Promise.all([
           client.session.list(),
           client.session.status({ directory: projectDirectory }).catch(() => null),
+          client.question.list({ directory: projectDirectory }).catch(() => null),
         ])
 
         const statuses = statusResponse?.data || {}
+        const sessionsWithPendingQuestion = new Set(
+          (questionsResponse?.data || []).map((request) => request.sessionID),
+        )
 
         for (const session of sessionsResponse.data || []) {
           const status = statuses[session.id]
+          const isBusy = Boolean(status && status.type !== 'idle')
+          // Only relabel to showing-question when the session is actually busy.
+          // An orphaned question left in the list after an abort (session idle)
+          // must not hide or relabel an otherwise-idle session.
           gathered.push({
             session,
             projectDirectory,
-            status: status && status.type !== 'idle' ? 'busy' : 'idle',
+            status: isBusy && sessionsWithPendingQuestion.has(session.id)
+              ? 'showing-question'
+              : isBusy
+                ? 'busy'
+                : 'idle',
           })
         }
       }
@@ -281,7 +297,12 @@ cli
           : ''
         const updatedAt = new Date(session.time.updated).toISOString()
         const threadInfo = threadId ? ` | thread: ${threadId}` : ''
-        const statusInfo = ` | status: ${entry.status === 'busy' ? 'working' : 'idle'}`
+        const statusLabel = entry.status === 'busy'
+          ? 'working'
+          : entry.status === 'showing-question'
+            ? 'showing-question'
+            : 'idle'
+        const statusInfo = ` | status: ${statusLabel}`
         const tokens = contextInfo(entry)
         const tokensText = tokens ? ` | tokens: ${formatTokenCount(tokens)}` : ''
         console.log(
@@ -460,7 +481,7 @@ cli
 cli
   .command(
     'session wait <sessionId>',
-    'Wait for a session to finish, then print its conversation as markdown',
+    'Wait until a session finishes or pauses for a user question, then print its conversation as markdown',
   )
   .action(async (sessionId) => {
     try {

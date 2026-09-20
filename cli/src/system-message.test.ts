@@ -823,7 +823,7 @@ describe('system-message', () => {
 
       \`session list --active\` exits with status 0 while it finds active sessions and status 1 when none remain. Exclude the current session in a wait loop so the loop does not wait for itself.
 
-      \`session wait\` exits with the session markdown on stdout once the model finishes responding.
+      \`session wait\` exits with the session markdown on stdout once the model finishes responding, or when the session pauses to show the user a question (it will not finish on its own until answered).
 
       Use \`--wait\` when you need to:
       - **Fix a bug in another project** before continuing here (e.g. fix a dependency, then resume)

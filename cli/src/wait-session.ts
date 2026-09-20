@@ -1,6 +1,8 @@
 // Wait utilities for polling session completion.
 // Used by `kimaki send --wait` and `kimaki session wait` to block until a
-// session is idle, interactive prompts are resolved, and output is stable.
+// session completes (idle, latest turn finished naturally, no pending
+// permission) OR pauses for a user question. A session parked on a `question`
+// tool never completes on its own, so it is treated as done for automation.
 
 import type { Message as OpenCodeMessage } from '@opencode-ai/sdk/v2'
 import { getSessionEventSnapshot, getThreadSession } from './database.js'
@@ -49,7 +51,9 @@ export async function waitForSessionId({
 
 /**
  * Poll the OpenCode SDK and persisted Kimaki events until the session is idle,
- * its latest user turn completed naturally, and no interactive UI is pending.
+ * its latest user turn completed naturally, and no permission prompt is pending
+ * -- or until the session pauses on a user question (which never completes on
+ * its own and is treated as done for automation).
  */
 export async function waitForSessionComplete({
   projectDirectory,
@@ -84,6 +88,25 @@ export async function waitForSessionComplete({
       throw new Error('Failed to check session status')
     }
     const sessionStatus = statusResponse.data?.[sessionId]
+    const isBusy = Boolean(sessionStatus && sessionStatus.type !== 'idle')
+
+    // A session parked on a `question` tool reports busy but will never complete
+    // on its own, so treat a live question as done for automation and stop
+    // waiting. Guard on `busy`: an orphaned question left after an abort
+    // (session idle) must fall through to the normal idle/completion checks
+    // instead of returning early.
+    if (isBusy) {
+      const questionsResponse = await getClient().question
+        .list({ directory: projectDirectory })
+        .catch(() => null)
+      const hasPendingQuestion = (questionsResponse?.data || []).some((request) => {
+        return request.sessionID === sessionId
+      })
+      if (hasPendingQuestion) {
+        waitLogger.log(`Session ${sessionId} is showing a user question; treating as complete`)
+        return
+      }
+    }
 
     const messagesResponse = await getClient().session.messages({
       sessionID: sessionId,
