@@ -377,6 +377,26 @@ export async function stopConfiguredForumSync() {
   )
 }
 
+export async function stopForumSyncForChannel(forumChannelId: string) {
+  const runtimeState = forumStateById.get(forumChannelId)
+  if (runtimeState?.discordDebounceTimer) {
+    clearTimeout(runtimeState.discordDebounceTimer)
+  }
+  if (runtimeState?.fileDebounceTimer) {
+    clearTimeout(runtimeState.fileDebounceTimer)
+  }
+  forumStateById.delete(forumChannelId)
+
+  const unsubscribe = watcherUnsubscribeByForumId.get(forumChannelId)
+  watcherUnsubscribeByForumId.delete(forumChannelId)
+  await unsubscribe?.().catch((cause) => {
+    forumLogger.warn(
+      `Failed to unsubscribe deleted forum ${forumChannelId}:`,
+      cause,
+    )
+  })
+}
+
 export async function startConfiguredForumSync({
   discordClient,
   appId,

@@ -25,9 +25,17 @@ import {
   setBotToken,
   initDatabase,
   closeDatabase,
+  createScheduledTask,
+  getChannelDirectory,
+  getScheduledTask,
+  getSessionSleep,
+  getThreadSession,
+  insertThreadQueueItem,
+  listThreadQueueItems,
   setChannelDirectory,
   setChannelVerbosity,
   type VerbosityLevel,
+  upsertSessionSleep,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import {
@@ -617,4 +625,90 @@ describe('runtime lifecycle', () => {
     },
     15_000,
   )
+
+  test('deleting a project channel clears its active Discord work', async () => {
+    const guild = botClient.guilds.cache.first()
+    if (!guild) throw new Error('Expected test guild')
+    const projectChannel = await guild.channels.create({
+      name: 'deleted-project',
+      type: ChannelType.GuildText,
+    })
+    await setChannelDirectory({
+      channelId: projectChannel.id,
+      directory: directories.projectDirectory,
+      channelType: 'text',
+      guildId: guild.id,
+    })
+    await discord.channel(projectChannel.id).user(TEST_USER_ID).sendMessage({
+      content: 'Reply with exactly: deleted-project',
+    })
+    const thread = await discord.channel(projectChannel.id).waitForThread({
+      timeout: 4_000,
+      predicate: (candidate) => candidate.name === 'Reply with exactly: deleted-project',
+    })
+    await waitForBotMessageContaining({
+      discord,
+      threadId: thread.id,
+      userId: TEST_USER_ID,
+      text: '*project',
+      timeout: 4_000,
+    })
+    const sessionId = await getThreadSession(thread.id)
+    if (!sessionId) throw new Error('Expected thread session')
+    await insertThreadQueueItem({
+      queueId: 'deleted-project-queue',
+      threadId: thread.id,
+      payloadJson: JSON.stringify({ prompt: 'queued' }),
+    })
+    await upsertSessionSleep({
+      sessionId,
+      wakeAt: new Date('2099-01-01T00:00:00.000Z'),
+      reason: 'later',
+    })
+    const channelTaskId = await createScheduledTask({
+      scheduleKind: 'at',
+      nextRunAt: new Date('2099-01-01T00:00:00.000Z'),
+      payloadJson: JSON.stringify({
+        kind: 'channel',
+        channelId: projectChannel.id,
+        prompt: 'later',
+      }),
+      promptPreview: 'later',
+      channelId: projectChannel.id,
+    })
+
+    expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+      "--- from: user (lifecycle-tester)
+      Reply with exactly: deleted-project
+      --- from: assistant (TestBot)
+      > *using deterministic-provider/deterministic-v2*
+      > ok
+      > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
+    `)
+    await projectChannel.delete()
+
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (!getRuntime(thread.id) && !await getChannelDirectory(projectChannel.id)) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+
+    expect({
+      mapping: await getChannelDirectory(projectChannel.id),
+      queue: await listThreadQueueItems(thread.id),
+      runtime: getRuntime(thread.id),
+      sleep: await getSessionSleep({ sessionId }),
+      task: await getScheduledTask(channelTaskId),
+    }).toMatchObject({
+      mapping: undefined,
+      queue: [],
+      runtime: undefined,
+      sleep: { status: 'cancelled' },
+      task: {
+        status: 'cancelled',
+        last_error: 'Discord channel was deleted',
+      },
+    })
+  }, 15_000)
 })

@@ -23,8 +23,13 @@ import {
   getChannelMentionMode,
   getChannelDirectory,
   cancelAllPendingIpcRequests,
+  cleanupDeletedThread,
+  clearGuildCategoryByChannelId,
   consumeSessionSleepWake,
+  deleteForumSyncConfig,
   deleteChannelDirectoryById,
+  findChannelsByDirectory,
+  isCurrentThreadSessionBinding,
   createPendingWorkspace,
   setWorkspaceReady,
 } from './database.js'
@@ -90,6 +95,7 @@ import {
   getRuntime,
   getOrCreateRuntime,
   disposeRuntime,
+  getRuntimeThreadIdsForChannel,
   restorePersistedLocalQueues,
   reserveThreadIngress,
   runInThreadIngressSlot,
@@ -111,6 +117,7 @@ import {
   startExternalOpencodeSessionSync,
   stopExternalOpencodeSessionSync,
 } from './external-opencode-sync.js'
+import { stopForumSyncForChannel } from './forum-sync/watchers.js'
 
 export {
   initDatabase,
@@ -320,6 +327,58 @@ export async function startDiscordBot({
 
   let currentAppId: string | undefined = appId
 
+  const cleanupDeletedDiscordThread = async (threadId: string) => {
+    const abortActiveRun = await isCurrentThreadSessionBinding(threadId)
+    disposeRuntime(threadId, { abortActiveRun })
+    await cleanupDeletedThread(threadId)
+  }
+
+  const cleanupDeletedDiscordChannel = async (channelId: string) => {
+    const mapping = await getChannelDirectory(channelId)
+    const preserveMapping = mapping?.directory === getDefaultKimakiDirectory()
+    const threadIds = getRuntimeThreadIdsForChannel(channelId)
+    await Promise.all(threadIds.map(cleanupDeletedDiscordThread))
+    await stopForumSyncForChannel(channelId)
+    await clearGuildCategoryByChannelId(channelId)
+    if (currentAppId) {
+      await deleteForumSyncConfig({
+        appId: currentAppId,
+        forumChannelId: channelId,
+      })
+    }
+    const deleted = await deleteChannelDirectoryById(channelId, {
+      preserveMapping,
+    })
+    if (preserveMapping) {
+      discordLogger.log(
+        `Preserved deleted default channel ${channelId} as a tombstone`,
+      )
+      return
+    }
+    if (deleted) {
+      discordLogger.log(`Cleaned up deleted channel ${channelId}`)
+    }
+  }
+
+  const reconcileDeletedDiscordChannels = async (c: Client<true>) => {
+    const mappings = await findChannelsByDirectory({})
+    for (const mapping of mappings) {
+      const channel = await c.channels
+        .fetch(mapping.channel_id, { force: true })
+        .catch((error) => {
+          const code = error instanceof Error ? Reflect.get(error, 'code') : undefined
+          const status = error instanceof Error ? Reflect.get(error, 'status') : undefined
+          if (code === 10003 || status === 404) return null
+          discordLogger.warn(
+            `Could not verify channel ${mapping.channel_id}; preserving its SQLite mapping: ${formatErrorWithStack(error)}`,
+          )
+          return undefined
+        })
+      if (channel !== null) continue
+      await cleanupDeletedDiscordChannel(mapping.channel_id)
+    }
+  }
+
   const setupHandlers = async (c: Client<true>) => {
     discordLogger.log(`Discord bot logged in as ${c.user.tag}`)
     discordLogger.log(`Connected to ${c.guilds.cache.size} guild(s)`)
@@ -354,6 +413,7 @@ export async function startDiscordBot({
 
     registerInteractionHandler({ discordClient: c, appId: currentAppId })
     registerVoiceStateHandler({ discordClient: c, appId: currentAppId })
+    await reconcileDeletedDiscordChannels(c)
     startExternalOpencodeSessionSync({ discordClient: c })
     await restorePersistedLocalQueues({
       discordClient: c,
@@ -388,19 +448,15 @@ export async function startDiscordBot({
     })
   }
 
-  // If client is already ready (was logged in before being passed to us),
-  // run setup immediately. Otherwise wait for the ClientReady event.
-  if (discordClient.isReady()) {
-    await setupHandlers(discordClient)
-  } else {
-    discordClient.once(Events.ClientReady, (readyClient) => {
-      void setupHandlers(readyClient).catch((error) => {
-        discordLogger.error(
-          `[GATEWAY] ClientReady handler failed: ${formatErrorWithStack(error)}`,
-        )
+  // Keep startup ordered so stale targets are removed before queues and
+  // scheduled tasks can deliver work to them.
+  const setupPromise = discordClient.isReady()
+    ? setupHandlers(discordClient)
+    : new Promise<void>((resolve, reject) => {
+        discordClient.once(Events.ClientReady, (readyClient) => {
+          void setupHandlers(readyClient).then(resolve, reject)
+        })
       })
-    })
-  }
 
   discordClient.on(Events.Error, (error) => {
     discordLogger.error('[GATEWAY] Client error:', formatErrorWithStack(error))
@@ -1507,31 +1563,19 @@ export async function startDiscordBot({
   // Dispose runtime when a thread is deleted so memory is freed immediately
   // instead of waiting for the idle sweeper (1 hour default).
   discordClient.on(Events.ThreadDelete, (thread) => {
-    disposeRuntime(thread.id)
+    void cleanupDeletedDiscordThread(thread.id).catch((error) => {
+      notifyError(
+        error instanceof Error ? error : new Error(String(error)),
+        `Failed to clean up deleted thread ${thread.id}`,
+      )
+    })
   })
 
-  // Clean up SQLite when a Discord channel is deleted so project list
-  // doesn't show stale ghost entries. Thread runtimes inside the deleted
-  // channel are disposed by their own ThreadDelete events from Discord.
+  // Clean up SQLite and active child runtimes without relying on Discord to
+  // send separate ThreadDelete events for every child.
   discordClient.on(Events.ChannelDelete, async (channel) => {
     try {
-      // Check if this is the default kimaki channel. If so, preserve the
-      // channel_directories row as a tombstone so we don't recreate it.
-      const mapping = await getChannelDirectory(channel.id)
-      const defaultDir = getDefaultKimakiDirectory()
-      if (mapping && mapping.directory === defaultDir) {
-        discordLogger.log(
-          `Preserving channel_directories row for deleted default channel ${channel.id} as tombstone`,
-        )
-        return
-      }
-
-      const deleted = await deleteChannelDirectoryById(channel.id)
-      if (deleted) {
-        discordLogger.log(
-          `Cleaned up channel_directories for deleted channel ${channel.id}`,
-        )
-      }
+      await cleanupDeletedDiscordChannel(channel.id)
     } catch (error) {
       notifyError(
         error instanceof Error ? error : new Error(String(error)),
@@ -1546,6 +1590,7 @@ export async function startDiscordBot({
   if (!discordClient.isReady()) {
     await discordClient.login(token)
   }
+  await setupPromise
 
   startHeapMonitor()
   startStdinCpuProfListener()

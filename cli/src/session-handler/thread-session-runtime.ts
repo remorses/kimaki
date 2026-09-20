@@ -401,10 +401,16 @@ export async function restorePersistedLocalQueues({
   }
 }
 
-export function disposeRuntime(threadId: string): void {
+export function disposeRuntime(
+  threadId: string,
+  { abortActiveRun = false }: { abortActiveRun?: boolean } = {},
+): void {
   const runtime = runtimes.get(threadId)
   if (!runtime) {
     return
+  }
+  if (abortActiveRun) {
+    runtime.abortDeletedDiscordResource()
   }
   runtime.dispose()
   runtimes.delete(threadId)
@@ -434,6 +440,12 @@ export function disposeRuntimesForDirectory({
     count++
   }
   return count
+}
+
+export function getRuntimeThreadIdsForChannel(channelId: string): string[] {
+  return Array.from(runtimes.entries())
+    .filter(([, runtime]) => runtime.channelId === channelId)
+    .map(([threadId]) => threadId)
 }
 
 /** Returns number of active runtimes (useful for diagnostics). */
@@ -1301,6 +1313,14 @@ export class ThreadSessionRuntime {
   }
 
   // ── Lifecycle ────────────────────────────────────────────────
+
+  abortDeletedDiscordResource(): void {
+    if (this.getDerivedPhase() === 'running') {
+      void this.abortActiveRunInternal({
+        reason: 'discord-resource-deleted',
+      }).apiAbortPromise
+    }
+  }
 
   dispose(): void {
     this.disposed = true

@@ -10,16 +10,28 @@ import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import {
   appendSessionEventsSinceLastTimestamp,
+  cleanupDeletedThread,
+  completeIpcRequest,
+  createIpcRequest,
+  createScheduledTask,
   createPendingWorkspace,
+  deleteChannelDirectoryById,
   deleteThreadQueueItem,
+  getChannelDirectory,
   getDueSessionSleeps,
+  getIpcRequestById,
+  getScheduledTask,
   getSessionEventSnapshot,
   getSessionModel,
   getSessionSleep,
+  getThreadSession,
   insertThreadQueueItem,
   listAllThreadQueueItems,
   listThreadQueueItems,
+  setChannelDirectory,
+  setChannelVerbosity,
   setSessionModel,
+  setThreadSession,
   updateThreadQueueItemPayload,
   upsertSessionSleep,
 } from './database.js'
@@ -89,6 +101,118 @@ describe('getDb', () => {
     expect(JSON.parse(remaining[0]!.payload_json).prompt).toBe('first-edited')
 
     await db.delete(schema.thread_queue_items).where(orm.eq(schema.thread_queue_items.thread_id, threadId))
+  })
+
+  test('cancels channel tasks before deleting a channel mapping', async () => {
+    const channelId = `channel-${crypto.randomUUID()}`
+    await setChannelDirectory({
+      channelId,
+      directory: `/tmp/${channelId}`,
+      channelType: 'text',
+    })
+    await setChannelVerbosity(channelId, 'text_only')
+    const taskId = await createScheduledTask({
+      scheduleKind: 'at',
+      nextRunAt: new Date('2099-01-01T00:00:00.000Z'),
+      payloadJson: JSON.stringify({ kind: 'channel', channelId, prompt: 'later' }),
+      promptPreview: 'later',
+      channelId,
+    })
+
+    expect(await deleteChannelDirectoryById(channelId)).toBe(true)
+
+    const db = await getDb()
+    expect({
+      mapping: await getChannelDirectory(channelId),
+      task: await getScheduledTask(taskId),
+      verbosity: await db.query.channel_verbosity.findFirst({
+        where: { channel_id: channelId },
+      }),
+    }).toMatchObject({
+      mapping: undefined,
+      task: {
+        status: 'cancelled',
+        last_error: 'Discord channel was deleted',
+      },
+      verbosity: undefined,
+    })
+  })
+
+  test('cleans pending work when a Discord thread is deleted', async () => {
+    const threadId = `thread-${crypto.randomUUID()}`
+    const sessionId = `session-${crypto.randomUUID()}`
+    const queueId = `queue-${crypto.randomUUID()}`
+    await setThreadSession(threadId, sessionId)
+    await insertThreadQueueItem({
+      queueId,
+      threadId,
+      payloadJson: JSON.stringify({ prompt: 'queued' }),
+    })
+    await upsertSessionSleep({
+      sessionId,
+      wakeAt: new Date('2099-01-01T00:00:00.000Z'),
+      reason: 'later',
+    })
+    const ipcRequest = await createIpcRequest({
+      type: 'file_upload',
+      sessionId,
+      threadId,
+      payload: '{}',
+    })
+    const taskId = await createScheduledTask({
+      scheduleKind: 'at',
+      nextRunAt: new Date('2099-01-01T00:00:00.000Z'),
+      payloadJson: JSON.stringify({ kind: 'thread', threadId, prompt: 'later' }),
+      promptPreview: 'later',
+      threadId,
+      sessionId,
+    })
+
+    await cleanupDeletedThread(threadId)
+    await completeIpcRequest({ id: ipcRequest.id, response: 'late response' })
+
+    expect({
+      ipc: await getIpcRequestById({ id: ipcRequest.id }),
+      queue: await listThreadQueueItems(threadId),
+      session: await getThreadSession(threadId),
+      sleep: await getSessionSleep({ sessionId }),
+      task: await getScheduledTask(taskId),
+    }).toMatchObject({
+      ipc: { status: 'cancelled' },
+      queue: [],
+      session: sessionId,
+      sleep: { status: 'cancelled' },
+      task: {
+        status: 'cancelled',
+        last_error: 'Discord thread was deleted',
+      },
+    })
+  })
+
+  test('deleting an old resumed thread preserves the current session sleep', async () => {
+    const db = await getDb()
+    const sessionId = `resumed-session-${crypto.randomUUID()}`
+    const oldThreadId = `old-thread-${crypto.randomUUID()}`
+    const currentThreadId = `current-thread-${crypto.randomUUID()}`
+    await setThreadSession(oldThreadId, sessionId)
+    await setThreadSession(currentThreadId, sessionId)
+    await db.update(schema.thread_sessions)
+      .set({ updated_at: new Date('2020-01-01T00:00:00.000Z') })
+      .where(orm.eq(schema.thread_sessions.thread_id, oldThreadId))
+    await db.update(schema.thread_sessions)
+      .set({ updated_at: new Date('2021-01-01T00:00:00.000Z') })
+      .where(orm.eq(schema.thread_sessions.thread_id, currentThreadId))
+    await upsertSessionSleep({
+      sessionId,
+      wakeAt: new Date('2099-01-01T00:00:00.000Z'),
+      reason: 'still current',
+    })
+
+    await cleanupDeletedThread(oldThreadId)
+
+    expect(await getSessionSleep({ sessionId })).toMatchObject({
+      status: 'planned',
+    })
   })
 
   test('rebuilds thread_queue_items that still use queue_id as the primary key', async () => {

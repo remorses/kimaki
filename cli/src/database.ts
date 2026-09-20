@@ -324,14 +324,20 @@ export async function recoverStaleRunningScheduledTasks({ staleBefore }: { stale
 export async function deleteScheduledTask(taskId: number) {
   const db = await getDb()
   await db.delete(schema.scheduled_tasks)
-    .where(orm.eq(schema.scheduled_tasks.id, taskId))
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'running'),
+    ))
 }
 
 export async function markScheduledTaskCronRescheduled({ taskId, completedAt, nextRunAt }: { taskId: number; completedAt: Date; nextRunAt: Date }) {
   const db = await getDb()
   await db.update(schema.scheduled_tasks)
     .set({ status: 'planned', last_run_at: completedAt, running_started_at: null, last_error: null, next_run_at: nextRunAt })
-    .where(orm.eq(schema.scheduled_tasks.id, taskId))
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'running'),
+    ))
 }
 
 export async function markScheduledTaskFailed({ taskId, failedAt, errorMessage }: { taskId: number; failedAt: Date; errorMessage: string }) {
@@ -344,7 +350,10 @@ export async function markScheduledTaskFailed({ taskId, failedAt, errorMessage }
       last_error: errorMessage,
       attempts: orm.sql`${schema.scheduled_tasks.attempts} + 1`,
     })
-    .where(orm.eq(schema.scheduled_tasks.id, taskId))
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'running'),
+    ))
 }
 
 export async function markScheduledTaskCronRetry({ taskId, failedAt, errorMessage, nextRunAt }: { taskId: number; failedAt: Date; errorMessage: string; nextRunAt: Date }) {
@@ -358,7 +367,10 @@ export async function markScheduledTaskCronRetry({ taskId, failedAt, errorMessag
       last_error: errorMessage,
       attempts: orm.sql`${schema.scheduled_tasks.attempts} + 1`,
     })
-    .where(orm.eq(schema.scheduled_tasks.id, taskId))
+    .where(orm.and(
+      orm.eq(schema.scheduled_tasks.id, taskId),
+      orm.eq(schema.scheduled_tasks.status, 'running'),
+    ))
 }
 
 export async function setSessionStartSource({ sessionId, scheduleKind, scheduledTaskId }: { sessionId: string; scheduleKind: ScheduledTaskScheduleKind; scheduledTaskId?: number }) {
@@ -1276,19 +1288,103 @@ export async function deleteChannelDirectoriesByDirectory(directory: string) {
   await db.delete(schema.channel_directories).where(orm.eq(schema.channel_directories.directory, directory))
 }
 
-export async function deleteChannelDirectoryById(channelId: string) {
+export async function deleteChannelDirectoryById(
+  channelId: string,
+  { preserveMapping = false }: { preserveMapping?: boolean } = {},
+) {
   const db = await getDb()
   await db.batch([
+    db.update(schema.scheduled_tasks)
+      .set({
+        status: 'cancelled',
+        running_started_at: null,
+        last_error: 'Discord channel was deleted',
+      })
+      .where(orm.and(
+        orm.eq(schema.scheduled_tasks.channel_id, channelId),
+        orm.inArray(schema.scheduled_tasks.status, ['planned', 'running']),
+      )),
     db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, channelId)),
     db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, channelId)),
     db.delete(schema.channel_worktrees).where(orm.eq(schema.channel_worktrees.channel_id, channelId)),
     db.delete(schema.channel_verbosity).where(orm.eq(schema.channel_verbosity.channel_id, channelId)),
     db.delete(schema.channel_mention_mode).where(orm.eq(schema.channel_mention_mode.channel_id, channelId)),
   ] as const)
+  if (preserveMapping) {
+    return Boolean(await db.query.channel_directories.findFirst({
+      where: { channel_id: channelId },
+      columns: { channel_id: true },
+    }))
+  }
   const rows = await db.delete(schema.channel_directories)
     .where(orm.eq(schema.channel_directories.channel_id, channelId))
     .returning({ channel_id: schema.channel_directories.channel_id })
   return rows.length > 0
+}
+
+export async function cleanupDeletedThread(threadId: string) {
+  const db = await getDb()
+  const binding = await db.query.thread_sessions.findFirst({
+    where: { thread_id: threadId },
+    columns: { session_id: true },
+  })
+  const currentThreadId = binding
+    ? await getThreadIdBySessionId(binding.session_id)
+    : undefined
+  const currentSessionId = currentThreadId === threadId
+    ? binding?.session_id
+    : undefined
+  await db.batch([
+    db.delete(schema.thread_queue_items)
+      .where(orm.eq(schema.thread_queue_items.thread_id, threadId)),
+    db.update(schema.session_sleeps)
+      .set({ status: 'cancelled' })
+      .where(orm.and(
+        orm.eq(schema.session_sleeps.status, 'planned'),
+        orm.eq(schema.session_sleeps.session_id, currentSessionId ?? ''),
+      )),
+    db.update(schema.scheduled_tasks)
+      .set({
+        status: 'cancelled',
+        running_started_at: null,
+        last_error: 'Discord thread was deleted',
+      })
+      .where(orm.and(
+        orm.eq(schema.scheduled_tasks.thread_id, threadId),
+        orm.inArray(schema.scheduled_tasks.status, ['planned', 'running']),
+      )),
+    db.update(schema.ipc_requests)
+      .set({
+        status: 'cancelled',
+        response: JSON.stringify({ error: 'Discord thread was deleted' }),
+      })
+      .where(orm.and(
+        orm.eq(schema.ipc_requests.thread_id, threadId),
+        orm.inArray(schema.ipc_requests.status, ['pending', 'processing']),
+      )),
+  ] as const)
+}
+
+export async function isCurrentThreadSessionBinding(threadId: string) {
+  const db = await getDb()
+  const binding = await db.query.thread_sessions.findFirst({
+    where: { thread_id: threadId },
+    columns: { session_id: true },
+  })
+  if (!binding) return false
+  return await getThreadIdBySessionId(binding.session_id) === threadId
+}
+
+export async function clearGuildCategoryByChannelId(channelId: string) {
+  const db = await getDb()
+  await db.batch([
+    db.update(schema.guild_categories)
+      .set({ category_id: null })
+      .where(orm.eq(schema.guild_categories.category_id, channelId)),
+    db.update(schema.guild_categories)
+      .set({ audio_category_id: null })
+      .where(orm.eq(schema.guild_categories.audio_category_id, channelId)),
+  ] as const)
 }
 
 export async function getVoiceChannelDirectory(channelId: string) {
@@ -1357,7 +1453,10 @@ export async function completeIpcRequest({ id, response }: { id: string; respons
   const db = await getDb()
   const [row] = await db.update(schema.ipc_requests)
     .set({ response, status: 'completed' })
-    .where(orm.eq(schema.ipc_requests.id, id))
+    .where(orm.and(
+      orm.eq(schema.ipc_requests.id, id),
+      orm.inArray(schema.ipc_requests.status, ['pending', 'processing']),
+    ))
     .returning()
   return row
 }

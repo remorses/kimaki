@@ -455,6 +455,9 @@ async function executeScheduledTask({
   task: ScheduledTask
   runId?: number
 }): Promise<string | null | Error | { kind: 'condition-not-met' }> {
+  const claimedTask = await getScheduledTask(task.id)
+  if (claimedTask?.status !== 'running') return { kind: 'condition-not-met' }
+
   const payloadResult = parseScheduledTaskPayload(task.payload_json)
   if (payloadResult instanceof Error) {
     return new Error(`Task ${task.id} has invalid payload`, {
@@ -465,6 +468,11 @@ async function executeScheduledTask({
   const commandResult = await runTaskCommand({ task, payload: payloadResult })
   if (commandResult instanceof Error) return commandResult
   if (commandResult.kind === 'skip') return { kind: 'condition-not-met' }
+
+  const taskAfterCommand = await getScheduledTask(task.id)
+  if (taskAfterCommand?.status !== 'running') {
+    return { kind: 'condition-not-met' }
+  }
 
   if (payloadResult.kind === 'thread') {
     return executeThreadScheduledTask({
