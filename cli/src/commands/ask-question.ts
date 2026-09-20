@@ -15,6 +15,7 @@ import { getOpencodeClient } from '../opencode.js'
 import { DiscordOperationError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
+import { getRuntime } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -298,51 +299,113 @@ export async function handleAskQuestionSelectMenu(
     `${QUEUE_PREFIX}**${username}:** ${answeredText}`,
   )
 
-  // Check if all questions are answered
-  if (areAllQuestionsAnswered(context)) {
-    // All questions answered - send result back to session
-    await submitQuestionAnswers(context)
+  // Check if all questions are answered. Claim the context synchronously
+  // (delete before awaiting submit) so two concurrent final selections for a
+  // multi-question tool cannot both submit and double-resume the session.
+  if (
+    areAllQuestionsAnswered(context)
+    && pendingQuestionContexts.get(contextHash) === context
+  ) {
     deletePendingQuestionContextsForRequest({
       threadId: context.thread.id,
       requestId: context.requestId,
     })
+    await submitQuestionAnswers(context)
+  }
+}
+
+/**
+ * Format collected answers as a plain-text summary the model can read when
+ * the run is resumed after an abort (e.g. `"Which option?"="Alpha"`).
+ *
+ * Known limitation: if the user had queued items via /queue during the pending
+ * question AND aborted the run from another opencode client, the first queued
+ * item may have already been handed off to opencode and can lose its ordering
+ * on resume. That rare combination needs a queue-handoff redesign; the common
+ * (no-queue) abort case is handled correctly.
+ */
+function formatQuestionAnswersText(context: PendingQuestionContext): string {
+  const parts = context.questions.map((q, i) => {
+    const answer = (context.answers[i] || []).join(', ') || 'Unanswered'
+    return `"${q.question}"="${answer}"`
+  })
+  return `Answers to your previous questions: ${parts.join(', ')}`
+}
+
+/** Resume the session by feeding the answers back as a new user prompt. */
+async function resumeSessionWithAnswers(
+  context: PendingQuestionContext,
+): Promise<void> {
+  const runtime = getRuntime(context.thread.id)
+  const resumed = await runtime?.resumeWithText({
+    text: formatQuestionAnswersText(context),
+  })
+  if (!resumed) {
+    await sendThreadMessage(
+      context.thread,
+      '✗ Failed to submit answers: session is no longer active',
+    )
   }
 }
 
 /**
  * Submit all collected answers back to the OpenCode session.
- * Uses the question.reply API to provide answers to the waiting tool.
+ *
+ * The decision is based on whether the session still has a live run:
+ *
+ * - Busy: a live run is parked on the question. Reply so it continues.
+ * - Idle: the run was aborted (from this or another opencode client). Replying
+ *   would resolve a dead run and the session would never continue, so resume it
+ *   with the answers as a fresh prompt instead.
+ *
+ * Note: `question.list` is not a reliable signal here. After an abort the
+ * question request can stay in the pending list but orphaned (no run awaiting
+ * it), so a reply would succeed yet the session would still not continue. The
+ * session busy state, derived from the event stream, is the accurate signal.
+ * The reply `.error` check is a safety net for the case where the request was
+ * actually removed while the session still looked busy.
  */
 async function submitQuestionAnswers(
   context: PendingQuestionContext,
 ): Promise<void> {
-  try {
-    const client = getOpencodeClient(context.directory)
-    if (!client) {
-      throw new Error('OpenCode server not found for directory')
-    }
+  const client = getOpencodeClient(context.directory)
+  if (!client) {
+    logger.error('OpenCode server not found for directory')
+    return
+  }
 
-    // Build answers array: each element is an array of selected labels for that question
-    const answers = context.questions.map((_, i) => {
-      return context.answers[i] || []
-    })
+  const runtime = getRuntime(context.thread.id)
 
-    await client.question.reply({
-      requestID: context.requestId,
-      directory: context.directory,
-      answers,
-    })
+  if (runtime && !runtime.isBusy()) {
+    logger.log(
+      `Session ${context.sessionId} idle; resuming with answers for question ${context.requestId}`,
+    )
+    await resumeSessionWithAnswers(context)
+    return
+  }
 
+  const answers = context.questions.map((_, i) => {
+    return context.answers[i] || []
+  })
+
+  // throwOnError is off on this client, so failures come back in `.error`.
+  const replyResult = await client.question
+    .reply({ requestID: context.requestId, directory: context.directory, answers })
+    .catch((error) => ({ error }))
+
+  if (!replyResult.error) {
     logger.log(
       `Submitted answers for question ${context.requestId} in session ${context.sessionId}`,
     )
-  } catch (error) {
-    logger.error('Failed to submit answers:', error)
-    await sendThreadMessage(
-      context.thread,
-      `✗ Failed to submit answers: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    )
+    return
   }
+
+  // Reply failed (the request was removed while the session still looked busy).
+  // Resume so the answer still reaches the model.
+  logger.log(
+    `Reply failed for question ${context.requestId}; resuming session ${context.sessionId} with answers`,
+  )
+  await resumeSessionWithAnswers(context)
 }
 
 /**

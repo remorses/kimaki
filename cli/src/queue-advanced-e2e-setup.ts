@@ -875,8 +875,73 @@ export function createDeterministicMatchers(): DeterministicMatcher[] {
     },
   }
 
+  // Question tool for the abort-then-answer case: model asks a question via
+  // dropdown. The test aborts the run before answering (session goes idle),
+  // then answers via select. Because the original run is dead, kimaki resumes
+  // the session by sending the answers back as a new prompt.
+  const questionAbortResumeMatcher: DeterministicMatcher = {
+    id: 'question-abort-resume-marker',
+    priority: 107,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'QUESTION_ABORT_RESUME_MARKER',
+      rawPromptRegex: '^(?!.*question-abort-resume-call)',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        {
+          type: 'tool-call',
+          toolCallId: 'question-abort-resume-call',
+          toolName: 'question',
+          input: JSON.stringify({
+            questions: [{
+              question: 'How to proceed?',
+              header: 'Select action',
+              options: [
+                { label: 'Alpha', description: 'Alpha option' },
+                { label: 'Beta', description: 'Beta option' },
+              ],
+            }],
+          }),
+        },
+        {
+          type: 'finish',
+          finishReason: 'tool-calls',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
+  // Follow-up after an aborted question is answered: kimaki resumes with a
+  // prompt containing the answers summary.
+  const questionAbortResumeFollowupMatcher: DeterministicMatcher = {
+    id: 'question-abort-resume-followup',
+    priority: 107,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: 'Answers to your previous questions:',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'resume-reply' },
+        { type: 'text-delta', id: 'resume-reply', delta: 'resumed-after-abort' },
+        { type: 'text-end', id: 'resume-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+    },
+  }
+
   return [
     questionSelectDrainMatcher,
+    questionAbortResumeMatcher,
+    questionAbortResumeFollowupMatcher,
     slowAbortMatcher,
     slowBusyMatcher,
     typingRepulseMatcher,

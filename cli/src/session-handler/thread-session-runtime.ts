@@ -1024,7 +1024,7 @@ export class ThreadSessionRuntime {
   }
 
   getDerivedPhase(): 'idle' | 'running' {
-    return this.isMainSessionBusy() ? 'running' : 'idle'
+    return this.isBusy() ? 'running' : 'idle'
   }
 
   private getLastRuntimeActivityTimestamp({
@@ -1053,7 +1053,7 @@ export class ThreadSessionRuntime {
   }
 
   private isIdleCandidateForInactivityCheck(): boolean {
-    if (this.isMainSessionBusy()) {
+    if (this.isBusy()) {
       return false
     }
     if ((this.state?.queueItems.length ?? 0) > 0) {
@@ -1196,7 +1196,8 @@ export class ThreadSessionRuntime {
     return `phase=${phase},assistant=${latestAssistant},assistantCount=${assistantCount}`
   }
 
-  private isMainSessionBusy(): boolean {
+  /** Whether the main session currently has an active run (derived from events). */
+  isBusy(): boolean {
     const sessionId = this.state?.sessionId
     if (!sessionId) {
       return false
@@ -3703,7 +3704,7 @@ export class ThreadSessionRuntime {
       const willDrainNow = stateAfterEnqueue
         ? (
           stateAfterEnqueue.queueItems.length > 0
-          && !this.isMainSessionBusy()
+          && !this.isBusy()
         )
         : false
       result = !willDrainNow && position > 0
@@ -3936,7 +3937,7 @@ export class ThreadSessionRuntime {
     }
 
     const sessionId = state.sessionId
-    const sessionIsBusy = this.isMainSessionBusy()
+    const sessionIsBusy = this.isBusy()
 
     logger.log(
       `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} sessionId=${sessionId || 'none'} queueLength=${state.queueItems.length} ${this.formatRunStateForLog()} sessionBusy=${sessionIsBusy}`,
@@ -3993,7 +3994,7 @@ export class ThreadSessionRuntime {
     let needsIdleWait = false
     const waitSinceTimestamp = Date.now()
     const abortResult = await this.dispatchAction(async () => {
-      needsIdleWait = this.isMainSessionBusy()
+      needsIdleWait = this.isBusy()
       const outcome = this.abortActiveRunInternal({ reason })
       if (outcome.apiAbortPromise) {
         void outcome.apiAbortPromise
@@ -5284,7 +5285,7 @@ export class ThreadSessionRuntime {
     let needsIdleWait = false
     const waitSinceTimestamp = Date.now()
     const abortResult = await this.dispatchAction(async () => {
-      needsIdleWait = this.isMainSessionBusy()
+      needsIdleWait = this.isBusy()
       const outcome = this.abortActiveRunInternal({
         reason: 'model-change',
       })
@@ -5343,6 +5344,31 @@ export class ThreadSessionRuntime {
       return false
     }
 
+    return true
+  }
+
+  /**
+   * Resume an idle session by sending `text` as a new user turn.
+   *
+   * Used when a question is answered after its run was aborted elsewhere:
+   * the original run is dead, so question.reply is a no-op. We instead feed
+   * the answer back as a fresh prompt so opencode continues from history.
+   */
+  async resumeWithText({ text }: { text: string }): Promise<boolean> {
+    const sessionId = this.state?.sessionId
+    if (!sessionId || this.disposed) {
+      logger.log(`[RESUME] No session for thread ${this.threadId}`)
+      return false
+    }
+    await this.enqueueIncoming({
+      prompt: text,
+      userId: '',
+      username: '',
+      appId: this.appId,
+      mode: 'opencode',
+      resetAssistantForNewRun: true,
+      expectedSessionId: sessionId,
+    })
     return true
   }
 }
