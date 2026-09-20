@@ -11,6 +11,7 @@ import {
   normalizeAudioMediaType,
   getOpenAIAudioConversionStrategy,
   buildTranscriptionTool,
+  createTranscriptionModel,
 } from './voice.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -33,6 +34,20 @@ describe('audio media type routing', () => {
     expect(getOpenAIAudioConversionStrategy('audio/opus')).toMatchInlineSnapshot('"convert-ogg-to-wav"')
     expect(getOpenAIAudioConversionStrategy('audio/mp4')).toMatchInlineSnapshot('"convert-m4a-to-wav"')
     expect(getOpenAIAudioConversionStrategy('audio/mpeg')).toMatchInlineSnapshot('"none"')
+  })
+})
+
+describe('transcription model selection', () => {
+  test('uses the latest compatible audio models', () => {
+    expect([
+      createTranscriptionModel({ apiKey: 'sk-test', provider: 'openai' }).modelId,
+      createTranscriptionModel({ apiKey: 'test', provider: 'gemini' }).modelId,
+    ]).toMatchInlineSnapshot(`
+      [
+        "gpt-audio-1.5",
+        "gemini-flash-latest",
+      ]
+    `)
   })
 })
 

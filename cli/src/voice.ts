@@ -1,10 +1,10 @@
 // Audio transcription service using AI SDK providers.
 // Both providers use LanguageModelV3 (chat model) with audio file parts + tool calling,
 // so we can pass full context (file tree, session info) for better word recognition.
-//   - OpenAI: gpt-4o-audio-preview via .chat() (Chat Completions API). MUST use .chat()
+//   - OpenAI: gpt-audio-1.5 via .chat() (Chat Completions API). MUST use .chat()
 //     because the default Responses API doesn't support audio file parts. The Chat
 //     Completions handler converts audio/mpeg file parts to input_audio format.
-//   - Gemini: gemini-2.5-flash natively accepts audio file parts in chat.
+//   - Gemini: gemini-flash-latest natively accepts audio file parts in chat.
 // Calls model.doGenerate() directly without the `ai` npm package.
 // Uses errore for type-safe error handling.
 
@@ -467,11 +467,11 @@ export function createTranscriptionModel({
 
   if (resolvedProvider === 'openai') {
     const openai = createOpenAI({ apiKey })
-    return openai.chat('gpt-audio')
+    return openai.chat('gpt-audio-1.5')
   }
 
   const google = createGoogleGenerativeAI({ apiKey })
-  return google('gemini-2.5-flash')
+  return google('gemini-flash-latest')
 }
 
 export async function transcribeAudio({
