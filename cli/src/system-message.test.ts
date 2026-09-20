@@ -540,7 +540,7 @@ describe('system-message', () => {
 
       Scheduled tasks do not overlap by default. Add \`--allow-concurrency\` only when concurrent sessions from the same task are safe.
 
-      Pass \`--user\` when the user should see or act on the thread. Omit \`--user\` for routine autonomous work (digests, monitors, housekeeping) so the thread does not appear in the user's Discord sidebar. Discord only shows a thread in the left sidebar to its members. Without \`--user\`, kimaki does not ensure anyone is a member. This applies to \`--channel\` and \`--thread\` scheduling alike.
+      For autonomous scheduled tasks, omit \`--user\` by default so each run stays out of the user's Discord sidebar. Put the user's Discord ID in the task instructions instead, and tell the agent to mention that ID only when it completed work worth reviewing, found an issue, or needs a decision. Do not mention the user when the run found no work or made no changes. Reserve \`--user\` for reminders that must surface every time they fire.
 
       ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday).
       When the user specifies a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
@@ -552,7 +552,7 @@ describe('system-message', () => {
       - \`--pre-run\` to start only when a project command exits with code 0
       - \`--allow-concurrency\` to permit overlapping runs from the same task
       - \`--parent-session\` to pass this session as parent of the scheduled child
-      - \`--user\` to add a specific user to the scheduled thread. Omit this for quiet autonomous work
+      - \`--user\` to add a specific user to every scheduled thread. Use this for reminders, not autonomous tasks
 
       \`--wait\` is incompatible with \`--send-at\` because scheduled tasks run in the future.
 
@@ -577,9 +577,9 @@ describe('system-message', () => {
 
       Notification strategy:
       - NEVER use \`@username\` (e.g. \`@Tommy\`) directly in task prompts. The prompt text becomes the first message in the thread, so a raw \`@\` mention triggers an actual Discord ping every time the task fires. Instead, wrap it in inline code like \`\\\`@Tommy\\\`\`, or use Discord user ID mentions like \`<@USER_ID>\` only in the body of the prompt where the agent will process it, not in the opening line.
-      - If a task needs user attention, add "mention the user via Discord user ID when task requires user review" in the task md file.
-      - With \`--user\`, the user is added to the thread and receives thread-level notifications. Omit \`--user\` when the work should stay out of the sidebar.
-      - If a scheduled task completes with no actionable result, archive the session: \`kimaki session archive thread_123 (or --session ses_123)\`
+      - For autonomous tasks, include the user's Discord ID in the task md file and instruct the agent to mention it only after completing work the user should review, when reporting an issue, or when asking for a decision.
+      - Do not mention the user if the task found no work, made no changes, or has nothing actionable to report. Archive that session instead: \`kimaki session archive thread_123 (or --session ses_123)\`
+      - Do not pass \`--user\` for autonomous tasks. It adds the user to every task thread before the result is known. Use it only when every occurrence must appear in the user's sidebar, such as an explicit reminder.
 
       Manage scheduled tasks with:
 
@@ -587,7 +587,7 @@ describe('system-message', () => {
       kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"] [--model "provider/model"] [--agent "<agent>"]
       kimaki task delete <id>
 
-      \`kimaki task list\` prints \`userId\`, \`agent\`, and \`model\` columns. A \`-\` in \`userId\` means nobody is added to the thread when that task fires, so the user may never see it. Add a user with \`kimaki task edit <id> --user '<discord-user-id>'\`. Clear a stored user with \`kimaki task edit <id> --user ''\`. Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
+      \`kimaki task list\` prints \`userId\`, \`agent\`, and \`model\` columns. For autonomous tasks, \`userId\` should normally be \`-\`; put the Discord ID and conditional mention rule in the task instructions instead. Clear a stored user with \`kimaki task edit <id> --user ''\`. Add \`--user '<discord-user-id>'\` only for tasks whose every occurrence must surface. Change model or agent in place with \`--model\` / \`--agent\` (empty string clears the override). Do not read SQLite or recreate the task just to swap model.
 
       \`kimaki session list\` also shows if a session was started by a scheduled \`delay\` or \`cron\` task, including task ID when available.
 
