@@ -50,11 +50,11 @@ For PyPI and crates.io, explicit versions or latest are used. For repos, use `@r
 
 ## Managing the Cache
 
-Source is cached globally at `~/.opensrc/` (override with `OPENSRC_HOME`).
+Source is cached globally at `~/.opensrc/` (override with `OPENSRC_HOME`). opensrc has **no TTL**. A cache hit is forever if the version/ref folder still exists. After clone it deletes `.git`, so you cannot `git pull`. Reclone by removing first.
 
 ```bash
-opensrc list                     # show all cached sources
-opensrc list --json              # JSON output
+opensrc list                     # show all cached sources (includes Fetched date)
+opensrc list --json              # JSON with fetchedAt ISO timestamps
 
 opensrc remove zod               # remove a package
 opensrc remove facebook/react    # remove a repo
@@ -66,6 +66,23 @@ opensrc clean --crates           # only crates.io packages
 opensrc clean --packages         # all packages, keep repos
 opensrc clean --repos            # all repos, keep packages
 ```
+
+### Reclone if older than 2 days
+
+Always refresh a clone that is **more than 2 days old** before you read it. This matters for unpinned / branch refs (`owner/repo#main`). Pinned tags (`zod@3.22.0`) stay the same, but still follow this rule so you do not keep a deleted folder.
+
+**Detect age (easiest):** `find -mtime +2` prints the path only when the clone dir is older than 2 days.
+
+```bash
+SPEC=anomalyco/opencode
+SRC=$(opensrc path "$SPEC")
+if find "$SRC" -maxdepth 0 -mtime +2 | grep -q .; then
+  opensrc remove "$SPEC"
+  SRC=$(opensrc path "$SPEC")
+fi
+```
+
+**Authoritative age:** `fetchedAt` in `opensrc list --json` (also `~/.opensrc/sources.json`). Compare that ISO time to now. `opensrc list` prints `Fetched: Mar 20, 2026` (date only).
 
 ## When to Fetch Source
 
