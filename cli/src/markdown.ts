@@ -19,6 +19,103 @@ class UnexpectedError extends errore.createTaggedError({
 const markdownLogger = createLogger(LogPrefix.MARKDOWN)
 
 const TOOL_OUTPUT_MAX_CHARS = 30_000
+export const DEFAULT_TOOL_INPUT_MAX_CHARS = 80
+
+export type SessionMarkdownOptions = {
+  compactTools: boolean
+  includeThinking: boolean
+  toolInputMaxChars: number
+}
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+type ToolInput = Record<string, JsonValue>
+
+function stringifyToolValue(value: JsonValue): string {
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}
+
+export function truncateChars(value: string, maxChars: number): string {
+  const collapsed = value.replace(/\s+/g, ' ').trim()
+  if (maxChars <= 0) return ''
+  if (collapsed.length <= maxChars) return collapsed
+  if (maxChars === 1) return '…'
+  return `${collapsed.slice(0, maxChars - 1)}…`
+}
+
+export function fileBaseName(filePath: string): string {
+  const normalized = filePath.replaceAll('\\', '/')
+  const segments = normalized.split('/')
+  return segments[segments.length - 1] || filePath
+}
+
+function readTaskSessionId(metadata: JsonValue | undefined): string | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined
+  const sessionId = metadata.sessionId
+  return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined
+}
+
+function taskChildSessionId({
+  input,
+  metadata,
+}: {
+  input?: ToolInput
+  metadata?: JsonValue
+}): string | undefined {
+  const sessionId = readTaskSessionId(metadata)
+  if (sessionId) return sessionId
+  const taskId = input?.task_id
+  if (typeof taskId === 'string' && taskId.startsWith('ses')) return taskId
+  return undefined
+}
+
+/** Compact tool input for session markdown. Keep this greppable and short. */
+export function formatCompactToolSummary({
+  tool,
+  input,
+  maxChars = DEFAULT_TOOL_INPUT_MAX_CHARS,
+  metadata,
+}: {
+  tool: string
+  input?: ToolInput
+  maxChars?: number
+  metadata?: JsonValue
+}): string {
+  const record = input ?? {}
+  if (tool === 'read') {
+    const path = record.filePath ?? record.path
+    return typeof path === 'string' && path.length > 0 ? fileBaseName(path) : ''
+  }
+  if (tool === 'task') {
+    const description = typeof record.description === 'string' ? record.description : ''
+    const sessionId = taskChildSessionId({ input: record, metadata })
+    if (!sessionId) return truncateChars(description, maxChars)
+    const separator = description.trim() ? 1 : 0
+    const descBudget = Math.max(0, maxChars - sessionId.length - separator)
+    const desc = truncateChars(description, descBudget)
+    return [desc, sessionId].filter(Boolean).join(' ')
+  }
+  if (tool === 'bash') {
+    const command = typeof record.command === 'string' ? record.command : ''
+    const collapsedCommand = command.replace(/\s+/g, ' ').trim()
+    if (collapsedCommand.length > 0 && collapsedCommand.length <= maxChars) {
+      return collapsedCommand
+    }
+    const description = typeof record.description === 'string' ? record.description : ''
+    return truncateChars(description || collapsedCommand, maxChars)
+  }
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(record)) {
+    parts.push(`${key}=${stringifyToolValue(value)}`)
+  }
+  return truncateChars(parts.join(' '), maxChars)
+}
 
 export class ShareMarkdown {
   constructor(private client: OpencodeClient) {}
@@ -34,8 +131,19 @@ export class ShareMarkdown {
     lastAssistantOnly?: boolean
     /** When true (default), tool calls show a compact one-liner with line count instead of full output. */
     compactTools?: boolean
+    /** When true, include reasoning parts. Off by default. */
+    includeThinking?: boolean
+    /** Max characters for compact tool input. Default 80. */
+    toolInputMaxChars?: number
   }): Promise<SessionNotFoundError | MessagesNotFoundError | string> {
-    const { sessionID, includeSystemInfo, lastAssistantOnly, compactTools = true } = options
+    const {
+      sessionID,
+      includeSystemInfo,
+      lastAssistantOnly,
+      compactTools = true,
+      includeThinking = false,
+      toolInputMaxChars = DEFAULT_TOOL_INPUT_MAX_CHARS,
+    } = options
 
     // Get session info
     const sessionResponse = await this.client.session.get({
@@ -98,7 +206,11 @@ export class ShareMarkdown {
     }
 
     for (const message of messagesToRender) {
-      const messageLines = this.renderMessage(message!.info, message!.parts, { compactTools })
+      const messageLines = this.renderMessage(message!.info, message!.parts, {
+        compactTools,
+        includeThinking,
+        toolInputMaxChars,
+      })
       lines.push(...messageLines)
       lines.push('')
     }
@@ -106,11 +218,11 @@ export class ShareMarkdown {
     return lines.join('\n')
   }
 
-  private renderMessage(message: any, parts: any[], opts: { compactTools: boolean }): string[] {
+  private renderMessage(message: any, parts: any[], opts: SessionMarkdownOptions): string[] {
     const lines: string[] = []
 
     if (message.role === 'user') {
-      lines.push('### 👤 User')
+      lines.push('### user')
       lines.push('')
 
       for (const part of parts) {
@@ -121,7 +233,7 @@ export class ShareMarkdown {
             lines.push('')
           }
         } else if (part.type === 'file') {
-          lines.push(`📎 **Attachment**: ${part.filename || 'unnamed file'}`)
+          lines.push(`file: ${part.filename || 'unnamed file'}`)
           if (part.url) {
             lines.push(`   - URL: ${part.url}`)
           }
@@ -132,7 +244,7 @@ export class ShareMarkdown {
       const modelId =
         [message.providerID, message.modelID].filter(Boolean).join('/') ||
         'unknown model'
-      lines.push(`### 🤖 Assistant (${modelId})`)
+      lines.push(`### assistant (${modelId})`)
       lines.push('')
 
       // Filter and process parts
@@ -154,8 +266,8 @@ export class ShareMarkdown {
 
       for (const part of filteredParts) {
         const partLines = opts.compactTools
-          ? this.renderPartCompact(part, message)
-          : this.renderPart(part, message)
+          ? this.renderPartCompact(part, message, opts)
+          : this.renderPart(part, message, opts)
         lines.push(...partLines)
       }
 
@@ -170,7 +282,7 @@ export class ShareMarkdown {
     return lines
   }
 
-  private renderPart(part: any, message: any): string[] {
+  private renderPart(part: any, message: any, opts: SessionMarkdownOptions): string[] {
     const lines: string[] = []
 
     switch (part.type) {
@@ -182,13 +294,10 @@ export class ShareMarkdown {
         break
 
       case 'reasoning':
-        if (part.text) {
-          lines.push('<details>')
-          lines.push('<summary>💭 Thinking</summary>')
+        if (opts.includeThinking && part.text) {
+          lines.push('thinking:')
           lines.push('')
           lines.push(part.text)
-          lines.push('')
-          lines.push('</details>')
           lines.push('')
         }
         break
@@ -200,12 +309,12 @@ export class ShareMarkdown {
 
           if (isOversized) {
             lines.push(
-              `> ⚠️ **Large tool output** (${output.length.toLocaleString()} chars, truncated to ${TOOL_OUTPUT_MAX_CHARS.toLocaleString()})`,
+              `> Large tool output (${output.length.toLocaleString()} chars, truncated to ${TOOL_OUTPUT_MAX_CHARS.toLocaleString()})`,
             )
             lines.push('')
           }
 
-          lines.push(`#### 🛠️ Tool: ${part.tool}`)
+          lines.push(`#### tool: ${part.tool}`)
           lines.push('')
 
           // Render input parameters in YAML
@@ -240,7 +349,7 @@ export class ShareMarkdown {
             }
           }
         } else if (part.state.status === 'error') {
-          lines.push(`#### ❌ Tool Error: ${part.tool}`)
+          lines.push(`#### tool-error: ${part.tool}`)
           lines.push('')
           lines.push('```')
           lines.push(part.state.error || 'Unknown error')
@@ -259,10 +368,9 @@ export class ShareMarkdown {
   }
 
   /** Compact rendering: tool calls become a single line with line count instead of full output. */
-  private renderPartCompact(part: any, message: any): string[] {
-    // Non-tool parts render the same as verbose
+  private renderPartCompact(part: any, message: any, opts: SessionMarkdownOptions): string[] {
     if (part.type !== 'tool') {
-      return this.renderPart(part, message)
+      return this.renderPart(part, message, opts)
     }
 
     const lines: string[] = []
@@ -270,47 +378,23 @@ export class ShareMarkdown {
     if (part.state.status === 'completed') {
       const output: string = part.state.output || ''
       const lineCount = output ? output.split('\n').length : 0
-      const inputSummary = this.compactInputSummary(part.state.input)
+      const inputSummary = formatCompactToolSummary({
+        tool: part.tool,
+        input: part.state.input,
+        maxChars: opts.toolInputMaxChars,
+        metadata: part.state.metadata,
+      })
       const outputLabel = lineCount > 0 ? `(${lineCount} lines)` : ''
       const parts = [inputSummary, outputLabel].filter(Boolean).join(' ')
-      lines.push(`> 🛠️ **${part.tool}**${parts ? ` ${parts}` : ''}`)
+      lines.push(`tool: ${part.tool}${parts ? ` ${parts}` : ''}`)
       lines.push('')
     } else if (part.state.status === 'error') {
       const errorText = (part.state.error || 'Unknown error').split('\n')[0].slice(0, 120)
-      lines.push(`> ❌ **${part.tool}** — ${errorText}`)
+      lines.push(`tool-error: ${part.tool} ${errorText}`)
       lines.push('')
     }
 
     return lines
-  }
-
-  /** Build a compact key=value summary of tool input, max 2 params, 80 chars each. */
-  private compactInputSummary(input: Record<string, unknown> | undefined): string {
-    if (!input) return ''
-    const entries = Object.entries(input)
-    if (entries.length === 0) return ''
-
-    const parts: string[] = []
-    const maxParams = 2
-    for (let i = 0; i < Math.min(entries.length, maxParams); i++) {
-      const [key, value] = entries[i]!
-      let val: string
-      try {
-        val = typeof value === 'string'
-          ? value
-          : (JSON.stringify(value) ?? String(value))
-      } catch {
-        val = String(value)
-      }
-      // Collapse whitespace for readability
-      const collapsed = val.replace(/\s+/g, ' ').trim()
-      const normalized = collapsed.length > 80 ? `${collapsed.slice(0, 80)}…` : collapsed
-      parts.push(`${key}=${normalized}`)
-    }
-    if (entries.length > maxParams) {
-      parts.push('...')
-    }
-    return parts.join(', ')
   }
 
   private formatDuration(ms: number): string {

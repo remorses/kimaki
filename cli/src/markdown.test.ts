@@ -13,10 +13,66 @@ import {
   buildDeterministicOpencodeConfig,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
-import { ShareMarkdown, getCompactSessionContext } from './markdown.js'
+import {
+  ShareMarkdown,
+  fileBaseName,
+  formatCompactToolSummary,
+  getCompactSessionContext,
+  truncateChars,
+} from './markdown.js'
 import { setDataDir } from './config.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
 import { cleanupTestSessions, initTestGitRepo } from './test-utils.js'
+
+test('truncateChars keeps short text and ellipsizes long text', () => {
+  expect(truncateChars('hello world', 80)).toBe('hello world')
+  expect(truncateChars('  a   b  ', 80)).toBe('a b')
+  expect(truncateChars('abcdefghij', 5)).toBe('abcd…')
+  expect(truncateChars('ab', 1)).toBe('…')
+})
+
+test('fileBaseName strips directories on posix and windows paths', () => {
+  expect(fileBaseName('/Users/morse/README.md')).toBe('README.md')
+  expect(fileBaseName('src\\cli.ts')).toBe('cli.ts')
+})
+
+test('formatCompactToolSummary indexes read, task, and bash inputs', () => {
+  expect(formatCompactToolSummary({
+    tool: 'read',
+    input: { filePath: '/Users/morse/Documents/GitHub/kimakivoice/README.md', offset: 1 },
+  })).toBe('README.md')
+
+  expect(formatCompactToolSummary({
+    tool: 'task',
+    input: { description: 'analyze gpuix-solid', task_id: 'ses_child123' },
+  })).toBe('analyze gpuix-solid ses_child123')
+
+  expect(formatCompactToolSummary({
+    tool: 'task',
+    input: { description: 'analyze gpuix-solid' },
+    metadata: { sessionId: 'ses_from_meta' },
+  })).toBe('analyze gpuix-solid ses_from_meta')
+
+  expect(formatCompactToolSummary({
+    tool: 'bash',
+    input: { command: 'echo hello world', description: 'Print greeting' },
+  })).toBe('echo hello world')
+
+  expect(formatCompactToolSummary({
+    tool: 'bash',
+    input: {
+      command: 'a'.repeat(120),
+      description: 'Rebuild native addon',
+    },
+    maxChars: 80,
+  })).toBe('Rebuild native addon')
+
+  expect(formatCompactToolSummary({
+    tool: 'grep',
+    input: { pattern: 'ShareMarkdown', path: 'cli/src/markdown.ts' },
+    maxChars: 40,
+  })).toBe('pattern=ShareMarkdown path=cli/src/mark…')
+})
 
 const ROOT = path.resolve(process.cwd(), 'tmp', 'markdown-test')
 
@@ -249,10 +305,10 @@ test('generate markdown with system info', async () => {
   expect(markdown).toContain('# Markdown Test Session')
   expect(markdown).toContain('## Session Information')
   expect(markdown).toContain('## Conversation')
-  expect(markdown).toContain('### 👤 User')
+  expect(markdown).toContain('### user')
   expect(markdown).toContain('hello markdown test')
   expect(markdown).toContain(
-    '### 🤖 Assistant (deterministic-provider/deterministic-v2)',
+    '### assistant (deterministic-provider/deterministic-v2)',
   )
   expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
   expect(markdown).toContain('**Started using deterministic-provider/deterministic-v2**')
@@ -269,12 +325,12 @@ test('generate markdown with system info', async () => {
 
     ## Conversation
 
-    ### 👤 User
+    ### user
 
     hello markdown test
 
 
-    ### 🤖 Assistant (deterministic-provider/deterministic-v2)
+    ### assistant (deterministic-provider/deterministic-v2)
 
     **Started using deterministic-provider/deterministic-v2**
 
@@ -306,12 +362,12 @@ test('generate markdown without system info', async () => {
 
     ## Conversation
 
-    ### 👤 User
+    ### user
 
     hello markdown test
 
 
-    ### 🤖 Assistant (deterministic-provider/deterministic-v2)
+    ### assistant (deterministic-provider/deterministic-v2)
 
     **Started using deterministic-provider/deterministic-v2**
 
@@ -370,6 +426,23 @@ test('generate markdown with lastAssistantOnly', async () => {
   expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
 })
 
+test('thinking is omitted unless includeThinking is set', async () => {
+  const exporter = new ShareMarkdown(client)
+  const hidden = await exporter.generate({
+    sessionID,
+    includeThinking: false,
+  })
+  expect(errore.isOk(hidden)).toBe(true)
+  expect(errore.unwrap(hidden)).not.toContain('thinking:')
+
+  const shown = await exporter.generate({
+    sessionID,
+    includeThinking: true,
+  })
+  expect(errore.isOk(shown)).toBe(true)
+  expect(errore.unwrap(shown)).not.toContain('💭')
+})
+
 test('compact tools: tool calls show one-liner with line count', async () => {
   const exporter = new ShareMarkdown(client)
 
@@ -382,9 +455,7 @@ test('compact tools: tool calls show one-liner with line count', async () => {
   const md = errore.unwrap(result)
 
   // Compact mode: exact one-liner format with params and line count
-  expect(md).toContain(
-    '> 🛠️ **bash** command=echo hello world, description=Print greeting',
-  )
+  expect(md).toContain('tool: bash echo hello world')
   expect(md).toMatch(/\(\d+ lines?\)/)
   // Should NOT contain full output code blocks or input YAML
   expect(md).not.toContain('**Output:**')
@@ -404,7 +475,7 @@ test('verbose tools: tool calls show full input and output', async () => {
   const md = errore.unwrap(result)
 
   // Verbose mode: full tool rendering with input YAML and output code block
-  expect(md).toContain('#### 🛠️ Tool: bash')
+  expect(md).toContain('#### tool: bash')
   expect(md).toContain('**Input:**')
   expect(md).toContain('```yaml')
   expect(md).toContain('**Output:**')

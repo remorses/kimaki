@@ -406,11 +406,23 @@ cli
 cli
   .command(
     'session read <sessionId>',
-    'Read a session conversation as markdown (pipe to file to grep)',
+    dedent`
+      Read a session conversation as markdown (pipe to file to grep).
+
+      Thinking is omitted by default. Tool inputs are truncated. Use
+      \`--thinking\` and \`--verbose\` for the full dump.
+    `,
   )
   .option('--project <path>', 'Project directory (defaults to cwd)')
   .option('--verbose', 'Show full tool inputs and outputs instead of compact summaries')
-  .action(async (sessionId: string, options: { project?: string; verbose?: boolean }) => {
+  .option('--thinking', 'Include reasoning / thinking parts')
+  .option(
+    '--tool-input-max-chars <n>',
+    z.number().default(80).describe('Max characters for compact tool input'),
+  )
+  .example('kimaki session read ses_xxx > ./tmp/session.md')
+  .example('kimaki session read ses_xxx --thinking --verbose')
+  .action(async (sessionId, options) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
@@ -426,7 +438,12 @@ cli
       // Try current project first (fast path)
       const compactTools = !options.verbose
       const markdown = new ShareMarkdown(getClient())
-      const result = await markdown.generate({ sessionID: sessionId, compactTools })
+      const result = await markdown.generate({
+        sessionID: sessionId,
+        compactTools,
+        includeThinking: options.thinking,
+        toolInputMaxChars: options.toolInputMaxChars,
+      })
       if (!(result instanceof Error)) {
         process.stdout.write(result)
         process.exit(0)
@@ -460,6 +477,8 @@ cli
         const otherResult = await otherMarkdown.generate({
           sessionID: sessionId,
           compactTools,
+          includeThinking: options.thinking,
+          toolInputMaxChars: options.toolInputMaxChars,
         })
         if (!(otherResult instanceof Error)) {
           process.stdout.write(otherResult)

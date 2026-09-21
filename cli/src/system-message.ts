@@ -912,14 +912,13 @@ kimaki session search "/panic|crash/i" --channel <channel_id>
 kimaki session search "auth timeout" --all
 \`\`\`
 
-To read a session's full conversation as markdown, pipe to a file and grep it to avoid wasting context.
-Logs go to stderr, so redirect stderr to hide them:
+To read a session as markdown, pipe to a file. Logs go to stderr:
 
 \`\`\`bash
 kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
 \`\`\`
 
-Then use grep/read tools on the file to find what you need.
+The dump is already compressed (no thinking, truncated tool inputs). If it is under 100 KB, read the whole file. Do not grep first. Use \`--thinking\` / \`--verbose\` only when you need the full dump.
 
 ### who edited a file
 
