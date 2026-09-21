@@ -255,18 +255,24 @@ export class ShareMarkdown {
         includeThinking,
         toolInputMaxChars,
       })
-      if (message!.info.role === 'user') {
-        const durationMs = userPromptDurationMs({
-          messages: messagesToRender,
-          userIndex: index,
-        })
-        if (durationMs !== undefined) {
-          messageLines.push(`duration: ${formatDuration(durationMs)}`)
-          messageLines.push('')
-        }
-      }
       lines.push(...messageLines)
       lines.push('')
+
+      const nextRole = messagesToRender[index + 1]?.info.role
+      if (message!.info.role !== 'assistant' || nextRole === 'assistant') continue
+
+      for (let userIndex = index - 1; userIndex >= 0; userIndex--) {
+        if (messagesToRender[userIndex]?.info.role !== 'user') continue
+        const durationMs = userPromptDurationMs({
+          messages: messagesToRender,
+          userIndex,
+        })
+        if (durationMs !== undefined) {
+          lines.push(`duration: ${formatDuration(durationMs)}`)
+          lines.push('')
+        }
+        break
+      }
     }
 
     return lines.join('\n')

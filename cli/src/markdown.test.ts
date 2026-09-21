@@ -348,13 +348,13 @@ test('generate markdown with system info', async () => {
 
     hello markdown test
 
-    duration: <duration>
-
 
     ### assistant (deterministic-provider/deterministic-v2)
 
     Hello! This is a deterministic markdown test response.
 
+
+    duration: <duration>
     "
   `)
 })
@@ -383,13 +383,13 @@ test('generate markdown without system info', async () => {
 
     hello markdown test
 
-    duration: <duration>
-
 
     ### assistant (deterministic-provider/deterministic-v2)
 
     Hello! This is a deterministic markdown test response.
 
+
+    duration: <duration>
     "
   `)
 })
