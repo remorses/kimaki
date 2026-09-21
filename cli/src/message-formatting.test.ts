@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { asDiscordQuote, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
@@ -94,6 +94,16 @@ describe('asDiscordQuote', () => {
       > 
       > then reply"
     `)
+  })
+})
+
+describe('quotedTextFitsOneDiscordMessage', () => {
+  test('accepts a short line', () => {
+    expect(quotedTextFitsOneDiscordMessage('done')).toBe(true)
+  })
+
+  test('rejects text whose quote would split across Discord messages', () => {
+    expect(quotedTextFitsOneDiscordMessage('x'.repeat(1999))).toBe(false)
   })
 })
 

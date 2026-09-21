@@ -210,6 +210,13 @@ export function asDiscordQuote(text: string): string {
   }).join('\n')
 }
 
+// Leave one char for the kind-change blank line in sessionPartContent.
+const DISCORD_MESSAGE_MAX_LENGTH = 2000
+
+export function quotedTextFitsOneDiscordMessage(text: string): boolean {
+  return asDiscordQuote(text).length < DISCORD_MESSAGE_MAX_LENGTH
+}
+
 function isNonEmptyTextPart(part: { type: string; text?: string }): boolean {
   return part.type === 'text' && Boolean(part.text?.trim())
 }
@@ -244,6 +251,7 @@ export function shouldQuoteIntermediateTextPart({
   const text = part.text ?? ''
   if (text.includes('<callout')) return false
   if (text.trim().split('\n').length > 2) return false
+  if (!quotedTextFitsOneDiscordMessage(text)) return false
   if (
     nextToolName === 'question'
     || nextToolName?.endsWith('kimaki_sleep')

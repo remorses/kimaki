@@ -54,6 +54,7 @@ import {
   formatTaskToolTitle,
   planAssistantTurnFlush,
   QUEUE_PREFIX,
+  sessionPartContent,
   sessionPartKind,
   shouldLeadWithBlankLine,
   shouldQuoteIntermediateTextPart,
@@ -156,6 +157,8 @@ import {
   getCurrentTurnStartTime,
   isSessionBusy,
   getLatestRunInfo,
+  getPromptCacheClear,
+  formatPromptCacheClearMessage,
   getIdleTokenUsageDelta,
   getDerivedSubtaskIndex,
   getDerivedSubtaskAgentType,
@@ -2050,6 +2053,49 @@ export class ThreadSessionRuntime {
     return []
   }
 
+  private async unquoteFinalTextPart(): Promise<void> {
+    const parts = this.getCurrentTurnParts()
+    const finalPart = planAssistantTurnFlush({
+      parts,
+      mode: 'final',
+    }).sendParts.at(-1)
+    if (!finalPart || finalPart.quoteText || finalPart.part.type !== 'text') return
+    const last = finalPart.part
+    const db = await getDb()
+    const row = await db.query.part_messages.findFirst({
+      where: { part_id: last.id },
+      columns: { message_id: true },
+    }).catch((e) => new DiscordOperationError({ operation: 'getPartMessage', cause: e }))
+    if (row instanceof Error) {
+      discordLogger.error(`Failed to find Discord message for ${last.id}:`, row)
+      return
+    }
+    const messageId = row?.message_id
+    if (!messageId) return
+    const message = await this.thread.messages.fetch(messageId)
+      .catch((e) => new DiscordOperationError({ operation: 'fetchMessage', cause: e }))
+    if (message instanceof Error) {
+      discordLogger.error(`Failed to fetch Discord message for ${last.id}:`, message)
+      return
+    }
+    const formatted = formatPart(last)
+    const leadWithBlankLine = message.content.startsWith('\n')
+    const quoted = sessionPartContent({
+      content: asDiscordQuote(formatted),
+      leadWithBlankLine,
+    })
+    if (message.content !== quoted) return
+    const plain = sessionPartContent({
+      content: formatted,
+      leadWithBlankLine,
+    })
+    const edited = await message.edit({ content: plain })
+      .catch((e) => new DiscordOperationError({ operation: 'editMessage', cause: e }))
+    if (edited instanceof Error) {
+      discordLogger.error(`ERROR: Failed to unquote final text ${last.id}:`, edited)
+    }
+  }
+
   private async flushCurrentTurnParts({
     mode,
     throughPartId,
@@ -2777,6 +2823,12 @@ export class ThreadSessionRuntime {
     await this.flushCurrentTurnParts({
       mode: 'final',
       repulseTyping: false,
+    })
+    await this.unquoteFinalTextPart()
+
+    await this.maybeNotifyPromptCacheClear({
+      sessionId,
+      messageId: completedMessageId,
     })
 
     // Skip footer if model produced no visible output (no text, no tool calls,
@@ -5289,6 +5341,29 @@ export class ThreadSessionRuntime {
     this.lastDisplayedContextPercentage = 0
     this.lastRateLimitDisplayTime = 0
     this.lastSentPartKind = undefined
+  }
+
+  private async maybeNotifyPromptCacheClear({
+    sessionId,
+    messageId,
+  }: {
+    sessionId: string
+    messageId: string
+  }): Promise<void> {
+    const cacheClear = getPromptCacheClear({
+      events: this.eventBuffer,
+      sessionId,
+      currentMessageId: messageId,
+    })
+    if (!cacheClear) {
+      return
+    }
+    const chunk = `${STATUS_PREFIX}${formatPromptCacheClearMessage(cacheClear)}`
+    const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
+      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    if (sendResult instanceof Error) {
+      discordLogger.error('Failed to send prompt cache notice:', sendResult)
+    }
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────
