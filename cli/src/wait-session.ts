@@ -12,8 +12,8 @@ import { createLogger, LogPrefix } from './logger.js'
 import {
   derivePendingPermissionRequests,
   getEventBufferSessionId,
+  parseEventBufferEvent,
   type EventBufferEntry,
-  type EventBufferEvent,
 } from './session-handler/event-stream-state.js'
 
 const waitLogger = createLogger(LogPrefix.SESSION)
@@ -182,18 +182,18 @@ async function loadPersistedSessionEvents({
 }): Promise<EventBufferEntry[]> {
   const rows = await getSessionEventSnapshot({ sessionId })
   return rows.flatMap((row) => {
-    try {
-      return [{
-        event: JSON.parse(row.event_json) as EventBufferEvent,
-        timestamp: Number(row.timestamp),
-        eventIndex: Number(row.event_index),
-      }]
-    } catch (error) {
+    const event = parseEventBufferEvent(row.event_json)
+    if (event instanceof Error) {
       waitLogger.warn(
-        `Skipping invalid persisted session event for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        `Skipping invalid persisted session event for ${sessionId}: ${event.message}`,
       )
       return []
     }
+    return [{
+      event,
+      timestamp: Number(row.timestamp),
+      eventIndex: Number(row.event_index),
+    }]
   })
 }
 

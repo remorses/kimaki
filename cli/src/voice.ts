@@ -26,6 +26,7 @@ import {
   SpeechGenerationError,
   type SpeechGenerationErrors,
 } from './errors.js'
+import { isJsonRecord, parseJsonUnknown } from './utils.js'
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
@@ -614,12 +615,15 @@ export function extractTranscription(
     return c.type === 'tool-call' && c.toolName === TRANSCRIPTION_TOOL_NAME
   })
 
-  if (toolCall?.type === 'tool-call') {
-    const args = errore.try(
-      () => JSON.parse(toolCall.input) as Record<string, unknown>,
-      (cause) => new TranscriptionError({ reason: 'Invalid tool call arguments', cause }),
-    )
-    if (args instanceof Error) return args
+  if (toolCall) {
+    // toolCall.input is a JSON string in LanguageModelV3
+    const args = (() => {
+      if (typeof toolCall.input !== 'string') return undefined
+      const parsed = parseJsonUnknown(toolCall.input)
+      if (parsed instanceof Error || !isJsonRecord(parsed)) return undefined
+      return parsed
+    })()
+    if (!args) return new EmptyTranscriptionError()
     const transcription = (typeof args.transcription === 'string' ? args.transcription : '').trim()
     const sessionAction = args.sessionAction === 'btw' || args.sessionAction === 'new-session'
       ? args.sessionAction

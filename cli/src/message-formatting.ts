@@ -3,7 +3,7 @@
 // handles file attachments, and provides tool summary generation.
 
 import type { SessionMessageInfo, SessionStructuredError } from '@opencode/client'
-import * as errore from 'errore'
+import { isJsonRecord, parseJsonUnknown } from './utils.js'
 
 export type DiscordSessionPart =
   | {
@@ -14,7 +14,6 @@ export type DiscordSessionPart =
       text: string
       time?: { start?: number; end?: number }
       ignored?: boolean
-      synthetic?: boolean
     }
   | {
       id: string
@@ -173,11 +172,11 @@ export function isEssentialToolPart(part: DiscordSessionPart): boolean {
 
 function parseToolInput(input: unknown): Record<string, unknown> {
   if (typeof input === 'string') {
-    const parsed = errore.try(() => JSON.parse(input) as Record<string, unknown>)
-    if (parsed instanceof Error || !parsed || typeof parsed !== 'object') return {}
+    const parsed = parseJsonUnknown(input)
+    if (parsed instanceof Error || !isJsonRecord(parsed)) return {}
     return parsed
   }
-  if (input && typeof input === 'object') return input as Record<string, unknown>
+  if (isJsonRecord(input)) return input
   return {}
 }
 

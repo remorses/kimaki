@@ -3,6 +3,7 @@
 
 import { execAsync } from './worktrees.js'
 import { createLogger, LogPrefix } from './logger.js'
+import { isJsonRecord, jsonString, parseJsonUnknown } from './utils.js'
 
 const logger = createLogger(LogPrefix.DIFF)
 
@@ -39,21 +40,13 @@ export function parseCritiqueOutput(output: string): CritiqueResult | undefined 
     if (!line.startsWith('{')) {
       continue
     }
-    try {
-      const parsed = JSON.parse(line) as {
-        url?: string
-        id?: string
-        error?: string
-      }
-      if (parsed.error) {
-        return { error: parsed.error }
-      }
-      if (parsed.url && parsed.id) {
-        return { url: parsed.url, id: parsed.id }
-      }
-    } catch {
-      // not valid JSON, try next line
-    }
+    const parsed = parseJsonUnknown(line)
+    if (parsed instanceof Error || !isJsonRecord(parsed)) continue
+    const error = jsonString(parsed.error)
+    if (error) return { error }
+    const url = jsonString(parsed.url)
+    const id = jsonString(parsed.id)
+    if (url && id) return { url, id }
   }
   // Fallback: try to find a URL in the raw output
   const urlMatch = output.match(/https?:\/\/critique\.work\/[^\s]+/)

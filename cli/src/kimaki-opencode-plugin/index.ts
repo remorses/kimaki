@@ -290,13 +290,32 @@ const DEFAULT_INJECTION_GUARD_CONFIG: InjectionGuardConfig = {
   scanPatterns: [],
 }
 
-function readJsonObject(filePath: string): Record<string, unknown> | null {
-  const content = fs.readFileSync(filePath, 'utf8')
-  const parsed = JSON.parse(content) as unknown
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function parseJsonUnknown(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
     return null
   }
-  return parsed as Record<string, unknown>
+}
+
+function readJsonObject(filePath: string): Record<string, unknown> | null {
+  const parsed = parseJsonUnknown(fs.readFileSync(filePath, 'utf8'))
+  if (!isJsonRecord(parsed)) return null
+  return parsed
+}
+
+function parseIpcToolResponse(raw: string): { error?: string; filePaths?: string[] } | null {
+  const parsed = parseJsonUnknown(raw)
+  if (!isJsonRecord(parsed)) return null
+  const error = typeof parsed.error === 'string' ? parsed.error : undefined
+  const filePaths = Array.isArray(parsed.filePaths)
+    ? parsed.filePaths.filter((value): value is string => typeof value === 'string')
+    : undefined
+  return { error, filePaths }
 }
 
 function injectionGuardConfig(directory: string): InjectionGuardConfig {
@@ -304,8 +323,8 @@ function injectionGuardConfig(directory: string): InjectionGuardConfig {
     const env = process.env.OPENCODE_INJECTION_GUARD
     if (env) {
       try {
-        const parsed = JSON.parse(env) as Record<string, unknown>
-        return parsed
+        const parsed = parseJsonUnknown(env)
+        return isJsonRecord(parsed) ? parsed : {}
       } catch {
         return {}
       }
@@ -406,7 +425,10 @@ function toolResultText(result: ToolResult) {
 function parseInjectionJudge(text: string) {
   try {
     const cleaned = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, '')
-    const parsed = JSON.parse(cleaned) as Record<string, unknown>
+    const parsed = parseJsonUnknown(cleaned)
+    if (!isJsonRecord(parsed)) {
+      return { flagged: false, confidence: 0, observation: null }
+    }
     return {
       flagged: parsed.flagged === true,
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,
@@ -666,9 +688,9 @@ export default Plugin.define({
               return toolText('File upload was cancelled')
             }
             if (updated.response) {
-              const parsed = JSON.parse(updated.response) as {
-                filePaths?: string[]
-                error?: string
+              const parsed = parseIpcToolResponse(updated.response)
+              if (!parsed) {
+                return toolText('File upload failed: invalid IPC response')
               }
               if (parsed.error) {
                 return toolText(`File upload failed: ${parsed.error}`)
@@ -735,9 +757,9 @@ export default Plugin.define({
               return toolText('Action button request was cancelled')
             }
             if (updated.response) {
-              const parsed = JSON.parse(updated.response) as {
-                ok?: boolean
-                error?: string
+              const parsed = parseIpcToolResponse(updated.response)
+              if (!parsed) {
+                return toolText('Action button request failed: invalid IPC response')
               }
               if (parsed.error) {
                 return toolText(`Action button request failed: ${parsed.error}`)
