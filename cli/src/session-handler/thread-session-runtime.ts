@@ -167,6 +167,8 @@ import {
   isAssistantMessageInLatestUserTurn,
   isAssistantMessageNaturalCompletion,
   shouldBufferSessionEvent,
+  shouldRetainSessionEvent,
+  trimEventBuffer,
   type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -1137,7 +1139,18 @@ export class ThreadSessionRuntime {
       ]
     })
 
-    this.eventBuffer = hydratedEvents.slice(-ThreadSessionRuntime.EVENT_BUFFER_MAX)
+    this.eventBuffer = trimEventBuffer({
+      events: hydratedEvents,
+      mainSessionId: sessionId,
+      max: ThreadSessionRuntime.EVENT_BUFFER_MAX,
+      isKnownChildSession: (candidateSessionId) => {
+        return isDerivedChildSession({
+          events: hydratedEvents,
+          mainSessionId: sessionId,
+          candidateSessionId,
+        })
+      },
+    })
     const lastHydratedEvent = this.eventBuffer[this.eventBuffer.length - 1]
     this.nextEventIndex = lastHydratedEvent
       ? Number(lastHydratedEvent.eventIndex || 0) + 1
@@ -1522,6 +1535,15 @@ export class ThreadSessionRuntime {
     if (!compactedEvent) {
       return
     }
+    if (!shouldRetainSessionEvent({
+      event: compactedEvent,
+      mainSessionId: this.state?.sessionId,
+      isKnownChildSession: (candidateSessionId) => {
+        return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
+      },
+    })) {
+      return
+    }
 
     const timestamp = Date.now()
     const eventIndex = this.nextEventIndex
@@ -1531,9 +1553,14 @@ export class ThreadSessionRuntime {
       timestamp,
       eventIndex,
     })
-    if (this.eventBuffer.length > ThreadSessionRuntime.EVENT_BUFFER_MAX) {
-      this.eventBuffer.splice(0, this.eventBuffer.length - ThreadSessionRuntime.EVENT_BUFFER_MAX)
-    }
+    this.eventBuffer = trimEventBuffer({
+      events: this.eventBuffer,
+      mainSessionId: this.state?.sessionId,
+      max: ThreadSessionRuntime.EVENT_BUFFER_MAX,
+      isKnownChildSession: (candidateSessionId) => {
+        return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
+      },
+    })
     this.persistEventBufferDebounced.trigger()
   }
 
@@ -1646,6 +1673,7 @@ export class ThreadSessionRuntime {
     // causing tryDrainQueue to drain the local queue while the session is
     // actually still busy. This was the root cause of "? queue" messages
     // interrupting instead of queuing.
+    // Child task part floods are also dropped at retain time for the same reason.
     if (event.type !== 'message.part.delta') {
       this.appendEventToBuffer(event)
     }

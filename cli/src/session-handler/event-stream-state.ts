@@ -191,8 +191,29 @@ export type DerivedSubagentSession = {
   timestamp: number
 }
 
+function getTaskPartStatus(
+  event: EventBufferEvent,
+  sessionId: string,
+): { callID: string; status: string } | undefined {
+  if (event.type !== 'message.part.updated') {
+    return undefined
+  }
+  const part = event.properties.part
+  if (part.sessionID !== sessionId || part.type !== 'tool' || part.tool !== 'task') {
+    return undefined
+  }
+  const callID = part.callID || part.id
+  if (!callID) {
+    return undefined
+  }
+  return { callID, status: part.state.status }
+}
+
 // Scans backward for most recent session-scoped lifecycle event.
 // Returns true if the latest lifecycle event for sessionId is session.status busy.
+// If status/idle were evicted from the bounded buffer, a still-running task
+// tool on that session also counts as busy. That stops `. queue` from draining
+// (and the 3s interrupt plugin from aborting) while a subagent is in flight.
 export function isSessionBusy({
   events,
   sessionId,
@@ -203,13 +224,14 @@ export function isSessionBusy({
   upToIndex?: number
 }): boolean {
   const end = upToIndex ?? events.length - 1
+  const latestTaskStatusByCallId = new Map<string, string>()
   for (let i = end; i >= 0; i--) {
     const entry = events[i]
     if (!entry) {
       continue
     }
-     const e = entry.event
-     const eid = getEventBufferSessionId(e)
+    const e = entry.event
+    const eid = getEventBufferSessionId(e)
     if (eid !== sessionId) {
       continue
     }
@@ -219,8 +241,14 @@ export function isSessionBusy({
     if (e.type === 'session.status') {
       return e.properties.status.type === 'busy'
     }
+    const taskPart = getTaskPartStatus(e, sessionId)
+    if (taskPart && !latestTaskStatusByCallId.has(taskPart.callID)) {
+      latestTaskStatusByCallId.set(taskPart.callID, taskPart.status)
+    }
   }
-  return false
+  return [...latestTaskStatusByCallId.values()].some((status) => {
+    return status === 'running' || status === 'pending'
+  })
 }
 
 export function didQuestionQueueHandoffSinceLatestQuestionAsked({
@@ -1423,6 +1451,56 @@ export function shouldBufferSessionEvent({
     return false
   }
   return parented.parentID === mainSessionId || isKnownChildSession(parented.parentID)
+}
+
+// Child task sessions emit thousands of message.part.updated events. Those are
+// still handled live for Discord display, but they must not occupy the bounded
+// buffer or they evict parent session.status busy and `. queue` drains early.
+// That is what aborted ses_f3c07efdbffeHwbaQhsE7fIz5z: live buffer mixed in
+// child parts, persist dropped them, export still looked busy, drain fired.
+// Keep child session/message lifecycle so token tracking and subtask identity
+// still derive after the part flood.
+export function shouldRetainSessionEvent({
+  event,
+  mainSessionId,
+  isKnownChildSession,
+}: {
+  event: EventBufferEvent
+  mainSessionId?: string
+  isKnownChildSession: (sessionId: string) => boolean
+}): boolean {
+  if (!shouldBufferSessionEvent({ event, mainSessionId, isKnownChildSession })) {
+    return false
+  }
+  const eventSessionId = getEventBufferSessionId(event)
+  if (!eventSessionId || eventSessionId === mainSessionId) {
+    return true
+  }
+  return event.type !== 'message.part.updated'
+}
+
+export function trimEventBuffer({
+  events,
+  mainSessionId,
+  max,
+  isKnownChildSession,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId?: string
+  max: number
+  isKnownChildSession: (sessionId: string) => boolean
+}): EventBufferEntry[] {
+  const retained = events.filter((entry) => {
+    return shouldRetainSessionEvent({
+      event: entry.event,
+      mainSessionId,
+      isKnownChildSession,
+    })
+  })
+  if (retained.length <= max) {
+    return retained
+  }
+  return retained.slice(-max)
 }
 
 // Child sessions of the main thread: task tool metadata.sessionId, plus

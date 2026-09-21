@@ -30,6 +30,8 @@ import {
   isAssistantTextReadyForQuestion,
   deriveLatestUnansweredQuestion,
   shouldBufferSessionEvent,
+  shouldRetainSessionEvent,
+  trimEventBuffer,
   type EventBufferEntry,
 } from './event-stream-state.js'
 
@@ -2330,6 +2332,174 @@ describe('shouldBufferSessionEvent', () => {
     expect(shouldBufferSessionEvent({
       event: toast,
       isKnownChildSession: () => false,
+    })).toBe(true)
+  })
+})
+
+describe('event buffer trim and busy derivation during task children', () => {
+  const mainSessionId = 'ses_parent'
+  const childSessionId = 'ses_task_child'
+
+  function parentBusy(): EventBufferEntry {
+    return eventEntry({
+      type: 'session.status',
+      properties: {
+        sessionID: mainSessionId,
+        status: { type: 'busy' },
+      },
+    })
+  }
+
+  function runningTaskPart(): EventBufferEntry {
+    return eventEntry({
+      type: 'message.part.updated',
+      properties: {
+        part: {
+          id: 'prt_task',
+          sessionID: mainSessionId,
+          messageID: 'msg_asst',
+          type: 'tool',
+          callID: 'call_task',
+          tool: 'task',
+          state: {
+            status: 'running',
+            input: { subagent_type: 'mythos-review' },
+            metadata: { sessionId: childSessionId },
+          },
+        },
+      },
+    })
+  }
+
+  function childPart(index: number): EventBufferEntry {
+    return eventEntry({
+      type: 'message.part.updated',
+      properties: {
+        part: {
+          id: `prt_child_${index}`,
+          sessionID: childSessionId,
+          messageID: 'msg_child',
+          type: 'text',
+          text: 'child output',
+        },
+      },
+    })
+  }
+
+  test('isSessionBusy stays true for a running task even without status events', () => {
+    expect(isSessionBusy({
+      events: [runningTaskPart()],
+      sessionId: mainSessionId,
+    })).toBe(true)
+  })
+
+  test('isSessionBusy is false after the same task call completes without status events', () => {
+    const events = [
+      runningTaskPart(),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'prt_task',
+            sessionID: mainSessionId,
+            messageID: 'msg_asst',
+            type: 'tool',
+            callID: 'call_task',
+            tool: 'task',
+            state: {
+              status: 'completed',
+              output: 'done',
+              input: { subagent_type: 'mythos-review' },
+              metadata: { sessionId: childSessionId },
+            },
+          },
+        },
+      }),
+    ]
+    expect(isSessionBusy({ events, sessionId: mainSessionId })).toBe(false)
+  })
+
+  test('isSessionBusy is false after the running task errors and the session idles', () => {
+    const events = [
+      runningTaskPart(),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'prt_task',
+            sessionID: mainSessionId,
+            messageID: 'msg_asst',
+            type: 'tool',
+            callID: 'call_task',
+            tool: 'task',
+            state: {
+              status: 'error',
+              error: 'Task cancelled',
+              input: { subagent_type: 'mythos-review' },
+              metadata: { sessionId: childSessionId },
+            },
+          },
+        },
+      }),
+      eventEntry({
+        type: 'session.idle',
+        properties: { sessionID: mainSessionId },
+      }),
+    ]
+    expect(isSessionBusy({ events, sessionId: mainSessionId })).toBe(false)
+  })
+
+  test('trim keeps parent busy across a child-session event flood', () => {
+    const busy = parentBusy()
+    const task = runningTaskPart()
+    const events = [
+      busy,
+      task,
+      ...Array.from({ length: 1000 }, (_, index) => childPart(index)),
+    ]
+    const trimmed = trimEventBuffer({
+      events,
+      mainSessionId,
+      max: 1000,
+      isKnownChildSession: (sessionId) => sessionId === childSessionId,
+    })
+    expect(trimmed.length).toBeLessThanOrEqual(1000)
+    expect(isSessionBusy({ events: trimmed, sessionId: mainSessionId })).toBe(true)
+  })
+
+  test('shouldRetainSessionEvent drops child part updates but keeps parent task parts', () => {
+    expect(shouldRetainSessionEvent({
+      event: runningTaskPart().event,
+      mainSessionId,
+      isKnownChildSession: (sessionId) => sessionId === childSessionId,
+    })).toBe(true)
+    expect(shouldRetainSessionEvent({
+      event: childPart(1).event,
+      mainSessionId,
+      isKnownChildSession: (sessionId) => sessionId === childSessionId,
+    })).toBe(false)
+    expect(shouldRetainSessionEvent({
+      event: eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: childSessionId,
+          info: {
+            id: 'msg_child',
+            sessionID: childSessionId,
+            role: 'assistant',
+            time: { created: 1 },
+            agent: 'mythos-review',
+            model: { providerID: 'test', modelID: 'test' },
+          },
+        },
+      }).event,
+      mainSessionId,
+      isKnownChildSession: (sessionId) => sessionId === childSessionId,
+    })).toBe(true)
+    expect(shouldBufferSessionEvent({
+      event: childPart(1).event,
+      mainSessionId,
+      isKnownChildSession: (sessionId) => sessionId === childSessionId,
     })).toBe(true)
   })
 })
