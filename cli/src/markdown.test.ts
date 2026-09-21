@@ -17,8 +17,10 @@ import {
   ShareMarkdown,
   fileBaseName,
   formatCompactToolSummary,
+  formatDuration,
   getCompactSessionContext,
   truncateChars,
+  userPromptDurationMs,
 } from './markdown.js'
 import { setDataDir } from './config.js'
 import { initializeOpencodeForDirectory, getOpencodeClient, stopOpencodeServer } from './opencode.js'
@@ -29,6 +31,24 @@ test('truncateChars keeps short text and ellipsizes long text', () => {
   expect(truncateChars('  a   b  ', 80)).toBe('a b')
   expect(truncateChars('abcdefghij', 5)).toBe('abcd…')
   expect(truncateChars('ab', 1)).toBe('…')
+})
+
+test('formatDuration uses ms, seconds, then minutes', () => {
+  expect(formatDuration(250)).toBe('250ms')
+  expect(formatDuration(1500)).toBe('1.5s')
+  expect(formatDuration(65_000)).toBe('1m 5s')
+})
+
+test('userPromptDurationMs spans user send to last following assistant', () => {
+  const messages = [
+    { info: { role: 'user', time: { created: 1000 } } },
+    { info: { role: 'assistant', time: { created: 1100, completed: 4000 } } },
+    { info: { role: 'assistant', time: { created: 4100, completed: 9000 } } },
+    { info: { role: 'user', time: { created: 20_000 } } },
+    { info: { role: 'assistant', time: { created: 20_100, completed: 21_000 } } },
+  ]
+  expect(userPromptDurationMs({ messages, userIndex: 0 })).toBe(8000)
+  expect(userPromptDurationMs({ messages, userIndex: 3 })).toBe(1000)
 })
 
 test('fileBaseName strips directories on posix and windows paths', () => {
@@ -276,10 +296,7 @@ afterAll(async () => {
 // Strip dynamic parts (timestamps, durations, branch names) for stable assertions
 function normalizeMarkdown(md: string): string {
   return md
-    // Normalize "Completed in Xs" to a fixed string
-    .replace(/\*Completed in [\d.]+[ms]+\*/g, '*Completed in Xs*')
-    // Normalize "Duration: Xs" tool timing
-    .replace(/\*Duration: [\d.]+[ms]+\*/g, '*Duration: Xs*')
+    .replace(/^duration: .+$/gm, 'duration: <duration>')
     // Normalize ISO dates in session info
     .replace(/\*\*Created\*\*: .+/g, '**Created**: <date>')
     .replace(/\*\*Updated\*\*: .+/g, '**Updated**: <date>')
@@ -311,7 +328,9 @@ test('generate markdown with system info', async () => {
     '### assistant (deterministic-provider/deterministic-v2)',
   )
   expect(markdown).toContain('Hello! This is a deterministic markdown test response.')
-  expect(markdown).toContain('**Started using deterministic-provider/deterministic-v2**')
+  expect(markdown).not.toContain('Started using')
+  expect(markdown).not.toContain('Completed in')
+  expect(markdown).toMatch(/^duration: /m)
 
   const normalized = normalizeMarkdown(markdown)
   expect(normalized).toMatchInlineSnapshot(`
@@ -329,15 +348,13 @@ test('generate markdown with system info', async () => {
 
     hello markdown test
 
+    duration: <duration>
+
 
     ### assistant (deterministic-provider/deterministic-v2)
 
-    **Started using deterministic-provider/deterministic-v2**
-
     Hello! This is a deterministic markdown test response.
 
-
-    *Completed in Xs*
     "
   `)
 })
@@ -366,15 +383,13 @@ test('generate markdown without system info', async () => {
 
     hello markdown test
 
+    duration: <duration>
+
 
     ### assistant (deterministic-provider/deterministic-v2)
 
-    **Started using deterministic-provider/deterministic-v2**
-
     Hello! This is a deterministic markdown test response.
 
-
-    *Completed in Xs*
     "
   `)
 })

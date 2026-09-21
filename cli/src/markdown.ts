@@ -49,6 +49,50 @@ export function truncateChars(value: string, maxChars: number): string {
   return `${collapsed.slice(0, maxChars - 1)}…`
 }
 
+export function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  const minutes = Math.floor(ms / 60_000)
+  const seconds = Math.floor((ms % 60_000) / 1000)
+  return `${minutes}m ${seconds}s`
+}
+
+function messageCreatedAt(message: { time?: { created?: number } }): number | undefined {
+  const created = message.time?.created
+  return typeof created === 'number' ? created : undefined
+}
+
+function messageEndedAt(message: {
+  time?: { created?: number; completed?: number }
+}): number | undefined {
+  const completed = message.time?.completed
+  if (typeof completed === 'number') return completed
+  return messageCreatedAt(message)
+}
+
+/** User sent → last assistant finished, until the next user message. */
+export function userPromptDurationMs({
+  messages,
+  userIndex,
+}: {
+  messages: Array<{ info: { role?: string; time?: { created?: number; completed?: number } } }>
+  userIndex: number
+}): number | undefined {
+  const userCreated = messageCreatedAt(messages[userIndex]?.info ?? {})
+  if (userCreated === undefined) return undefined
+
+  let end = userCreated
+  for (let i = userIndex + 1; i < messages.length; i++) {
+    const info = messages[i]?.info
+    if (info?.role === 'user') break
+    if (info?.role !== 'assistant') continue
+    const ended = messageEndedAt(info)
+    if (ended !== undefined && ended > end) end = ended
+  }
+  const ms = end - userCreated
+  return ms > 0 ? ms : undefined
+}
+
 export function fileBaseName(filePath: string): string {
   const normalized = filePath.replaceAll('\\', '/')
   const segments = normalized.split('/')
@@ -205,12 +249,22 @@ export class ShareMarkdown {
       lines.push('')
     }
 
-    for (const message of messagesToRender) {
+    for (const [index, message] of messagesToRender.entries()) {
       const messageLines = this.renderMessage(message!.info, message!.parts, {
         compactTools,
         includeThinking,
         toolInputMaxChars,
       })
+      if (message!.info.role === 'user') {
+        const durationMs = userPromptDurationMs({
+          messages: messagesToRender,
+          userIndex: index,
+        })
+        if (durationMs !== undefined) {
+          messageLines.push(`duration: ${formatDuration(durationMs)}`)
+          messageLines.push('')
+        }
+      }
       lines.push(...messageLines)
       lines.push('')
     }
@@ -241,21 +295,16 @@ export class ShareMarkdown {
         }
       }
     } else if (message.role === 'assistant') {
-      const modelId =
-        [message.providerID, message.modelID].filter(Boolean).join('/') ||
-        'unknown model'
-      lines.push(`### assistant (${modelId})`)
-      lines.push('')
-
-      // Filter and process parts
       const filteredParts = parts.filter((part) => {
-        if (part.type === 'step-start' && parts.indexOf(part) > 0) return false
-        if (part.type === 'snapshot') return false
-        if (part.type === 'patch') return false
-        if (part.type === 'step-finish') return false
-        if (part.type === 'text' && part.synthetic === true) return false
+        if (
+          part.type === 'step-start' ||
+          part.type === 'step-finish' ||
+          part.type === 'snapshot' ||
+          part.type === 'patch'
+        )
+          return false
+        if (part.type === 'text' && (part.synthetic === true || !part.text)) return false
         if (part.type === 'tool' && part.tool === 'todoread') return false
-        if (part.type === 'text' && !part.text) return false
         if (
           part.type === 'tool' &&
           (part.state.status === 'pending' || part.state.status === 'running')
@@ -264,25 +313,28 @@ export class ShareMarkdown {
         return true
       })
 
+      const body: string[] = []
       for (const part of filteredParts) {
-        const partLines = opts.compactTools
-          ? this.renderPartCompact(part, message, opts)
-          : this.renderPart(part, message, opts)
-        lines.push(...partLines)
+        body.push(
+          ...(opts.compactTools
+            ? this.renderPartCompact(part, opts)
+            : this.renderPart(part, opts)),
+        )
       }
+      if (body.length === 0) return lines
 
-      // Add completion time if available
-      if (message.time?.completed) {
-        const duration = message.time.completed - message.time.created
-        lines.push('')
-        lines.push(`*Completed in ${this.formatDuration(duration)}*`)
-      }
+      const modelId =
+        [message.providerID, message.modelID].filter(Boolean).join('/') ||
+        'unknown model'
+      lines.push(`### assistant (${modelId})`)
+      lines.push('')
+      lines.push(...body)
     }
 
     return lines
   }
 
-  private renderPart(part: any, message: any, opts: SessionMarkdownOptions): string[] {
+  private renderPart(part: any, opts: SessionMarkdownOptions): string[] {
     const lines: string[] = []
 
     switch (part.type) {
@@ -339,15 +391,6 @@ export class ShareMarkdown {
             lines.push('```')
             lines.push('')
           }
-
-          // Add timing info if significant
-          if (part.state.time?.start && part.state.time?.end) {
-            const duration = part.state.time.end - part.state.time.start
-            if (duration > 2000) {
-              lines.push(`*Duration: ${this.formatDuration(duration)}*`)
-              lines.push('')
-            }
-          }
         } else if (part.state.status === 'error') {
           lines.push(`#### tool-error: ${part.tool}`)
           lines.push('')
@@ -357,20 +400,15 @@ export class ShareMarkdown {
           lines.push('')
         }
         break
-
-      case 'step-start':
-        lines.push(`**Started using ${message.providerID}/${message.modelID}**`)
-        lines.push('')
-        break
     }
 
     return lines
   }
 
   /** Compact rendering: tool calls become a single line with line count instead of full output. */
-  private renderPartCompact(part: any, message: any, opts: SessionMarkdownOptions): string[] {
+  private renderPartCompact(part: any, opts: SessionMarkdownOptions): string[] {
     if (part.type !== 'tool') {
-      return this.renderPart(part, message, opts)
+      return this.renderPart(part, opts)
     }
 
     const lines: string[] = []
@@ -395,14 +433,6 @@ export class ShareMarkdown {
     }
 
     return lines
-  }
-
-  private formatDuration(ms: number): string {
-    if (ms < 1000) return `${ms}ms`
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
-    const minutes = Math.floor(ms / 60000)
-    const seconds = Math.floor((ms % 60000) / 1000)
-    return `${minutes}m ${seconds}s`
   }
 }
 
