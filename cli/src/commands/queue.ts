@@ -21,6 +21,7 @@ import {
   getRuntime,
   type IngressInput,
 } from '../session-handler/thread-session-runtime.js'
+import { parseQueuedMessagePayload } from '../session-handler/thread-runtime-state.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { asSubtext, QUEUE_PREFIX } from '../message-formatting.js'
 import { extractBtwQueueSuffix } from '../btw-prefix-detection.js'
@@ -40,19 +41,17 @@ async function deleteThreadQueueItemWithoutRuntime(queueId: string) {
   if (!row) {
     return undefined
   }
-  try {
-    const parsed = JSON.parse(row.payload_json) as {
-      prompt?: string
-      username?: string
-      command?: { name: string }
-    }
-    return {
-      prompt: typeof parsed.prompt === 'string' ? parsed.prompt : '',
-      username: typeof parsed.username === 'string' ? parsed.username : '',
-      command: parsed.command,
-    }
-  } catch {
+  const parsed = parseQueuedMessagePayload({
+    queueId,
+    payloadJson: row.payload_json,
+  })
+  if (parsed instanceof Error) {
     return { prompt: '', username: '' }
+  }
+  return {
+    prompt: parsed.prompt,
+    username: parsed.username,
+    command: parsed.command,
   }
 }
 

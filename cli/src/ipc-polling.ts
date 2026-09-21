@@ -16,6 +16,7 @@ import { queueActionButtonsRequest } from './commands/action-buttons.js'
 import type { ActionButtonColor } from './commands/action-buttons.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
+import { isJsonRecord, jsonFiniteNumber, jsonString, parseJsonUnknown } from './utils.js'
 
 const ipcLogger = createLogger(LogPrefix.IPC)
 
@@ -28,33 +29,50 @@ class IpcDispatchError extends errore.createTaggedError({
 
 // ── Button parsing ───────────────────────────────────────────────────────
 
-const VALID_COLORS = new Set<ActionButtonColor>([
-  'white',
-  'blue',
-  'green',
-  'red',
-])
-
 type ParsedButton = { label: string; color?: ActionButtonColor }
 
 function parseButtons(raw: unknown): ParsedButton[] {
   if (!Array.isArray(raw)) return []
   const results: ParsedButton[] = []
   for (const value of raw) {
-    if (!value || typeof value !== 'object') continue
-    const label = (typeof value.label === 'string' ? value.label : '')
-      .trim()
-      .slice(0, 80)
+    if (!isJsonRecord(value)) continue
+    const label = (jsonString(value.label) || '').trim().slice(0, 80)
     if (!label) continue
-    const color =
-      typeof value.color === 'string' &&
-      VALID_COLORS.has(value.color as ActionButtonColor)
-        ? (value.color as ActionButtonColor)
+    const colorValue = jsonString(value.color)
+    const color: ActionButtonColor | undefined =
+      colorValue === 'white' || colorValue === 'blue' || colorValue === 'green' || colorValue === 'red'
+        ? colorValue
         : undefined
     results.push({ label, color })
     if (results.length >= 3) break
   }
   return results
+}
+
+function parseFileUploadPayload(payloadJson: string) {
+  const parsed = parseJsonUnknown(payloadJson)
+  if (parsed instanceof Error) return parsed
+  if (!isJsonRecord(parsed)) {
+    return new Error('File upload payload is not an object')
+  }
+  const maxFiles = jsonFiniteNumber(parsed.maxFiles)
+  return {
+    prompt: jsonString(parsed.prompt),
+    maxFiles,
+    directory: jsonString(parsed.directory),
+  }
+}
+
+function parseActionButtonsPayload(payloadJson: string) {
+  const parsed = parseJsonUnknown(payloadJson)
+  if (parsed instanceof Error) return parsed
+  if (!isJsonRecord(parsed)) {
+    return new Error('Action buttons payload is not an object')
+  }
+  return {
+    buttons: parsed.buttons,
+    directory: jsonString(parsed.directory),
+  }
 }
 
 // ── Request dispatch ─────────────────────────────────────────────────────
@@ -76,26 +94,17 @@ async function dispatchRequest({
 }) {
   switch (req.type) {
     case 'file_upload': {
-      const parsed = errore.try(
-        () =>
-          JSON.parse(req.payload) as {
-            prompt?: string
-            maxFiles?: number
-            directory?: string
-          },
-        (e) =>
-          new IpcDispatchError({
-            requestId: req.id,
-            reason: 'Invalid payload JSON',
-            cause: e,
-          }),
-      )
+      const parsed = parseFileUploadPayload(req.payload)
       if (parsed instanceof Error) {
         await completeIpcRequest({
           id: req.id,
           response: JSON.stringify({ error: parsed.message }),
         })
-        return parsed
+        return new IpcDispatchError({
+          requestId: req.id,
+          reason: 'Invalid payload JSON',
+          cause: parsed,
+        })
       }
 
       const thread = await discordClient.channels
@@ -161,22 +170,17 @@ async function dispatchRequest({
     }
 
     case 'action_buttons': {
-      const parsed = errore.try(
-        () =>
-          JSON.parse(req.payload) as { buttons?: unknown; directory?: string },
-        (e) =>
-          new IpcDispatchError({
-            requestId: req.id,
-            reason: 'Invalid payload JSON',
-            cause: e,
-          }),
-      )
+      const parsed = parseActionButtonsPayload(req.payload)
       if (parsed instanceof Error) {
         await completeIpcRequest({
           id: req.id,
           response: JSON.stringify({ error: parsed.message }),
         })
-        return parsed
+        return new IpcDispatchError({
+          requestId: req.id,
+          reason: 'Invalid payload JSON',
+          cause: parsed,
+        })
       }
 
       const buttons = parseButtons(parsed.buttons)

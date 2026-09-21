@@ -161,13 +161,13 @@ import {
 } from './errors.js'
 import {
   ensureKimakiCommandShim,
-  getIncompatibleOpencodeVersionError,
   getPathEnvKey,
   getSpawnCommandAndArgs,
+  parseOpencodeVersion,
   prependPathEntry,
-  selectResolvedCommand,
 } from './opencode-command.js'
 import { skillPermissionRules } from './skill-filter.js'
+import { isJsonRecord, jsonStringArray, parseJsonUnknown } from './utils.js'
 
 const opencodeLogger = createLogger(LogPrefix.OPENCODE)
 
@@ -305,11 +305,8 @@ export function parseOpencodeServerDiscovery(body: string): {
   port: number
   password: string
 } | null {
-  const parsed = errore.try(
-    () => JSON.parse(body) as unknown,
-    (cause) => new Error('Invalid OpenCode server discovery response', { cause }),
-  )
-  if (parsed instanceof Error || typeof parsed !== 'object' || parsed === null) {
+  const parsed = parseJsonUnknown(body)
+  if (parsed instanceof Error || !isJsonRecord(parsed)) {
     return null
   }
   if (!('port' in parsed) || !('password' in parsed)) return null
@@ -1621,12 +1618,16 @@ export function readInjectionGuardConfig({
 }: {
   sessionId: string
 }): { scanPatterns: string[] } | null {
-  try {
-    const raw = fs.readFileSync(path.join(getInjectionGuardDir(), `${sessionId}.json`), 'utf-8')
-    return JSON.parse(raw) as { scanPatterns: string[] }
-  } catch {
-    return null
-  }
+  const raw = errore.try(
+    () => fs.readFileSync(path.join(getInjectionGuardDir(), `${sessionId}.json`), 'utf-8'),
+    (cause) => new Error('Failed to read injection guard config', { cause }),
+  )
+  if (raw instanceof Error) return null
+  const parsed = parseJsonUnknown(raw)
+  if (parsed instanceof Error || !isJsonRecord(parsed)) return null
+  const scanPatterns = jsonStringArray(parsed.scanPatterns)
+  if (!scanPatterns) return null
+  return { scanPatterns }
 }
 
 // ── Public helpers ───────────────────────────────────────────────

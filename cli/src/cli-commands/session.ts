@@ -23,6 +23,7 @@ import { editorsForFile, loadFileEditEvents } from '../file-edit-log.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { serializeOpencodeEventsJsonl } from '../session-handler/opencode-session-event-log.js'
+import { parseEventBufferEvent } from '../session-handler/event-stream-state.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { OpenCodeSdkError } from '../errors.js'
@@ -46,12 +47,6 @@ import {
 } from '../cli-runner.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
-const persistedSessionEventSchema = z.object({
-  type: z.string(),
-  data: z.unknown().optional(),
-  location: z.unknown().optional(),
-  properties: z.unknown().optional(),
-}).passthrough()
 const cli = goke()
 
 async function resolveSessionDirectoryFromDatabase({
@@ -899,16 +894,7 @@ cli
     }
 
     const parsedRows = rows.flatMap((row) => {
-      const parsed = errore.try(
-        () => {
-          return persistedSessionEventSchema.parse(JSON.parse(row.event_json))
-        },
-        (error) => {
-          return new Error('Failed to parse persisted event JSON', {
-            cause: error,
-          })
-        },
-      )
+      const parsed = parseEventBufferEvent(row.event_json)
       if (parsed instanceof Error) {
         cliLogger.warn(
           `Skipping invalid persisted event row ${row.id}: ${parsed.message}`,

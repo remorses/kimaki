@@ -90,29 +90,23 @@ export function editorsForFile({
 
 function parseFileEditEvent(line: string) {
   const parsed = errore.try(
-    () => JSON.parse(line) as {
-      v: number
-      at: number
-      sessionId: string
-      file: string
-      tool: string
-    },
+    () => JSON.parse(line) as unknown,
     (cause) => new FilesystemOperationError({ operation: 'parse file edit event', cause }),
   )
-  if (parsed instanceof Error) return null
-  if (!parsed || typeof parsed !== 'object') return null
-  if (parsed.v !== 1) return null
-  if (typeof parsed.at !== 'number' || !Number.isFinite(parsed.at)) return null
-  if (typeof parsed.sessionId !== 'string' || parsed.sessionId.length === 0) return null
-  if (typeof parsed.file !== 'string' || parsed.file.length === 0) return null
-  if (typeof parsed.tool !== 'string' || !isFileEditTool(parsed.tool)) return null
-  return {
-    v: 1 as const,
-    at: parsed.at,
-    sessionId: parsed.sessionId,
-    file: parsed.file,
-    tool: parsed.tool,
+  if (parsed instanceof Error || typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return null
   }
+  const v = Reflect.get(parsed, 'v')
+  const at = Reflect.get(parsed, 'at')
+  const sessionId = Reflect.get(parsed, 'sessionId')
+  const file = Reflect.get(parsed, 'file')
+  const tool = Reflect.get(parsed, 'tool')
+  if (v !== 1) return null
+  if (typeof at !== 'number' || !Number.isFinite(at)) return null
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return null
+  if (typeof file !== 'string' || file.length === 0) return null
+  if (typeof tool !== 'string' || !isFileEditTool(tool)) return null
+  return { v: 1 as const, at, sessionId, file, tool }
 }
 
 function nodeErrorCode(error: Error) {

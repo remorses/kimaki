@@ -20,6 +20,7 @@ import {
 } from '../opencode.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import type { ScheduledTaskScheduleKind } from '../database.js'
+import { isJsonRecord, jsonString, parseJsonUnknown } from '../utils.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 
@@ -50,20 +51,21 @@ function getRecentModelsFromTuiState(): Array<{
   // Same path as OpenCode TUI: path.join(Global.Path.state, "model.json")
   const modelJsonPath = path.join(xdgState, 'opencode', 'model.json')
 
-  const result = errore.tryFn(() => {
-    const content = fs.readFileSync(modelJsonPath, 'utf-8')
-    const data = JSON.parse(content) as {
-      recent?: Array<{ providerID: string; modelID: string }>
-    }
-    return data.recent ?? []
-  })
-
-  if (result instanceof Error) {
-    // File doesn't exist or is invalid - this is normal for fresh installs
+  const content = errore.tryFn(() => fs.readFileSync(modelJsonPath, 'utf-8'))
+  if (content instanceof Error) return []
+  const data = parseJsonUnknown(content)
+  if (data instanceof Error || !isJsonRecord(data) || !Array.isArray(data.recent)) {
     return []
   }
-
-  return result
+  const recent: Array<{ providerID: string; modelID: string }> = []
+  for (const item of data.recent) {
+    if (!isJsonRecord(item)) continue
+    const providerID = jsonString(item.providerID)
+    const modelID = jsonString(item.modelID)
+    if (!providerID || !modelID) continue
+    recent.push({ providerID, modelID })
+  }
+  return recent
 }
 
 /**
