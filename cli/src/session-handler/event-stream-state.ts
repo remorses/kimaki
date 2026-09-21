@@ -1,6 +1,12 @@
 // Pure derivations from native OpenCode v2 and Kimaki-local session events.
 
 import type { V2Event } from '@opencode/client'
+import {
+  isJsonRecord,
+  jsonFiniteNumber,
+  jsonString,
+  parseJsonUnknown,
+} from '../utils.js'
 import { getOpencodeEventSessionId } from './opencode-session-event-log.js'
 
 export type KimakiLocalEvent =
@@ -38,6 +44,79 @@ export type EventBufferEntry = {
   eventIndex?: number
 }
 
+const KIMAKI_LOCAL_EVENT_TYPES = new Set([
+  'kimaki.queue-dispatch.started',
+  'kimaki.queue-dispatch.settled',
+  'kimaki.question-queue-handoff.started',
+  'kimaki.subagent.routing',
+])
+
+function parseKimakiLocalEvent(value: Record<string, unknown>): KimakiLocalEvent | undefined {
+  const type = jsonString(value.type)
+  if (!type || !KIMAKI_LOCAL_EVENT_TYPES.has(type) || !isJsonRecord(value.data)) return undefined
+  const sessionID = jsonString(value.data.sessionID)
+  if (!sessionID) return undefined
+  if (type === 'kimaki.queue-dispatch.started') {
+    return { type: 'kimaki.queue-dispatch.started', data: { sessionID } }
+  }
+  if (type === 'kimaki.queue-dispatch.settled') {
+    return { type: 'kimaki.queue-dispatch.settled', data: { sessionID } }
+  }
+  if (type === 'kimaki.question-queue-handoff.started') {
+    const requestID = jsonString(value.data.requestID)
+    if (requestID) {
+      return { type: 'kimaki.question-queue-handoff.started', data: { sessionID, requestID } }
+    }
+    return { type: 'kimaki.question-queue-handoff.started', data: { sessionID } }
+  }
+  const assistantMessageID = jsonString(value.data.assistantMessageID)
+  const id = jsonString(value.data.id)
+  const childSessionID = jsonString(value.data.childSessionID)
+  if (!assistantMessageID || !id || !childSessionID) return undefined
+  const status = jsonString(value.data.status)
+  if (status) {
+    return {
+      type: 'kimaki.subagent.routing',
+      data: { sessionID, assistantMessageID, id, childSessionID, status },
+    }
+  }
+  return {
+    type: 'kimaki.subagent.routing',
+    data: { sessionID, assistantMessageID, id, childSessionID },
+  }
+}
+
+function parseNativeDurableIdentity(value: unknown): NativeDurableIdentity | undefined {
+  if (!isJsonRecord(value)) return undefined
+  const aggregateID = jsonString(value.aggregateID)
+  const seq = jsonFiniteNumber(value.seq)
+  if (!aggregateID || seq === undefined) return undefined
+  return { aggregateID, seq }
+}
+
+export function parseEventBufferEvent(raw: string): EventBufferEvent | Error {
+  const parsed = parseJsonUnknown(raw)
+  if (parsed instanceof Error) {
+    return new Error('Failed to parse persisted session event JSON', { cause: parsed })
+  }
+  if (!isJsonRecord(parsed)) {
+    return new Error('Persisted session event is not an object')
+  }
+  const type = jsonString(parsed.type)
+  if (!type) {
+    return new Error('Persisted session event is missing type')
+  }
+  const local = parseKimakiLocalEvent(parsed)
+  if (local) return local
+  if (!type.includes('.')) {
+    return new Error(`Persisted session event has unknown type: ${type}`)
+  }
+  const durable = parseNativeDurableIdentity(parsed.durable)
+  const event = durable ? { ...parsed, type, durable } : { ...parsed, type }
+  // OpenCode owns this JSON. Kimaki only checks it is an object with a dotted type.
+  return event as EventBufferEvent
+}
+
 export type NativeDurableIdentity = {
   aggregateID: string
   seq: number
@@ -46,14 +125,8 @@ export type NativeDurableIdentity = {
 export function getNativeDurableIdentity(
   event: EventBufferEvent,
 ): NativeDurableIdentity | null {
-  const durable = (event as EventBufferEvent & {
-    durable?: NativeDurableIdentity
-  }).durable
-  if (!durable) return null
-  return {
-    aggregateID: durable.aggregateID,
-    seq: durable.seq,
-  }
+  if (!('durable' in event)) return null
+  return parseNativeDurableIdentity(event.durable) ?? null
 }
 
 export function hasSeenNativeDurableEvent({

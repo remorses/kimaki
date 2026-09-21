@@ -28,7 +28,7 @@ import {
   sessionMessagesToGeneric,
 } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import * as errore from 'errore'
+import { parseEventBufferEvent } from '../session-handler/event-stream-state.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 const forkLogger = createLogger(LogPrefix.FORK)
@@ -67,16 +67,7 @@ function parsePersistedEventRows({
   rows: Array<{ event_json: string; timestamp: number; event_index: number; id: number }>
 }) {
   return rows.flatMap((row) => {
-    const parsed = errore.try(
-      () => {
-        return JSON.parse(row.event_json)
-      },
-      (error) => {
-        return new Error('Failed to parse persisted event JSON', {
-          cause: error,
-        })
-      },
-    )
+    const parsed = parseEventBufferEvent(row.event_json)
     if (parsed instanceof Error) {
       forkLogger.warn(
         `[fork] Skipping invalid persisted event row ${row.id}: ${parsed.message}`,

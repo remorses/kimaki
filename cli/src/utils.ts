@@ -214,3 +214,30 @@ export function abbreviatePath(fullPath: string): string {
   }
   return fullPath
 }
+
+export function parseJsonUnknown(raw: string): unknown | Error {
+  return errore.try(
+    () => JSON.parse(raw) as unknown,
+    (cause) => new Error('Invalid JSON', { cause }),
+  )
+}
+
+export function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function jsonString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return value
+}
+
+export function jsonFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return value
+}
+
+export function jsonStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  if (!value.every((item) => typeof item === 'string')) return undefined
+  return value
+}

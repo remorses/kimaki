@@ -2,6 +2,7 @@ import { ChannelType, Routes, type REST } from 'discord.js'
 import * as errore from 'errore'
 import { DiscordApiError } from './errors.js'
 import { isThreadChannelType } from './discord-utils.js'
+import { isJsonRecord, jsonString } from './utils.js'
 
 export const DISCORD_THREAD_LIST_PAGE_SIZE = 100
 const ARCHIVED_THREAD_FETCH_LIMIT = 200
@@ -18,23 +19,6 @@ export type DiscordChannelThread = {
   lastMessageId: string | null
 }
 
-type DiscordThreadPayload = {
-  id?: string
-  name?: string
-  type?: number
-  parent_id?: string
-  guild_id?: string
-  last_message_id?: string | null
-  thread_metadata?: {
-    archived?: boolean
-  }
-}
-
-type DiscordThreadListPayload = {
-  threads?: DiscordThreadPayload[]
-  has_more?: boolean
-}
-
 class DiscordThreadListError extends errore.createTaggedError({
   name: 'DiscordThreadListError',
   message: 'Failed to list Discord threads for channel $channelId',
@@ -45,25 +29,30 @@ export function parseDiscordThreadPayload({
   parentId,
   guildId,
 }: {
-  payload: DiscordThreadPayload
+  payload: unknown
   parentId: string
   guildId: string
 }): DiscordChannelThread | null {
-  if (!payload.id || !isThreadChannelType(payload.type ?? -1)) {
+  if (!isJsonRecord(payload)) return null
+  const id = jsonString(payload.id)
+  const type = typeof payload.type === 'number' ? payload.type : -1
+  if (!id || !isThreadChannelType(type)) {
     return null
   }
-  if (payload.parent_id && payload.parent_id !== parentId) {
+  const payloadParentId = jsonString(payload.parent_id)
+  if (payloadParentId && payloadParentId !== parentId) {
     return null
   }
-  const archived = Boolean(payload.thread_metadata?.archived)
+  const metadata = isJsonRecord(payload.thread_metadata) ? payload.thread_metadata : undefined
+  const archived = metadata?.archived === true
   return {
-    id: payload.id,
-    name: payload.name || payload.id,
+    id,
+    name: jsonString(payload.name) || id,
     parentId,
-    guildId: payload.guild_id || guildId,
+    guildId: jsonString(payload.guild_id) || guildId,
     archived,
     archiveState: archived ? 'archived' : 'active',
-    lastMessageId: payload.last_message_id ?? null,
+    lastMessageId: jsonString(payload.last_message_id) ?? null,
   }
 }
 
@@ -98,11 +87,11 @@ function parseThreadListPayload({
   parentId: string
   guildId: string
 }): { threads: DiscordChannelThread[]; hasMore: boolean } {
-  if (!payload || typeof payload !== 'object') {
+  if (!isJsonRecord(payload)) {
     return { threads: [], hasMore: false }
   }
-  const list = payload as DiscordThreadListPayload
-  const threads = (list.threads ?? []).flatMap((thread) => {
+  const rawThreads = Array.isArray(payload.threads) ? payload.threads : []
+  const threads = rawThreads.flatMap((thread) => {
     const parsed = parseDiscordThreadPayload({
       payload: thread,
       parentId,
@@ -112,7 +101,7 @@ function parseThreadListPayload({
   })
   return {
     threads,
-    hasMore: Boolean(list.has_more),
+    hasMore: payload.has_more === true,
   }
 }
 
