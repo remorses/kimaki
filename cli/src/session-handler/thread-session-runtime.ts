@@ -2,7 +2,7 @@
 
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { ChannelType, ComponentType, type ThreadChannel } from 'discord.js'
+import { ChannelType, ComponentType, type Client, type ThreadChannel } from 'discord.js'
 import type {
   PermissionRequest,
   V2Event,
@@ -11,7 +11,7 @@ import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
-import type { QueuedMessage } from './thread-runtime-state.js'
+import { parseQueuedMessagePayload, type QueuedMessage } from './thread-runtime-state.js'
 import type { OpencodeClient } from '../opencode.js'
 import {
   getOpencodeClient,
@@ -148,9 +148,13 @@ import {
   shouldShowRetryNotice,
   getLatestAssistantMessageIdForLatestExecution,
   getLatestExecutionStartedTimestamp,
+  didLatestExecutionUseTool,
   getEventBufferSessionId,
   hasSeenNativeDurableEvent,
   compactSubagentRoutingEvidence,
+  parseEventBufferEvent,
+  shouldRetainSessionEvent,
+  trimEventBuffer,
   type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
@@ -984,16 +988,7 @@ export class ThreadSessionRuntime {
     }
 
     const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
-      const eventResult = errore.try(
-        () => {
-          return JSON.parse(row.event_json) as EventBufferEvent
-        },
-        (error) => {
-          return new Error('Failed to parse persisted session event JSON', {
-            cause: error,
-          })
-        },
-      )
+      const eventResult = parseEventBufferEvent(row.event_json)
       if (eventResult instanceof Error) {
         logger.warn(
           `[SESSION EVENT DB] Skipping invalid persisted event row for session ${sessionId}: ${eventResult.message}`,
