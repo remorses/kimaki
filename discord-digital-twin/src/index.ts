@@ -1421,7 +1421,10 @@ export class ScopedUserActor {
    * bypass the fetch entirely. Content defaults to empty string since
    * real Discord voice messages have no text body.
    */
-  async sendVoiceMessage({ content }: { content?: string } = {}) {
+  async sendVoiceMessage({
+    content,
+    url = 'https://fake-cdn.discord.test/voice-message.ogg',
+  }: { content?: string; url?: string } = {}) {
     return this.sendMessage({
       content: content ?? '',
       attachments: [
@@ -1430,8 +1433,8 @@ export class ScopedUserActor {
           filename: 'voice-message.ogg',
           content_type: 'audio/ogg',
           size: 1024,
-          url: 'https://fake-cdn.discord.test/voice-message.ogg',
-          proxy_url: 'https://fake-cdn.discord.test/voice-message.ogg',
+          url,
+          proxy_url: url,
         },
       ],
     })

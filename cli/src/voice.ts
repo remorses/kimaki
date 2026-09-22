@@ -1,9 +1,9 @@
 // Audio transcription service using AI SDK providers.
 // Both providers use LanguageModelV3 (chat model) with audio file parts + tool calling,
 // so we can pass full context (file tree, session info) for better word recognition.
-//   - OpenAI: gpt-audio-1.5 via .chat() (Chat Completions API). MUST use .chat()
-//     because the default Responses API doesn't support audio file parts. The Chat
-//     Completions handler converts audio/mpeg file parts to input_audio format.
+//   - OpenAI: plain fetch to the Chat Completions API. The AI SDK chat schema
+//     rejects message.audio, so we parse transcript and tool_calls ourselves.
+//     https://github.com/vercel/ai/issues/21289
 //   - Gemini: gemini-flash-latest natively accepts audio file parts in chat.
 // Calls model.doGenerate() directly without the `ai` npm package.
 // Uses errore for type-safe error handling.
@@ -35,7 +35,78 @@ import {
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
-// OpenAI input_audio only supports wav and mp3. Other formats (OGG Opus, etc)
+const OPENAI_AUDIO_CHAT_MODEL = 'gpt-audio-1.5'
+// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions'
+
+export async function requestOpenAIAudioTranscription({
+  apiKey,
+  prompt,
+  audioBase64,
+  mediaType,
+  temperature,
+  tool,
+}: {
+  apiKey: string
+  prompt: string
+  audioBase64: string
+  mediaType: string
+  temperature: number
+  tool: LanguageModelV3FunctionTool
+}): Promise<TranscriptionLoopError | TranscriptionResult> {
+  const audioFormat = mediaType.includes('wav') ? 'wav' : 'mp3'
+  const response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_AUDIO_CHAT_MODEL,
+      temperature,
+      max_completion_tokens: 2048,
+      user: 'kimaki:voice-transcription',
+      safety_identifier: 'kimaki:voice-transcription',
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.inputSchema,
+          },
+        },
+      ],
+      tool_choice: { type: 'function', function: { name: 'transcriptionResult' } },
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            {
+              type: 'input_audio',
+              input_audio: { data: audioBase64, format: audioFormat },
+            },
+          ],
+        },
+      ],
+    }),
+  }).catch(
+    (cause) =>
+      new TranscriptionError({
+        reason: `API call failed: ${String(cause)}`,
+        cause,
+      }),
+  )
+  if (response instanceof Error) return response
+  const raw = await response.text()
+  if (!response.ok) {
+    return new TranscriptionError({ reason: `API call failed: ${response.status} ${raw.slice(0, 300)}` })
+  }
+  return parseOpenAIAudioChatResponse(raw)
+}
+
+// OpenAI input_audio supports only wav and mp3. Other formats (OGG Opus, etc)
 // must be converted before sending.
 const OPENAI_SUPPORTED_AUDIO_TYPES = new Set([
   'audio/mpeg',
@@ -438,6 +509,45 @@ async function runTranscriptionOnce({
   return extractTranscription(response.content)
 }
 
+type OpenAIAudioChatMessage = {
+  content?: string | null
+  audio?: { transcript?: string | null } | null
+  tool_calls?: Array<{
+    id?: string
+    function?: { name?: string; arguments?: string }
+  }> | null
+}
+
+// Response shape: https://developers.openai.com/api/docs/guides/audio-chat-completions
+export function parseOpenAIAudioChatResponse(
+  body: string,
+): TranscriptionLoopError | TranscriptionResult {
+  let parsed: { choices?: Array<{ message?: OpenAIAudioChatMessage }> }
+  try {
+    parsed = JSON.parse(body) as { choices?: Array<{ message?: OpenAIAudioChatMessage }> }
+  } catch (cause) {
+    return new TranscriptionError({ reason: 'Invalid JSON response', cause })
+  }
+  const message = parsed.choices?.[0]?.message
+  if (!message) return new NoResponseContentError()
+  const toolCall = message.tool_calls?.find((call) => {
+    return call.function?.name === 'transcriptionResult'
+  })
+  if (toolCall?.function?.arguments) {
+    return extractTranscription([
+      {
+        type: 'tool-call',
+        toolCallId: toolCall.id || 'transcriptionResult',
+        toolName: 'transcriptionResult',
+        input: toolCall.function.arguments,
+      },
+    ])
+  }
+  const transcript = message.audio?.transcript?.trim() || message.content?.trim() || ''
+  if (!transcript) return new NoResponseContentError()
+  return { transcription: transcript, queueMessage: false }
+}
+
 export type TranscribeAudioErrors =
   | ApiKeyMissingError
   | InvalidAudioFormatError
@@ -446,30 +556,15 @@ export type TranscribeAudioErrors =
 export type TranscriptionProvider = 'openai' | 'gemini'
 
 /**
- * Create a LanguageModelV3 for transcription.
- * Both providers use chat models that accept audio file parts, so we get full
- * context (prompt, session info, tool calling) for better word recognition.
- *
- * OpenAI: must use .chat() to get the Chat Completions API model, because the
- * default callable (Responses API) doesn't support audio file parts. Use the
- * GA audio model instead of older gpt-4o audio preview snapshots.
- * Gemini: language models natively accept audio in chat.
+ * Create the Gemini chat model for transcription.
+ * OpenAI does not use this. Its chat schema rejects message.audio.
  */
 export function createTranscriptionModel({
   apiKey,
-  provider,
 }: {
   apiKey: string
   provider?: TranscriptionProvider
 }): LanguageModelV3 {
-  const resolvedProvider: TranscriptionProvider =
-    provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
-
-  if (resolvedProvider === 'openai') {
-    const openai = createOpenAI({ apiKey })
-    return openai.chat('gpt-audio-1.5')
-  }
-
   const google = createGoogleGenerativeAI({ apiKey })
   return google('gemini-flash-latest')
 }
@@ -520,7 +615,7 @@ export async function transcribeAudio({
     return 'gemini'
   })()
 
-  const languageModel: LanguageModelV3 =
+  const languageModel =
     model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
 
   // Convert audio to Buffer for potential format conversion
@@ -653,6 +748,21 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
   const agentNames = agents
     ?.map((a) => { return a.name })
     .filter((name) => { return name.length > 0 })
+  const resolvedAgentNames = agentNames && agentNames.length > 0 ? agentNames : undefined
+
+  if (resolvedProvider === 'openai') {
+    return requestOpenAIAudioTranscription({
+      apiKey: apiKey!,
+      prompt: transcriptionPrompt,
+      audioBase64: finalAudioBase64,
+      mediaType,
+      temperature: temperature ?? 0.3,
+      tool: buildTranscriptionTool({
+        agentNames: resolvedAgentNames,
+        canForkSession,
+      }),
+    })
+  }
 
   return runTranscriptionOnce({
     model: languageModel,
@@ -660,7 +770,7 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
     audioBase64: finalAudioBase64,
     mediaType,
     temperature: temperature ?? 0.3,
-    agentNames: agentNames && agentNames.length > 0 ? agentNames : undefined,
+    agentNames: resolvedAgentNames,
     canForkSession,
     provider: resolvedProvider,
   })

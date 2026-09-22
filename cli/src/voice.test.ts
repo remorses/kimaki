@@ -12,6 +12,7 @@ import {
   getOpenAIAudioConversionStrategy,
   buildTranscriptionTool,
   createTranscriptionModel,
+  parseOpenAIAudioChatResponse,
 } from './voice.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -37,17 +38,57 @@ describe('audio media type routing', () => {
   })
 })
 
-describe('transcription model selection', () => {
-  test('uses the latest compatible audio models', () => {
-    expect([
-      createTranscriptionModel({ apiKey: 'sk-test', provider: 'openai' }).modelId,
-      createTranscriptionModel({ apiKey: 'test', provider: 'gemini' }).modelId,
-    ]).toMatchInlineSnapshot(`
-      [
-        "gpt-audio-1.5",
-        "gemini-flash-latest",
-      ]
+describe('openai audio chat response', () => {
+  test('reads a tool call when content is null and audio is present', () => {
+    expect(parseOpenAIAudioChatResponse(JSON.stringify({
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          audio: { transcript: 'ignored when tool call exists' },
+          tool_calls: [{
+            id: 'call_1',
+            function: {
+              name: 'transcriptionResult',
+              arguments: JSON.stringify({
+                transcription: 'Fix the login bug',
+                queueMessage: true,
+              }),
+            },
+          }],
+        },
+      }],
+    }))).toMatchInlineSnapshot(`
+      {
+        "agent": undefined,
+        "queueMessage": true,
+        "sessionAction": undefined,
+        "transcription": "Fix the login bug",
+      }
     `)
+  })
+
+  test('falls back to message.audio.transcript', () => {
+    expect(parseOpenAIAudioChatResponse(JSON.stringify({
+      choices: [{
+        message: {
+          content: null,
+          audio: { transcript: 'Fix the login bug' },
+        },
+      }],
+    }))).toMatchInlineSnapshot(`
+      {
+        "queueMessage": false,
+        "transcription": "Fix the login bug",
+      }
+    `)
+  })
+})
+
+describe('transcription model selection', () => {
+  test('uses the current Gemini chat audio model', () => {
+    expect(createTranscriptionModel({ apiKey: 'test', provider: 'gemini' }).modelId)
+      .toMatchInlineSnapshot('"gemini-flash-latest"')
   })
 })
 

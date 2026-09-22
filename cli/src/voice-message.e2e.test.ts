@@ -9,6 +9,7 @@
 // transitions (via getThreadState from the zustand store).
 
 import fs from 'node:fs'
+import http from 'node:http'
 
 import path from 'node:path'
 import url from 'node:url'
@@ -1476,5 +1477,48 @@ e2eTest('voice message handling', () => {
       expect(assistantTexts.length).toBeGreaterThanOrEqual(2)
     },
     10_000,
+  )
+
+  test.skipIf(!process.env.OPENAI_API_KEY)(
+    'transcribes a real ogg voice note and starts a session',
+    async () => {
+      const audioPath = path.resolve(process.cwd(), 'scripts', 'example-audio.ogg')
+      const audio = fs.readFileSync(audioPath)
+      const server = http.createServer((req, res) => {
+        if (req.url !== '/voice-message.ogg') {
+          res.writeHead(404).end()
+          return
+        }
+        res.writeHead(200, { 'content-type': 'audio/ogg' })
+        res.end(audio)
+      })
+      await new Promise<void>((resolve) => {
+        server.listen(0, '127.0.0.1', resolve)
+      })
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Audio server did not bind')
+      const audioUrl = `http://127.0.0.1:${address.port}/voice-message.ogg`
+
+      setDeterministicTranscription(null)
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendVoiceMessage({ url: audioUrl })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 20_000,
+        predicate: (candidate) => Boolean(candidate.name?.toLowerCase().includes('hear me')),
+      })
+      await waitForFooterMessage({ discord, threadId: thread.id, timeout: 20_000 })
+      expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+        "--- from: user (voice-tester)
+        [attachment: voice-message.ogg]
+        --- from: assistant (TestBot)
+        🎤 Transcribing voice message...
+        📝 **Transcribed message:** Yo, can you hear me loud and clear? What a shit model. Why are you so slow?
+        #- *using deterministic-provider/deterministic-v2*
+        > session-reply
+        #- *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@300000000000000777>"
+      `)
+      server.close()
+    },
+    30_000,
   )
 })
