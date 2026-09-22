@@ -338,12 +338,12 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
       expect(runtimeAfterB).toBe(runtimeAfterA)
     },
@@ -388,7 +388,7 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -460,12 +460,12 @@ describe('runtime lifecycle', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)
@@ -683,7 +683,7 @@ describe('runtime lifecycle', () => {
       --- from: assistant (TestBot)
       > *using deterministic-provider/deterministic-v2*
       > ok
-      > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000888>"
+      > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
     `)
     await projectChannel.delete()
 

@@ -356,7 +356,7 @@ describe('kimaki_sleep', () => {
         Continue the work you were waiting for.
         [embed]
         > sleep-wake-done
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
 
       // The wake must continue the SAME OpenCode session, not start a new one:
@@ -474,7 +474,7 @@ describe('kimaki_sleep', () => {
         SLEEP_CANCEL_FOLLOWUP never mind, keep going
         --- from: assistant (TestBot)
         > cancel-followup-done
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
     },
     20_000,

@@ -102,7 +102,7 @@ describe('voice routing preserves source questions', () => {
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
           > tool done
-          > *project ⋅ main ⋅ 1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+          > *project ⋅ main ⋅ 1s ⋅ 0% ⋅ deterministic-v2*"
         `)
       } else {
         expect(transcript).toMatchInlineSnapshot(`
@@ -122,7 +122,7 @@ describe('voice routing preserves source questions', () => {
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
           > tool done
-          > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000991>"
+          > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
         `)
       }
       expect(transcript).not.toContain('expired')

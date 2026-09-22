@@ -69,7 +69,7 @@ export type KimakiState = {
   critiqueEnabled: boolean
 
   // Whether final session footers mention the thread creator.
-  // Changes: set once at startup from --skip-footer-mentions.
+  // Changes: set once at startup from --enable-footer-mentions (default off).
   // Read by: ThreadSessionRuntime.emitFooter().
   footerMentionsEnabled: boolean
 
@@ -204,7 +204,7 @@ export const store = createStore<KimakiState>(() => ({
   defaultVerbosity: 'text_and_essential_tools',
   defaultMentionMode: false,
   critiqueEnabled: true,
-  footerMentionsEnabled: true,
+  footerMentionsEnabled: false,
   enabledSkills: [],
   disabledSkills: [],
   allowedMentions: ['users'],

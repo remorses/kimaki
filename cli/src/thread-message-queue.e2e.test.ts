@@ -463,7 +463,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
     },
     12_000,
@@ -623,7 +623,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
@@ -717,7 +717,7 @@ e2eTest('thread message queue ordering', () => {
         ┣ bash _Create marker file for e2e test_
 
         > file created
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
       const markerContents = fs.readFileSync(markerPath, 'utf8')
@@ -844,14 +844,14 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
         Queued message (position 1)
         > race-final
         > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: queued-from-slash
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
     },
     12_000,
@@ -977,7 +977,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
         Removed queued message (was position 1): Reply with exactly: removed-queued-message
         Queued message (position 2)
@@ -1059,7 +1059,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: hotel
         Reply with exactly: india
@@ -1282,7 +1282,7 @@ e2eTest('thread message queue ordering', () => {
         > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: edited-queued
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
 
       const finalText = await th.text()
@@ -1387,7 +1387,7 @@ e2eTest('thread message queue ordering', () => {
         Queued at position 1. Edit or delete your message to update the queue
         ⬦ **queue-tester** removed message from queue
         > slow-busy-reply
-        > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2* <@200000000000000777>"
+        > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2*"
       `)
     },
     12_000,

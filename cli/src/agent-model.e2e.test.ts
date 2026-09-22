@@ -507,7 +507,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -564,7 +564,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         > system-context-ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
     },
     15_000,
@@ -707,7 +707,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/channel-model-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ channel-model-v2* <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ channel-model-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -761,7 +761,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/channel-model-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ channel-model-v2* <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ channel-model-v2*"
       `)
       expect(footer?.content).toContain(CHANNEL_MODEL)
       expect(footer?.content).not.toContain(DEFAULT_MODEL)
@@ -847,7 +847,7 @@ describe('agent model resolution', () => {
         Reusing context from <#SOURCE_THREAD> to answer prompt...
         Reply with exactly: btw-model-check
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2* <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2*"
       `)
       expect(forkedSessionModel).toMatchInlineSnapshot(`
         {
@@ -928,12 +928,12 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
         Reply with exactly: second-thread-msg
         --- from: assistant (TestBot)
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
 
       const secondMessages = await discord.thread(thread.id).getMessages()
@@ -996,7 +996,7 @@ describe('agent model resolution', () => {
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
         > *using deterministic-provider/plan-model-v2 ⋅ plan*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan***"
       `)
     },
     20_000,
@@ -1041,7 +1041,7 @@ describe('agent model resolution', () => {
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
         > *using deterministic-provider/plan-model-v2 ⋅ plan*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan***"
       `)
       expect(sessionId ? await getSessionModel(sessionId) : undefined).toMatchInlineSnapshot(`
         {
@@ -1158,10 +1158,10 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***
         » **agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan***"
       `)
     },
     20_000,
@@ -1230,7 +1230,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
@@ -1238,7 +1238,7 @@ describe('agent model resolution', () => {
         Reply with exactly: after-switch-msg
         --- from: assistant (TestBot)
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan***"
       `)
 
       const secondFooter = [...(await discord.thread(thread.id).getMessages())]
@@ -1304,7 +1304,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
         Reply with exactly: race-switch-follow-up
         --- from: assistant (TestBot)
@@ -1312,7 +1312,7 @@ describe('agent model resolution', () => {
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan***"
       `)
 
       const secondFooter = [...(await discord.thread(thread.id).getMessages())]
@@ -1367,7 +1367,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/plan-model-v2 ⋅ plan*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan***"
       `)
 
       const footer = [...(await discord.thread(thread.id).getMessages())]
@@ -1428,7 +1428,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/plan-model-v2 ⋅ plan*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan*** <@200000000000000920>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ plan-model-v2 ⋅ **plan***
         Using **plan** agent for this session
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message."
@@ -1481,7 +1481,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/agent-model-v2 ⋅ test-agent*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent*** <@200000000000000920>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message."
@@ -1536,7 +1536,7 @@ describe('agent model resolution', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/channel-model-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ channel-model-v2* <@200000000000000920>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ channel-model-v2*
         Switched to **plain** agent for this session
         Model: *deterministic-provider/channel-model-v2* (channel override)
         This model comes from a channel override. Use /model and press Clear override if you want this agent's model.

@@ -422,7 +422,7 @@ describeIf('gateway-proxy e2e', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > gateway-proxy-reply
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
       expect(reply).toBeDefined()
       expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)
@@ -458,12 +458,12 @@ describeIf('gateway-proxy e2e', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > gateway-proxy-reply
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
         > gateway-proxy-reply
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>"
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
       `)
       expect(reply).toBeDefined()
       expect(getMessageVisibleText(reply).trim().length).toBeGreaterThan(0)
@@ -499,12 +499,12 @@ describeIf('gateway-proxy e2e', () => {
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
         > gateway-proxy-reply
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
         follow up through proxy
         --- from: assistant (TestBot)
         > gateway-proxy-reply
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2* <@900000000000000001>
+        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
         --- from: user (proxy-tester)
         !echo proxy-shell-test
         --- from: assistant (TestBot)

@@ -58,7 +58,7 @@ async function parseRootBotOptions(argv: string[]) {
   const script = [
     "import { goke } from 'goke'",
     'const cli = goke(\'kimaki\')',
-    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--skip-footer-mentions', 'Do not mention the thread creator in final footers')",
+    "cli.command('', 'bot').option('--no-analytics', 'Disable analytics').option('--enable-footer-mentions', 'Mention the thread creator in final footers')",
     `const result = await cli.parse(${JSON.stringify(argv)}, { run: false })`,
     'process.stdout.write(JSON.stringify({ args: result.args, options: result.options }))',
   ].join(';')
@@ -291,14 +291,14 @@ describe('goke CLI ID parsing', () => {
       'node',
       'kimaki',
       '--no-analytics',
-      '--skip-footer-mentions',
+      '--enable-footer-mentions',
     ])
 
     expect(result.options).toMatchInlineSnapshot(`
       {
         "--": [],
+        "enableFooterMentions": true,
         "noAnalytics": true,
-        "skipFooterMentions": true,
       }
     `)
   })
