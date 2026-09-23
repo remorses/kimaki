@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'vitest'
 import { applyClaudeCodeRequestIdentity } from './anthropic-account-identity.js'
-import { replacer } from './anthropic-auth-plugin.js'
+import { anthropicAuthPlugin, replacer } from './anthropic-auth-plugin.js'
 
 async function transformSystem(systemText: string) {
   const plugin = await replacer({} as never)
@@ -18,6 +18,41 @@ async function transformSystem(systemText: string) {
   )
   return output.system.join('\n')
 }
+
+describe('Anthropic OAuth loader', () => {
+  test('missing auth does not crash on auth.type', async () => {
+    const plugin = await anthropicAuthPlugin({
+      serverUrl: new URL('http://127.0.0.1:9'),
+      directory: '/tmp',
+    } as never)
+    const loader = plugin.auth?.loader
+    if (!loader) throw new Error('missing loader')
+
+    let reads = 0
+    const options = await loader(
+      (async () => {
+        reads += 1
+        if (reads === 1) {
+          return {
+            type: 'oauth',
+            refresh: 'refresh-token',
+            access: 'access-token',
+            expires: Date.now() + 60_000,
+          }
+        }
+        return undefined
+      }) as never,
+      { models: {} } as never,
+    )
+
+    await expect(
+      options.fetch?.('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        body: '{}',
+      }),
+    ).rejects.toThrow('Anthropic OAuth credentials are missing')
+  })
+})
 
 describe('Anthropic OAuth request identity', () => {
   test('applies the current external Claude Code client headers', () => {

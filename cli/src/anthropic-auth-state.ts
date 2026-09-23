@@ -35,6 +35,7 @@ export type { OAuthStored, RotationResult }
 export {
   accountLabel,
   authFilePath,
+  isOAuthStored,
   withAuthStateLock,
   shouldRotateAuth,
   isPermanentOAuthRefreshFailure,

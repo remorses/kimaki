@@ -36,6 +36,7 @@ import {
   rotateAnthropicAccount,
   saveAccountStore,
   setAnthropicAuth,
+  isOAuthStored,
   shouldRotateAuth,
   type OAuthStored,
   upsertAccount,
@@ -908,21 +909,22 @@ function mergeBetas(existing: string | null, required: string[]) {
 
 // --- Token refresh with dedup ---
 
-function isOAuthStored(auth: { type: string }): auth is OAuthStored {
-  return auth.type === "oauth";
-}
-
 /**
  * Refresh Anthropic OAuth. On permanent refresh failure (invalid_grant),
  * remove that account from the pool and retry with the next one.
  * removeAccountByAuth runs outside withAuthStateLock to avoid nested locks.
  */
 async function getFreshOAuth(
-  getAuth: () => Promise<OAuthStored | { type: string }>,
+  getAuth: () => Promise<OAuthStored | { type: string } | undefined>,
   client: OpencodeClient,
   options?: { sessionId?: string },
 ): Promise<OAuthStored | undefined> {
   const auth = await getAuth();
+  if (auth == null) {
+    throw new Error(
+      "Anthropic OAuth credentials are missing. Re-login with /login and pick Claude Pro/Max.",
+    );
+  }
   if (!isOAuthStored(auth)) return undefined;
   if (auth.access && auth.expires > Date.now()) return auth;
 
@@ -1017,11 +1019,11 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
     auth: {
       provider: "anthropic",
       async loader(
-        getAuth: () => Promise<OAuthStored | { type: string }>,
+        getAuth: () => Promise<OAuthStored | { type: string } | undefined>,
         provider: { models: Record<string, { cost?: unknown }> },
       ) {
         const auth = await getAuth();
-        if (auth.type !== "oauth") return {};
+        if (!auth || auth.type !== "oauth") return {};
 
         // Zero out costs for OAuth users (Claude Pro/Max subscription)
         for (const model of Object.values(provider.models)) {
