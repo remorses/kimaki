@@ -209,14 +209,7 @@ export class ShareMarkdown {
 
     // If lastAssistantOnly, filter to only the last assistant message
     const messagesToRender = lastAssistantOnly
-      ? (() => {
-          const assistantMessages = messages.filter(
-            (m) => m.info.role === 'assistant',
-          )
-          return assistantMessages.length > 0
-            ? [assistantMessages[assistantMessages.length - 1]]
-            : []
-        })()
+      ? messages.filter((m) => m.info.role === 'assistant').slice(-1)
       : messages
 
     // Build markdown
@@ -250,7 +243,7 @@ export class ShareMarkdown {
     }
 
     for (const [index, message] of messagesToRender.entries()) {
-      const messageLines = this.renderMessage(message!.info, message!.parts, {
+      const messageLines = this.renderMessage(message.info, message.parts, {
         compactTools,
         includeThinking,
         toolInputMaxChars,
@@ -259,7 +252,7 @@ export class ShareMarkdown {
       lines.push('')
 
       const nextRole = messagesToRender[index + 1]?.info.role
-      if (message!.info.role !== 'assistant' || nextRole === 'assistant') continue
+      if (message.info.role !== 'assistant' || nextRole === 'assistant') continue
 
       for (let userIndex = index - 1; userIndex >= 0; userIndex--) {
         if (messagesToRender[userIndex]?.info.role !== 'user') continue
