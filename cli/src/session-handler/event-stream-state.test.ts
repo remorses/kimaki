@@ -16,6 +16,8 @@ import {
   getLatestAssistantMessageIdForLatestUserTurn,
   getLatestRunInfo,
   getLatestTurnTokenUsage,
+  getPromptCacheClear,
+  formatPromptCacheClearMessage,
   getIdleTokenUsageDelta,
   getTokenUsageSessionIdsForIdle,
   isDerivedChildSession,
@@ -1572,6 +1574,659 @@ describe('getLatestTurnTokenUsage', () => {
       assistantMessageCount: 1,
       userMessageId: undefined,
     })
+  })
+})
+
+describe('getPromptCacheClear', () => {
+  function userEvent({
+    sessionId,
+    messageId,
+    created,
+  }: {
+    sessionId: string
+    messageId: string
+    created: number
+  }) {
+    return eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: messageId,
+          sessionID: sessionId,
+          role: 'user',
+          time: { created },
+          agent: 'build',
+          model: {
+            providerID: 'openai',
+            modelID: 'gpt-5.3-codex',
+          },
+        },
+      },
+    })
+  }
+
+  function assistantEvent({
+    sessionId,
+    messageId,
+    parentID,
+    created,
+    tokens,
+    modelID = 'gpt-5.3-codex',
+    providerID = 'openai',
+    completed = true,
+    error,
+  }: {
+    sessionId: string
+    messageId: string
+    parentID: string
+    created: number
+    tokens: {
+      input: number
+      output: number
+      reasoning: number
+      cache: { read: number; write: number }
+    }
+    modelID?: string
+    providerID?: string
+    completed?: boolean
+    error?: { name: string; data: { message: string } }
+  }) {
+    return eventEntry({
+      type: 'message.updated',
+      properties: {
+        sessionID: sessionId,
+        info: {
+          id: messageId,
+          sessionID: sessionId,
+          role: 'assistant',
+          time: { created, completed: completed ? created + 1 : undefined },
+          parentID,
+          modelID,
+          providerID,
+          mode: 'build',
+          agent: 'build',
+          path: { cwd: '/test', root: '/test' },
+          cost: 0,
+          tokens,
+          finish: completed ? 'stop' : undefined,
+          error,
+        },
+      },
+    })
+  }
+
+  test('skips the first completed assistant in a session', () => {
+    const sessionId = 'ses_cache_start'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 20000 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_1',
+    })).toBeUndefined()
+  })
+
+  test('skips a cache drop when the model changed', () => {
+    const sessionId = 'ses_cache_model'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 20000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        modelID: 'gemini-2.5-flash',
+        providerID: 'google',
+        tokens: {
+          input: 20100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('detects a cache miss when cache.read drops to zero', () => {
+    const sessionId = 'ses_cache_miss'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 20000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 20100,
+          output: 12,
+          reasoning: 0,
+          cache: { read: 0, write: 20100 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toEqual({
+      previousCacheRead: 20000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_2',
+    })
+  })
+
+  test('detects a cache drop when prompt size stays similar', () => {
+    const sessionId = 'ses_cache_drop'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 40000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 200,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 8000, write: 32000 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toEqual({
+      previousCacheRead: 40000,
+      currentCacheRead: 8000,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_2',
+    })
+  })
+
+  test('ignores a cache drop after a prune marker even if prompt grew', () => {
+    const sessionId = 'ses_cache_prune_grew'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 100000, write: 0 },
+        },
+      }),
+      eventEntry({
+        type: 'message.part.updated',
+        properties: {
+          sessionID: sessionId,
+          part: {
+            id: 'prt_pruned',
+            sessionID: sessionId,
+            messageID: 'msg_asst_1',
+            type: 'tool',
+            tool: 'bash',
+            state: {
+              status: 'completed',
+              output: '',
+              time: { start: 3, end: 4, compacted: 5 },
+            },
+          },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 6 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 7,
+        tokens: {
+          input: 101100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 101100 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('ignores a small prompt shrink from pruning', () => {
+    const sessionId = 'ses_cache_prune'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 100000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 21000,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 79000, write: 0 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('ignores a smaller prompt after context reduction', () => {
+    const sessionId = 'ses_cache_smaller'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 40000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 5000,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 8000, write: 5000 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('compares against the previous user turn, not a same-turn tool step', () => {
+    const sessionId = 'ses_cache_same_turn'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 20000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2a',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 80,
+          output: 5,
+          reasoning: 0,
+          cache: { read: 20100, write: 80 },
+        },
+      }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2b',
+        parentID: 'msg_user_2',
+        created: 5,
+        tokens: {
+          input: 20180,
+          output: 12,
+          reasoning: 0,
+          cache: { read: 0, write: 20180 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2b',
+    })).toEqual({
+      previousCacheRead: 20000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_2b',
+    })
+  })
+
+  test('ignores a cache hit that grew', () => {
+    const sessionId = 'ses_cache_hit'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 20000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 80,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 22000, write: 80 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('does not compare across an aborted assistant', () => {
+    const sessionId = 'ses_cache_abort_bridge'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 40000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        error: { name: 'MessageAbortedError', data: { message: 'aborted' } },
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_3', created: 5 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_3',
+        parentID: 'msg_user_3',
+        created: 6,
+        tokens: {
+          input: 40100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 40100 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_3',
+    })).toBeUndefined()
+  })
+
+  test('does not compare across a compaction summary', () => {
+    const sessionId = 'ses_cache_compaction'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 40000, write: 0 },
+        },
+      }),
+      eventEntry({
+        type: 'message.updated',
+        properties: {
+          sessionID: sessionId,
+          info: {
+            id: 'msg_summary',
+            sessionID: sessionId,
+            role: 'assistant',
+            parentID: 'msg_user_1',
+            time: { created: 3, completed: 4 },
+            modelID: 'gpt-5.3-codex',
+            providerID: 'openai',
+            mode: 'compaction',
+            agent: 'compaction',
+            path: { cwd: '/test', root: '/test' },
+            cost: 0,
+            tokens: {
+              input: 20,
+              output: 1,
+              reasoning: 0,
+              cache: { read: 0, write: 0 },
+            },
+            finish: 'stop',
+            summary: true,
+          },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 5 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 6,
+        tokens: {
+          input: 40100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 40100 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('ignores aborted assistants with zero cache read', () => {
+    const sessionId = 'ses_cache_abort'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 48512, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        error: { name: 'MessageAbortedError', data: { message: 'aborted' } },
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('ignores incomplete streaming snapshots', () => {
+    const sessionId = 'ses_cache_stream'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 20000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        completed: false,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toBeUndefined()
+  })
+
+  test('formats a compact cache-miss notice', () => {
+    expect(formatPromptCacheClearMessage({
+      previousCacheRead: 20000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_2',
+    })).toBe('prompt cache missed (20k → 0)')
+    expect(formatPromptCacheClearMessage({
+      previousCacheRead: 20000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_2',
+    }, { additions: 4, deletions: 1 })).toBe('prompt cache missed (20k → 0), system +4 -1')
   })
 })
 

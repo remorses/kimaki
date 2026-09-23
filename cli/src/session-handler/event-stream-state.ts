@@ -875,6 +875,190 @@ export function getIdleTokenUsageDelta({
   return delta
 }
 
+const MIN_PROMPT_CACHE_READ_TO_TRACK = 1024
+const PROMPT_CACHE_DROP_RATIO = 0.5
+
+export type PromptCacheClear = {
+  previousCacheRead: number
+  currentCacheRead: number
+  previousMessageId: string
+  currentMessageId: string
+}
+
+function hasPruneBetween({
+  events,
+  sessionId,
+  fromIndex,
+  toIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  fromIndex: number
+  toIndex: number
+}): boolean {
+  for (let i = fromIndex + 1; i <= toIndex; i++) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.part.updated') {
+      continue
+    }
+    const part = event.properties.part
+    if (part.sessionID !== sessionId || part.type !== 'tool') {
+      continue
+    }
+    if (part.state.status !== 'completed') {
+      continue
+    }
+    if (typeof part.state.time.compacted === 'number') {
+      return true
+    }
+  }
+  return false
+}
+
+function promptInputTokens(tokens: {
+  input: number
+  cache: { read: number; write: number }
+}): number {
+  return tokens.input + tokens.cache.read + tokens.cache.write
+}
+
+function getCompletedAssistantAt({
+  events,
+  sessionId,
+  messageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string
+  upToIndex: number
+}): AssistantMessage | undefined {
+  for (let i = upToIndex; i >= 0; i--) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+      continue
+    }
+    if (typeof info.time.completed !== 'number') {
+      return undefined
+    }
+    return info
+  }
+  return undefined
+}
+
+function isComparableCacheAssistant(message: AssistantMessage): boolean {
+  if (!isUserFacingAssistantMessage(message)) {
+    return false
+  }
+  if (message.error) {
+    return false
+  }
+  if (!message.tokens || !message.modelID || !message.providerID) {
+    return false
+  }
+  return true
+}
+
+// Same-model cache drop vs the previous completed assistant. Errors and compaction summaries block the pair.
+export function getPromptCacheClear({
+  events,
+  sessionId,
+  currentMessageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  currentMessageId: string
+  upToIndex?: number
+}): PromptCacheClear | undefined {
+  const end = upToIndex ?? events.length - 1
+  const current = getCompletedAssistantAt({
+    events,
+    sessionId,
+    messageId: currentMessageId,
+    upToIndex: end,
+  })
+  if (!current || !isComparableCacheAssistant(current) || !current.tokens) {
+    return undefined
+  }
+
+  const seen = new Set<string>([currentMessageId])
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (event?.type !== 'message.updated') {
+      continue
+    }
+    const info = event.properties.info
+    if (info.sessionID !== sessionId || info.role !== 'assistant') {
+      continue
+    }
+    if (seen.has(info.id) || info.parentID === current.parentID) {
+      continue
+    }
+    if (typeof info.time.completed !== 'number') {
+      continue
+    }
+    seen.add(info.id)
+    if (!isComparableCacheAssistant(info) || !info.tokens) {
+      return undefined
+    }
+    if (info.modelID !== current.modelID || info.providerID !== current.providerID) {
+      return undefined
+    }
+    if (info.tokens.cache.read < MIN_PROMPT_CACHE_READ_TO_TRACK) {
+      return undefined
+    }
+    if (hasPruneBetween({
+      events,
+      sessionId,
+      fromIndex: i,
+      toIndex: end,
+    })) {
+      return undefined
+    }
+    if (current.tokens.cache.read > info.tokens.cache.read * PROMPT_CACHE_DROP_RATIO) {
+      return undefined
+    }
+    const previousPrompt = promptInputTokens(info.tokens)
+    const currentPrompt = promptInputTokens(current.tokens)
+    // Pruning blanks old tool output and shrinks the next prompt. That is not a cache clear.
+    if (currentPrompt < previousPrompt) {
+      return undefined
+    }
+    return {
+      previousCacheRead: info.tokens.cache.read,
+      currentCacheRead: current.tokens.cache.read,
+      previousMessageId: info.id,
+      currentMessageId: current.id,
+    }
+  }
+  return undefined
+}
+
+export function formatCompactTokenCount(count: number): string {
+  if (count >= 1000) {
+    const thousands = count / 1000
+    const rounded = thousands >= 10 ? thousands.toFixed(0) : thousands.toFixed(1)
+    return `${rounded.replace(/\.0$/, '')}k`
+  }
+  return String(count)
+}
+
+export function formatPromptCacheClearMessage(
+  clear: PromptCacheClear,
+  systemDiff?: { additions: number; deletions: number },
+): string {
+  const tokens = `prompt cache missed (${formatCompactTokenCount(clear.previousCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)})`
+  if (!systemDiff || (systemDiff.additions === 0 && systemDiff.deletions === 0)) {
+    return tokens
+  }
+  return `${tokens}, system +${systemDiff.additions} -${systemDiff.deletions}`
+}
+
 // Scans backward for most recent message.updated with role=assistant for sessionId.
 // Extracts model, providerID, agent, tokensUsed.
 export function getLatestRunInfo({
