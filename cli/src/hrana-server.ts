@@ -177,7 +177,7 @@ export async function startHranaServer({
     // Health check — no auth required
     if (pathname === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', pid: process.pid }))
+      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: getWrapperPid() }))
       return
     }
     // OpenCode server port discovery — no auth required (localhost only).
@@ -268,8 +268,18 @@ export async function stopHranaServer() {
  * Evict a previous kimaki instance on the lock port.
  * Fetches /health to get the running process PID, then kills it directly.
  * No lsof/netstat/spawnSync needed — the PID comes from the health response.
+ *
+ * SIGTERM first so the old bot can clean up. Its own shutdown deadline is
+ * 15s, so after a longer grace period we SIGKILL: a stuck process must never
+ * block every future start. Safe because the PID comes from our own /health.
  */
-export async function evictExistingInstance({ port }: { port: number }) {
+export async function evictExistingInstance({
+  port,
+  gracePeriodMs = 20_000,
+}: {
+  port: number
+  gracePeriodMs?: number
+}) {
   const url = `http://127.0.0.1:${port}/health`
 
   const probe = await fetch(url, { signal: AbortSignal.timeout(1000) }).catch(
@@ -277,20 +287,26 @@ export async function evictExistingInstance({ port }: { port: number }) {
   )
   if (probe instanceof Error) return
 
-  const body = await (probe.json() as Promise<{ pid?: number }>).catch(
+  const body = await (probe.json() as Promise<{ pid?: number; wrapperPid?: number | null }>).catch(
     (e) => new FetchError({ url, cause: e }),
   )
   if (body instanceof Error || !body) return
 
   const targetPid = body.pid
   if (!targetPid || targetPid === process.pid) return
+  // Signal the bin.ts wrapper, not only the child: killing just the child
+  // looks like a crash and the old wrapper respawns it, which then evicts us.
+  // The wrapper forwards SIGTERM and does not restart after it.
+  const wrapperPid = body.wrapperPid && body.wrapperPid !== process.ppid
+    ? body.wrapperPid
+    : null
 
   hranaLogger.log(
-    `Evicting existing kimaki process (PID: ${targetPid}) on port ${port}`,
+    `Evicting existing kimaki process (PID: ${targetPid}, wrapper: ${wrapperPid ?? 'none'}) on port ${port}`,
   )
   const killResult = errore.try(
     () => {
-      process.kill(targetPid, 'SIGTERM')
+      process.kill(wrapperPid ?? targetPid, 'SIGTERM')
     },
     (e) =>
       new Error('Failed to send SIGTERM to existing kimaki process', {
@@ -302,18 +318,82 @@ export async function evictExistingInstance({ port }: { port: number }) {
     return
   }
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    await new Promise((resolve) => {
-      setTimeout(resolve, 1000)
-    })
-
-    // Verify it's gone. Some shutdown paths need a few seconds to run cleanup,
-    // so we avoid SIGKILL and just poll for up to 10 seconds.
-    const secondProbe = await fetch(url, {
-      signal: AbortSignal.timeout(2000),
-    }).catch((e) => new FetchError({ url, cause: e }))
-    if (secondProbe instanceof Error) return
+  // Wait for process exit, not just a failed probe: a process that already
+  // closed its HTTP server can still be alive and holding the socket briefly.
+  if (await waitForProcessExit({ pid: targetPid, timeoutMs: gracePeriodMs })) {
+    return
   }
 
-  hranaLogger.log(`PID ${targetPid} still alive after 10s SIGTERM grace period`)
+  hranaLogger.log(
+    `PID ${targetPid} still alive after ${gracePeriodMs / 1000}s SIGTERM grace period, sending SIGKILL`,
+  )
+  // Wrapper first so it cannot respawn the child we are about to kill.
+  const wrapperKillResult = wrapperPid
+    ? errore.try(
+        () => {
+          process.kill(wrapperPid, 'SIGKILL')
+        },
+        (e) => new Error('Failed to send SIGKILL to kimaki wrapper', { cause: e }),
+      )
+    : null
+  if (wrapperKillResult instanceof Error) {
+    hranaLogger.log(`Failed to kill wrapper PID ${wrapperPid}: ${wrapperKillResult.message}`)
+  }
+  const forceKillResult = errore.try(
+    () => {
+      process.kill(targetPid, 'SIGKILL')
+    },
+    (e) =>
+      new Error('Failed to send SIGKILL to existing kimaki process', {
+        cause: e,
+      }),
+  )
+  if (forceKillResult instanceof Error) {
+    hranaLogger.log(`Failed to kill PID ${targetPid}: ${forceKillResult.message}`)
+    return
+  }
+  if (await waitForProcessExit({ pid: targetPid, timeoutMs: 5_000 })) {
+    return
+  }
+  hranaLogger.log(`PID ${targetPid} still alive after SIGKILL`)
+}
+
+// PID of the bin.ts respawn wrapper, only while it is alive (IPC connected).
+// Without the connected check an orphan would report ppid 1.
+function getWrapperPid(): number | null {
+  if (!process.env.__KIMAKI_CHILD || !process.connected) {
+    return null
+  }
+  return process.ppid
+}
+
+function isProcessAlive(pid: number): boolean {
+  const result = errore.try(
+    () => {
+      process.kill(pid, 0)
+    },
+    (e) => new Error('Process liveness check failed', { cause: e }),
+  )
+  if (result instanceof Error) {
+    // EPERM means the PID exists but belongs to another user.
+    return result.cause instanceof Error && Reflect.get(result.cause, 'code') === 'EPERM'
+  }
+  return true
+}
+
+async function waitForProcessExit({
+  pid,
+  timeoutMs,
+}: {
+  pid: number
+  timeoutMs: number
+}): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true
+    await new Promise((resolve) => {
+      setTimeout(resolve, 200)
+    })
+  }
+  return !isProcessAlive(pid)
 }

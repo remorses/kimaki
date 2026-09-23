@@ -28,6 +28,7 @@ import {
   initDatabase,
   getChannelDirectory,
   startDiscordBot,
+  registerBotLifecycleHandlers,
   initializeOpencodeForDirectory,
   assertCompatibleOpencodeVersion,
   createProjectChannels,
@@ -1638,6 +1639,9 @@ export async function run({
     cliLogger.error('Failed to start hrana server:', hranaResult.message)
     process.exit(EXIT_NO_RESTART)
   }
+  // We own the lock port from here on. Stop signals must release it in every
+  // startup phase (Discord login, channel reconcile), not only after ready.
+  registerBotLifecycleHandlers()
 
   // Initialize database (connects to hrana server via HTTP)
   await initDatabase()
@@ -1803,6 +1807,10 @@ export async function run({
     }
     process.exit(EXIT_NO_RESTART)
   }
+  // Stop signal during Discord login: shutdown owns the process now.
+  if (global.shuttingDown) {
+    return
+  }
   await setBotToken(appId, token)
 
    // In gateway mode the bot only sees guilds the user has installed
@@ -1842,6 +1850,9 @@ export async function run({
     // Start bot immediately — channel sync happens in the background.
     cliLogger.log('Starting Discord bot...')
     await startDiscordBot({ token, appId, discordClient, useWorktrees })
+    if (global.shuttingDown) {
+      return
+    }
     cliLogger.log('Discord bot is running!')
 
     // Background channel sync + role reconciliation + default channel creation.

@@ -98,11 +98,14 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
       `--diagnostic-dir=${HEAP_SNAPSHOT_DIR}`,
     ]
     const args = [...heapArgs, ...process.execArgv, ...process.argv.slice(1)]
+    // The IPC channel is only a liveness link: when this wrapper dies (even by
+    // SIGKILL) the child sees 'disconnect' and shuts down instead of staying
+    // orphaned on the lock port. See registerBotLifecycleHandlers.
     const currentChild = spawn(
       process.argv[0]!,
       args,
       {
-        stdio: 'inherit',
+        stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
         env: { ...process.env, __KIMAKI_CHILD: '1' },
       },
     )
@@ -151,8 +154,9 @@ if (process.env.__KIMAKI_CHILD || isSubcommand || isHelpFlag) {
   }
 
   // Forward signals to child so graceful shutdown and heap snapshots work.
-  // SIGTERM/SIGINT mark shutdownRequested so we don't restart after graceful exit.
-  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  // Termination signals mark shutdownRequested so we don't restart after
+  // graceful exit. SIGHUP comes from closing the terminal.
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
     process.on(sig, () => {
       shutdownRequested = true
       killChild(sig)

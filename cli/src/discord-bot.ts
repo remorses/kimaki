@@ -324,6 +324,8 @@ export async function startDiscordBot({
   }
 
   store.setState({ useWorktrees: Boolean(useWorktrees) })
+  activeDiscordClient = discordClient
+  registerBotLifecycleHandlers()
 
   let currentAppId: string | undefined = appId
 
@@ -1591,11 +1593,19 @@ export async function startDiscordBot({
     await discordClient.login(token)
   }
   await setupPromise
+  // A stop signal during setup: do not start workers against closing resources.
+  if (global.shuttingDown) {
+    return
+  }
 
   startHeapMonitor()
   startStdinCpuProfListener()
   const stopTaskRunner = startTaskRunner({ token })
   const stopRuntimeIdleSweeper = startRuntimeIdleSweeper()
+  stopBackgroundWorkers = async () => {
+    await stopRuntimeIdleSweeper()
+    await stopTaskRunner()
+  }
 
   // Prevent discord.js from permanently killing the REST token on 401.
   // @discordjs/rest calls setToken(null) whenever it receives a 401 response.
@@ -1612,150 +1622,6 @@ export async function startDiscordBot({
     return originalSetToken(newToken)
   }
 
-  const handleShutdown = async (signal: string, { skipExit = false } = {}) => {
-    discordLogger.log(`Received ${signal}, cleaning up...`)
-
-    if (global.shuttingDown) {
-      discordLogger.log('Already shutting down, ignoring duplicate signal')
-      return
-    }
-    global.shuttingDown = true
-
-    try {
-      stopStdinCpuProfListener()
-      const flushed = await flushCpuProfiling()
-      if (flushed instanceof Error) {
-        discordLogger.warn(
-          'Failed to flush CPU profile on shutdown:',
-          flushed.message,
-        )
-      }
-      await stopRuntimeIdleSweeper()
-      await stopTaskRunner()
-
-      await flushDebouncedProcessCallbacks().catch((error) => {
-        discordLogger.warn(
-          'Failed to flush debounced process callbacks:',
-          error instanceof Error ? error.stack : String(error),
-        )
-      })
-
-      await flushAnalytics()
-
-      // Cancel pending IPC requests so plugin tools don't hang
-      await cancelAllPendingIpcRequests().catch((e) => {
-        discordLogger.warn(
-          'Failed to cancel pending IPC requests:',
-          (e as Error).message,
-        )
-      })
-
-      const cleanupPromises: Promise<void>[] = []
-      for (const [guildId] of voiceConnections) {
-        voiceLogger.log(
-          `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
-        )
-        cleanupPromises.push(cleanupVoiceConnection(guildId))
-      }
-
-      if (cleanupPromises.length > 0) {
-        voiceLogger.log(
-          `[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`,
-        )
-        await Promise.allSettled(cleanupPromises)
-        discordLogger.log(`All voice connections cleaned up`)
-      }
-
-      voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
-      stopExternalOpencodeSessionSync()
-      await stopOpencodeServer()
-
-      discordLogger.log('Closing database...')
-      await closeDatabase()
-
-      discordLogger.log('Stopping hrana server...')
-      await stopHranaServer()
-
-      discordLogger.log('Destroying Discord client...')
-      // Remove all listeners before destroy to prevent late-arriving shard
-      // errors (from pending DNS lookups, WebSocket frames) from becoming
-      // uncaught exceptions after the client's internal handlers are torn down.
-      discordClient.removeAllListeners()
-      void discordClient.destroy()
-
-      discordLogger.log('Cleanup complete.')
-      if (!skipExit) {
-        process.exit(0)
-      }
-    } catch (error) {
-      voiceLogger.error('[SHUTDOWN] Error during cleanup:', error)
-      if (!skipExit) {
-        process.exit(1)
-      }
-    }
-  }
-
-  process.on('SIGTERM', async () => {
-    try {
-      await handleShutdown('SIGTERM')
-    } catch (error) {
-      voiceLogger.error('[SIGTERM] Error during shutdown:', error)
-      process.exit(1)
-    }
-  })
-
-  process.on('SIGINT', async () => {
-    try {
-      await handleShutdown('SIGINT')
-    } catch (error) {
-      voiceLogger.error('[SIGINT] Error during shutdown:', error)
-      process.exit(1)
-    }
-  })
-
-  process.on('SIGUSR1', () => {
-    discordLogger.log('Received SIGUSR1, writing heap snapshot...')
-    writeHeapSnapshot().catch((e) => {
-      discordLogger.error(
-        'Failed to write heap snapshot:',
-        e instanceof Error ? e.message : String(e),
-      )
-    })
-  })
-
-  // Self-restart: die so the bin.ts wrapper restarts us with exponential
-  // backoff and crash-loop detection. process.exit() can hang joining native
-  // worker threads after Discord gateway failures, so SIGKILL instead.
-  // When running without the wrapper (e.g. `tsx src/cli.ts`), the process
-  // just dies — use `tsx src/bin.ts` for auto-restart support.
-  let selfRestarting = false
-  async function selfRestart(reason: string) {
-    if (selfRestarting) {
-      discordLogger.log(`Self-restart already in progress, ignoring duplicate reason: ${reason}`)
-      return
-    }
-    selfRestarting = true
-    discordLogger.log(`Self-restarting (reason: ${reason})...`)
-    setTimeout(() => process.kill(process.pid, 'SIGKILL'), 15_000)
-    try {
-      await handleShutdown(reason, { skipExit: true })
-    } catch (error) {
-      voiceLogger.error(`[${reason}] Error during shutdown:`, error)
-    }
-
-    if (!process.env.__KIMAKI_CHILD) {
-      discordLogger.warn(
-        'No restart wrapper detected. Run via `tsx src/bin.ts` (dev) or `kimaki` (npm) for auto-restart on crash.',
-      )
-    }
-    process.kill(process.pid, 'SIGKILL')
-  }
-
-  process.on('SIGUSR2', () => {
-    discordLogger.log('Received SIGUSR2, restarting after cleanup...')
-    void selfRestart('SIGUSR2')
-  })
-
   process.on('uncaughtException', (error) => {
     // During self-restart or shutdown, discord.js can still fire errors from
     // pending async operations (DNS lookups, WebSocket frames) after the client
@@ -1770,14 +1636,7 @@ export async function startDiscordBot({
     }
     discordLogger.error('Uncaught exception:', formatErrorWithStack(error))
     notifyError(error, 'Uncaught exception in bot process')
-    void handleShutdown('uncaughtException', { skipExit: true }).catch(
-      (shutdownError) => {
-        discordLogger.error(
-          '[uncaughtException] shutdown failed:',
-          formatErrorWithStack(shutdownError),
-        )
-      },
-    )
+    void shutdownBot('uncaughtException', { skipExit: true })
     setTimeout(() => {
       process.exit(1)
     }, 250).unref()
@@ -1800,4 +1659,178 @@ export async function startDiscordBot({
         : new Error(formatErrorWithStack(reason))
     void notifyError(error, 'Unhandled rejection in bot process')
   })
+}
+
+// ── Process lifecycle ────────────────────────────────────────────────
+// cli-runner installs these handlers right after binding the hrana lock port,
+// long before Discord is ready. Before this, SIGINT/SIGTERM during startup only
+// hit the opencode.ts fallback listener, which does not exit, so the process
+// kept the lock port forever and every next start failed with EADDRINUSE.
+// Every cleanup step below must therefore be safe at any startup phase.
+
+const SHUTDOWN_DEADLINE_MS = 15_000
+let activeDiscordClient: Client | null = null
+let stopBackgroundWorkers: (() => Promise<void>) | null = null
+let selfRestarting = false
+let lifecycleHandlersRegistered = false
+
+async function shutdownBot(reason: string, { skipExit = false } = {}) {
+  discordLogger.log(`Received ${reason}, cleaning up...`)
+
+  if (global.shuttingDown) {
+    discordLogger.log('Already shutting down, ignoring duplicate signal')
+    return
+  }
+  global.shuttingDown = true
+
+  // Cleanup or process.exit() can hang (native worker threads after gateway
+  // failures). Never let a stuck shutdown hold the lock port. Kept ref'd so a
+  // drained event loop cannot exit with code 0 and skip the wrapper restart.
+  setTimeout(() => {
+    process.kill(process.pid, 'SIGKILL')
+  }, SHUTDOWN_DEADLINE_MS)
+
+  try {
+    stopStdinCpuProfListener()
+    const flushed = await flushCpuProfiling()
+    if (flushed instanceof Error) {
+      discordLogger.warn(
+        'Failed to flush CPU profile on shutdown:',
+        flushed.message,
+      )
+    }
+    await stopBackgroundWorkers?.()
+
+    await flushDebouncedProcessCallbacks().catch((error) => {
+      discordLogger.warn(
+        'Failed to flush debounced process callbacks:',
+        error instanceof Error ? error.stack : String(error),
+      )
+    })
+
+    await flushAnalytics()
+
+    // Cancel pending IPC requests so plugin tools don't hang
+    await cancelAllPendingIpcRequests().catch((e) => {
+      discordLogger.warn(
+        'Failed to cancel pending IPC requests:',
+        (e as Error).message,
+      )
+    })
+
+    const cleanupPromises: Promise<void>[] = []
+    for (const [guildId] of voiceConnections) {
+      voiceLogger.log(
+        `[SHUTDOWN] Cleaning up voice connection for guild ${guildId}`,
+      )
+      cleanupPromises.push(cleanupVoiceConnection(guildId))
+    }
+
+    if (cleanupPromises.length > 0) {
+      voiceLogger.log(
+        `[SHUTDOWN] Waiting for ${cleanupPromises.length} voice connection(s) to clean up...`,
+      )
+      await Promise.allSettled(cleanupPromises)
+      discordLogger.log(`All voice connections cleaned up`)
+    }
+
+    voiceLogger.log('[SHUTDOWN] Stopping OpenCode server')
+    stopExternalOpencodeSessionSync()
+    await stopOpencodeServer()
+
+    discordLogger.log('Closing database...')
+    await closeDatabase()
+
+    discordLogger.log('Stopping hrana server...')
+    await stopHranaServer()
+
+    if (activeDiscordClient) {
+      discordLogger.log('Destroying Discord client...')
+      // Remove all listeners before destroy to prevent late-arriving shard
+      // errors (from pending DNS lookups, WebSocket frames) from becoming
+      // uncaught exceptions after the client's internal handlers are torn down.
+      activeDiscordClient.removeAllListeners()
+      void activeDiscordClient.destroy()
+    }
+
+    discordLogger.log('Cleanup complete.')
+    if (!skipExit) {
+      process.exit(0)
+    }
+  } catch (error) {
+    voiceLogger.error('[SHUTDOWN] Error during cleanup:', error)
+    if (!skipExit) {
+      process.exit(1)
+    }
+  }
+}
+
+// Self-restart: die so the bin.ts wrapper restarts us with exponential
+// backoff and crash-loop detection. process.exit() can hang joining native
+// worker threads after Discord gateway failures, so SIGKILL instead.
+// When running without the wrapper (e.g. `tsx src/cli.ts`), the process
+// just dies — use `tsx src/bin.ts` for auto-restart support.
+async function selfRestart(reason: string) {
+  if (selfRestarting) {
+    discordLogger.log(`Self-restart already in progress, ignoring duplicate reason: ${reason}`)
+    return
+  }
+  selfRestarting = true
+  discordLogger.log(`Self-restarting (reason: ${reason})...`)
+  await shutdownBot(reason, { skipExit: true })
+
+  if (!process.env.__KIMAKI_CHILD) {
+    discordLogger.warn(
+      'No restart wrapper detected. Run via `tsx src/bin.ts` (dev) or `kimaki` (npm) for auto-restart on crash.',
+    )
+  }
+  process.kill(process.pid, 'SIGKILL')
+}
+
+/** Idempotent. Call as soon as the process owns the lock port. */
+export function registerBotLifecycleHandlers() {
+  if (lifecycleHandlersRegistered) {
+    return
+  }
+  lifecycleHandlersRegistered = true
+
+  // SIGHUP: closing the terminal must stop the bot, not leave it orphaned.
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.on(signal, () => {
+      void shutdownBot(signal)
+    })
+  }
+
+  process.on('SIGUSR1', () => {
+    discordLogger.log('Received SIGUSR1, writing heap snapshot...')
+    writeHeapSnapshot().catch((e) => {
+      discordLogger.error(
+        'Failed to write heap snapshot:',
+        e instanceof Error ? e.message : String(e),
+      )
+    })
+  })
+
+  process.on('SIGUSR2', () => {
+    discordLogger.log('Received SIGUSR2, restarting after cleanup...')
+    void selfRestart('SIGUSR2')
+  })
+
+  // bin.ts spawns us with an IPC channel. The OS closes it when the wrapper
+  // dies for any reason (including SIGKILL), so an orphaned child exits instead
+  // of holding the lock port. Guarded by __KIMAKI_CHILD so vitest workers,
+  // which also have an IPC channel, are not affected.
+  if (!process.env.__KIMAKI_CHILD) {
+    return
+  }
+  // The wrapper can die before we get here (e.g. during the eviction wait);
+  // 'disconnect' is not replayed for late listeners.
+  if (!process.connected) {
+    void shutdownBot('wrapper-disconnect')
+    return
+  }
+  process.on('disconnect', () => {
+    void shutdownBot('wrapper-disconnect')
+  })
+  process.channel?.unref()
 }

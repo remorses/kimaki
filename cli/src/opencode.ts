@@ -487,16 +487,21 @@ function ensureProcessCleanupHandlersRegistered(): void {
     killStartingServerProcessNow({ reason: 'process-exit' })
   })
 
-  // Fallback for short-lived CLI subcommands that call process.exit without
-  // running discord-bot.ts shutdown handlers.
-  process.on('SIGINT', () => {
-    killSingleServerProcessNow({ reason: 'sigint' })
-    killStartingServerProcessNow({ reason: 'sigint' })
-  })
-  process.on('SIGTERM', () => {
-    killSingleServerProcessNow({ reason: 'sigterm' })
-    killStartingServerProcessNow({ reason: 'sigterm' })
-  })
+  // Fallback for CLI subcommands without their own signal handling. Any signal
+  // listener disables Node's default exit, so if we are the only listener we
+  // must exit ourselves. Otherwise the process ignores Ctrl+C and, in the bot,
+  // keeps holding the hrana lock port. If another owner exists (the bot
+  // lifecycle handlers, a subcommand), it decides when to exit.
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.on(signal, () => {
+      killSingleServerProcessNow({ reason: signal.toLowerCase() })
+      killStartingServerProcessNow({ reason: signal.toLowerCase() })
+      if (process.listenerCount(signal) > 1) {
+        return
+      }
+      process.exit(128 + os.constants.signals[signal])
+    })
+  }
 }
 
 // ── Resolve opencode binary ──────────────────────────────────────
@@ -1082,6 +1087,15 @@ async function startSingleServer({
     return waitResult
   }
   serverReady = true
+  // stopOpencodeServer() may have run while we waited (bot shutdown). Never
+  // publish a server that nobody will stop.
+  if (global.shuttingDown || serverProcess.killed) {
+    killStartingServerProcessNow({ reason: 'stopped-during-startup' })
+    if (startingServerProcess === serverProcess) {
+      startingServerProcess = null
+    }
+    return new ServerStartError({ port, reason: 'stopped during startup' })
+  }
   opencodeLogger.log(`Server ready on port ${port}`)
 
   // Always dump startup logs so plugin loading errors and other startup output
@@ -1504,6 +1518,10 @@ export function extractSdkErrorMessage(error: SdkErrorResponse | null | undefine
  * Used for process teardown, tests, and explicit restarts.
  */
 export async function stopOpencodeServer(): Promise<boolean> {
+  // A server still booting lives only in startingServerProcess.
+  killStartingServerProcessNow({ reason: 'stop-opencode-server' })
+  startingServerProcess = null
+
   if (!singleServer) {
     return false
   }
@@ -1537,9 +1555,6 @@ export async function stopOpencodeServer(): Promise<boolean> {
       opencodeLogger.warn(killResult.message)
     }
   }
-
-  killStartingServerProcessNow({ reason: 'stop-opencode-server' })
-  startingServerProcess = null
 
   singleServer = null
   clientCache.clear()
