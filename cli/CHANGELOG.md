@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.30.0
+
+1. **Footer mentions are now opt-in.** Final session footers no longer ping the thread creator by default. Pass `--enable-footer-mentions` to get the old behavior:
+
+   ```bash
+   kimaki --enable-footer-mentions
+   ```
+
+   The old `--skip-footer-mentions` flag is removed. If you used it, just drop it, since no mention is now the default.
+
+2. **Silent notice when prompt cache is lost mid-session.** Kimaki compares `tokens.cache.read` on consecutive completed assistant messages of the same model. If cached input drops while the prompt did not shrink, it posts a silent line:
+
+   ```
+   -# prompt cache missed (20k → 0), system +4 -1
+   ```
+
+   `system +4 -1` appears when the OpenCode system prompt changed. The full unified diff is written to `~/.kimaki/cache-rewrites/<time>-<session>.patch`, so you can see which plugin or agent prompt broke the cache. The check is skipped on the first assistant message, model changes, aborts, compaction, pruning, and any smaller prompt.
+
+3. **`kimaki session read` is much cheaper for agents to load.** Thinking is omitted unless you pass `--thinking`. Compact tool lines truncate input to 80 characters (change it with `--tool-input-max-chars`). `--verbose` still dumps full tool YAML.
+
+   ```bash
+   kimaki session read ses_xxx > ./tmp/session.md
+   kimaki session read ses_xxx --thinking --verbose
+   ```
+
+   Headings and tool lines use stable prefixes with no emoji: `### user`, `### assistant`, `tool:`, `tool-error:`. Compact `read` lines show the file base name, `task` lines keep the description and child `ses_` id, and `bash` lines show the command when it fits, otherwise the description. Agents are told to read the whole transcript when it is under 100 KB.
+
+4. **`kimaki session wait` and `send --wait` stop at pending questions.** A session waiting on a `question` tool never finishes on its own, so waits now return the transcript at that point. `kimaki session list` shows these sessions as `status: showing-question`, and `--active` excludes them.
+
+5. **Discord system lines use `-# ` subtext.** The new-session model banner, turn footer, queue notices, context usage, retries, and sleep wake now start with `-# ` instead of a quote or diamond. When a turn ends, the last assistant text is edited back to full width. Short status text stays quoted only while the turn is still running.
+
+   ```
+   -# *using openai/gpt-5.6-sol ⋅ gpt5*
+
+   I'll inspect the file.
+
+   -# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ gpt-5.6-sol*
+   ```
+
+6. **Clean up local state when Discord channels and threads are deleted.** Kimaki removes stale project mappings, channel preferences, forum sync config, queued messages, pending interactions, sleeps, and scheduled deliveries that can no longer reach Discord, and stops active runtimes of the deleted threads. On startup it also removes saved channel mappings that Discord confirms no longer exist. Temporary API failures keep the mapping.
+
+7. **Fixed Claude Pro/Max sessions with Anthropic.** Kimaki and the bundled Subrouter now advertise Claude Code `2.1.280`, so Anthropic no longer rejects newer models with `Claude Code 2.1.257 does not support this model`. Login and token refresh no longer fail with `Authorization code was invalid or expired` (the token endpoint returned a fake 429 to the OpenCode user-agent). If `auth.json` loses its `anthropic` entry, sessions now report that the login is missing instead of crashing with `undefined is not an object (evaluating 'auth.type')`. Run `/login` and pick **Claude Pro/Max** to log in again.
+
+8. **Fixed voice transcription.** OpenAI voice notes no longer fail with `Invalid JSON response`. Transcription now uses `gpt-audio-1.5` for OpenAI and `gemini-flash-latest` for Gemini.
+
+9. **Fixed Kimaki failing to start with `Port 29988 still in use after eviction`.** Ctrl+C, `SIGTERM`, or closing the terminal during startup was ignored, so the old process kept the lock port. Now:
+
+   - stop signals end the bot cleanly at any point of startup
+   - a new `kimaki` start force-kills an old instance that does not exit within 20 seconds
+   - if the restart wrapper dies, the bot process exits too instead of staying orphaned on the port
+
+10. **Fixed `. queue` messages interrupting a running `task` subagent.** Queued follow-ups now wait until the parent task actually finishes.
+
+11. **Fixed question answers lost after an abort in another client.** If the session was aborted elsewhere, answering the Discord dropdown now resumes the session with your answers instead of silently dropping them.
+
+12. **Subrouter cooldown fallback notices show as silent Discord lines** and never enter the model context. OpenAI WebSocket `1006` drops now retry on the same subscription instead of rotating the account.
+
+13. **Quieter scheduled tasks.** Autonomous scheduled runs stay out of your Discord sidebar by default. The agent mentions you only when it completed work worth reviewing, found an issue, or needs a decision. Runs with no work archive themselves.
+
 ## 0.29.0
 
 1. **Continue a thread on another computer with `kimaki thread list`.** Session IDs live only in the SQLite database and OpenCode server of the machine that created them, but Discord thread IDs work everywhere. Find a remote channel, list its threads, then send by thread ID:
