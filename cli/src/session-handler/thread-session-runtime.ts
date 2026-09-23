@@ -134,6 +134,7 @@ import {
   type ScheduledTaskSystemContext,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
+import { countSystemPromptDiffLines } from '../cache-rewrite.js'
 import { store } from '../store.js'
 import {
   trackEvent,
@@ -915,6 +916,7 @@ export class ThreadSessionRuntime {
   // Notification throttles for retry/context notices.
   private lastDisplayedContextPercentage = 0
   private lastRateLimitDisplayTime = 0
+  private userSystemByMessageId = new Map<string, string>()
 
   // Last OpenCode session title we applied to Discord. Dedupes session.updated
   // so we only call setName once per distinct title. Not persisted.
@@ -1461,6 +1463,9 @@ export class ThreadSessionRuntime {
             return [{ id: candidate.id, type: candidate.type }]
           })
         : []
+      if (info.role === 'user' && typeof info.id === 'string' && typeof info.system === 'string') {
+        this.userSystemByMessageId.set(info.id, info.system)
+      }
       delete info.system
       delete info.tools
       delete info.parts
@@ -5358,12 +5363,60 @@ export class ThreadSessionRuntime {
     if (!cacheClear) {
       return
     }
-    const chunk = `${STATUS_PREFIX}${formatPromptCacheClearMessage(cacheClear)}`
+    const systemDiff = await this.getSystemPromptDiffForCacheClear({
+      sessionId,
+      previousMessageId: cacheClear.previousMessageId,
+      currentMessageId: cacheClear.currentMessageId,
+    })
+    const chunk = `${STATUS_PREFIX}${formatPromptCacheClearMessage(cacheClear, systemDiff)}`
     const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send prompt cache notice:', sendResult)
     }
+  }
+
+  private async getSystemPromptDiffForCacheClear({
+    sessionId,
+    previousMessageId,
+    currentMessageId,
+  }: {
+    sessionId: string
+    previousMessageId: string
+    currentMessageId: string
+  }): Promise<{ additions: number; deletions: number } | undefined> {
+    const previousParentId = this.getAssistantParentId({ sessionId, messageId: previousMessageId })
+    const currentParentId = this.getAssistantParentId({ sessionId, messageId: currentMessageId })
+    if (!previousParentId || !currentParentId) {
+      return undefined
+    }
+    const beforeText = this.userSystemByMessageId.get(previousParentId)
+    const afterText = this.userSystemByMessageId.get(currentParentId)
+    if (beforeText === undefined || afterText === undefined || beforeText === afterText) {
+      return undefined
+    }
+    return countSystemPromptDiffLines({ beforeText, afterText })
+  }
+
+  private getAssistantParentId({
+    sessionId,
+    messageId,
+  }: {
+    sessionId: string
+    messageId: string
+  }): string | undefined {
+    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
+      const event = this.eventBuffer[i]?.event
+      if (event?.type !== 'message.updated') {
+        continue
+      }
+      const info = event.properties.info
+      if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
+        continue
+      }
+      return info.parentID
+    }
+    return undefined
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────

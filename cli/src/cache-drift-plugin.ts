@@ -4,8 +4,11 @@
 // This helps spot plugins that mutate the system prompt unexpectedly.
 
 import type { Plugin } from '@opencode-ai/plugin'
-import { diffLines } from 'diff'
 import * as errore from 'errore'
+import {
+  countSystemPromptDiffLines,
+  writeSystemPromptPatch,
+} from './cache-rewrite.js'
 import { createPluginLogger, formatPluginErrorWithStack, setPluginLogFilePath } from './plugin-logger.js'
 import { initSentry, notifyError } from './sentry.js'
 
@@ -64,23 +67,6 @@ function shouldSuppressDriftWarning({
   )
 }
 
-function countDiffLines({
-  beforeText,
-  afterText,
-}: {
-  beforeText: string
-  afterText: string
-}): { additions: number; deletions: number } {
-  const changes = diffLines(beforeText, afterText)
-  let additions = 0
-  let deletions = 0
-  for (const change of changes) {
-    if (change.added) additions += change.count ?? 0
-    if (change.removed) deletions += change.count ?? 0
-  }
-  return { additions, deletions }
-}
-
 function getOrCreateSessionState({
   sessions,
   sessionId,
@@ -108,10 +94,12 @@ function handleSystemTransform({
   input,
   output,
   sessions,
+  dataDir,
 }: {
   input: { sessionID?: string }
   output: { system: string[] }
   sessions: Map<string, SessionState>
+  dataDir: string | undefined
 }): void {
   const sessionId = input.sessionID
   if (!sessionId) return
@@ -138,15 +126,37 @@ function handleSystemTransform({
     return
   }
 
-  const { additions, deletions } = countDiffLines({
+  const { additions, deletions } = countSystemPromptDiffLines({
     beforeText: previousPrompt,
     afterText: currentPrompt,
   })
+  const model = state.currentTurnContext?.model
+  const agent = state.currentTurnContext?.agent
 
-  logger.warn(
-    `[cache-drift] context cache discarded for session ${sessionId}: `
-    + `system prompt changed since previous message (+${additions} / -${deletions} lines)`,
-  )
+  if (!dataDir) {
+    logger.warn(
+      `[cache-drift] system prompt changed for session ${sessionId} `
+      + `(+${additions} / -${deletions}), no data dir for patch`,
+    )
+    return
+  }
+
+  void writeSystemPromptPatch({
+    dataDir,
+    sessionId,
+    beforeText: previousPrompt,
+    afterText: currentPrompt,
+    model,
+    agent,
+  }).then((filePath) => {
+    logger.warn(
+      `[cache-drift] system prompt changed for session ${sessionId} `
+      + `(+${additions} / -${deletions}) patch=${filePath}`,
+    )
+  }).catch((error: unknown) => {
+    logger.warn(`[cache-drift] ${formatPluginErrorWithStack(error)}`)
+    void notifyError(error, 'cache drift patch write failed')
+  })
 }
 
 function getDeletedSessionId({ event }: { event: { type: string; properties?: Record<string, unknown> } }): string | undefined {
@@ -196,7 +206,7 @@ const cacheDriftPlugin: Plugin = async ({ directory }) => {
           state.pendingCompareTimeout = setTimeout(() => {
             state.pendingCompareTimeout = undefined
             try {
-              handleSystemTransform({ input, output, sessions })
+              handleSystemTransform({ input, output, sessions, dataDir })
             } catch (err) {
               logger.warn(`[cache-drift] ${formatPluginErrorWithStack(err)}`)
               void notifyError(err, 'cache drift plugin transform hook failed')
