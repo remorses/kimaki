@@ -210,7 +210,7 @@ describe('formatSessionSleepToolOutput', () => {
         reason: 'Wait 1 day, then check mail',
       }),
     ).toBe(
-      '⬦ Woke after sleeping until 2026-09-07 13:21 UTC\nReason: Wait 1 day, then check mail\nContinue the work you were waiting for.',
+      '-# Woke after sleeping until 2026-09-07 13:21 UTC\nReason: Wait 1 day, then check mail\nContinue the work you were waiting for.',
     )
   })
 })

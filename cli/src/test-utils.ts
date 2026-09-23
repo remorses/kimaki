@@ -354,9 +354,11 @@ export function isFooterMessage({
   if (message.author.id !== botUserId) {
     return false
   }
-  const content = message.content.startsWith('> ')
-    ? message.content.slice(2)
-    : message.content
+  const content = message.content.startsWith('-# ')
+    ? message.content.slice(3)
+    : message.content.startsWith('> ')
+      ? message.content.slice(2)
+      : message.content
   if (!content.startsWith('*')) {
     return false
   }

@@ -46,7 +46,7 @@ describe('question text before dropdown', () => {
         "--- from: user (question-text-tester)
         QUESTION_AFTER_TEXT_MARKER
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         PLAN_TEXT_BEFORE_QUESTION
         **Next step**
         What next?"

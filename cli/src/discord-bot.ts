@@ -39,7 +39,7 @@ import {
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
-import { STATUS_PREFIX } from './message-formatting.js'
+import { asSystemLine, STATUS_PREFIX } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -994,7 +994,7 @@ export async function startDiscordBot({
         if (enqueueResult.queued && enqueueResult.position) {
           await sendThreadMessage(
             thread,
-            `Queued at position ${enqueueResult.position}. Edit or delete your message to update the queue`,
+            asSystemLine(`Queued at position ${enqueueResult.position}. Edit or delete your message to update the queue`),
           )
         }
       }

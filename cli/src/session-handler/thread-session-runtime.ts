@@ -50,6 +50,7 @@ import {
 import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
 import {
   asDiscordQuote,
+  asSystemLine,
   formatPart,
   formatTaskToolTitle,
   planAssistantTurnFlush,
@@ -5173,7 +5174,7 @@ export class ThreadSessionRuntime {
       : ''
     const result = await sendThreadMessage(
       this.thread,
-      asDiscordQuote(`*using ${modelLabel}${agentLabel}*`),
+      asSystemLine(`*using ${modelLabel}${agentLabel}*`),
       { flags: SILENT_MESSAGE_FLAGS },
     ).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (result instanceof Error) {
@@ -5326,7 +5327,7 @@ export class ThreadSessionRuntime {
         })
       : undefined
     const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
-    const footerText = asDiscordQuote(
+    const footerText = asSystemLine(
       `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`,
     )
     this.stopTyping()

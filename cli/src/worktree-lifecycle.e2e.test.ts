@@ -545,15 +545,15 @@ describe('worktree lifecycle', () => {
         "--- from: user (worktree-tester)
         Reply with exactly: before-worktree
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > ok
         Creating worktree in <#THREAD_ID>
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (worktree-tester)
         Reply with exactly: after-source-thread
         --- from: assistant (TestBot)
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ source-model-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ source-model-v2*"
       `)
       expect(sourceText).toContain('Reply with exactly: before-worktree')
       expect(sourceText).toContain('Reply with exactly: after-source-thread')
@@ -571,7 +571,7 @@ describe('worktree lifecycle', () => {
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
         > ok
-        > *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ <1s ⋅ 0% ⋅ source-model-v2*"
+        -# *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2*"
       `)
       expect(worktreeText).toContain('Worktree:')
       expect(worktreeText).toContain('Branch:')
@@ -666,7 +666,7 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > ok"
       `)
       expect(worktreeText).toContain('Branch:')
@@ -797,12 +797,12 @@ describe('worktree lifecycle', () => {
         "--- from: user (worktree-tester)
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > ok
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        > *non-git-project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        -# *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         > ok"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
@@ -880,7 +880,7 @@ describe('worktree lifecycle', () => {
         🌳 **Worktree: AUTO_WORKTREE_BRANCH**
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > ok"
       `)
 

@@ -344,19 +344,19 @@ describe('kimaki_sleep', () => {
         "--- from: user (sleep-tester)
         SLEEP_TOOL_MARKER wait for the deploy
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > waiting for the deploy
 
         ┣ kimaki_sleep until 2030-01-01T09:00:00Z _waiting for the deploy_
 
         > sleep-started
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
-        ⬦ Woke after sleeping until 2030-01-01 09:00 UTC
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# Woke after sleeping until 2030-01-01 09:00 UTC
         Reason: waiting for the deploy
         Continue the work you were waiting for.
         [embed]
         > sleep-wake-done
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       // The wake must continue the SAME OpenCode session, not start a new one:
@@ -465,16 +465,16 @@ describe('kimaki_sleep', () => {
         "--- from: user (sleep-tester)
         SLEEP_CANCEL_MARKER wait for something
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         ┣ kimaki_sleep for 2h _cancel me_
 
         > cancel-sleep-started
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (sleep-tester)
         SLEEP_CANCEL_FOLLOWUP never mind, keep going
         --- from: assistant (TestBot)
         > cancel-followup-done
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
     20_000,

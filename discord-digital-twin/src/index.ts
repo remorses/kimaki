@@ -1095,9 +1095,14 @@ export class ChannelScope {
       const visibleText = getMessageVisibleText(msg)
       if (visibleText) {
         let content = visibleText
-        // Footer lines look like: *project ⋅ main ⋅ <1s ⋅ 2% ⋅ model-name*
+        // Footer lines look like: -# *project ⋅ main ⋅ <1s ⋅ 2% ⋅ model-name*
         // Replace duration and percentage with stable placeholders.
-        if (deterministicFooters && content.startsWith('*') && content.includes('⋅')) {
+        const footerBody = content.startsWith('-# ')
+          ? content.slice(3)
+          : content.startsWith('> ')
+            ? content.slice(2)
+            : content
+        if (deterministicFooters && footerBody.startsWith('*') && footerBody.includes('⋅') && !footerBody.startsWith('*using ')) {
           content = content
             .replace(/<1s/g, 'Ns')
             .replace(/\b\d+m\s+\d+s\b/g, 'Ns')

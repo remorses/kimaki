@@ -125,7 +125,7 @@ describe('queue advanced: typing around permissions', () => {
         "--- from: user (queue-permission-tester)
         PERMISSION_TYPING_MARKER
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > requesting external read permission
 
         ┣ read *.zprofile*
@@ -137,7 +137,7 @@ describe('queue advanced: typing around permissions', () => {
         [user clicks button]
 
         > permission-flow-done
-        > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const timeline = await th.text({

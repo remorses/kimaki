@@ -336,14 +336,14 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(runtimeAfterB).toBe(runtimeAfterA)
     },
@@ -386,9 +386,9 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -458,14 +458,14 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: reconnect-alpha
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
         > ok
-        > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)
@@ -506,11 +506,11 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-high-usage
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*"
+        -# *using deterministic-provider/deterministic-v2*"
       `)
 
       const threadText = await discord.thread(thread.id).text()
-      expect(threadText).not.toContain('⬦ context usage')
+      expect(threadText).not.toContain('-# context usage')
     },
     10_000,
   )
@@ -681,9 +681,9 @@ describe('runtime lifecycle', () => {
       "--- from: user (lifecycle-tester)
       Reply with exactly: deleted-project
       --- from: assistant (TestBot)
-      > *using deterministic-provider/deterministic-v2*
+      -# *using deterministic-provider/deterministic-v2*
       > ok
-      > *project ⋅ main ⋅ <1s ⋅ 0% ⋅ deterministic-v2*"
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)
     await projectChannel.delete()
 

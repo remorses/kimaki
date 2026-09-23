@@ -96,7 +96,7 @@ describe('abort clears pending question dropdown', () => {
         "--- from: user (question-abort-tester)
         QUESTION_SELECT_QUEUE_MARKER abort-test
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
+        -# *using deterministic-provider/deterministic-v2*
         **Select action**
         How to proceed?
         [user selects dropdown: 0]

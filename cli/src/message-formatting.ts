@@ -29,9 +29,20 @@ const logger = createLogger(LogPrefix.FORMATTING)
 export const TOOL_PREFIX = '┣ '
 export const FILE_EDIT_PREFIX = '◼︎ '
 export const THINKING_PREFIX = '┣ '
-export const STATUS_PREFIX = '⬦ '
+// Discord subtext. Not `#-`.
+export const SYSTEM_LINE_PREFIX = '-# '
+export const STATUS_PREFIX = SYSTEM_LINE_PREFIX
 export const QUEUE_PREFIX = '» '
-export const WORKTREE_PREFIX = STATUS_PREFIX
+export const WORKTREE_PREFIX = '⬦ '
+
+export function asSystemLine(text: string): string {
+  const lead = text.startsWith('\n') ? '\n' : ''
+  const body = lead ? text.slice(1) : text
+  return lead + body.split('\n').map((line) => {
+    if (line.startsWith(SYSTEM_LINE_PREFIX) || line.startsWith('-#')) return line
+    return `${SYSTEM_LINE_PREFIX}${line}`
+  }).join('\n')
+}
 
 /**
  * Serialize Discord embeds into plain text so the AI model can read them.

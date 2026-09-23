@@ -86,11 +86,11 @@ e2eTest('queue delete message', () => {
         "--- from: user (queue-delete-tester)
         SLOW_BUSY_MARKER Reply with exactly: delete-queue-setup
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
-        Queued at position 1. Edit or delete your message to update the queue
-        ⬦ **queue-delete-tester** removed message from queue
+        -# *using deterministic-provider/deterministic-v2*
+        -# Queued at position 1. Edit or delete your message to update the queue
+        -# **queue-delete-tester** removed message from queue
         > slow-busy-reply
-        > *project ⋅ main ⋅ 2s ⋅ 0% ⋅ deterministic-v2*"
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const finalText = await th.text()
       expect(finalText).not.toContain(
