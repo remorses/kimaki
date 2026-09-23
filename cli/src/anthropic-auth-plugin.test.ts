@@ -65,7 +65,7 @@ describe('Anthropic OAuth request identity', () => {
       {
         "accept": "application/json",
         "authorization": "Bearer access-token",
-        "user-agent": "claude-cli/2.1.257 (external, cli)",
+        "user-agent": "claude-cli/2.1.280 (external, cli)",
         "x-app": "cli",
       }
     `)

@@ -1,7 +1,7 @@
 // LEGACY rotation, superseded by @subrouter/opencode. See oauth-rotation-shared.ts.
 // Helpers for Anthropic OAuth account and Claude Code client identity.
 
-const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.257 (external, cli)'
+const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.280 (external, cli)'
 
 export function applyClaudeCodeRequestIdentity({
   headers,
