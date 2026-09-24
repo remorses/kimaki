@@ -4050,17 +4050,20 @@ export class ThreadSessionRuntime {
     }
   }
 
-  abortActiveRun(reason: string): void {
+  /** Explicit user abort: stops the run and drops all queued messages. Returns the removed items. */
+  async abortActiveRun(reason: string): Promise<threadState.QueuedMessage[]> {
     const outcome = this.abortActiveRunInternal({
       reason,
     })
     if (outcome.apiAbortPromise) {
       void outcome.apiAbortPromise
     }
-    // Drain local queued messages after explicit abort.
-    void this.dispatchAction(() => {
-      return this.tryDrainQueue({ showIndicator: true })
+    // Enqueued synchronously, so it runs before the abort's session.idle can drain the queue.
+    let cleared: threadState.QueuedMessage[] = []
+    await this.dispatchAction(async () => {
+      cleared = await this.clearQueueNow()
     })
+    return cleared
   }
 
   async abortActiveRunAndWait({
@@ -4111,18 +4114,23 @@ export class ThreadSessionRuntime {
   async clearQueue(): Promise<threadState.QueuedMessage[]> {
     let cleared: threadState.QueuedMessage[] = []
     await this.dispatchAction(async () => {
-      const persistResult = await deleteThreadQueueItems(this.threadId).catch((error) => {
-        return new Error('Failed to clear persisted queue', { cause: error })
-      })
-      if (persistResult instanceof Error) {
-        logger.error(
-          `[QUEUE] Failed to clear persisted queue for thread ${this.threadId}: ${persistResult.message}`,
-        )
-        return
-      }
-      cleared = threadState.clearQueueItems(this.threadId)
+      cleared = await this.clearQueueNow()
     })
     return cleared
+  }
+
+  // Must run inside dispatchAction.
+  private async clearQueueNow(): Promise<threadState.QueuedMessage[]> {
+    const persistResult = await deleteThreadQueueItems(this.threadId).catch((error) => {
+      return new Error('Failed to clear persisted queue', { cause: error })
+    })
+    if (persistResult instanceof Error) {
+      logger.error(
+        `[QUEUE] Failed to clear persisted queue for thread ${this.threadId}: ${persistResult.message}`,
+      )
+      return []
+    }
+    return threadState.clearQueueItems(this.threadId)
   }
 
   /** Remove a queued message by its 1-based position. */

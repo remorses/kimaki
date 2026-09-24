@@ -10,7 +10,7 @@ import {
   getRuntime,
 } from './session-handler/thread-session-runtime.js'
 import { getThreadState } from './session-handler/thread-runtime-state.js'
-import { setSessionModel } from './database.js'
+import { listThreadQueueItems, setSessionModel } from './database.js'
 import {
   isFooterMessage,
   waitForFooterMessage,
@@ -82,7 +82,7 @@ e2eTest('queue advanced: abort and retry', () => {
         throw new Error('Expected runtime to exist for explicit-abort test')
       }
 
-      runtime.abortActiveRun('test-explicit-abort')
+      void runtime.abortActiveRun('test-explicit-abort')
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: papa',
@@ -146,6 +146,73 @@ e2eTest('queue advanced: abort and retry', () => {
   )
 
   test(
+    '/abort clears queued messages so they are never sent',
+    async () => {
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'PLUGIN_TIMEOUT_SLEEP_MARKER',
+      })
+
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === 'PLUGIN_TIMEOUT_SLEEP_MARKER'
+        },
+      })
+      const th = ctx.discord.thread(thread.id)
+
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'starting sleep',
+        timeout: 4_000,
+      })
+
+      const { id: queueInteractionId } = await th.user(TEST_USER_ID).runSlashCommand({
+        name: 'queue',
+        options: [{ name: 'message', type: 3, value: 'Reply with exactly: abort-cleared-queued' }],
+      })
+      await th.waitForInteractionAck({ interactionId: queueInteractionId, timeout: 4_000 })
+      expect(getRuntime(thread.id)?.getQueueLength()).toBe(1)
+      expect(await listThreadQueueItems(thread.id)).toHaveLength(1)
+
+      const { id: abortInteractionId } = await th.user(TEST_USER_ID).runSlashCommand({
+        name: 'abort',
+      })
+      await th.waitForInteractionAck({ interactionId: abortInteractionId, timeout: 4_000 })
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'Request **aborted**',
+        timeout: 4_000,
+      })
+
+      // Queued message must never be dispatched after abort.
+      for (let i = 0; i < 10; i++) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 20)
+        })
+        const text = await th.text()
+        expect(text).not.toContain('» **queue-advanced-tester:** Reply with exactly: abort-cleared-queued')
+      }
+
+      expect(await th.text()).toMatchInlineSnapshot(`
+        "--- from: user (queue-advanced-tester)
+        PLUGIN_TIMEOUT_SLEEP_MARKER
+        --- from: assistant (TestBot)
+        -# *using deterministic-provider/deterministic-v2*
+        > starting sleep 100
+        -# Queued message (position 1)
+        Request **aborted**, cleared 1 queued message"
+      `)
+      expect(getRuntime(thread.id)?.getQueueLength()).toBe(0)
+      expect(await listThreadQueueItems(thread.id)).toHaveLength(0)
+    },
+    10_000,
+  )
+
+  test(
     'explicit abort emits MessageAbortedError and does not emit footer',
     async () => {
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -183,7 +250,7 @@ e2eTest('queue advanced: abort and retry', () => {
       const beforeAbortMessages = await th.getMessages()
       const baselineCount = beforeAbortMessages.length
 
-      runtime.abortActiveRun('test-no-footer-on-abort')
+      void runtime.abortActiveRun('test-no-footer-on-abort')
 
       for (let i = 0; i < 10; i++) {
         await new Promise((resolve) => {
@@ -242,7 +309,7 @@ e2eTest('queue advanced: abort and retry', () => {
         throw new Error('Expected runtime to exist for race abort scenario')
       }
 
-      runtime.abortActiveRun('test-race-abort')
+      void runtime.abortActiveRun('test-race-abort')
 
       await th.user(TEST_USER_ID).sendMessage({
         content: raceFinalPrompt,
@@ -366,7 +433,7 @@ e2eTest('queue advanced: abort and retry', () => {
         throw new Error('Expected runtime to exist for forced-abort test')
       }
 
-      runtime.abortActiveRun('force-abort-test')
+      void runtime.abortActiveRun('force-abort-test')
 
       expect(await th.text()).toMatchInlineSnapshot(`
         "--- from: user (queue-advanced-tester)

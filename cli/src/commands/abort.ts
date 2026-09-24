@@ -7,7 +7,11 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import type { CommandContext } from './types.js'
-import { cancelSessionSleepForThread, getThreadSession } from '../database.js'
+import {
+  cancelSessionSleepForThread,
+  deleteThreadQueueItems,
+  getThreadSession,
+} from '../database.js'
 import { getOpencodeClient, initializeOpencodeForDirectory } from '../opencode.js'
 import {
   resolveWorkingDirectory,
@@ -71,11 +75,20 @@ export async function handleAbortCommand({
   // wake would still fire later and restart a session the user just stopped.
   await cancelSessionSleepForThread({ threadId: channel.id })
 
-  // abortActiveRun delegates to session.abort(), run settlement stays event-driven.
+  // abortActiveRun delegates to session.abort() and clears the /queue, so
+  // queued messages are not sent after abort or restored after a restart.
   const runtime = getRuntime(channel.id)
+  let clearedCount = 0
   if (runtime) {
-    runtime.abortActiveRun('user-requested')
+    const cleared = await runtime.abortActiveRun('user-requested')
+    clearedCount = cleared.length
   } else {
+    const deleteResult = await deleteThreadQueueItems(channel.id).catch((error) => {
+      return new Error('Failed to clear persisted queue', { cause: error })
+    })
+    if (deleteResult instanceof Error) {
+      logger.error(`[ABORT] ${deleteResult.message}:`, deleteResult.cause)
+    }
     // No runtime but session exists — fall back to direct API abort
     const serverResult = await initializeOpencodeForDirectory(projectDirectory)
     if (serverResult instanceof Error) {
@@ -92,6 +105,9 @@ export async function handleAbortCommand({
     }
   }
 
-  await command.editReply('Request **aborted**')
+  const queueNote = clearedCount > 0
+    ? `, cleared ${clearedCount} queued message${clearedCount > 1 ? 's' : ''}`
+    : ''
+  await command.editReply(`Request **aborted**${queueNote}`)
   logger.log(`Session ${sessionId} aborted by user`)
 }
