@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.30.1
+
+1. **`/abort` now also clears the thread `/queue`**, like `/clear-queue` does. Before, queued messages survived an abort: they were sent right after it, or restored from SQLite and sent after a Kimaki restart. Now abort removes them from memory and from the database, and the reply says how many were dropped:
+
+   ```
+   Request **aborted**, cleared 2 queued messages
+   ```
+
+2. **Child threads link back to their parent thread.** Threads started with `kimaki send --parent-session` show `Parent thread: #thread-name` as a clickable link in the starter message embed, so you can jump back to the thread that spawned the session. Works for direct sends and scheduled `--send-at` tasks. The link appears only when the parent session is bound to a thread on the same machine.
+
+   ```bash
+   kimaki send --channel <channel_id> --prompt 'Fix the auth bug' --parent-session ses_xxx
+   ```
+
+3. **Tool calls, thinking, and task lines are now dimmed as Discord subtext**, so assistant text stands out. Bot status lines (banner, footer, context usage, queue notices, retries) are plain subtext with no glyph. Only tool-related status lines like `bash returned N tokens` keep the `⬦` glyph, so it lines up with the `┣` and `◼︎` tool prefixes.
+
+   ```
+   -# *using openai/gpt-5.6-sol ⋅ build*
+   -# ┣ skill _changesets_
+   -# ◼︎ apply_patch *thread-session-runtime.ts* (+14-10)
+   -# ⬦ bash returned 12k tokens
+   -# Queued message (position 1)
+   -# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ gpt-5.6-sol*
+   ```
+
+4. **`prompt cache missed` notice now shows for every real cache miss**, right after the first reply to a new user message. Before, many misses were hidden: the check used the last reply of a turn (which reads back the cache the turn just wrote), a second Anthropic miss in a row was skipped, an aborted reply hid the next notice, and any slightly smaller prompt was treated as pruning. Now only real pruning and compaction hide the notice, and `/undo` does not show a false miss.
+
 ## 0.30.0
 
 1. **Footer mentions are now opt-in.** Final session footers no longer ping the thread creator by default. Pass `--enable-footer-mentions` to get the old behavior:
