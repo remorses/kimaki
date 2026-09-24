@@ -6,7 +6,6 @@
 import { goke } from 'goke'
 import { z } from 'zod'
 import { note } from '@clack/prompts'
-import YAML from 'yaml'
 import * as errore from 'errore'
 import type { OpencodeClient, Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
@@ -30,7 +29,7 @@ import { QUEUE_PREFIX } from '../message-formatting.js'
 import type { ThreadStartMarker } from '../system-message.js'
 import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
-import { archiveThread, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
+import { archiveThread, buildThreadStartEmbeds, ensureThreadMember, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
 import { execAsync, resolveSessionWorkingDirectory, isGitRepositoryRoot } from '../worktrees.js'
 import { upgrade, getCurrentVersion } from '../upgrade.js'
@@ -565,12 +564,7 @@ cli
             ...(options.injectionGuard?.length ? { injectionGuardPatterns: options.injectionGuard } : {}),
             ...(options.parentSession && { parentSessionId: options.parentSession }),
           }
-          const promptEmbed = [
-            {
-              color: 0x2b2d31,
-              footer: { text: YAML.stringify(threadPromptMarker) },
-            },
-          ]
+          const promptEmbed = await buildThreadStartEmbeds(threadPromptMarker)
 
           // Prefix the prompt so it's clear who sent it (matches /queue format).
           // Use a newline between prefix and prompt so leading /command
@@ -779,7 +773,7 @@ cli
               ...(options.parentSession && { parentSessionId: options.parentSession }),
             }
         const autoStartEmbed = embedMarker
-          ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(embedMarker) } }]
+          ? await buildThreadStartEmbeds(embedMarker)
           : undefined
 
         const starterMessage = await sendDiscordMessageWithOptionalAttachment({

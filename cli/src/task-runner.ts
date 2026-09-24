@@ -2,7 +2,7 @@
 
 import { DiscordAPIError, type REST, Routes } from 'discord.js'
 import { createDiscordRest } from './discord-urls.js'
-import { ensureThreadMember } from './discord-utils.js'
+import { buildThreadStartEmbeds, ensureThreadMember } from './discord-utils.js'
 import YAML from 'yaml'
 import {
   claimScheduledTaskRunning,
@@ -97,7 +97,7 @@ async function executeThreadScheduledTask({
       : {}),
     ...(payload.parentSessionId ? { parentSessionId: payload.parentSessionId } : {}),
   }
-  const embed = [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
+  const embed = await buildThreadStartEmbeds(marker)
   // Newline between prefix and prompt so leading /command detection can
   // find the command on its own line.
   const prefixedPrompt = `${QUEUE_PREFIX}**kimaki-cli:**\n${prompt}`
@@ -296,7 +296,7 @@ async function executeChannelScheduledTask({
         ...(payload.parentSessionId ? { parentSessionId: payload.parentSessionId } : {}),
       }
   const embeds = marker
-    ? [{ color: 0x2b2d31, footer: { text: YAML.stringify(marker) } }]
+    ? await buildThreadStartEmbeds(marker)
     : undefined
 
   const starterResult = await rest

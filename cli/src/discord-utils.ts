@@ -26,8 +26,10 @@ import {
   shouldLeadWithBlankLine,
   type SessionChunk,
 } from './message-formatting.js'
-import { getChannelDirectory, getThreadWorktreeOrWorkspace } from './database.js'
+import { getChannelDirectory, getThreadIdBySessionId, getThreadWorktreeOrWorkspace } from './database.js'
 import { DiscordOperationError } from './errors.js'
+import type { ThreadStartMarker } from './system-message.js'
+import YAML from 'yaml'
 import { limitHeadingDepth } from './limit-heading-depth.js'
 import { unnestCodeBlocksFromLists } from './unnest-code-blocks.js'
 import { createLogger, LogPrefix } from './logger.js'
@@ -37,6 +39,20 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const discordLogger = createLogger(LogPrefix.DISCORD)
+
+/** Starter embed with the YAML marker. Links the parent thread when the parent session is known locally. */
+export async function buildThreadStartEmbeds(marker: ThreadStartMarker) {
+  const parentThreadId = marker.parentSessionId
+    ? await getThreadIdBySessionId(marker.parentSessionId)
+    : undefined
+  return [
+    {
+      color: 0x2b2d31,
+      ...(parentThreadId && { description: `Parent thread: <#${parentThreadId}>` }),
+      footer: { text: YAML.stringify(marker) },
+    },
+  ]
+}
 
 /**
  * Centralized permission check for Kimaki bot access.
