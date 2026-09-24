@@ -879,7 +879,8 @@ const MIN_PROMPT_CACHE_READ_TO_TRACK = 1024
 const PROMPT_CACHE_DROP_RATIO = 0.5
 
 export type PromptCacheClear = {
-  previousCacheRead: number
+  // Tokens that should have been read from cache: the smaller of the previous cached prefix and the current prompt.
+  expectedCacheRead: number
   currentCacheRead: number
   previousMessageId: string
   currentMessageId: string
@@ -913,13 +914,6 @@ function hasPruneBetween({
     }
   }
   return false
-}
-
-function promptInputTokens(tokens: {
-  input: number
-  cache: { read: number; write: number }
-}): number {
-  return tokens.input + tokens.cache.read + tokens.cache.write
 }
 
 function getCompletedAssistantAt({
@@ -963,7 +957,8 @@ function isComparableCacheAssistant(message: AssistantMessage): boolean {
   return true
 }
 
-// Same-model cache drop vs the previous completed assistant. Errors and compaction summaries block the pair.
+// Same-model cache drop vs the previous completed assistant. Aborted/errored replies are skipped,
+// compaction summaries and pruned tool output block the pair since they rewrite the prompt.
 export function getPromptCacheClear({
   events,
   sessionId,
@@ -1003,13 +998,13 @@ export function getPromptCacheClear({
       continue
     }
     seen.add(info.id)
-    if (!isComparableCacheAssistant(info) || !info.tokens) {
+    if (!isUserFacingAssistantMessage(info)) {
       return undefined
+    }
+    if (!isComparableCacheAssistant(info) || !info.tokens) {
+      continue
     }
     if (info.modelID !== current.modelID || info.providerID !== current.providerID) {
-      return undefined
-    }
-    if (info.tokens.cache.read < MIN_PROMPT_CACHE_READ_TO_TRACK) {
       return undefined
     }
     if (hasPruneBetween({
@@ -1020,17 +1015,19 @@ export function getPromptCacheClear({
     })) {
       return undefined
     }
-    if (current.tokens.cache.read > info.tokens.cache.read * PROMPT_CACHE_DROP_RATIO) {
+    // Anthropic reports a fresh cache as write only, so read alone misses the turn after a miss.
+    const previousCached = info.tokens.cache.read + info.tokens.cache.write
+    const currentPrompt = current.tokens.input + current.tokens.cache.read + current.tokens.cache.write
+    // A reverted (shorter) prompt can only reuse its own length from cache.
+    const expectedCacheRead = Math.min(previousCached, currentPrompt)
+    if (expectedCacheRead < MIN_PROMPT_CACHE_READ_TO_TRACK) {
       return undefined
     }
-    const previousPrompt = promptInputTokens(info.tokens)
-    const currentPrompt = promptInputTokens(current.tokens)
-    // Pruning blanks old tool output and shrinks the next prompt. That is not a cache clear.
-    if (currentPrompt < previousPrompt) {
+    if (current.tokens.cache.read > expectedCacheRead * PROMPT_CACHE_DROP_RATIO) {
       return undefined
     }
     return {
-      previousCacheRead: info.tokens.cache.read,
+      expectedCacheRead,
       currentCacheRead: current.tokens.cache.read,
       previousMessageId: info.id,
       currentMessageId: current.id,
@@ -1052,7 +1049,7 @@ export function formatPromptCacheClearMessage(
   clear: PromptCacheClear,
   systemDiff?: { additions: number; deletions: number },
 ): string {
-  const tokens = `prompt cache missed (${formatCompactTokenCount(clear.previousCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)})`
+  const tokens = `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)})`
   if (!systemDiff || (systemDiff.additions === 0 && systemDiff.deletions === 0)) {
     return tokens
   }

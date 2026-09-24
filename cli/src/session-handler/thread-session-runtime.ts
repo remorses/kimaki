@@ -2349,16 +2349,15 @@ export class ThreadSessionRuntime {
       upToIndex: this.eventBuffer.length - 2,
     })
     const completedAt = msg.time.completed
-    if (
-      !wasAlreadyCompleted
-      && typeof completedAt === 'number'
-      && isAssistantMessageNaturalCompletion({ message: msg })
-    ) {
-      await this.handleNaturalAssistantCompletion({
-        completedMessageId: msg.id,
-        completedAt,
-      })
-      return
+    if (!wasAlreadyCompleted && typeof completedAt === 'number') {
+      if (isAssistantMessageNaturalCompletion({ message: msg })) {
+        await this.handleNaturalAssistantCompletion({
+          completedMessageId: msg.id,
+          completedAt,
+        })
+        return
+      }
+      await this.maybeNotifyPromptCacheClear({ sessionId, messageId: msg.id })
     }
 
     // Context usage notice.
@@ -5356,6 +5355,11 @@ export class ThreadSessionRuntime {
     sessionId: string
     messageId: string
   }): Promise<void> {
+    // Only the first reply after a user prompt can show a cold cache. Later steps re-read the turn's own writes.
+    const [firstAssistantId] = this.getAssistantMessageIdsForCurrentTurn({ sessionId })
+    if (firstAssistantId !== messageId) {
+      return
+    }
     const cacheClear = getPromptCacheClear({
       events: this.eventBuffer,
       sessionId,

@@ -1754,10 +1754,107 @@ describe('getPromptCacheClear', () => {
       sessionId,
       currentMessageId: 'msg_asst_2',
     })).toEqual({
-      previousCacheRead: 20000,
+      expectedCacheRead: 20000,
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
+    })
+  })
+
+  test('detects a miss on the second turn when the first turn only wrote cache', () => {
+    const sessionId = 'ses_cache_second_turn'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 20000 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 100,
+          output: 12,
+          reasoning: 0,
+          cache: { read: 0, write: 20200 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toEqual({
+      expectedCacheRead: 20000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_2',
+    })
+  })
+
+  test('detects consecutive misses, not only every other turn', () => {
+    const sessionId = 'ses_cache_consecutive'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 20000, write: 100 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 20300 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_3', created: 5 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_3',
+        parentID: 'msg_user_3',
+        created: 6,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 20500 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_3',
+    })).toEqual({
+      expectedCacheRead: 20300,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_2',
+      currentMessageId: 'msg_asst_3',
     })
   })
 
@@ -1796,7 +1893,7 @@ describe('getPromptCacheClear', () => {
       sessionId,
       currentMessageId: 'msg_asst_2',
     })).toEqual({
-      previousCacheRead: 40000,
+      expectedCacheRead: 40000,
       currentCacheRead: 8000,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
@@ -1895,8 +1992,8 @@ describe('getPromptCacheClear', () => {
     })).toBeUndefined()
   })
 
-  test('ignores a smaller prompt after context reduction', () => {
-    const sessionId = 'ses_cache_smaller'
+  test('ignores a smaller prompt that is still read from cache after a revert', () => {
+    const sessionId = 'ses_cache_revert'
     const events = [
       userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
       assistantEvent({
@@ -1918,10 +2015,10 @@ describe('getPromptCacheClear', () => {
         parentID: 'msg_user_2',
         created: 4,
         tokens: {
-          input: 5000,
+          input: 200,
           output: 10,
           reasoning: 0,
-          cache: { read: 8000, write: 5000 },
+          cache: { read: 8000, write: 0 },
         },
       }),
     ]
@@ -1930,6 +2027,48 @@ describe('getPromptCacheClear', () => {
       sessionId,
       currentMessageId: 'msg_asst_2',
     })).toBeUndefined()
+  })
+
+  test('detects a miss when the prompt shrank without pruning', () => {
+    const sessionId = 'ses_cache_shrunk_miss'
+    const events = [
+      userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_1',
+        parentID: 'msg_user_1',
+        created: 2,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 187000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_user_2', created: 3 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_asst_2',
+        parentID: 'msg_user_2',
+        created: 4,
+        tokens: {
+          input: 182000,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      }),
+    ]
+    expect(getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_asst_2',
+    })).toEqual({
+      expectedCacheRead: 182000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_2',
+    })
   })
 
   test('compares against the previous user turn, not a same-turn tool step', () => {
@@ -1979,7 +2118,7 @@ describe('getPromptCacheClear', () => {
       sessionId,
       currentMessageId: 'msg_asst_2b',
     })).toEqual({
-      previousCacheRead: 20000,
+      expectedCacheRead: 20000,
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2b',
@@ -2023,7 +2162,7 @@ describe('getPromptCacheClear', () => {
     })).toBeUndefined()
   })
 
-  test('does not compare across an aborted assistant', () => {
+  test('compares across an aborted assistant with the last good reply', () => {
     const sessionId = 'ses_cache_abort_bridge'
     const events = [
       userEvent({ sessionId, messageId: 'msg_user_1', created: 1 }),
@@ -2071,7 +2210,12 @@ describe('getPromptCacheClear', () => {
       events,
       sessionId,
       currentMessageId: 'msg_asst_3',
-    })).toBeUndefined()
+    })).toEqual({
+      expectedCacheRead: 40000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_asst_1',
+      currentMessageId: 'msg_asst_3',
+    })
   })
 
   test('does not compare across a compaction summary', () => {
@@ -2216,13 +2360,13 @@ describe('getPromptCacheClear', () => {
 
   test('formats a compact cache-miss notice', () => {
     expect(formatPromptCacheClearMessage({
-      previousCacheRead: 20000,
+      expectedCacheRead: 20000,
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
     })).toBe('prompt cache missed (20k → 0)')
     expect(formatPromptCacheClearMessage({
-      previousCacheRead: 20000,
+      expectedCacheRead: 20000,
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
