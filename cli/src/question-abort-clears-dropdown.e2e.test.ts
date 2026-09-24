@@ -65,7 +65,7 @@ describe('abort clears pending question dropdown', () => {
       if (!runtime) {
         throw new Error('Expected runtime for question abort test')
       }
-      runtime.abortActiveRun('test-question-abort')
+      void runtime.abortActiveRun('test-question-abort')
 
       // Click the now-dead dropdown. The answer echo must never appear.
       const interaction = await th.user(TEST_USER_ID).selectMenu({

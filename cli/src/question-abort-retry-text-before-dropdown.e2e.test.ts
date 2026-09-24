@@ -129,7 +129,7 @@ describe('question text before dropdown after abort retry', () => {
       if (!runtime) {
         throw new Error('Expected runtime for abort-retry question test')
       }
-      runtime.abortActiveRun('test-question-abort-retry-flush')
+      void runtime.abortActiveRun('test-question-abort-retry-flush')
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'QUESTION_AFTER_ABORT_RETRY_MARKER',

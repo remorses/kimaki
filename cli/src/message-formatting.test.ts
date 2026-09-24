@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { asDiscordQuote, asSystemLine, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
 import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
 import type { Part } from '@opencode-ai/sdk/v2'
@@ -76,16 +76,17 @@ describe('formatPart', () => {
 
 })
 
-describe('asSystemLine', () => {
-  test('prefixes every line', () => {
-    expect(asSystemLine('hello\nworld')).toMatchInlineSnapshot(`
+describe('asSubtext', () => {
+  test('prefixes every non-empty line', () => {
+    expect(asSubtext('hello\n\nworld')).toMatchInlineSnapshot(`
       "-# hello
+
       -# world"
     `)
   })
 
   test('does not double-prefix', () => {
-    expect(asSystemLine('-# already marked')).toMatchInlineSnapshot(`"-# already marked"`)
+    expect(asSubtext('-# already marked')).toMatchInlineSnapshot(`"-# already marked"`)
   })
 })
 
@@ -596,7 +597,7 @@ describe('collectSessionChunks', () => {
     })
     expect(chunks.map((chunk) => chunk.content)).toEqual([
       '> I will read it',
-      '┣ read',
+      '-# ┣ read',
     ])
   })
 
@@ -771,7 +772,7 @@ describe('formatTaskToolTitle', () => {
           sessionId: 'ses_child',
         }),
       ),
-    ).toMatchInlineSnapshot(`"┣ general **Classify pending changes**"`)
+    ).toMatchInlineSnapshot(`"-# ┣ general **Classify pending changes**"`)
   })
 
   test('prefers input description on running parts', () => {
@@ -784,7 +785,7 @@ describe('formatTaskToolTitle', () => {
           sessionId: 'ses_child',
         }),
       ),
-    ).toMatchInlineSnapshot(`"┣ explore **inspect repo**"`)
+    ).toMatchInlineSnapshot(`"-# ┣ explore **inspect repo**"`)
   })
 
   test('does not format completed parts so Discord does not post the line at the end', () => {
@@ -811,7 +812,7 @@ describe('formatTaskToolTitle', () => {
           },
         }),
       ),
-    ).toMatchInlineSnapshot(`"┣ general **audit customer pages**"`)
+    ).toMatchInlineSnapshot(`"-# ┣ general **audit customer pages**"`)
   })
 })
 

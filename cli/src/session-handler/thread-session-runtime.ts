@@ -50,7 +50,7 @@ import {
 import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
 import {
   asDiscordQuote,
-  asSystemLine,
+  asSubtext,
   formatPart,
   formatTaskToolTitle,
   planAssistantTurnFlush,
@@ -2398,7 +2398,7 @@ export class ThreadSessionRuntime {
       return
     }
     this.lastDisplayedContextPercentage = thresholdCrossed
-    const chunk = `${STATUS_PREFIX}context usage ${currentPercentage}%`
+    const chunk = asSubtext(`context usage ${currentPercentage}%`)
     const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
@@ -2615,7 +2615,7 @@ export class ThreadSessionRuntime {
             }
             return ` (${pct.toFixed(1)}%)`
           })()
-          const chunk = `${STATUS_PREFIX}${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`
+          const chunk = asSubtext(`${STATUS_PREFIX}${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`)
           const largeOutputResult = await this.thread.send({
             content: chunk,
             flags: SILENT_MESSAGE_FLAGS,
@@ -3285,7 +3285,7 @@ export class ThreadSessionRuntime {
       return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`
     })()
 
-    const chunk = `${STATUS_PREFIX}${message} - retrying in ${duration} (attempt #${attempt})`
+    const chunk = asSubtext(`${message} - retrying in ${duration} (attempt #${attempt})`)
     const retryResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (retryResult instanceof Error) {
@@ -3371,7 +3371,7 @@ export class ThreadSessionRuntime {
     const titlePrefix = properties.title
       ? `${properties.title.trim()}: `
       : ''
-    const chunk = `${STATUS_PREFIX}${properties.variant}: ${titlePrefix}${toastMessage}`
+    const chunk = asSubtext(`${properties.variant}: ${titlePrefix}${toastMessage}`)
     const toastResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (toastResult instanceof Error) {
@@ -5174,7 +5174,7 @@ export class ThreadSessionRuntime {
       : ''
     const result = await sendThreadMessage(
       this.thread,
-      asSystemLine(`*using ${modelLabel}${agentLabel}*`),
+      asSubtext(`*using ${modelLabel}${agentLabel}*`),
       { flags: SILENT_MESSAGE_FLAGS },
     ).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (result instanceof Error) {
@@ -5327,7 +5327,7 @@ export class ThreadSessionRuntime {
         })
       : undefined
     const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
-    const footerText = asSystemLine(
+    const footerText = asSubtext(
       `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`,
     )
     this.stopTyping()
@@ -5369,7 +5369,7 @@ export class ThreadSessionRuntime {
       previousMessageId: cacheClear.previousMessageId,
       currentMessageId: cacheClear.currentMessageId,
     })
-    const chunk = `${STATUS_PREFIX}${formatPromptCacheClearMessage(cacheClear, systemDiff)}`
+    const chunk = asSubtext(formatPromptCacheClearMessage(cacheClear, systemDiff))
     const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {

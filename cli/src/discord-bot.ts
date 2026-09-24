@@ -39,7 +39,7 @@ import {
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
-import { asSystemLine, STATUS_PREFIX } from './message-formatting.js'
+import { asSubtext } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -996,7 +996,7 @@ export async function startDiscordBot({
         if (enqueueResult.queued && enqueueResult.position) {
           await sendThreadMessage(
             thread,
-            asSystemLine(`Queued at position ${enqueueResult.position}. Edit or delete your message to update the queue`),
+            asSubtext(`Queued at position ${enqueueResult.position}. Edit or delete your message to update the queue`),
           )
         }
       }
@@ -1258,7 +1258,7 @@ export async function startDiscordBot({
           )
           await sendThreadMessage(
             channel,
-            `${STATUS_PREFIX}**${displayName}** removed message from queue`,
+            asSubtext(`**${displayName}** removed message from queue`),
           )
         } else {
           discordLogger.log(
@@ -1266,7 +1266,7 @@ export async function startDiscordBot({
           )
           await sendThreadMessage(
             channel,
-            `${STATUS_PREFIX}**${displayName}** edited queued message`,
+            asSubtext(`**${displayName}** edited queued message`),
           )
         }
       }
@@ -1297,7 +1297,7 @@ export async function startDiscordBot({
       )
       await sendThreadMessage(
         channel,
-        `${STATUS_PREFIX}**${removed.username}** removed message from queue`,
+        asSubtext(`**${removed.username}** removed message from queue`),
       )
     } catch (error) {
       discordLogger.error(

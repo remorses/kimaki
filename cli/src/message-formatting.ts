@@ -30,17 +30,19 @@ export const TOOL_PREFIX = '┣ '
 export const FILE_EDIT_PREFIX = '◼︎ '
 export const THINKING_PREFIX = '┣ '
 // Discord subtext. Not `#-`.
-export const SYSTEM_LINE_PREFIX = '-# '
-export const STATUS_PREFIX = SYSTEM_LINE_PREFIX
+export const SUBTEXT_PREFIX = '-# '
+// Same width as ┣. Only used for tool-related status lines; other bot status lines have no glyph.
+export const STATUS_PREFIX = '⬦ '
 export const QUEUE_PREFIX = '» '
 export const WORKTREE_PREFIX = '⬦ '
 
-export function asSystemLine(text: string): string {
+export function asSubtext(text: string): string {
   const lead = text.startsWith('\n') ? '\n' : ''
   const body = lead ? text.slice(1) : text
   return lead + body.split('\n').map((line) => {
-    if (line.startsWith(SYSTEM_LINE_PREFIX) || line.startsWith('-#')) return line
-    return `${SYSTEM_LINE_PREFIX}${line}`
+    if (!line.trim()) return line
+    if (line.startsWith('-#')) return line
+    return `${SUBTEXT_PREFIX}${line}`
   }).join('\n')
 }
 
@@ -830,10 +832,17 @@ export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): stri
 
   const subagentType = part.state.input?.subagent_type
   const agent = typeof subagentType === 'string' ? subagentType : 'task'
-  return `${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`
+  return asSubtext(`${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`)
 }
 
+// Non-text parts (tools, thinking, files) render as Discord subtext so they look dimmer than text.
 export function formatPart(part: Part, prefix?: string): string {
+  const formatted = formatPartBody(part, prefix)
+  if (!formatted || part.type === 'text') return formatted
+  return asSubtext(formatted)
+}
+
+function formatPartBody(part: Part, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {

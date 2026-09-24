@@ -714,7 +714,7 @@ e2eTest('thread message queue ordering', () => {
         > running create file
         > creating marker
 
-        ┣ bash _Create marker file for e2e test_
+        -# ┣ bash _Create marker file for e2e test_
 
         > file created
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"

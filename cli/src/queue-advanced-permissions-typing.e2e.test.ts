@@ -128,7 +128,7 @@ describe('queue advanced: typing around permissions', () => {
         -# *using deterministic-provider/deterministic-v2*
         > requesting external read permission
 
-        ┣ read *.zprofile*
+        -# ┣ read *.zprofile*
         ⚠️ **Permission Required**
         **Type:** \`external_directory\`
         Agent is accessing files outside the project. [Learn more](https://opencode.ai/docs/permissions/#external-directories)

@@ -21,7 +21,7 @@ import {
   getRuntime,
 } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { asSystemLine, QUEUE_PREFIX } from '../message-formatting.js'
+import { asSubtext, QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
@@ -124,7 +124,7 @@ export async function handleQueueRemoveButton(
     : await deleteThreadQueueItemWithoutRuntime(parsed.queueId)
   if (!removed) {
     await interaction.editReply({
-      content: asSystemLine('Queued message is no longer in the queue'),
+      content: asSubtext('Queued message is no longer in the queue'),
       components: [],
     })
     return
@@ -134,7 +134,7 @@ export async function handleQueueRemoveButton(
     ? `/${removed.command.name}`
     : removed.prompt.slice(0, 120)
   await interaction.editReply({
-    content: asSystemLine(`Removed queued message: ${label}`),
+    content: asSubtext(`Removed queued message: ${label}`),
     components: [],
   })
   logger.log(
@@ -211,7 +211,7 @@ export async function handleQueueCommand({
   })
 
   if (enqueueResult.queued && enqueueResult.queueId) {
-    const responseText = asSystemLine(`Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`)
+    const responseText = asSubtext(`Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`)
     await command.reply({
       content: responseText,
       components: [
@@ -282,7 +282,7 @@ export async function handleClearQueueCommand({
     }
 
     await command.reply({
-      content: asSystemLine(`Cleared queued message at position ${position}`),
+      content: asSubtext(`Cleared queued message at position ${position}`),
       flags: SILENT_MESSAGE_FLAGS,
     })
 
@@ -306,7 +306,7 @@ export async function handleClearQueueCommand({
   }
 
   await command.reply({
-    content: asSystemLine(`Cleared ${cleared.length} queued message${cleared.length > 1 ? 's' : ''}:\n${list}`),
+    content: asSubtext(`Cleared ${cleared.length} queued message${cleared.length > 1 ? 's' : ''}:\n${list}`),
     flags: SILENT_MESSAGE_FLAGS,
   })
 
@@ -402,7 +402,7 @@ export async function handleQueueCommandCommand({
   })
 
   if (enqueueResult.queued && enqueueResult.queueId) {
-    const responseText = asSystemLine(`Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`)
+    const responseText = asSubtext(`Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`)
     await command.reply({
       content: responseText,
       components: [
