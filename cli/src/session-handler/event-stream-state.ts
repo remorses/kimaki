@@ -187,7 +187,7 @@ export function compactSubagentRoutingEvidence(
 // Busy on queue-dispatch.started, execution.started, step.started, or
 // status busy/retry. Idle on execution terminals and session.idle.
 // If those were evicted from the bounded buffer, a still-running parent
-// task tool also counts as busy. That stops `. queue` from draining
+// subagent tool also counts as busy. That stops `. queue` from draining
 // (and the 3s interrupt plugin from aborting) while a subagent is in flight.
 export function isSessionBusy({
   events,
@@ -225,7 +225,7 @@ export function isSessionBusy({
     }
     if (
       event.type === 'session.tool.input.started'
-      && event.data.name === 'task'
+      && event.data.name === 'subagent'
       && !terminalTaskIds.has(event.data.id)
     ) {
       pendingTaskIds.add(event.data.id)
@@ -428,6 +428,139 @@ export function getContextUsageNoticePercentage({
     return Math.max(maximum, Math.floor((total / contextLimit) * 10) * 10)
   }, 0)
   return threshold > priorThreshold ? currentPercentage : undefined
+}
+
+const MIN_PROMPT_CACHE_READ_TO_TRACK = 1024
+const PROMPT_CACHE_DROP_RATIO = 0.5
+
+export type PromptCacheClear = {
+  // Tokens that should have been read from cache: the smaller of the previous cached prefix and the current prompt.
+  expectedCacheRead: number
+  currentCacheRead: number
+  previousMessageId: string
+  currentMessageId: string
+}
+
+function getStepModelKey({
+  events,
+  sessionId,
+  assistantMessageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  assistantMessageId: string
+  upToIndex: number
+}): string | undefined {
+  for (let i = upToIndex; i >= 0; i--) {
+    const event = events[i]?.event
+    if (
+      event?.type === 'session.step.started'
+      && event.data.sessionID === sessionId
+      && event.data.assistantMessageID === assistantMessageId
+    ) return `${event.data.model.providerID}/${event.data.model.id}`
+  }
+  return undefined
+}
+
+// Same-model cache drop on the first step of the latest execution vs the last
+// step of an earlier successful execution. Later steps re-read their own turn's
+// writes. Compactions rewrite the prompt, so they block the comparison.
+export function getPromptCacheClear({
+  events,
+  sessionId,
+  currentMessageId,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  currentMessageId: string
+  upToIndex?: number
+}): PromptCacheClear | undefined {
+  const end = upToIndex ?? events.length - 1
+  const currentIndex = events.findLastIndex(({ event }, index) => {
+    return index <= end
+      && event.type === 'session.step.ended'
+      && event.data.sessionID === sessionId
+      && event.data.assistantMessageID === currentMessageId
+  })
+  const current = events[currentIndex]?.event
+  if (current?.type !== 'session.step.ended') return undefined
+  const currentModel = getStepModelKey({
+    events,
+    sessionId,
+    assistantMessageId: currentMessageId,
+    upToIndex: currentIndex,
+  })
+  if (!currentModel) return undefined
+
+  const executionStartIndex = events.findLastIndex(({ event }, index) => {
+    return index < currentIndex
+      && event.type === 'session.execution.started'
+      && event.data.sessionID === sessionId
+  })
+  if (executionStartIndex < 0) return undefined
+  const isFirstStep = !events.slice(executionStartIndex + 1, currentIndex).some(({ event }) => {
+    return event.type === 'session.step.started'
+      && event.data.sessionID === sessionId
+      && event.data.assistantMessageID !== currentMessageId
+  })
+  if (!isFirstStep) return undefined
+
+  let insideUnsuccessfulExecution = false
+  for (let i = executionStartIndex - 1; i >= 0; i--) {
+    const event = events[i]?.event
+    if (!event || getEventBufferSessionId(event) !== sessionId) continue
+    if (event.type === 'session.compaction.started' || event.type === 'session.compaction.ended') {
+      return undefined
+    }
+    if (event.type === 'session.execution.interrupted' || event.type === 'session.execution.failed') {
+      insideUnsuccessfulExecution = true
+      continue
+    }
+    if (event.type === 'session.execution.succeeded' || event.type === 'session.execution.started') {
+      insideUnsuccessfulExecution = false
+      continue
+    }
+    if (insideUnsuccessfulExecution || event.type !== 'session.step.ended') continue
+    if (event.data.finish === 'error') continue
+    const previousModel = getStepModelKey({
+      events,
+      sessionId,
+      assistantMessageId: event.data.assistantMessageID,
+      upToIndex: i,
+    })
+    if (previousModel !== currentModel) return undefined
+    const previous = event.data.tokens
+    const tokens = current.data.tokens
+    // Anthropic reports a fresh cache as write only, so read alone misses the turn after a miss.
+    const previousCached = previous.cache.read + previous.cache.write
+    const currentPrompt = tokens.input + tokens.cache.read + tokens.cache.write
+    // A reverted (shorter) prompt can only reuse its own length from cache.
+    const expectedCacheRead = Math.min(previousCached, currentPrompt)
+    if (expectedCacheRead < MIN_PROMPT_CACHE_READ_TO_TRACK) return undefined
+    if (tokens.cache.read > expectedCacheRead * PROMPT_CACHE_DROP_RATIO) return undefined
+    return {
+      expectedCacheRead,
+      currentCacheRead: tokens.cache.read,
+      previousMessageId: event.data.assistantMessageID,
+      currentMessageId,
+    }
+  }
+  return undefined
+}
+
+function formatCompactTokenCount(count: number): string {
+  if (count >= 1000) {
+    const thousands = count / 1000
+    const rounded = thousands >= 10 ? thousands.toFixed(0) : thousands.toFixed(1)
+    return `${rounded.replace(/\.0$/, '')}k`
+  }
+  return String(count)
+}
+
+export function formatPromptCacheClearMessage(clear: PromptCacheClear): string {
+  return `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)})`
 }
 
 export function shouldShowRetryNotice({
@@ -844,7 +977,9 @@ export function getDerivedSubtaskAgentType({
 }): string | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const candidate = getSubagentCandidate({ events, eventIndex: i, mainSessionId })
-    if (candidate?.childSessionId === candidateSessionId) return candidate.subagentType
+    if (candidate?.childSessionId === candidateSessionId && candidate.subagentType) {
+      return candidate.subagentType
+    }
   }
   return undefined
 }
@@ -976,11 +1111,11 @@ export function isEventForSessionTree({
   })
 }
 
-// Child task sessions emit thousands of text/tool/step events. Those are
+// Child subagent sessions emit thousands of text/tool events. Those are
 // still handled live for Discord display, but they must not occupy the bounded
 // buffer or they evict parent busy/lifecycle events and `. queue` drains early.
-// Keep child session/message lifecycle so token tracking and subtask identity
-// still derive after the part flood.
+// Keep child step and execution lifecycle: step.started gives the child's
+// current assistant message for tool routing, step.ended carries child tokens.
 export function shouldRetainSessionEvent({
   event,
   mainSessionId,
@@ -1018,8 +1153,6 @@ export function shouldRetainSessionEvent({
   if (
     event.type === 'session.text.ended'
     || event.type === 'session.reasoning.ended'
-    || event.type === 'session.step.started'
-    || event.type === 'session.step.ended'
     || event.type.startsWith('session.tool.')
   ) {
     return false

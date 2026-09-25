@@ -76,11 +76,11 @@ describe('external directory project deny', () => {
       -# *using deterministic-provider/deterministic-v2*
       > reading external directory
 
-      ┣ read *probe.txt*
-      ⨯ read Permission denied: external_directory *probe.txt*
+      -# ┣ read *probe.txt*
+      -# ⨯ read Permission denied: external_directory *probe.txt*
 
-      > external-directory-probe-denied
-      > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+      external-directory-probe-denied
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)
 
     // A deny is silent: it must not fall back to asking the user.

@@ -24,6 +24,7 @@ import type {
 import type { setDataDir } from '../config.js'
 import type { setPluginLogFilePath } from '../plugin-logger.js'
 import type { createFileEditHooks } from '../file-edit-log.js'
+import type { writeSystemPromptPatch } from '../cache-rewrite.js'
 import type {
   formatSessionSleepToolOutput,
   formatSessionSleepWakeAt,
@@ -73,6 +74,10 @@ type FileEditLogModule = {
   createFileEditHooks: typeof createFileEditHooks
 }
 
+type CacheRewriteModule = {
+  writeSystemPromptPatch: typeof writeSystemPromptPatch
+}
+
 function getProcessState(): ProcessState {
   const globalState = globalThis as typeof globalThis & {
     [PROCESS_KEY]?: ProcessState
@@ -113,6 +118,8 @@ type GitState = {
 type ContextSessionState = {
   announcedDirectory: string | undefined
   frozenMemoryOverview: string | null | undefined
+  // Last request system prompt, keyed by agent/model/directory so a switch is not drift.
+  lastSystem: { key: string; text: string } | undefined
 }
 
 const CONTEXT_KEY = Symbol.for('kimaki.opencode-plugin.context')
@@ -135,6 +142,7 @@ function getContextSession(sessionID: string) {
   const created: ContextSessionState = {
     announcedDirectory: undefined,
     frozenMemoryOverview: undefined,
+    lastSystem: undefined,
   }
   sessions.set(sessionID, created)
   return created
@@ -611,6 +619,38 @@ export default Plugin.define({
       }
       if (state.frozenMemoryOverview) {
         pushSystemText(event, state.frozenMemoryOverview)
+      }
+
+      // Cache drift: a system prompt change with the same agent and model busts the prompt cache.
+      const model = `${event.model.providerID}/${event.model.id}`
+      const systemKey = `${event.agent}|${model}|${directory}`
+      const systemText = event.system
+        .flatMap((part) => part.type === 'text' ? [part.text] : [])
+        .join('\n')
+      const previousSystem = state.lastSystem
+      state.lastSystem = { key: systemKey, text: systemText }
+      if (
+        dataDir
+        && previousSystem?.key === systemKey
+        && previousSystem.text !== systemText
+      ) {
+        void import(siblingModuleHref('cache-rewrite'))
+          .then((module) => {
+            return (module as CacheRewriteModule).writeSystemPromptPatch({
+              dataDir,
+              sessionId: event.sessionID,
+              beforeText: previousSystem.text,
+              afterText: systemText,
+              model,
+              agent: event.agent,
+            })
+          })
+          .then((filePath) => {
+            logger.warn(`[cache-drift] system prompt changed for session ${event.sessionID} patch=${filePath}`)
+          })
+          .catch((error: unknown) => {
+            logger.warn('[cache-drift] failed to write system prompt patch', error)
+          })
       }
     })
 

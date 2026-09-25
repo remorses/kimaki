@@ -1099,7 +1099,7 @@ export function formatTaskToolTitle(
   part: Extract<DiscordSessionPart, { type: 'tool' }>,
 ): string {
   // Running only. The child session can be created later when many tasks queue.
-  if (part.tool !== 'task' || part.state.status !== 'running') return ''
+  if ((part.tool !== 'task' && part.tool !== 'subagent') || part.state.status !== 'running') return ''
 
   const description = part.state.input?.description
   const stateTitle = part.state.title
@@ -1110,12 +1110,20 @@ export function formatTaskToolTitle(
       : ''
   if (!title) return ''
 
-  const subagentType = part.state.input?.subagent_type
+  // v1 task used subagent_type; native v2 subagent uses agent.
+  const subagentType = part.state.input?.subagent_type ?? part.state.input?.agent
   const agent = typeof subagentType === 'string' ? subagentType : 'task'
   return asSubtext(`${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`)
 }
 
+// Non-text parts (tools, thinking) render as Discord subtext so they look dimmer than text.
 export function formatPart(part: DiscordSessionPart, prefix?: string): string {
+  const formatted = formatPartBody(part, prefix)
+  if (!formatted || part.type === 'text') return formatted
+  return asSubtext(formatted)
+}
+
+function formatPartBody(part: DiscordSessionPart, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
@@ -1153,8 +1161,8 @@ export function formatPart(part: DiscordSessionPart, prefix?: string): string {
       return ''
     }
 
-    // Task tool display is handled in session-handler with proper label
-    if (part.tool === 'task') {
+    // Subagent tool display is handled in session-handler with proper label
+    if (part.tool === 'task' || part.tool === 'subagent') {
       return ''
     }
 

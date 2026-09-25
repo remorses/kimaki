@@ -477,11 +477,12 @@ test('routes one native child tool and replays captured durable event shapes', a
     "--- from: user (subagent-tester)
     NATIVE_SUBAGENT_PARENT: delegate this check
     --- from: assistant (TestBot)
-    > *using deterministic-provider/deterministic-v2*
-    ┣ explore-1 ⋅ shell _echo native-child-tool-ok_
+    -# *using deterministic-provider/deterministic-v2*
+    -# ┣ explore **Inspect child routing**
+    -# ┣ explore-1 ⋅ shell _echo native-child-tool-ok_
 
-    > Parent received native child
-    > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+    Parent received native child
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   const mainSessionID = await getThreadSession(thread.id)
@@ -724,19 +725,21 @@ test('keeps distinct parallel child labels live and after durable replay', async
 
   const finishedText = await th.text()
   const snapshotText = finishedText.replace(
-    /(┣ explore-\d[^\n]*\n┣ explore-\d[^\n]*)/,
+    /(-# ┣ explore-\d[^\n]*\n-# ┣ explore-\d[^\n]*)/,
     (match) => match.split('\n').sort().join('\n'),
   )
   expect(snapshotText).toMatchInlineSnapshot(`
     "--- from: user (subagent-tester)
     PARALLEL_SUBAGENT_PARENT: delegate both checks
     --- from: assistant (TestBot)
-    > *using deterministic-provider/deterministic-v2*
-    ┣ explore-1 ⋅ shell _echo parallel-child-a-ok_
-    ┣ explore-2 ⋅ shell _echo parallel-child-b-ok_
+    -# *using deterministic-provider/deterministic-v2*
+    -# ┣ explore **Inspect first sibling**
+    -# ┣ explore **Inspect second sibling**
+    -# ┣ explore-1 ⋅ shell _echo parallel-child-a-ok_
+    -# ┣ explore-2 ⋅ shell _echo parallel-child-b-ok_
 
-    > Parent received parallel native children
-    > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+    Parent received parallel native children
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(finishedText.split('\n').filter((line) => {
     return line.includes('shell _echo parallel-child-a-ok_')

@@ -57,7 +57,8 @@ test('shows tools before completion, sends one tool line, and renames from nativ
   const liveMessages = await waitForBotMessageContaining({
     discord: ctx.discord,
     threadId: thread.id,
-    text: '┣ shell',
+    // The context notice follows the tool line at the next step start, so waiting for it keeps the snapshot stable.
+    text: 'context usage',
     timeout: 4_000,
   })
   const liveText = await th.text()
@@ -65,11 +66,11 @@ test('shows tools before completion, sends one tool line, and renames from nativ
     "--- from: user (render-tester)
     LIVE_RENDER_MARKER
     --- from: assistant (TestBot)
-    > *using deterministic-provider/deterministic-v2*
+    -# *using deterministic-provider/deterministic-v2*
     > Checking the project
 
-    ┣ shell _echo live-render_
-    ⬦ context usage 10%"
+    -# ┣ shell _echo live-render_
+    -# context usage 10%"
   `)
   expect(liveMessages.some((message) => isFooterMessage({ message, botUserId: ctx.discord.botUserId }))).toBe(false)
   expect(liveText).not.toContain('Live rendering complete')
@@ -85,18 +86,18 @@ test('shows tools before completion, sends one tool line, and renames from nativ
     "--- from: user (render-tester)
     LIVE_RENDER_MARKER
     --- from: assistant (TestBot)
-    > *using deterministic-provider/deterministic-v2*
+    -# *using deterministic-provider/deterministic-v2*
     > Checking the project
 
-    ┣ shell _echo live-render_
-    ⬦ context usage 10%
+    -# ┣ shell _echo live-render_
+    -# context usage 10%
 
-    > Live rendering complete
-    > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+    Live rendering complete
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
-  expect(finishedText.split('\n').filter((line) => line.startsWith('┣ shell'))).toHaveLength(1)
+  expect(finishedText.split('\n').filter((line) => line.startsWith('-# ┣ shell'))).toHaveLength(1)
   // OpenCode's configured model default has a 200,000-token context window.
-  expect(finishedText).toContain('⬦ context usage 10%')
+  expect(finishedText).toContain('-# context usage 10%')
   expect(finishedText.indexOf('Checking the project')).toBeLessThan(finishedText.indexOf('┣ shell'))
   expect(finishedText.indexOf('┣ shell')).toBeLessThan(finishedText.indexOf('Live rendering complete'))
 

@@ -134,9 +134,9 @@ e2eTest('queue + interrupt drain ordering', () => {
         "--- from: user (interrupt-tester)
         Reply with exactly: setup-archive-drain
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        -# *using deterministic-provider/deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
         --- from: assistant (TestBot)
@@ -145,11 +145,11 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: user (interrupt-tester)
         Reply with exactly: continue-after-archive
         --- from: assistant (TestBot)
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: archived-queue-survives
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
     20_000,
@@ -242,9 +242,9 @@ e2eTest('queue + interrupt drain ordering', () => {
         "--- from: user (interrupt-tester)
         Reply with exactly: setup-interrupt-drain
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        -# *using deterministic-provider/deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -253,11 +253,11 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: user (interrupt-tester)
         Reply with exactly: interrupt-now
         --- from: assistant (TestBot)
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: queued-behind-slow
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       // 7. Assert the interrupt message got its own ok reply between the

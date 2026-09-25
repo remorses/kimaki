@@ -363,7 +363,7 @@ describe('Discord event projection parts', () => {
             "type": "skip-part",
           },
           {
-            "content": "┣ thinking",
+            "content": "-# ┣ thinking",
             "deliveryId": "msg_1:reasoning:1",
             "destination": {
               "label": "main",
@@ -457,6 +457,21 @@ describe('Discord event projection parts', () => {
               "messageID": "msg_1",
               "sessionID": "ses_main",
               "state": {
+                "input": {},
+                "raw": "",
+                "status": "pending",
+              },
+              "tool": "shell",
+              "type": "tool",
+            },
+            "type": "store-part",
+          },
+          {
+            "part": {
+              "id": "msg_1:tool:call_1",
+              "messageID": "msg_1",
+              "sessionID": "ses_main",
+              "state": {
                 "input": {
                   "command": "echo ok",
                   "hasSideEffect": true,
@@ -470,7 +485,7 @@ describe('Discord event projection parts', () => {
             "type": "store-part",
           },
           {
-            "content": "┣ shell _echo ok_",
+            "content": "-# ┣ shell _echo ok_",
             "deliveryId": "msg_1:tool:call_1:running",
             "destination": {
               "label": "main",
@@ -513,6 +528,21 @@ describe('Discord event projection parts', () => {
               "messageID": "msg_1",
               "sessionID": "ses_main",
               "state": {
+                "input": {},
+                "raw": "",
+                "status": "pending",
+              },
+              "tool": "read",
+              "type": "tool",
+            },
+            "type": "store-part",
+          },
+          {
+            "part": {
+              "id": "msg_1:tool:call_2",
+              "messageID": "msg_1",
+              "sessionID": "ses_main",
+              "state": {
                 "input": {
                   "filePath": "/tmp/a",
                 },
@@ -531,7 +561,7 @@ describe('Discord event projection parts', () => {
             "type": "skip-part",
           },
           {
-            "content": "┣ read",
+            "content": "-# ┣ read",
             "deliveryId": "msg_1:tool:call_2:running",
             "destination": {
               "label": "main",
@@ -565,7 +595,7 @@ describe('Discord event projection parts', () => {
             "type": "store-part",
           },
           {
-            "content": "⨯ read not found",
+            "content": "-# ⨯ read not found",
             "deliveryId": "msg_1:tool:call_2:error",
             "destination": {
               "label": "main",
@@ -689,7 +719,7 @@ describe('Discord event projection parts', () => {
           "type": "store-part",
         },
         {
-          "content": "┣ explore-1 ⋅ shell _pwd_",
+          "content": "-# ┣ explore-1 ⋅ shell _pwd_",
           "deliveryId": "msg_child:tool:child_call",
           "destination": {
             "label": "explore-1",
@@ -749,7 +779,7 @@ describe('Discord event projection terminals and forms', () => {
 
   test('projects successful, failed, and interrupted terminal effects', () => {
     expect({
-      succeeded: projectSequence(executionEvents('session.execution.succeeded')).actions.slice(-7),
+      succeeded: projectSequence(executionEvents('session.execution.succeeded')).actions.slice(-8),
       failed: projectSequence(executionEvents('session.execution.failed')).actions.slice(-7),
       interrupted: projectSequence(executionEvents('session.execution.interrupted')).actions.slice(-7),
     }).toMatchInlineSnapshot(`
@@ -910,6 +940,11 @@ describe('Discord event projection terminals and forms', () => {
             "partId": "msg_1:text:0",
             "reason": "delivered",
             "type": "skip-part",
+          },
+          {
+            "content": "Finished",
+            "partId": "msg_1:text:0",
+            "type": "unquote-final-text",
           },
           {
             "completedAt": 900,

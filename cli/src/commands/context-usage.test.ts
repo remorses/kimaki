@@ -1,57 +1,65 @@
 import { describe, expect, test } from 'vitest'
-import type { Message, Part } from '@opencode-ai/sdk/v2'
+import type { SessionMessageInfo } from '@opencode/client'
 import { formatContextBreakdown } from './context-usage.js'
 
-const part = (messageID: string, value: Partial<Part>): Part => ({
-  id: `part-${messageID}`,
-  sessionID: 'session',
-  messageID,
-  ...value,
-} as Part)
+type AssistantContent = Extract<SessionMessageInfo, { type: 'assistant' }>['content']
 
-const user = (id: string, system?: string): Message => ({
-  id, sessionID: 'session', role: 'user', time: { created: 1 },
-  agent: 'build', model: { providerID: 'test', modelID: 'test' }, system,
+const user = (id: string, text: string): SessionMessageInfo => ({
+  id, type: 'user', time: { created: 1 }, text,
 })
 
-const assistant = (id: string, input: number): Message => ({
-  id, sessionID: 'session', role: 'assistant', time: { created: 2 },
-  parentID: 'user', modelID: 'test', providerID: 'test', mode: 'build',
-  agent: 'build', path: { cwd: '/', root: '/' }, cost: 0,
+const assistant = ({ id, input, content }: {
+  id: string
+  input: number
+  content: AssistantContent
+}): SessionMessageInfo => ({
+  id, type: 'assistant', time: { created: 2 }, agent: 'build',
+  model: { providerID: 'test', id: 'test' }, content, cost: 0,
   tokens: { input, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+})
+
+const tool = ({ name, input, output }: {
+  name: string
+  input: Record<string, string>
+  output: string
+}): AssistantContent[number] => ({
+  type: 'tool', id: `call-${name}`, name, time: { created: 1 },
+  state: { status: 'completed', input, content: [{ type: 'text', text: output }] },
 })
 
 describe('formatContextBreakdown', () => {
   test('attributes tool call inputs and outputs by type, and excludes the response to the measured prompt', () => {
     const messages = [
-      { info: user('user', 's'.repeat(40)), parts: [part('user', { type: 'text', text: 'u'.repeat(20) })] },
-      { info: assistant('first', 20), parts: [
-        part('first', { type: 'tool', tool: 'read', callID: 'call', state: {
-          status: 'completed', input: { filePath: 'a'.repeat(28) }, output: 'o'.repeat(40),
-          title: 'read', metadata: {}, time: { start: 1, end: 2 },
-        } }),
-      ] },
-      { info: assistant('last', 50), parts: [part('last', { type: 'text', text: 'x'.repeat(800) })] },
+      user('user', 'u'.repeat(20)),
+      assistant({
+        id: 'first',
+        input: 20,
+        content: [tool({ name: 'read', input: { path: 'a'.repeat(32) }, output: 'o'.repeat(40) })],
+      }),
+      assistant({ id: 'last', input: 50, content: [{ type: 'text', text: 'x'.repeat(800) }] }),
     ]
 
-    expect(formatContextBreakdown({ messages, lastAssistantId: 'last', inputTokens: 50 }))
+    expect(formatContextBreakdown({ messages, lastAssistantId: 'last', inputTokens: 50, systemChars: 40 }))
       .toMatchInlineSnapshot(`"**Estimated input mix:** tool read 42.0% (21) · system 20.0% (10) · other 38.0% (19) tokens (other includes messages and unexposed prompts)"`)
   })
 
-  test('ignores compacted history and old tool outputs', () => {
-    const messages = [
-      { info: user('old', 'x'.repeat(800)), parts: [part('old', { type: 'text', text: 'x'.repeat(800) })] },
-      { info: assistant('old-answer', 30), parts: [part('old-answer', { type: 'tool', tool: 'bash', callID: 'old', state: {
-        status: 'completed', input: {}, output: 'x'.repeat(800), title: 'old', metadata: {},
-        time: { start: 1, end: 2, compacted: 3 },
-      } })] },
-      { info: user('compact'), parts: [part('compact', { type: 'compaction', auto: true })] },
-      { info: assistant('summary', 20), parts: [part('summary', { type: 'text', text: 'summary'.repeat(8) })] },
-      { info: user('new', 's'.repeat(20)), parts: [part('new', { type: 'text', text: 'u'.repeat(20) })] },
-      { info: assistant('last', 40), parts: [] },
+  test('ignores compacted history', () => {
+    const messages: SessionMessageInfo[] = [
+      user('old', 'x'.repeat(800)),
+      assistant({
+        id: 'old-answer',
+        input: 30,
+        content: [tool({ name: 'shell', input: {}, output: 'x'.repeat(800) })],
+      }),
+      {
+        type: 'compaction', id: 'compact', time: { created: 3 }, status: 'completed',
+        reason: 'auto', summary: 'summary'.repeat(8), recent: 'new',
+      },
+      user('new', 'u'.repeat(20)),
+      assistant({ id: 'last', input: 40, content: [] }),
     ]
 
-    expect(formatContextBreakdown({ messages, lastAssistantId: 'last', inputTokens: 40 }))
+    expect(formatContextBreakdown({ messages, lastAssistantId: 'last', inputTokens: 40, systemChars: 20 }))
       .toMatchInlineSnapshot(`"**Estimated input mix:** system 12.5% (5) · other 87.5% (35) tokens (other includes messages and unexposed prompts)"`)
   })
 })
