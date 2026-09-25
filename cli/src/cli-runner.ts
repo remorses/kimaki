@@ -56,6 +56,7 @@ import {
   AttachmentBuilder,
 } from 'discord.js'
 import { discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl, getInternetReachableBaseUrl } from './discord-urls.js'
+import { extractQueueSuffix } from './message-formatting.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -239,6 +240,21 @@ function wrapPromptAttachmentText(prompt: string): string {
     .join('\n')
 }
 
+/**
+ * Visible message content + prompt.md text for prompts over Discord's limit.
+ * The bot reads the queue suffix only from message content, so the suffix
+ * moves from the file to the visible message and the send still queues.
+ */
+export function buildLongPromptMessage(prompt: string): {
+  content: string
+  fileText: string
+} {
+  const { prompt: fileText, forceQueue } = extractQueueSuffix(prompt)
+  const preview = fileText.slice(0, 100).replace(/\n/g, ' ')
+  const summary = `Prompt attached as file (${fileText.length} chars)\n\n> ${preview}…`
+  return { content: forceQueue ? `${summary}\n\nqueue` : summary, fileText }
+}
+
 function promptAttachmentBlob(text: string) {
   return new Blob([new Uint8Array(Buffer.from(text, 'utf8'))], {
     type: 'text/markdown',
@@ -288,10 +304,10 @@ export async function sendDiscordMessageWithOptionalAttachment({
     // When prompt exceeds Discord's limit, attach it as prompt.md alongside
     // user files so nothing is silently lost. Build prompt.md from memory so
     // parallel kimaki send processes never share or unlink a temp path.
-    const isLongPrompt = prompt.length > discordMaxLength
-    const content = isLongPrompt
-      ? `Prompt attached as file (${prompt.length} chars)\n\n> ${prompt.slice(0, 100).replace(/\n/g, ' ')}...`
-      : prompt
+    const longPrompt = prompt.length > discordMaxLength
+      ? buildLongPromptMessage(prompt)
+      : undefined
+    const content = longPrompt ? longPrompt.content : prompt
 
     const allFiles: Array<{ data: Uint8Array; filename: string; mimeType: string }> =
       files.map((file) => ({
@@ -300,9 +316,9 @@ export async function sendDiscordMessageWithOptionalAttachment({
         mimeType: mime.getType(file) || 'application/octet-stream',
       }))
 
-    if (isLongPrompt) {
+    if (longPrompt) {
       allFiles.push({
-        data: new Uint8Array(Buffer.from(prompt, 'utf8')),
+        data: new Uint8Array(Buffer.from(longPrompt.fileText, 'utf8')),
         filename: 'prompt.md',
         mimeType: 'text/markdown',
       })
@@ -383,14 +399,13 @@ export async function sendDiscordMessageWithOptionalAttachment({
     return firstMessage!
   }
 
-  const preview = prompt.slice(0, 100).replace(/\n/g, ' ')
-  const summaryContent = `Prompt attached as file (${prompt.length} chars)\n\n> ${preview}...`
+  const longPrompt = buildLongPromptMessage(prompt)
   // In-memory Blob only — no temp file. Parallel send must never share a path.
   const formData = new FormData()
   formData.append(
     'payload_json',
     JSON.stringify({
-      content: summaryContent,
+      content: longPrompt.content,
       attachments: [{ id: 0, filename: 'prompt.md' }],
       embeds,
       allowed_mentions: { parse: store.getState().allowedMentions },
@@ -398,7 +413,7 @@ export async function sendDiscordMessageWithOptionalAttachment({
   )
   formData.append(
     'files[0]',
-    promptAttachmentBlob(wrapPromptAttachmentText(prompt)),
+    promptAttachmentBlob(wrapPromptAttachmentText(longPrompt.fileText)),
     'prompt.md',
   )
 

@@ -19,6 +19,13 @@ CLI-injected messages in existing threads. New-thread flows (channel-level
 `kimaki send` and channel scheduled tasks) post the raw prompt without
 prefix and rely on an embed marker (`ThreadStartMarker` YAML) for metadata.
 
+## Queue suffix lives in resolveMessagePrompt
+
+Every Discord-message ingress (user messages, `kimaki send --thread/--channel`,
+message edits) builds prompt + mode via `resolveMessagePrompt()` in
+`message-preprocessing.ts`. Pass content-only text (`resolveContentMentions`),
+never `resolveMentions`: its appended embeds hide the `. queue` suffix.
+
 ## Cross-cutting transformations — do them in two places
 
 When adding a prompt-level transformation (like leading `/command` detection):

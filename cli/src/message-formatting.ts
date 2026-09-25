@@ -132,6 +132,14 @@ export function serializeMessageSnapshots(
  * model can see all user-visible content.
  */
 export function resolveMentions(message: Message): string {
+  const content = resolveContentMentions(message)
+  const extras = serializeMessageExtras(message)
+  if (!extras) return content
+  return content ? `${content}\n\n${extras}` : extras
+}
+
+/** Message content with mentions resolved, without embeds, polls or forwards. */
+export function resolveContentMentions(message: Message): string {
   let content = message.content || ''
 
   // Replace user mentions <@userId> or <@!userId> with @displayName
@@ -155,18 +163,37 @@ export function resolveMentions(message: Message): string {
     content = content.replace(new RegExp(`<#${channelId}>`, 'g'), `#${name}`)
   }
 
-  // Append non-text content so the model can see it
-  const extras = [
+  return content
+}
+
+// Matches explicit queue markers at the end of a message (case-insensitive).
+// Supported forms:
+// - punctuation + queue: ". queue", "! queue", ". queue.", "!queue."
+// - queue as its own final line: "text\nqueue" or just "queue"
+// When present the suffix is stripped and the message is routed through
+// kimaki's local queue (same as /queue command).
+const QUEUE_SUFFIX_RE = /(?:[.!?,;:]|^)\s*queue\.?\s*$|\n\s*queue\.?\s*$/i
+
+/**
+ * Only for code that builds or reads raw prompt text. Discord message ingress
+ * must go through `resolveMessagePrompt()` in message-preprocessing.ts.
+ */
+export function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
+  if (!QUEUE_SUFFIX_RE.test(prompt)) {
+    return { prompt, forceQueue: false }
+  }
+  return { prompt: prompt.replace(QUEUE_SUFFIX_RE, '').trimEnd(), forceQueue: true }
+}
+
+/** Non-text message content (embeds, poll, forwards) serialized for the model. */
+export function serializeMessageExtras(message: Message): string {
+  return [
     serializeEmbeds(message.embeds),
     serializePoll(message.poll),
     serializeMessageSnapshots(message.messageSnapshots),
-  ].filter(Boolean)
-  if (extras.length > 0) {
-    const joined = extras.join('\n\n')
-    content = content ? `${content}\n\n${joined}` : joined
-  }
-
-  return content
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 /**

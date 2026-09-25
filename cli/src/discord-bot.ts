@@ -58,18 +58,14 @@ import {
   type ThreadStartMarker,
 } from './system-message.js'
 import YAML from 'yaml'
-import {
-  getFileAttachments,
-  getTextAttachments,
-  resolveMentions,
-} from './message-formatting.js'
+import { resolveContentMentions } from './message-formatting.js'
 import { extractBtwSuffix } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
-  extractQueueSuffix,
   preprocessExistingThreadMessage,
   preprocessNewThreadMessage,
+  resolveMessagePrompt,
 } from './message-preprocessing.js'
 import { cancelPendingActionButtons } from './commands/action-buttons.js'
 import { cancelPendingQuestion, hasPendingQuestionForThread } from './commands/ask-question.js'
@@ -1235,18 +1231,17 @@ export async function startDiscordBot({
       const runtime = getRuntime(channel.id)
       if (!runtime) return
 
-      // Use resolveMentions to match initial preprocessing and preserve
-      // newlines (stripMentions collapses them, breaking final-line queue
-      // suffix detection).
-      const { prompt, forceQueue } = extractQueueSuffix(
-        resolveMentions(message),
-      )
+      // Same resolution as initial ingress, so the edited prompt matches.
+      const { prompt, mode } = await resolveMessagePrompt({
+        message,
+        text: resolveContentMentions(message),
+      })
 
       // If the edit removed the queue suffix, remove the item from the queue.
       // If the suffix is still present, update the prompt.
       const result = await runtime.updateQueuedMessage(
         message.id,
-        forceQueue ? prompt : '',
+        mode === 'local-queue' ? prompt : '',
       )
 
       if (result.found && channel.isThread()) {
@@ -1364,14 +1359,11 @@ export async function startDiscordBot({
         `[BOT_SESSION] Detected bot-initiated thread: ${thread.name}`,
       )
 
-      const [textAttachmentsContent, fileAttachments] = await Promise.all([
-        getTextAttachments(starterMessage),
-        getFileAttachments(starterMessage),
-      ])
-      const messageText = resolveMentions(starterMessage).trim()
-      const prompt = textAttachmentsContent
-        ? `${messageText}\n\n${textAttachmentsContent}`
-        : messageText
+      const resolvedPrompt = await resolveMessagePrompt({
+        message: starterMessage,
+        text: resolveContentMentions(starterMessage).trim(),
+      })
+      const { prompt } = resolvedPrompt
       if (!prompt) {
         discordLogger.log(`[BOT_SESSION] No prompt found in starter message`)
         return
@@ -1523,7 +1515,7 @@ export async function startDiscordBot({
         permissions: marker.permissions,
         injectionGuardPatterns: marker.injectionGuardPatterns,
         parentSessionId: marker.parentSessionId,
-        mode: 'opencode',
+        mode: resolvedPrompt.mode,
         sessionStartSource: botThreadStartSource
           ? {
               scheduleKind: botThreadStartSource.scheduleKind,
@@ -1532,11 +1524,7 @@ export async function startDiscordBot({
             }
           : undefined,
         preprocess: async () => {
-          return {
-            prompt,
-            mode: 'opencode',
-            ...(fileAttachments.length > 0 && { images: fileAttachments }),
-          }
+          return resolvedPrompt
         },
       })
     } catch (error) {

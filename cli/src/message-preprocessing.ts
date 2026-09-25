@@ -16,6 +16,9 @@ import { getOrCreateRuntime } from './session-handler/thread-session-runtime.js'
 import type { AgentInfo, RepliedMessageContext } from './system-message.js'
 import {
   resolveMentions,
+  resolveContentMentions,
+  serializeMessageExtras,
+  extractQueueSuffix,
   getFileAttachments,
   getTextAttachments,
 } from './message-formatting.js'
@@ -152,19 +155,47 @@ async function fetchAvailableAgents(
 
 export type { PreprocessResult }
 
-// Matches explicit queue markers at the end of a message (case-insensitive).
-// Supported forms:
-// - punctuation + queue: ". queue", "! queue", ". queue.", "!queue."
-// - queue as its own final line: "text\nqueue" or just "queue"
-// When present the suffix is stripped and the message is routed through
-// kimaki's local queue (same as /queue command).
-const QUEUE_SUFFIX_RE = /(?:[.!?,;:]|^)\s*queue\.?\s*$|\n\s*queue\.?\s*$/i
 const REPLIED_MESSAGE_TEXT_LIMIT = 1_000
-export function extractQueueSuffix(prompt: string): { prompt: string; forceQueue: boolean } {
-  if (!QUEUE_SUFFIX_RE.test(prompt)) {
-    return { prompt, forceQueue: false }
+
+/**
+ * Shared ingress step for every Discord message that becomes a prompt: user
+ * messages, `kimaki send --thread` injections and `kimaki send --channel`
+ * starter messages. Strips the queue suffix, appends embeds and text
+ * attachments, and picks the ingress mode.
+ *
+ * `text` must not contain embeds or attachments yet. The suffix is read from
+ * it first; anything appended before would push "? queue" away from the end.
+ */
+export async function resolveMessagePrompt({
+  message,
+  text,
+  forceQueue = false,
+  includeExtras = true,
+}: {
+  message: Message
+  text: string
+  /** Queue even without a suffix, e.g. voice transcription asked to queue. */
+  forceQueue?: boolean
+  /** Append serialized embeds, polls and forwards of `message`. */
+  includeExtras?: boolean
+}): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode'>> {
+  const qs = extractQueueSuffix(text)
+  const [images, textAttachments] = await Promise.all([
+    getFileAttachments(message),
+    getTextAttachments(message),
+  ])
+  const prompt = [
+    qs.prompt,
+    includeExtras ? serializeMessageExtras(message) : '',
+    textAttachments,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  return {
+    prompt,
+    images: images.length > 0 ? images : undefined,
+    mode: qs.forceQueue || forceQueue ? 'local-queue' : 'opencode',
   }
-  return { prompt: prompt.replace(QUEUE_SUFFIX_RE, '').trimEnd(), forceQueue: true }
 }
 
 function shouldSkipEmptyPrompt({
@@ -273,7 +304,7 @@ export async function preprocessExistingThreadMessage({
 
   let messageContent = isCliInjected
     ? (message.content || '')
-    : resolveMentions(message)
+    : resolveContentMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
 
   // Fetch session context and available agents for voice transcription enrichment
@@ -359,35 +390,17 @@ export async function preprocessExistingThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
-  // Extract queue suffix from raw message content BEFORE appending text
-  // attachments. Otherwise a text file attachment pushes "? queue" away from
-  // the end of the string and the regex fails to match.
-  const qs = extractQueueSuffix(messageContent)
-
-  const fileAttachments = await getFileAttachments(message)
-  const textAttachmentsContent = await getTextAttachments(message)
-  const prompt = textAttachmentsContent
-    ? `${qs.prompt}\n\n${textAttachmentsContent}`
-    : qs.prompt
-
-  if (
-    shouldSkipEmptyPrompt({
-      message,
-      prompt,
-      images: fileAttachments,
-      hasVoiceAttachment,
-    })
-  ) {
+  const resolved = await resolveMessagePrompt({
+    message,
+    text: messageContent,
+    forceQueue: voiceResult?.queueMessage,
+    // The kimaki marker embed of CLI injections is metadata, not prompt text.
+    includeExtras: !isCliInjected,
+  })
+  if (shouldSkipEmptyPrompt({ message, ...resolved, hasVoiceAttachment })) {
     return { prompt: '', mode: 'opencode', skip: true }
   }
-
-  return {
-    prompt,
-    images: fileAttachments.length > 0 ? fileAttachments : undefined,
-    repliedMessage,
-    mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
-    agent: voiceResult?.agent,
-  }
+  return { ...resolved, repliedMessage, agent: voiceResult?.agent }
 }
 
 /**
@@ -422,7 +435,7 @@ export async function preprocessNewSessionMessage({
     }
   }
 
-  let prompt = resolveMentions(message)
+  let prompt = resolveContentMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
   const voiceResult = await processVoiceAttachment({
     message,
@@ -468,32 +481,15 @@ export async function preprocessNewSessionMessage({
     }
   }
 
-  const qs = extractQueueSuffix(prompt)
-
-  const fileAttachments = await getFileAttachments(message)
-  const textAttachmentsContent = await getTextAttachments(message)
-  const finalPrompt = textAttachmentsContent
-    ? `${qs.prompt}\n\n${textAttachmentsContent}`
-    : qs.prompt
-
-  if (
-    shouldSkipEmptyPrompt({
-      message,
-      prompt: finalPrompt,
-      images: fileAttachments,
-      hasVoiceAttachment,
-    })
-  ) {
+  const resolved = await resolveMessagePrompt({
+    message,
+    text: prompt,
+    forceQueue: voiceResult?.queueMessage,
+  })
+  if (shouldSkipEmptyPrompt({ message, ...resolved, hasVoiceAttachment })) {
     return { prompt: '', mode: 'opencode', skip: true }
   }
-
-  return {
-    prompt: finalPrompt,
-    images: fileAttachments.length > 0 ? fileAttachments : undefined,
-    repliedMessage,
-    mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
-    agent: voiceResult?.agent,
-  }
+  return { ...resolved, repliedMessage, agent: voiceResult?.agent }
 }
 
 /**
@@ -525,7 +521,7 @@ export async function preprocessNewThreadMessage({
     }
   }
 
-  let messageContent = resolveMentions(message)
+  let messageContent = resolveContentMentions(message)
   const repliedMessage = await getRepliedMessageContext({ message })
   const voiceResult = await processVoiceAttachment({
     message,
@@ -548,32 +544,13 @@ export async function preprocessNewThreadMessage({
     return { prompt: '', mode: 'opencode', skip: true }
   }
 
-  // Extract queue suffix from raw message content BEFORE appending text
-  // attachments (same fix as preprocessExistingThreadMessage).
-  const qs = extractQueueSuffix(messageContent)
-
-  const fileAttachments = await getFileAttachments(message)
-  const textAttachmentsContent = await getTextAttachments(message)
-  const prompt = textAttachmentsContent
-    ? `${qs.prompt}\n\n${textAttachmentsContent}`
-    : qs.prompt
-
-  if (
-    shouldSkipEmptyPrompt({
-      message,
-      prompt,
-      images: fileAttachments,
-      hasVoiceAttachment,
-    })
-  ) {
+  const resolved = await resolveMessagePrompt({
+    message,
+    text: messageContent,
+    forceQueue: voiceResult?.queueMessage,
+  })
+  if (shouldSkipEmptyPrompt({ message, ...resolved, hasVoiceAttachment })) {
     return { prompt: '', mode: 'opencode', skip: true }
   }
-
-  return {
-    prompt,
-    images: fileAttachments.length > 0 ? fileAttachments : undefined,
-    repliedMessage,
-    mode: qs.forceQueue || voiceResult?.queueMessage ? 'local-queue' : 'opencode',
-    agent: voiceResult?.agent,
-  }
+  return { ...resolved, repliedMessage, agent: voiceResult?.agent }
 }
