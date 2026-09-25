@@ -1,4 +1,4 @@
-// Anonymous product analytics via Strada (OpenTelemetry).
+// Anonymous product analytics via Strada (@strada.sh/light, no OpenTelemetry deps).
 // Tracks install-level usage only: no Discord IDs, paths, prompts, or secrets.
 // A random install id is stored in {dataDir}/install-id for DAU-style queries.
 //
@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { createRequire } from 'node:module'
-import { initStrada, track, flush } from '@strada.sh/sdk'
+import { initStrada, track, flush } from '@strada.sh/light'
 import { getDataDir } from './config.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { store } from './store.js'
