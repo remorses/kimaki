@@ -61,7 +61,8 @@
     "@opencode/plugin": "2.0.2",
     "@types/node": "^24.3.0",
     "opencode-deterministic-provider": "workspace:^",
-    "rimraf": "^6.0.1"
+    "rimraf": "^6.0.1",
+    "string-dedent": "^3.0.2"
   },
   "peerDependencies": {
     "@opencode/client": "2.0.2",
