@@ -72,7 +72,7 @@ describe('external directory project deny', () => {
 
       -# ┣ read *probe.txt*
 
-      > external-directory-probe-denied"
+      external-directory-probe-denied"
     `)
 
     // A deny is silent: it must not fall back to asking the user.

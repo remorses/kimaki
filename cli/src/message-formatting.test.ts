@@ -420,13 +420,13 @@ describe('planAssistantTurnFlush', () => {
     `)
   })
 
-  test('progress still quotes two-line earlier text', () => {
+  test('progress leaves two-line text unquoted', () => {
     expect(
       plan(
         [text('t1', 'line one\nline two'), tool('tool1'), text('t2', 'answer')],
         'progress',
       ).send.find((entry) => entry.id === 't1'),
-    ).toEqual({ id: 't1', quoteText: true })
+    ).toEqual({ id: 't1', quoteText: false })
   })
 
   test('progress keeps sleep-tool quote context after that tool is already sent', () => {

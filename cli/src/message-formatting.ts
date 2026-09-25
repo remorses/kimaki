@@ -263,7 +263,7 @@ export function shouldQuoteIntermediateTextPart({
   if (!isNonEmptyTextPart(part) || isLastInTurn) return false
   const text = part.text ?? ''
   if (text.includes('<callout')) return false
-  if (text.trim().split('\n').length > 2) return false
+  if (text.trim().includes('\n')) return false
   if (!quotedTextFitsOneDiscordMessage(text)) return false
   if (
     nextToolName === 'question'

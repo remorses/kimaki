@@ -546,13 +546,13 @@ describe('worktree lifecycle', () => {
         Reply with exactly: before-worktree
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         Creating worktree in <#THREAD_ID>
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (worktree-tester)
         Reply with exactly: after-source-thread
         --- from: assistant (TestBot)
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ source-model-v2*"
       `)
       expect(sourceText).toContain('Reply with exactly: before-worktree')
@@ -570,7 +570,7 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
-        > ok
+        ok
         -# *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2*"
       `)
       expect(worktreeText).toContain('Worktree:')
@@ -667,7 +667,7 @@ describe('worktree lifecycle', () => {
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok"
+        ok"
       `)
       expect(worktreeText).toContain('Branch:')
       expect(worktreeText).toContain('ok')
@@ -802,8 +802,8 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        -# *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        > ok"
+        ok
+        -# *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
       expect(text).toContain('Reply with exactly: non-git-second')
@@ -881,7 +881,7 @@ describe('worktree lifecycle', () => {
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
         -# *using deterministic-provider/deterministic-v2*
-        > ok"
+        ok"
       `)
 
       // Verify DB has worktree info

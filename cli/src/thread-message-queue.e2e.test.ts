@@ -462,7 +462,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
@@ -622,13 +622,13 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: one
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        > ok"
+        ok"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -716,7 +716,7 @@ e2eTest('thread message queue ordering', () => {
 
         -# ┣ bash _Create marker file for e2e test_
 
-        > file created
+        file created
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
@@ -843,14 +843,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
         -# Queued message (position 2)
-        > race-final
+        race-final
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: queued-from-slash
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
@@ -1058,7 +1058,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: golf
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: hotel
@@ -1169,7 +1169,6 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: lima
         Reply with exactly: mike
         --- from: assistant (TestBot)
-        > ok
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)"
@@ -1277,10 +1276,10 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         -# Queued at position 1. Edit or delete your message to update the queue
         -# **queue-tester** edited queued message
-        > slow-busy-reply
+        slow-busy-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: edited-queued
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
@@ -1385,7 +1384,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         -# Queued at position 1. Edit or delete your message to update the queue
         -# **queue-tester** removed message from queue
-        > slow-busy-reply
+        slow-busy-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
