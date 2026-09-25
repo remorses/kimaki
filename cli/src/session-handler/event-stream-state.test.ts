@@ -16,6 +16,8 @@ import {
   getLatestExecutionStartedTimestamp,
   getContextUsageNoticePercentage,
   getLatestRunInfo,
+  getPromptCacheClear,
+  formatPromptCacheClearMessage,
   getNativeDurableIdentity,
   getNativeExecutionUsage,
   hasSeenNativeDurableEvent,
@@ -517,6 +519,135 @@ describe('native execution state', () => {
   })
 })
 
+describe('getPromptCacheClear', () => {
+  const sessionID = 'ses_cache'
+
+  function cacheStep({
+    assistantMessageID,
+    input,
+    read,
+    write,
+    providerID = 'anthropic',
+    modelID = 'claude-opus',
+  }: {
+    assistantMessageID: string
+    input: number
+    read: number
+    write: number
+    providerID?: string
+    modelID?: string
+  }): EventBufferEntry[] {
+    const started = stepStarted({ sessionID, assistantMessageID })
+    const ended = stepEnded({ sessionID, assistantMessageID, input, output: 10, cost: 0 })
+    return [
+      entry({ ...started, data: { ...started.data, model: { providerID, id: modelID } } }),
+      entry({ ...ended, data: { ...ended.data, tokens: { ...ended.data.tokens, cache: { read, write } } } }),
+    ]
+  }
+
+  function turn(steps: EventBufferEntry[][]): EventBufferEntry[] {
+    return [
+      entry(executionStarted(sessionID)),
+      ...steps.flat(),
+      entry(executionSucceeded(sessionID)),
+    ]
+  }
+
+  function compactionEnded(): EventBufferEntry {
+    return entry({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.compaction.ended',
+      durable: durable(),
+      data: { sessionID, reason: 'auto', text: 'summary', recent: 'msg_recent' },
+    })
+  }
+
+  test('detects same-model cache drops only on the first step after an earlier turn', () => {
+    const first = turn([cacheStep({ assistantMessageID: 'msg_1', input: 100, read: 0, write: 20_000 })])
+    expect(getPromptCacheClear({ events: first, sessionId: sessionID, currentMessageId: 'msg_1' }))
+      .toBeUndefined()
+
+    const missed = [
+      ...first,
+      ...turn([
+        cacheStep({ assistantMessageID: 'msg_2', input: 21_000, read: 0, write: 21_000 }),
+        cacheStep({ assistantMessageID: 'msg_3', input: 100, read: 0, write: 21_500 }),
+      ]),
+    ]
+    expect(getPromptCacheClear({ events: missed, sessionId: sessionID, currentMessageId: 'msg_2' }))
+      .toMatchInlineSnapshot(`
+        {
+          "currentCacheRead": 0,
+          "currentMessageId": "msg_2",
+          "expectedCacheRead": 20000,
+          "previousMessageId": "msg_1",
+        }
+      `)
+    // Later steps in the same execution compare against their own writes, not the earlier turn.
+    expect(getPromptCacheClear({ events: missed, sessionId: sessionID, currentMessageId: 'msg_3' }))
+      .toBeUndefined()
+
+    const hit = [
+      ...first,
+      ...turn([cacheStep({ assistantMessageID: 'msg_4', input: 500, read: 20_000, write: 500 })]),
+    ]
+    expect(getPromptCacheClear({ events: hit, sessionId: sessionID, currentMessageId: 'msg_4' }))
+      .toBeUndefined()
+  })
+
+  test('skips model changes, compactions, and interrupted turns', () => {
+    const first = turn([cacheStep({ assistantMessageID: 'msg_1', input: 100, read: 0, write: 20_000 })])
+    const modelChanged = [
+      ...first,
+      ...turn([cacheStep({ assistantMessageID: 'msg_2', input: 20_000, read: 0, write: 20_000, modelID: 'gpt' })]),
+    ]
+    expect(getPromptCacheClear({ events: modelChanged, sessionId: sessionID, currentMessageId: 'msg_2' }))
+      .toBeUndefined()
+
+    const compacted = [
+      ...first,
+      compactionEnded(),
+      ...turn([cacheStep({ assistantMessageID: 'msg_3', input: 20_000, read: 0, write: 20_000 })]),
+    ]
+    expect(getPromptCacheClear({ events: compacted, sessionId: sessionID, currentMessageId: 'msg_3' }))
+      .toBeUndefined()
+
+    const interrupted: EventBufferEntry = entry({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.execution.interrupted',
+      durable: durable(),
+      data: { sessionID, reason: 'user' },
+    })
+    const acrossInterrupt = [
+      ...first,
+      entry(executionStarted(sessionID)),
+      ...cacheStep({ assistantMessageID: 'msg_aborted', input: 20_000, read: 0, write: 0 }),
+      interrupted,
+      ...turn([cacheStep({ assistantMessageID: 'msg_4', input: 20_500, read: 0, write: 20_500 })]),
+    ]
+    expect(getPromptCacheClear({ events: acrossInterrupt, sessionId: sessionID, currentMessageId: 'msg_4' }))
+      .toMatchInlineSnapshot(`
+        {
+          "currentCacheRead": 0,
+          "currentMessageId": "msg_4",
+          "expectedCacheRead": 20000,
+          "previousMessageId": "msg_1",
+        }
+      `)
+  })
+
+  test('formats a compact cache-miss notice', () => {
+    expect(formatPromptCacheClearMessage({
+      expectedCacheRead: 20_000,
+      currentCacheRead: 1_234,
+      previousMessageId: 'msg_1',
+      currentMessageId: 'msg_2',
+    })).toMatchInlineSnapshot(`"prompt cache missed (20k → 1.2k)"`)
+  })
+})
+
 describe('native permissions and forms', () => {
   test('tracks unresolved permission requests from native data', () => {
     const sessionID = 'ses_permission'
@@ -860,7 +991,7 @@ describe('event buffer trim and busy derivation during task children', () => {
         sessionID: mainSessionID,
         assistantMessageID: 'msg_asst',
         id: 'call_task',
-        name: 'task',
+        name: 'subagent',
       },
     })
   }

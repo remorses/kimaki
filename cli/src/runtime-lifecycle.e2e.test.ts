@@ -336,14 +336,14 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: seq-alpha
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
+        -# *using deterministic-provider/deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: seq-beta
         --- from: assistant (TestBot)
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(runtimeAfterB).toBe(runtimeAfterA)
     },
@@ -386,9 +386,9 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-check
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        -# *using deterministic-provider/deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(footerMessage).toBeDefined()
       if (!footerMessage) {
@@ -458,14 +458,14 @@ describe('runtime lifecycle', () => {
         "--- from: user (lifecycle-tester)
         Reply with exactly: reconnect-alpha
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>
+        -# *using deterministic-provider/deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (lifecycle-tester)
         Reply with exactly: reconnect-beta
         --- from: assistant (TestBot)
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000888>"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const runtimeAfterRestart = getRuntime(thread.id)

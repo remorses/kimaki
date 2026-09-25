@@ -44,7 +44,9 @@ import type {
 } from '../message-formatting.js'
 import {
   asDiscordQuote,
+  asSubtext,
   QUEUE_PREFIX,
+  sessionPartContent,
   STATUS_PREFIX,
   WORKTREE_PREFIX,
 } from '../message-formatting.js'
@@ -124,7 +126,6 @@ import {
   type ScheduledTaskSystemContext,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
-import { countSystemPromptDiffLines } from '../cache-rewrite.js'
 import { store } from '../store.js'
 import {
   trackEvent,
@@ -145,8 +146,7 @@ import {
   getAssistantMessageIdsForLatestExecution,
   isSessionBusy,
   getLatestRunInfo,
-  getDerivedSubtaskIndex,
-  getDerivedSubtaskAgentType,
+  getDerivedSubtaskLabel,
   isDerivedChildSession,
   isEventForSessionTree,
   shouldShowRetryNotice,
@@ -1149,13 +1149,7 @@ export class ThreadSessionRuntime {
       mainSessionId,
       candidateSessionId,
     })
-    if (!subtaskIndex) return undefined
-    const agentType = getDerivedSubtaskAgentType({
-      events: this.eventBuffer,
-      mainSessionId,
-      candidateSessionId,
-    })
-    const label = `${agentType || 'task'}-${subtaskIndex}`
+    if (!label) return undefined
     const assistantMessageId = this.getLatestAssistantMessageIdForCurrentTurn({
       sessionId: candidateSessionId,
     })
@@ -1610,7 +1604,7 @@ export class ThreadSessionRuntime {
       }
       if (action.type === 'show-large-output') {
         const result = await this.thread.send({
-          content: `${STATUS_PREFIX}${action.content}`,
+          content: asSubtext(`${STATUS_PREFIX}${action.content}`),
           flags: SILENT_MESSAGE_FLAGS,
         }).catch((cause) => new DiscordOperationError({ operation: 'sendMessage', cause }))
         if (result instanceof Error) discordLogger.error('Failed to send large output notice:', result)
@@ -1642,6 +1636,18 @@ export class ThreadSessionRuntime {
       }
       if (action.type === 'show-context-usage') {
         await this.showContextUsageNotice(action.sessionId)
+        continue
+      }
+      if (action.type === 'show-prompt-cache-clear') {
+        const result = await this.thread.send({
+          content: asSubtext(action.message),
+          flags: SILENT_MESSAGE_FLAGS,
+        }).catch((cause) => new DiscordOperationError({ operation: 'sendMessage', cause }))
+        if (result instanceof Error) discordLogger.error('Failed to send prompt cache notice:', result)
+        continue
+      }
+      if (action.type === 'unquote-final-text') {
+        await this.unquoteFinalText(action)
         continue
       }
       if (action.type === 'send-footer') {
@@ -1712,6 +1718,40 @@ export class ThreadSessionRuntime {
       threadId: this.thread.id,
     })
     if (action.repulseTyping) this.requestTypingRepulse()
+  }
+
+  // Only edits when the Discord body is exactly the quote Kimaki sent, so model text starting with `> ` stays.
+  private async unquoteFinalText(
+    action: Extract<DiscordAction, { type: 'unquote-final-text' }>,
+  ): Promise<void> {
+    const db = await getDb()
+    const row = await db.query.part_messages.findFirst({
+      where: { part_id: action.partId },
+      columns: { message_id: true },
+    }).catch((cause) => new DiscordOperationError({ operation: 'getPartMessage', cause }))
+    if (row instanceof Error) {
+      discordLogger.error(`Failed to find Discord message for ${action.partId}:`, row)
+      return
+    }
+    if (!row?.message_id) return
+    const message = await this.thread.messages.fetch(row.message_id)
+      .catch((cause) => new DiscordOperationError({ operation: 'fetchMessage', cause }))
+    if (message instanceof Error) {
+      discordLogger.error(`Failed to fetch Discord message for ${action.partId}:`, message)
+      return
+    }
+    const leadWithBlankLine = message.content.startsWith('\n')
+    const quoted = sessionPartContent({
+      content: asDiscordQuote(action.content),
+      leadWithBlankLine,
+    })
+    if (message.content !== quoted) return
+    const edited = await message.edit({
+      content: sessionPartContent({ content: action.content, leadWithBlankLine }),
+    }).catch((cause) => new DiscordOperationError({ operation: 'editMessage', cause }))
+    if (edited instanceof Error) {
+      discordLogger.error(`Failed to unquote final text ${action.partId}:`, edited)
+    }
   }
 
   private async showProjectedActionButtons(sessionId: string): Promise<void> {
@@ -2298,7 +2338,7 @@ export class ThreadSessionRuntime {
       contextLimit: this.modelContextLimit,
     })
     if (currentPercentage === undefined) return
-    const chunk = `${STATUS_PREFIX}context usage ${currentPercentage}%`
+    const chunk = asSubtext(`context usage ${currentPercentage}%`)
     const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
@@ -3357,17 +3397,20 @@ export class ThreadSessionRuntime {
     }
   }
 
-  abortActiveRun(reason: string): void {
+  /** Explicit user abort: stops the run and drops all queued messages. Returns the removed items. */
+  async abortActiveRun(reason: string): Promise<threadState.QueuedMessage[]> {
     const outcome = this.abortActiveRunInternal({
       reason,
     })
     if (outcome.apiAbortPromise) {
       void outcome.apiAbortPromise
     }
-    void this.dispatchAction(async () => {
+    // Enqueued synchronously, so the queue is cleared before the interrupt terminal can drain it.
+    let cleared: threadState.QueuedMessage[] = []
+    await this.dispatchAction(async () => {
+      cleared = await this.clearQueueNow()
       await this.flushCurrentTurnParts({ mode: 'interactive', repulseTyping: false })
       await this.executeDiscordActions([{ type: 'discard-open-text' }])
-      return this.tryDrainQueue({ showIndicator: true })
     })
     return cleared
   }
@@ -4288,87 +4331,6 @@ export class ThreadSessionRuntime {
   private resetPerRunState(): void {
     this.modelContextLimit = undefined
     this.modelContextLimitKey = undefined
-  }
-
-  private async maybeNotifyPromptCacheClear({
-    sessionId,
-    messageId,
-  }: {
-    sessionId: string
-    messageId: string
-  }): Promise<void> {
-    // Only the first reply after a user prompt can show a cold cache. Later steps re-read the turn's own writes.
-    // TODO: send this before step 1 tools finish. Tokens arrive only with step-finish, after tools in v1 and v2.
-    // OpenCode v2 publishes `session.step.streamed` at stream end (before tools settle) but without tokens, and
-    // packages/ai drops Anthropic `message_start` usage (onMessageStart returns NO_EVENTS). Needs upstream:
-    // add tokens to Step.Streamed, or emit a usage event on message_start for a notice right after the prompt.
-    // https://github.com/anomalyco/opencode/blob/v2/packages/schema/src/session-event.ts
-    const [firstAssistantId] = this.getAssistantMessageIdsForCurrentTurn({ sessionId })
-    if (firstAssistantId !== messageId) {
-      return
-    }
-    const cacheClear = getPromptCacheClear({
-      events: this.eventBuffer,
-      sessionId,
-      currentMessageId: messageId,
-    })
-    if (!cacheClear) {
-      return
-    }
-    const systemDiff = await this.getSystemPromptDiffForCacheClear({
-      sessionId,
-      previousMessageId: cacheClear.previousMessageId,
-      currentMessageId: cacheClear.currentMessageId,
-    })
-    const chunk = asSubtext(formatPromptCacheClearMessage(cacheClear, systemDiff))
-    const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-    if (sendResult instanceof Error) {
-      discordLogger.error('Failed to send prompt cache notice:', sendResult)
-    }
-  }
-
-  private async getSystemPromptDiffForCacheClear({
-    sessionId,
-    previousMessageId,
-    currentMessageId,
-  }: {
-    sessionId: string
-    previousMessageId: string
-    currentMessageId: string
-  }): Promise<{ additions: number; deletions: number } | undefined> {
-    const previousParentId = this.getAssistantParentId({ sessionId, messageId: previousMessageId })
-    const currentParentId = this.getAssistantParentId({ sessionId, messageId: currentMessageId })
-    if (!previousParentId || !currentParentId) {
-      return undefined
-    }
-    const beforeText = this.userSystemByMessageId.get(previousParentId)
-    const afterText = this.userSystemByMessageId.get(currentParentId)
-    if (beforeText === undefined || afterText === undefined || beforeText === afterText) {
-      return undefined
-    }
-    return countSystemPromptDiffLines({ beforeText, afterText })
-  }
-
-  private getAssistantParentId({
-    sessionId,
-    messageId,
-  }: {
-    sessionId: string
-    messageId: string
-  }): string | undefined {
-    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
-      const event = this.eventBuffer[i]?.event
-      if (event?.type !== 'message.updated') {
-        continue
-      }
-      const info = event.properties.info
-      if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
-        continue
-      }
-      return info.parentID
-    }
-    return undefined
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────

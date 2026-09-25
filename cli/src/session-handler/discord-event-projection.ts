@@ -17,11 +17,12 @@ import {
 } from '../message-formatting.js'
 import {
   compactSubagentRoutingEvidence,
-  getDerivedSubtaskAgentType,
-  getDerivedSubtaskIndex,
+  getDerivedSubtaskLabel,
   deriveNativeExecutionTerminalAnalytics,
   getAssistantMessageIdsForLatestExecution,
   getLatestAssistantMessageIdForLatestExecution,
+  getPromptCacheClear,
+  formatPromptCacheClearMessage,
   hasVisibleV2OutputSinceExecutionStart,
   isDerivedChildSession,
   type EventBufferEntry,
@@ -74,6 +75,8 @@ export type DiscordAction =
   | { type: 'start-typing'; immediate?: boolean }
   | { type: 'stop-typing' }
   | { type: 'show-context-usage'; sessionId: string }
+  | { type: 'show-prompt-cache-clear'; message: string }
+  | { type: 'unquote-final-text'; partId: string; content: string }
   | { type: 'send-footer'; completedAt: number; startedAt: number }
   | { type: 'send-error'; message: string }
   | { type: 'record-terminal-analytics'; analytics: TerminalAnalytics }
@@ -430,22 +433,17 @@ function routeStoredSubagentPart({
   projectedParts: readonly DiscordSessionPart[]
   output: ProjectionOutputOptions
 }): DiscordAction[] {
-  const index = getDerivedSubtaskIndex({
+  const label = getDerivedSubtaskLabel({
     events,
     mainSessionId,
     candidateSessionId: part.sessionID,
   })
-  if (!index) return []
-  const agent = getDerivedSubtaskAgentType({
-    events,
-    mainSessionId,
-    candidateSessionId: part.sessionID,
-  })
+  if (!label) return []
   const latestAssistantMessageId = getLatestAssistantMessageIdForLatestExecution({
     events,
     sessionId: part.sessionID,
   })
-  const destination = { type: 'subagent' as const, label: `${agent || 'task'}-${index}` }
+  const destination = { type: 'subagent' as const, label }
   const action: DiscordAction = (() => {
     if (part.type === 'text') {
       return { type: 'skip-part', partId: part.id, destination: 'subagent', reason: 'subagent-text' }
@@ -680,6 +678,33 @@ function normalizeQuestionForm(
   return { formId: form.id, sessionId: form.sessionID, messageId, questions }
 }
 
+function promptCacheClearActions({
+  events,
+  sessionId,
+  messageId,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  messageId: string | undefined
+}): DiscordAction[] {
+  if (!messageId) return []
+  const clear = getPromptCacheClear({ events, sessionId, currentMessageId: messageId })
+  if (!clear) return []
+  return [{ type: 'show-prompt-cache-clear', message: formatPromptCacheClearMessage(clear) }]
+}
+
+// Short text is quoted as soon as it ends. When it turns out to be the last
+// visible part of a successful turn, the executor edits it back to full width.
+function unquoteFinalTextActions(parts: readonly DiscordSessionPart[]): DiscordAction[] {
+  const finalPart = parts.findLast((part) => {
+    return (part.type === 'text' && part.text.trim()) || part.type === 'tool'
+  })
+  if (finalPart?.type !== 'text') return []
+  const content = formatPart(finalPart)
+  if (!content) return []
+  return [{ type: 'unquote-final-text', partId: finalPart.id, content }]
+}
+
 type TerminalEvent = Extract<V2Event, {
   type:
     | 'session.execution.succeeded'
@@ -862,14 +887,31 @@ export function projectDiscordActions({
       output,
     })
   }
+  if (event.type === 'session.tool.input.started') {
+    // Child tool events are not retained in the event buffer, so the name must live on the part.
+    return [{
+      type: 'store-part',
+      part: {
+        id: discordToolPartId({ messageID: event.data.assistantMessageID, toolId: event.data.id }),
+        type: 'tool',
+        sessionID: event.data.sessionID,
+        messageID: event.data.assistantMessageID,
+        tool: event.data.name,
+        state: { status: 'pending', input: {}, raw: '' },
+      },
+    }]
+  }
   if (event.type === 'session.tool.called') {
     const partId = partIdForEvent(event)
-    const tool = findToolName({
-      events,
-      sessionId: event.data.sessionID,
-      assistantMessageId: event.data.assistantMessageID,
-      toolId: event.data.id,
-    })
+    const existing = getPart(projectedParts, partId)
+    const tool = existing?.type === 'tool'
+      ? existing.tool
+      : findToolName({
+          events,
+          sessionId: event.data.sessionID,
+          assistantMessageId: event.data.assistantMessageID,
+          toolId: event.data.id,
+        })
     const input = tool === 'subagent' && typeof event.data.input.agent === 'string'
       ? { ...event.data.input, subagent_type: event.data.input.agent }
       : event.data.input
@@ -976,16 +1018,28 @@ export function projectDiscordActions({
       actions.push({ type: 'record-terminal-analytics', analytics })
     }
     if (event.data.sessionID !== mainSessionId) return actions
+    const mainParts = projectedParts.filter((part) => part.sessionID === mainSessionId)
     actions.push(
       { type: 'stop-typing' },
       ...planMainPartActions({
-        parts: projectedParts.filter((part) => part.sessionID === mainSessionId),
+        parts: mainParts,
         historyParts: projectedParts,
         mode: 'final',
         repulseTyping: false,
         output,
       }),
     )
+    if (event.type === 'session.execution.succeeded') {
+      // Only the first step can hit a cold cache. Reported on success so failed runs stay quiet.
+      const [firstMessageId] = getAssistantMessageIdsForLatestExecution({
+        events,
+        sessionId: mainSessionId,
+      })
+      actions.push(
+        ...unquoteFinalTextActions(mainParts),
+        ...promptCacheClearActions({ events, sessionId: mainSessionId, messageId: firstMessageId }),
+      )
+    }
     if (
       event.type === 'session.execution.succeeded'
       && hasVisibleV2OutputSinceExecutionStart({ events, sessionId: mainSessionId })

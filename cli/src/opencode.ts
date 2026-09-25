@@ -877,8 +877,16 @@ function createOpencodeServerManager() {
     cleanupHandlersRegistered = true
     opencodeLogger.log('Registering process cleanup handlers for opencode server')
     process.on('exit', () => signalOwnedProcessesNow({ reason: 'process-exit' }))
-    process.on('SIGINT', () => signalOwnedProcessesNow({ reason: 'sigint' }))
-    process.on('SIGTERM', () => signalOwnedProcessesNow({ reason: 'sigterm' }))
+    // Any signal listener disables Node's default exit. If this fallback is the
+    // only listener (CLI subcommands), exit here, or Ctrl+C is ignored and the
+    // bot keeps the hrana lock port. Other owners decide when to exit.
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+      process.on(signal, () => {
+        signalOwnedProcessesNow({ reason: signal.toLowerCase() })
+        if (process.listenerCount(signal) > 1) return
+        process.exit(128 + os.constants.signals[signal])
+      })
+    }
   }
 
   const ensure = async ({
@@ -1350,15 +1358,6 @@ async function startSingleServer({
     return waitResult
   }
   serverReady = true
-  // stopOpencodeServer() may have run while we waited (bot shutdown). Never
-  // publish a server that nobody will stop.
-  if (global.shuttingDown || serverProcess.killed) {
-    killStartingServerProcessNow({ reason: 'stopped-during-startup' })
-    if (startingServerProcess === serverProcess) {
-      startingServerProcess = null
-    }
-    return new ServerStartError({ port, reason: 'stopped during startup' })
-  }
   opencodeLogger.log(`Server ready on port ${port}`)
 
   // Always dump startup logs so plugin loading errors and other startup output
@@ -1374,7 +1373,8 @@ async function startSingleServer({
     baseUrl: `http://127.0.0.1:${port}`,
     password: serverPassword,
   }
-  if (!opencodeServerManager.commitRunning({ expected: starting, server })) {
+  // Never publish a server that finished booting during bot shutdown; nobody would stop it.
+  if (global.shuttingDown || !opencodeServerManager.commitRunning({ expected: starting, server })) {
     await terminateChildProcess({
       child: serverProcess,
       reason: 'stop-opencode-server',

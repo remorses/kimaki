@@ -101,8 +101,8 @@ describe('voice routing preserves source questions', () => {
           Session forked! Continue in <#TARGET_THREAD>
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
-          > tool done
-          > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+          tool done
+          -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
         `)
       } else {
         expect(transcript).toMatchInlineSnapshot(`
@@ -121,8 +121,8 @@ describe('voice routing preserves source questions', () => {
           Created new session in <#TARGET_THREAD>
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
-          > tool done
-          > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+          tool done
+          -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
         `)
       }
       expect(transcript).not.toContain('expired')

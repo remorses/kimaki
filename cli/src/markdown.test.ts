@@ -55,30 +55,30 @@ test('fileBaseName strips directories on posix and windows paths', () => {
   expect(fileBaseName('src\\cli.ts')).toBe('cli.ts')
 })
 
-test('formatCompactToolSummary indexes read, task, and bash inputs', () => {
+test('formatCompactToolSummary indexes read, subagent, and shell inputs', () => {
   expect(formatCompactToolSummary({
     tool: 'read',
     input: { filePath: '/Users/morse/Documents/GitHub/kimakivoice/README.md', offset: 1 },
   })).toBe('README.md')
 
   expect(formatCompactToolSummary({
-    tool: 'task',
-    input: { description: 'analyze gpuix-solid', task_id: 'ses_child123' },
+    tool: 'subagent',
+    input: { description: 'analyze gpuix-solid', sessionID: 'ses_child123' },
   })).toBe('analyze gpuix-solid ses_child123')
 
   expect(formatCompactToolSummary({
-    tool: 'task',
+    tool: 'subagent',
     input: { description: 'analyze gpuix-solid' },
-    metadata: { sessionId: 'ses_from_meta' },
+    metadata: { sessionID: 'ses_from_meta' },
   })).toBe('analyze gpuix-solid ses_from_meta')
 
   expect(formatCompactToolSummary({
-    tool: 'bash',
+    tool: 'shell',
     input: { command: 'echo hello world', description: 'Print greeting' },
   })).toBe('echo hello world')
 
   expect(formatCompactToolSummary({
-    tool: 'bash',
+    tool: 'shell',
     input: {
       command: 'a'.repeat(120),
       description: 'Rebuild native addon',
@@ -452,7 +452,7 @@ test('compact tools: tool calls show one-liner with line count', async () => {
   const md = errore.unwrap(result)
 
   // Compact mode: exact one-liner format with params and line count
-  expect(md).toContain('tool: bash echo hello world')
+  expect(md).toContain('tool: shell echo hello world')
   expect(md).toMatch(/\(\d+ lines?\)/)
   // Should NOT contain full output code blocks or input YAML
   expect(md).not.toContain('**Output:**')
@@ -472,7 +472,7 @@ test('verbose tools: tool calls show full input and output', async () => {
   const md = errore.unwrap(result)
 
   // Verbose mode: full tool rendering with input YAML and output code block
-  expect(md).toContain('#### tool: bash')
+  expect(md).toContain('#### tool: shell')
   expect(md).toContain('**Input:**')
   expect(md).toContain('```yaml')
   expect(md).toContain('**Output:**')

@@ -103,23 +103,24 @@ export function fileBaseName(filePath: string): string {
   return segments[segments.length - 1] || filePath
 }
 
-function readTaskSessionId(metadata: JsonValue | undefined): string | undefined {
+function readSubagentSessionId(metadata: JsonValue | undefined): string | undefined {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined
-  const sessionId = metadata.sessionId
+  const sessionId = metadata.sessionID
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined
 }
 
-function taskChildSessionId({
+// Native v2 subagent: child id in result metadata, or in input when continuing a child.
+function subagentChildSessionId({
   input,
   metadata,
 }: {
   input?: ToolInput
   metadata?: JsonValue
 }): string | undefined {
-  const sessionId = readTaskSessionId(metadata)
+  const sessionId = readSubagentSessionId(metadata)
   if (sessionId) return sessionId
-  const taskId = input?.task_id
-  if (typeof taskId === 'string' && taskId.startsWith('ses')) return taskId
+  const inputSessionId = input?.sessionID
+  if (typeof inputSessionId === 'string' && inputSessionId.startsWith('ses')) return inputSessionId
   return undefined
 }
 
@@ -140,16 +141,16 @@ export function formatCompactToolSummary({
     const path = record.filePath ?? record.path
     return typeof path === 'string' && path.length > 0 ? fileBaseName(path) : ''
   }
-  if (tool === 'task') {
+  if (tool === 'subagent') {
     const description = typeof record.description === 'string' ? record.description : ''
-    const sessionId = taskChildSessionId({ input: record, metadata })
+    const sessionId = subagentChildSessionId({ input: record, metadata })
     if (!sessionId) return truncateChars(description, maxChars)
     const separator = description.trim() ? 1 : 0
     const descBudget = Math.max(0, maxChars - sessionId.length - separator)
     const desc = truncateChars(description, descBudget)
     return [desc, sessionId].filter(Boolean).join(' ')
   }
-  if (tool === 'bash') {
+  if (tool === 'shell') {
     const command = typeof record.command === 'string' ? record.command : ''
     const collapsedCommand = command.replace(/\s+/g, ' ').trim()
     if (collapsedCommand.length > 0 && collapsedCommand.length <= maxChars) {
@@ -197,7 +198,13 @@ function toGenericSessionMessage(message: SessionMessageInfo) {
             id: part.id,
             type: 'tool' as const,
             tool: part.name,
-            state: { status, input, output, error },
+            state: {
+              status,
+              input,
+              output,
+              error,
+              metadata: 'metadata' in part.state ? part.state.metadata : undefined,
+            },
           }
         }
         return {
