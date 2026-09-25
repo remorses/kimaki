@@ -2,7 +2,8 @@
 
 import { OpenCode, type SessionMessageInfo } from '@opencode/client'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import dedent from 'string-dedent'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -59,6 +60,23 @@ function createMatchers(): DeterministicMatcher[] {
       priority: 100,
       when: { latestUserTextIncludes: 'AUTO_MODE_PUSH' },
       then: { parts: shellCall('git push --force origin AUTO_MODE_PUSH', 'push-call-1') },
+    },
+    {
+      id: 'later-tool-call',
+      priority: 100,
+      when: { latestUserTextIncludes: 'AUTO_MODE_LATER_TOOL' },
+      then: {
+        parts: [
+          { type: 'stream-start', warnings: [] },
+          {
+            type: 'tool-call',
+            toolCallId: 'later-tool-call-1',
+            toolName: 'later_tool',
+            input: JSON.stringify({}),
+          },
+          { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+        ],
+      },
     },
     {
       id: 'classifier-push-fast',
@@ -140,6 +158,7 @@ async function waitForHealth(port: number) {
 
 let home: string
 let projectDir: string
+let laterToolMarker: string
 let port: number
 let serverProcess: ChildProcess | undefined
 const stderrLines: string[] = []
@@ -173,6 +192,35 @@ beforeAll(async () => {
     path.resolve(process.cwd(), '..', 'opencode-deterministic-provider', 'src', 'index.ts'),
   ).href
   const pluginEntry = import.meta.dirname
+  // Registered after auto-mode, like an MCP server or a plugin loaded later.
+  const laterPluginDir = path.join(home, 'later-plugin')
+  laterToolMarker = path.join(home, 'later-tool-ran')
+  await mkdir(laterPluginDir, { recursive: true })
+  await writeFile(path.join(laterPluginDir, 'package.json'), JSON.stringify({ type: 'module' }))
+  await writeFile(
+    path.join(laterPluginDir, 'index.js'),
+    dedent`
+      import { writeFile } from 'node:fs/promises'
+
+      export default {
+        id: 'auto-mode-e2e-later-tool',
+        async setup(ctx) {
+          await ctx.tool.transform((editor) => {
+            editor.add({
+              name: 'later_tool',
+              description: 'Tool registered after auto-mode',
+              input: { type: 'object', properties: {}, additionalProperties: false },
+              options: { codemode: false },
+              execute: async () => {
+                await writeFile(${JSON.stringify(laterToolMarker)}, 'ran')
+                return { content: [{ type: 'text', text: 'later tool ran' }] }
+              },
+            })
+          })
+        },
+      }
+    `,
+  )
   const deterministic = buildDeterministicOpencodeConfig({
     providerName: 'deterministic-provider',
     providerNpm,
@@ -186,7 +234,7 @@ beforeAll(async () => {
     JSON.stringify(
       {
         ...deterministic,
-        plugins: [pluginEntry],
+        plugins: [pluginEntry, laterPluginDir],
         lsp: false,
         formatter: false,
         permission: {
@@ -285,6 +333,20 @@ describe('opencode auto-mode e2e', () => {
     const chmod = tools.find((tool) => tool.tool === 'shell')
     expect(chmod?.status).toBe('error')
     expect(chmod?.error ?? '').toContain('[auto-mode]')
+  }, 30_000)
+
+  test('classifies tools registered after auto-mode', async () => {
+    const tools = await runPrompt('AUTO_MODE_LATER_TOOL')
+    expect(tools).toMatchInlineSnapshot(`
+      [
+        {
+          "error": "[auto-mode] force push",
+          "status": "error",
+          "tool": "later_tool",
+        },
+      ]
+    `)
+    expect(await access(laterToolMarker).then(() => true, () => false)).toBe(false)
   }, 30_000)
 
   test('classifier blocks git push --force', async () => {
