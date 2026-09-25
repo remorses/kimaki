@@ -22,6 +22,7 @@ import {
   getIpcRequestById,
   getScheduledTask,
   getSessionEventSnapshot,
+  getSessionAgent,
   getSessionModel,
   getSessionSleep,
   getThreadSession,
@@ -30,6 +31,7 @@ import {
   listThreadQueueItems,
   setChannelDirectory,
   setChannelVerbosity,
+  setSessionAgent,
   setSessionModel,
   setThreadSession,
   updateThreadQueueItemPayload,
@@ -38,7 +40,7 @@ import {
 import { createClient } from '@libsql/client'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
 import { chooseLockPort } from './test-utils.js'
-import { copyCurrentSessionModel } from './commands/model.js'
+import { copySessionPreferences } from './commands/model.js'
 import type { initializeOpencodeForDirectory } from './opencode.js'
 
 afterAll(async () => {
@@ -652,7 +654,9 @@ describe('getDb', () => {
     await db.delete(schema.thread_sessions).where(orm.eq(schema.thread_sessions.thread_id, threadId))
   })
 
-  test('copyCurrentSessionModel snapshots source session model to forked session', async () => {
+  // Regression: btw forks lost the agent and ran `build` instead of the source
+  // agent, which changed tools and busted the whole prompt cache.
+  test('copySessionPreferences snapshots source session agent and model to forked session', async () => {
     const db = await getDb()
     const sourceSessionId = `test-source-session-${crypto.randomUUID()}`
     const targetSessionId = `test-target-session-${crypto.randomUUID()}`
@@ -665,21 +669,29 @@ describe('getDb', () => {
       modelId: 'anthropic/claude-opus-4-6',
       variant: 'thinking',
     })
+    await setSessionAgent(sourceSessionId, 'opus')
 
-    await copyCurrentSessionModel({
+    await copySessionPreferences({
       sourceSessionId,
       targetSessionId,
       getClient,
     })
 
-    await expect(getSessionModel(targetSessionId)).resolves.toMatchInlineSnapshot(`
+    expect({
+      agent: await getSessionAgent(targetSessionId),
+      model: await getSessionModel(targetSessionId),
+    }).toMatchInlineSnapshot(`
       {
-        "modelId": "anthropic/claude-opus-4-6",
-        "variant": "thinking",
+        "agent": "opus",
+        "model": {
+          "modelId": "anthropic/claude-opus-4-6",
+          "variant": "thinking",
+        },
       }
     `)
 
     await db.delete(schema.session_models).where(orm.inArray(schema.session_models.session_id, [sourceSessionId, targetSessionId]))
+    await db.delete(schema.session_agents).where(orm.inArray(schema.session_agents.session_id, [sourceSessionId, targetSessionId]))
   })
 
   test('session event persistence uses (timestamp, event_index) ordering for deterministic same-ms replay', async () => {

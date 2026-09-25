@@ -5,7 +5,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  copySessionSystemPrompt,
   deleteSessionSystemPrompt,
+  isSystemPromptForSession,
+  resolveSessionSystemPrompt,
+  systemPromptHasParentSession,
   getOpencodePromptContext,
   getOpencodeSystemMessage,
   getSessionSystemPromptPath,
@@ -103,7 +107,7 @@ describe('system-message', () => {
 
     const filePath = getSessionSystemPromptPath({ sessionId, dataDir })
     expect(filePath).toBe(
-      path.join(dataDir, 'session-system', `${sessionId}.txt`),
+      path.join(dataDir, 'session-system-pinned', `${sessionId}.txt`),
     )
     await expect(
       readSessionSystemPrompt({ sessionId, dataDir }),
@@ -120,6 +124,76 @@ describe('system-message', () => {
     await expect(
       readSessionSystemPrompt({ sessionId, dataDir }),
     ).resolves.toBeNull()
+  })
+
+  // Regression: a btw fork regenerated the system prompt with its own session
+  // and thread IDs, so the 150k-token history prefix missed the prompt cache.
+  test('pins system prompt per session and forks reuse the source prompt', async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-system-'))
+    tempDirs.push(dataDir)
+    const sourceSessionId = 'ses_source'
+    const forkSessionId = 'ses_fork'
+    // Old command path rewrote this legacy file on every command; never trust it as pinned.
+    const legacyPath = path.join(dataDir, 'session-system', `${sourceSessionId}.txt`)
+    await fs.promises.mkdir(path.dirname(legacyPath), { recursive: true })
+    await fs.promises.writeFile(legacyPath, 'legacy command-path prompt')
+
+    const firstTurn = await resolveSessionSystemPrompt({
+      sessionId: sourceSessionId,
+      dataDir,
+      generate: () => getOpencodeSystemMessage({ sessionId: sourceSessionId, threadId: 'thread_source', channelTopic: 'old topic' }),
+    })
+    const laterTurn = await resolveSessionSystemPrompt({
+      sessionId: sourceSessionId,
+      dataDir,
+      generate: () => getOpencodeSystemMessage({ sessionId: sourceSessionId, threadId: 'thread_source', channelTopic: 'new topic' }),
+    })
+    expect(laterTurn).toBe(firstTurn)
+    expect(firstTurn).not.toBe('legacy command-path prompt')
+    expect(firstTurn).toContain('<channel-topic>\nold topic')
+
+    const copied = await copySessionSystemPrompt({ sourceSessionId, targetSessionId: forkSessionId, dataDir })
+    const forkSystem = await resolveSessionSystemPrompt({
+      sessionId: forkSessionId,
+      dataDir,
+      generate: () => getOpencodeSystemMessage({ sessionId: forkSessionId, threadId: 'thread_fork' }),
+    })
+    if (forkSystem instanceof Error) throw forkSystem
+    expect(copied).toBe(true)
+    expect(forkSystem).toBe(firstTurn)
+    expect(isSystemPromptForSession({ system: forkSystem, sessionId: sourceSessionId })).toBe(true)
+    expect(isSystemPromptForSession({ system: forkSystem, sessionId: forkSessionId })).toBe(false)
+    // A parent set after the first turn is missing from the pinned prompt.
+    expect(systemPromptHasParentSession({ system: forkSystem, parentSessionId: 'ses_parent_added_later' })).toBe(false)
+    expect(
+      systemPromptHasParentSession({
+        system: getOpencodeSystemMessage({ sessionId: 'ses_child', parentSessionId: 'ses_parent' }),
+        parentSessionId: 'ses_parent',
+      }),
+    ).toBe(true)
+    expect(
+      getOpencodePromptContext({
+        sessionId: forkSessionId,
+        threadId: 'thread_fork',
+        systemPromptFromSourceSession: true,
+        parentSessionId: 'ses_parent_added_later',
+      }),
+    ).toMatchInlineSnapshot(`
+      "<system-reminder>
+      Your current OpenCode session ID is: ses_fork
+      Your current Discord thread ID is: thread_fork
+      This session was forked. The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every kimaki command (--session, --parent-session, --thread, session archive).
+      Your parent OpenCode session ID is: ses_parent_added_later
+      You can send a message back to the parent session with:
+      kimaki send --session ses_parent_added_later --prompt 'your update here' --agent <current_agent>
+      Do NOT message the parent session unless the user explicitly asks you to.
+      </system-reminder>
+      "
+    `)
+
+    await expect(
+      copySessionSystemPrompt({ sourceSessionId: 'ses_unpinned', targetSessionId: 'ses_other', dataDir }),
+    ).resolves.toBe(false)
   })
 
   test('readSessionSystemPrompt returns null when missing', async () => {

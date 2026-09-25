@@ -33,6 +33,7 @@ import {
   resolveDisplayedModelId,
 } from '../session-handler/model-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
+import { resolveAgentPreference } from '../session-handler/agent-utils.js'
 import { getThinkingValuesForModel } from '../thinking-utils.js'
 import {
   buildHtmlActionCustomId,
@@ -40,6 +41,7 @@ import {
   registerHtmlAction,
 } from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { OpenCodeSdkError } from '../errors.js'
 import * as errore from 'errore'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
@@ -283,7 +285,57 @@ export async function ensureSessionPreferencesSnapshot({
   )
 }
 
-export async function copyCurrentSessionModel({
+const LAST_USER_AGENT_PAGE_SIZE = 50
+const LAST_USER_AGENT_MAX_PAGES = 10
+
+/**
+ * Agent of the newest user message in a session, paging back from the end.
+ * Long agentic turns hold many assistant messages after one user message.
+ */
+async function getLastUserMessageAgent({
+  getClient,
+  sessionId,
+  directory,
+  before,
+  page = 0,
+}: {
+  getClient: Exclude<Awaited<ReturnType<typeof initializeOpencodeForDirectory>>, Error>
+  sessionId: string
+  directory?: string
+  before?: string
+  page?: number
+}): Promise<OpenCodeSdkError | string | undefined> {
+  if (page >= LAST_USER_AGENT_MAX_PAGES) return undefined
+  const response = await (async () => {
+    return getClient().session.messages({
+      sessionID: sessionId,
+      directory,
+      limit: LAST_USER_AGENT_PAGE_SIZE,
+      before,
+    })
+  })().catch((cause) => new OpenCodeSdkError({ operation: 'session.messages', cause }))
+  if (response instanceof Error) return response
+  if (response.error || !response.data) {
+    return new OpenCodeSdkError({ operation: 'session.messages', cause: response.error })
+  }
+  const newestUser = response.data
+    .map((message) => message.info)
+    .filter((info) => info.role === 'user')
+    .sort((a, b) => b.time.created - a.time.created)[0]
+  if (newestUser?.role === 'user') return newestUser.agent
+  const cursor = response.response.headers.get('X-Next-Cursor')
+  if (!cursor) return undefined
+  return getLastUserMessageAgent({ getClient, sessionId, directory, before: cursor, page: page + 1 })
+}
+
+/**
+ * Copy the agent, model and variant onto a forked session. The fork must run
+ * the same agent and model as the source: a different agent changes tools and
+ * prompts, which busts the prompt cache. The agent comes from the fork's own
+ * history (the fork point, also right for /fork at an earlier message), with
+ * the source DB preference as fallback.
+ */
+export async function copySessionPreferences({
   sourceSessionId,
   targetSessionId,
   channelId,
@@ -298,27 +350,42 @@ export async function copyCurrentSessionModel({
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
   directory?: string
 }) {
-  const modelInfo = await getCurrentModelInfo({
-    sessionId: sourceSessionId,
-    channelId,
-    appId,
-    getClient,
-    directory,
-  })
+  const [historyAgent, preferredAgent, modelInfo, variant] = await Promise.all([
+    getClient instanceof Error
+      ? undefined
+      : getLastUserMessageAgent({ getClient, sessionId: targetSessionId, directory }),
+    resolveAgentPreference({ sessionId: sourceSessionId, channelId }),
+    getCurrentModelInfo({
+      sessionId: sourceSessionId,
+      channelId,
+      appId,
+      getClient,
+      directory,
+    }),
+    getVariantCascade({
+      sessionId: sourceSessionId,
+      channelId,
+      appId,
+    }),
+  ])
+  if (historyAgent instanceof Error) {
+    modelLogger.warn(
+      `[MODEL] Could not read fork history agent for ${targetSessionId}, using DB preference: ${historyAgent.message}`,
+    )
+  }
+  const agent = (historyAgent instanceof Error ? undefined : historyAgent) || preferredAgent
+  if (agent) {
+    await setSessionAgent(targetSessionId, agent)
+  }
   if (modelInfo.type === 'none') return
 
-  const variant = await getVariantCascade({
-    sessionId: sourceSessionId,
-    channelId,
-    appId,
-  })
   await setSessionModel({
     sessionId: targetSessionId,
     modelId: modelInfo.model,
     variant: variant ?? null,
   })
   modelLogger.log(
-    `[MODEL] Copied session model ${modelInfo.model} from ${sourceSessionId} to ${targetSessionId}`,
+    `[MODEL] Copied session agent ${agent ?? 'default'} and model ${modelInfo.model} from ${sourceSessionId} to ${targetSessionId}`,
   )
 }
 

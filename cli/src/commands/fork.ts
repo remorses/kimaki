@@ -27,6 +27,8 @@ import {
   batchChunksForDiscord,
 } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { copySessionPreferences } from './model.js'
+import { copySessionSystemPrompt } from '../system-message.js'
 import * as errore from 'errore'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
@@ -331,7 +333,38 @@ export async function handleForkSelectMenu(
 
     // Claim the forked session immediately so external polling does not race
     // and create a duplicate Sync thread before the rest of this setup runs.
-    await setThreadSession(thread.id, forkedSession.id)
+    // Same agent, model and pinned system prompt keep the source prompt cache.
+    const [, , copiedSystem] = await Promise.all([
+      setThreadSession(thread.id, forkedSession.id),
+      copySessionPreferences({
+        sourceSessionId: sessionId,
+        targetSessionId: forkedSession.id,
+        channelId: textChannel.id,
+        appId: interaction.applicationId,
+        getClient,
+        directory: projectDirectory,
+      }),
+      copySessionSystemPrompt({
+        sourceSessionId: sessionId,
+        targetSessionId: forkedSession.id,
+      }),
+    ])
+    // `false` (source not pinned yet) is the only fallback; I/O errors fail setup.
+    if (copiedSystem instanceof Error) {
+      forkLogger.error(`Could not pin source system prompt on fork ${forkedSession.id}:`, copiedSystem)
+      await Promise.all([
+        thread.delete('fork setup failed').catch((error) => {
+          forkLogger.warn(`Could not delete orphan fork thread ${thread.id}:`, error)
+        }),
+        getClient().session.delete({ sessionID: forkedSession.id }).catch((error) => {
+          forkLogger.warn(`Could not delete orphan fork session ${forkedSession.id}:`, error)
+        }),
+      ])
+      await interaction.editReply(
+        `Failed to fork session: could not copy the source system prompt (${copiedSystem.message})`,
+      )
+      return
+    }
 
     // Add user to thread so it appears in their sidebar
     await thread.members.add(interaction.user.id)

@@ -128,7 +128,9 @@ import {
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
-  writeSessionSystemPrompt,
+  isSystemPromptForSession,
+  resolveSessionSystemPrompt,
+  systemPromptHasParentSession,
   type AgentInfo,
   type RepliedMessageContext,
   type WorktreeInfo,
@@ -3618,6 +3620,16 @@ export class ThreadSessionRuntime {
         }
         return fetched.topic?.trim() || undefined
       })()
+      const system = await this.resolveTurnSystemPrompt({
+        sessionId: session.id,
+        channelTopic,
+        agents: availableAgents,
+        input,
+      })
+      if (system instanceof Error) {
+        await cleanupOnError(`✗ Failed to prepare system prompt: ${system.message}`)
+        return
+      }
       const worktreeChanged = this.consumeWorktreePromptChange(worktree)
       const syntheticContext = getOpencodePromptContext({
         sessionId: session.id,
@@ -3631,6 +3643,8 @@ export class ThreadSessionRuntime {
         worktree,
         currentAgent: resolvedAgent,
         worktreeChanged,
+        systemPromptFromSourceSession: !isSystemPromptForSession({ system, sessionId: session.id }),
+        parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
       const parts = [
         { type: 'text' as const, text: promptWithImagePaths },
@@ -3642,18 +3656,7 @@ export class ThreadSessionRuntime {
         sessionID: session.id,
         directory: this.sdkDirectory,
         parts,
-        system: getOpencodeSystemMessage({
-          sessionId: session.id,
-          channelId,
-          guildId: this.thread.guildId,
-          threadId: this.thread.id,
-          channelTopic,
-          agents: availableAgents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-          parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-          scheduledTask: await this.resolveScheduledTaskContext(session.id),
-        }),
+        system,
         ...(resolvedAgent ? { agent: resolvedAgent } : {}),
         ...(modelField ? { model: modelField } : {}),
         ...variantField,
@@ -4655,6 +4658,29 @@ export class ThreadSessionRuntime {
       }
       return fetched.topic?.trim() || undefined
     })()
+    // Pinned before building parts so the fork notice can compare identities.
+    // Also covers session.command: the context-awareness plugin reads the same
+    // pinned file because the command API has no system field.
+    const system = await this.resolveTurnSystemPrompt({
+      sessionId: session.id,
+      channelTopic,
+      agents: earlyAvailableAgents,
+      input,
+    })
+    if (system instanceof Error) {
+      logger.error(
+        `[DISPATCH] Failed to pin system prompt for session ${session.id}: ${system.message}`,
+      )
+      void notifyError(system, 'Failed to pin session system prompt')
+      this.stopTyping()
+      await sendThreadMessage(
+        this.thread,
+        `✗ Failed to prepare system prompt: ${system.message}`,
+        { flags: NOTIFY_MESSAGE_FLAGS },
+      )
+      return false
+    }
+    const systemPromptFromSourceSession = !isSystemPromptForSession({ system, sessionId: session.id })
     const worktreeChanged = this.consumeWorktreePromptChange(worktree)
     const syntheticContext = getOpencodePromptContext({
       sessionId: session.id,
@@ -4668,6 +4694,8 @@ export class ThreadSessionRuntime {
       worktree,
       currentAgent: earlyAgentPreference,
       worktreeChanged,
+      systemPromptFromSourceSession,
+      parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
     })
     const parts = [
       { type: 'text' as const, text: promptWithImagePaths },
@@ -4718,49 +4746,9 @@ export class ThreadSessionRuntime {
         sourceThreadId: input.sourceThreadId || this.thread.id,
         threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
+        systemPromptFromSourceSession,
+        parentSessionId: this.getParentSessionIdMissingFromSystem({ system, input }),
       })
-      // OpenCode's session.command API has no `system` field. Persist the
-      // kimaki system prompt so the context-awareness plugin can attach it
-      // on chat.message when the command user message is created.
-      // Fail the dispatch if persistence fails — otherwise the command runs
-      // without Discord context and silently restores the original bug.
-      const commandSystem = getOpencodeSystemMessage({
-        sessionId: session.id,
-        channelId,
-        guildId: this.thread.guildId,
-        threadId: this.thread.id,
-        channelTopic,
-        agents: earlyAvailableAgents,
-        username: this.state?.sessionUsername || input.username,
-        userId: this.state?.sessionUserId || input.userId,
-        parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-        scheduledTask: await this.resolveScheduledTaskContext(session.id),
-      })
-      const systemWriteResult = await writeSessionSystemPrompt({
-        sessionId: session.id,
-        system: commandSystem,
-        dataDir: getDataDir(),
-      }).catch((e) => {
-        return e instanceof Error
-          ? e
-          : new Error(String(e), { cause: e })
-      })
-      if (systemWriteResult instanceof Error) {
-        logger.error(
-          `[DISPATCH] Failed to persist system prompt for command session ${session.id}: ${systemWriteResult.message}`,
-        )
-        void notifyError(
-          systemWriteResult,
-          'Failed to persist system prompt before session.command',
-        )
-        this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `✗ Failed to prepare command system prompt: ${systemWriteResult.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
-        )
-        return false
-      }
       const commandResponse = await getClient().session.command(
         {
           sessionID: session.id,
@@ -4850,18 +4838,7 @@ export class ThreadSessionRuntime {
       sessionID: session.id,
       directory: this.sdkDirectory,
       parts,
-      system: getOpencodeSystemMessage({
-        sessionId: session.id,
-        channelId,
-        guildId: this.thread.guildId,
-        threadId: this.thread.id,
-        channelTopic,
-        agents: earlyAvailableAgents,
-        username: this.state?.sessionUsername || input.username,
-        userId: this.state?.sessionUserId || input.userId,
-        parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-        scheduledTask: await this.resolveScheduledTaskContext(session.id),
-      }),
+      system,
       model: earlyModelParam,
       agent: earlyAgentPreference,
       ...variantField,
@@ -4943,6 +4920,54 @@ export class ThreadSessionRuntime {
     })
     cache.set(sessionId, context)
     return context
+  }
+
+  /**
+   * Pinned system prompt for this turn. Generated only on the first turn of a
+   * session; forks start with the source session's pinned prompt.
+   */
+  private async resolveTurnSystemPrompt({
+    sessionId,
+    channelTopic,
+    agents,
+    input,
+  }: {
+    sessionId: string
+    channelTopic: string | undefined
+    agents: AgentInfo[]
+    input: { username?: string; userId?: string; parentSessionId?: string }
+  }) {
+    return resolveSessionSystemPrompt({
+      sessionId,
+      generate: async () => {
+        return getOpencodeSystemMessage({
+          sessionId,
+          channelId: this.channelId,
+          guildId: this.thread.guildId,
+          threadId: this.thread.id,
+          channelTopic,
+          agents,
+          username: this.state?.sessionUsername || input.username,
+          userId: this.state?.sessionUserId || input.userId,
+          parentSessionId: this.state?.parentSessionId || input.parentSessionId,
+          scheduledTask: await this.resolveScheduledTaskContext(sessionId),
+        })
+      },
+    })
+  }
+
+  /** Parent set after the first turn is not in the pinned prompt; send it per turn. */
+  private getParentSessionIdMissingFromSystem({
+    system,
+    input,
+  }: {
+    system: string
+    input: { parentSessionId?: string }
+  }) {
+    const parentSessionId = this.state?.parentSessionId || input.parentSessionId
+    if (!parentSessionId) return undefined
+    if (systemPromptHasParentSession({ system, parentSessionId })) return undefined
+    return parentSessionId
   }
 
   private async updateExistingSessionPermissions({

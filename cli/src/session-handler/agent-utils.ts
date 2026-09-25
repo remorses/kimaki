@@ -17,6 +17,30 @@ import { type AgentInfo } from '../system-message.js'
 
 const agentLogger = createLogger('agent')
 
+/** Unvalidated agent preference: session agent, else channel agent unless a session model is pinned. */
+export async function resolveAgentPreference({
+  sessionId,
+  channelId,
+}: {
+  sessionId: string
+  channelId?: string
+}): Promise<string | undefined> {
+  const sessionAgent = await getSessionAgent(sessionId)
+  if (sessionAgent) {
+    return sessionAgent
+  }
+
+  const sessionModel = await getSessionModel(sessionId)
+  if (sessionModel) {
+    return undefined
+  }
+
+  if (!channelId) {
+    return undefined
+  }
+  return getChannelAgent(channelId)
+}
+
 export async function resolveValidatedAgentPreference({
   agent,
   sessionId,
@@ -30,26 +54,7 @@ export async function resolveValidatedAgentPreference({
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
   directory?: string
 }): Promise<{ agentPreference?: string; agents: AgentInfo[] }> {
-  const agentPreference = await (async (): Promise<string | undefined> => {
-    if (agent) {
-      return agent
-    }
-
-    const sessionAgent = await getSessionAgent(sessionId)
-    if (sessionAgent) {
-      return sessionAgent
-    }
-
-    const sessionModel = await getSessionModel(sessionId)
-    if (sessionModel) {
-      return undefined
-    }
-
-    if (!channelId) {
-      return undefined
-    }
-    return getChannelAgent(channelId)
-  })()
+  const agentPreference = agent || await resolveAgentPreference({ sessionId, channelId })
 
   if (getClient instanceof Error) {
     return { agentPreference: agentPreference || undefined, agents: [] }

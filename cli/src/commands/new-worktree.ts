@@ -51,7 +51,7 @@ import {
 import { WORKTREE_PREFIX } from './merge-worktree.js'
 import type { AutocompleteContext } from './types.js'
 import * as errore from 'errore'
-import { copyCurrentSessionModel } from './model.js'
+import { copySessionPreferences } from './model.js'
 
 const logger = createLogger(LogPrefix.WORKTREE)
 async function resolveRequestedWorktreeBaseRef({
@@ -745,7 +745,10 @@ async function handleWorktreeInThread({
         return
       }
 
-      await copyCurrentSessionModel({
+      // No system prompt copy: OpenCode's env block (cwd) precedes the kimaki
+      // system prompt, so a fork into another directory never shares the
+      // source cache prefix. The fork pins its own prompt on its first turn.
+      await copySessionPreferences({
         sourceSessionId,
         targetSessionId: forkedSession.id,
         channelId: parent.id,

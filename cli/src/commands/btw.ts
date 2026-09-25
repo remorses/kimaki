@@ -25,7 +25,9 @@ import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js
 import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
-import { copyCurrentSessionModel } from './model.js'
+import { copySessionPreferences } from './model.js'
+import { copySessionSystemPrompt } from '../system-message.js'
+import { OpenCodeSdkError } from '../errors.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.FORK)
@@ -73,49 +75,89 @@ export async function forkSessionToBtwThread({
     return new Error('Could not resolve parent text channel')
   }
 
-  // Fork must succeed before creating the Discord thread to avoid orphan threads
-  const forkResponse = await getClientResult().session.fork({ sessionID: sessionId, directory: sdkDirectory })
-  if (!forkResponse.data) {
-    return new Error('Failed to fork session')
+  // Fork and thread creation are independent round trips, so run them together.
+  // If either side fails, remove whichever side succeeded.
+  const [forkSettled, threadSettled] = await Promise.allSettled([
+    getClientResult().session.fork({ sessionID: sessionId, directory: sdkDirectory }),
+    textChannel.threads.create({
+      name: `btw: ${prompt}`.slice(0, 100),
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      reason: `btw fork from session ${sessionId}`,
+    }),
+  ])
+  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value.data : undefined
+  const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value : undefined
+  const cleanup = async () => {
+    await Promise.all([
+      createdThread?.delete('btw fork setup failed').catch((error) => {
+        logger.warn(`Could not delete orphan btw thread ${createdThread.id}:`, error)
+      }),
+      forkedSession && getClientResult()
+        .session.delete({ sessionID: forkedSession.id, directory: sdkDirectory })
+        .catch((error) => {
+          logger.warn(`Could not delete orphan btw session ${forkedSession.id}:`, error)
+        }),
+    ])
   }
-  const forkedSession = forkResponse.data
+  if (!forkedSession) {
+    await cleanup()
+    const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkSettled.value.error
+    return new OpenCodeSdkError({ operation: 'session.fork', cause })
+  }
+  if (!createdThread) {
+    await cleanup()
+    return new Error('Failed to create the btw thread', {
+      cause: threadSettled.status === 'rejected' ? threadSettled.reason : undefined,
+    })
+  }
+  const thread = createdThread
   const channelId = sourceThread.parentId || sourceThread.id
+  const sourceThreadLink = `<#${sourceThread.id}>`
 
-  await copyCurrentSessionModel({
-    sourceSessionId: sessionId,
-    targetSessionId: forkedSession.id,
-    channelId,
-    appId,
-    getClient: getClientResult,
-    directory: sdkDirectory,
-  })
-
-  const thread = await textChannel.threads.create({
-    name: `btw: ${prompt}`.slice(0, 100),
-    autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-    reason: `btw fork from session ${sessionId}`,
-  })
-
-  // DB mapping must complete before user-visible actions so the thread is routable
-  await setThreadSession(thread.id, forkedSession.id)
-  const sourceWorkspace = await getThreadWorktreeOrWorkspace(sourceThread.id)
-  if (sourceWorkspace?.status === 'ready' && sourceWorkspace.workspace_directory) {
-    await createPendingWorkspace({
-      threadId: thread.id,
-      workspaceType: sourceWorkspace.workspace_type,
-      workspaceName: sourceWorkspace.workspace_name ?? '',
-      projectDirectory,
-    })
-    await setWorkspaceReady({
-      threadId: thread.id,
-      workspaceId: sourceWorkspace.workspace_id ?? undefined,
-      workspaceDirectory: sourceWorkspace.workspace_directory,
+  // The fork must run with the source agent, model and pinned system prompt,
+  // so its request prefix is byte-identical and hits the source prompt cache.
+  // `false` (source not pinned yet) is the only fallback; I/O errors fail setup.
+  const [, copiedSystem] = await Promise.all([
+    copySessionPreferences({
+      sourceSessionId: sessionId,
+      targetSessionId: forkedSession.id,
+      channelId,
+      appId,
+      getClient: getClientResult,
+      directory: sdkDirectory,
+    }),
+    copySessionSystemPrompt({
+      sourceSessionId: sessionId,
+      targetSessionId: forkedSession.id,
+    }),
+  ])
+  if (copiedSystem instanceof Error) {
+    await cleanup()
+    return new Error(`Could not copy the source system prompt to the fork: ${copiedSystem.message}`, {
+      cause: copiedSystem,
     })
   }
 
-  // Parallelize: member add and status message are independent best-effort actions
-  const sourceThreadLink = `<#${sourceThread.id}>`
   await Promise.all([
+    // DB mapping must complete before dispatch so the thread is routable
+    (async () => {
+      await setThreadSession(thread.id, forkedSession.id)
+      const sourceWorkspace = await getThreadWorktreeOrWorkspace(sourceThread.id)
+      if (sourceWorkspace?.status !== 'ready' || !sourceWorkspace.workspace_directory) {
+        return
+      }
+      await createPendingWorkspace({
+        threadId: thread.id,
+        workspaceType: sourceWorkspace.workspace_type,
+        workspaceName: sourceWorkspace.workspace_name ?? '',
+        projectDirectory,
+      })
+      await setWorkspaceReady({
+        threadId: thread.id,
+        workspaceId: sourceWorkspace.workspace_id ?? undefined,
+        workspaceDirectory: sourceWorkspace.workspace_directory,
+      })
+    })(),
     thread.members.add(userId).catch((error) => {
       logger.warn('Could not add fork member:', error)
     }),
@@ -126,7 +168,7 @@ export async function forkSessionToBtwThread({
   ])
 
   logger.log(
-    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId})`,
+    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId}), system prompt ${copiedSystem ? 'reused' : 'regenerated'}`,
   )
 
   // Parent context stays in the user prompt only. Do NOT pass parentSessionId
@@ -152,7 +194,9 @@ export async function forkSessionToBtwThread({
     appId,
     sessionId: forkedSession.id,
   })
-  await runtime.enqueueIncoming({
+  // Not awaited: the caller confirms in the source thread right away while the
+  // runtime resolves preferences and dispatches. Failures are reported in the fork.
+  void runtime.enqueueIncoming({
     prompt: wrappedPrompt,
     agent,
     images,

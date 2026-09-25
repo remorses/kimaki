@@ -4,19 +4,27 @@
 // Keep per-message data out of the system prompt so prompt caching can reuse
 // the same session prefix across turns.
 //
-// session.command has no `system` field in the OpenCode SDK, so kimaki persists
-// the system prompt under <dataDir>/session-system/<sessionId>.txt and the
-// context-awareness plugin copies it onto user messages that arrive without one
-// (command path). promptAsync still passes system directly.
+// The system prompt is pinned per session under
+// <dataDir>/session-system-pinned/<sessionId>.txt on the first turn and sent
+// unchanged on every later turn, so the provider prompt cache prefix stays
+// valid. Channel topic, agent list and kimaki prompt text changes therefore
+// reach new sessions only; data that must change mid-session goes into the
+// per-turn synthetic context. session.command has no `system` field, so the
+// context-awareness plugin copies the pinned file onto command user messages.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { getDataDir } from './config.js'
 import { store } from './store.js'
 import { SESSION_SEARCH_DEFAULT_DAYS } from './session-search.js'
+import { FilesystemOperationError } from './errors.js'
 
-/** Subfolder under the kimaki data dir for session system prompt side-channel files. */
-export const SESSION_SYSTEM_PROMPT_DIR = 'session-system'
+/**
+ * Subfolder for pinned session system prompts. Not `session-system`: the old
+ * command path rewrote those files on every command, so they may differ from
+ * the prompt last sent and must not be trusted as pinned.
+ */
+export const SESSION_SYSTEM_PROMPT_DIR = 'session-system-pinned'
 
 /** Stable marker present in every kimaki system prompt; used by tests and plugins. */
 export const KIMAKI_SYSTEM_PROMPT_MARKER = 'via kimaki.dev'
@@ -95,6 +103,89 @@ export async function deleteSessionSystemPrompt({
     }
     throw error
   })
+}
+
+/**
+ * Return the pinned system prompt for a session. The first turn pins a freshly
+ * generated one. The system prompt precedes all history in the provider prompt
+ * cache prefix, so it must never change mid-session. Data that changes later
+ * (identity after a fork, user, worktree) goes into per-turn synthetic parts.
+ */
+export async function resolveSessionSystemPrompt({
+  sessionId,
+  generate,
+  dataDir = getDataDir(),
+}: {
+  sessionId: string
+  generate: () => string | Promise<string>
+  dataDir?: string
+}): Promise<FilesystemOperationError | string> {
+  const pinned = await readSessionSystemPrompt({ sessionId, dataDir }).catch(
+    (e) => new FilesystemOperationError({ operation: 'readSessionSystemPrompt', cause: e }),
+  )
+  if (pinned instanceof Error) return pinned
+  if (pinned) return pinned
+  const system = await generate()
+  const written = await writeSessionSystemPrompt({ sessionId, system, dataDir }).catch(
+    (e) => new FilesystemOperationError({ operation: 'writeSessionSystemPrompt', cause: e }),
+  )
+  if (written instanceof Error) return written
+  return system
+}
+
+/**
+ * Pin the source session's system prompt on a forked session so the fork sends
+ * a byte-identical prefix and reuses the source prompt cache. Returns false
+ * when the source has no pinned prompt yet; the fork then pins its own.
+ */
+export async function copySessionSystemPrompt({
+  sourceSessionId,
+  targetSessionId,
+  dataDir = getDataDir(),
+}: {
+  sourceSessionId: string
+  targetSessionId: string
+  dataDir?: string
+}): Promise<FilesystemOperationError | boolean> {
+  const source = await readSessionSystemPrompt({ sessionId: sourceSessionId, dataDir }).catch(
+    (e) => new FilesystemOperationError({ operation: 'readSessionSystemPrompt', cause: e }),
+  )
+  if (source instanceof Error) return source
+  if (!source) return false
+  const written = await writeSessionSystemPrompt({ sessionId: targetSessionId, system: source, dataDir }).catch(
+    (e) => new FilesystemOperationError({ operation: 'writeSessionSystemPrompt', cause: e }),
+  )
+  if (written instanceof Error) return written
+  return true
+}
+
+const SESSION_ID_LINE_PREFIX = 'Your current OpenCode session ID is: '
+const PARENT_SESSION_ID_LINE_PREFIX = 'Your parent OpenCode session ID is: '
+
+function getParentSessionInstructions(parentSessionId: string) {
+  return `${PARENT_SESSION_ID_LINE_PREFIX}${parentSessionId}\nYou can send a message back to the parent session with:\nkimaki send --session ${parentSessionId} --prompt 'your update here' --agent <current_agent>\nDo NOT message the parent session unless the user explicitly asks you to.`
+}
+
+/** True when the pinned system prompt already names this parent session. */
+export function systemPromptHasParentSession({
+  system,
+  parentSessionId,
+}: {
+  system: string
+  parentSessionId: string
+}) {
+  return system.split('\n').includes(`${PARENT_SESSION_ID_LINE_PREFIX}${parentSessionId}`)
+}
+
+/** False when a fork reuses the source session's pinned system prompt. */
+export function isSystemPromptForSession({
+  system,
+  sessionId,
+}: {
+  system: string
+  sessionId: string
+}) {
+  return system.split('\n').includes(`${SESSION_ID_LINE_PREFIX}${sessionId}`)
 }
 
 function getCritiqueInstructions(sessionId: string) {
@@ -403,9 +494,15 @@ export function getOpencodePromptContext({
   worktree,
   currentAgent,
   worktreeChanged,
+  systemPromptFromSourceSession,
+  parentSessionId,
 }: {
   sessionId?: string
   threadId?: string
+  /** Set only when the pinned system prompt does not name this parent yet. */
+  parentSessionId?: string
+  /** Fork reuses the source session's system prompt, so its IDs are stale. */
+  systemPromptFromSourceSession?: boolean
   username?: string
   userId?: string
   sourceMessageId?: string
@@ -440,6 +537,12 @@ export function getOpencodePromptContext({
     ...(threadId
       ? [`Your current Discord thread ID is: ${threadId}`]
       : []),
+    ...(systemPromptFromSourceSession && (sessionId || threadId)
+      ? [
+          'This session was forked. The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every kimaki command (--session, --parent-session, --thread, session archive).',
+        ]
+      : []),
+    ...(parentSessionId ? [getParentSessionInstructions(parentSessionId)] : []),
   ]
   const identityReminder = identityLines.length > 0
     ? `<system-reminder>\n${identityLines.join('\n')}\n</system-reminder>`
@@ -526,7 +629,7 @@ export function getOpencodeSystemMessage({
   // Opt-in only. Empty by default so /btw, task subagents, and normal sessions
   // keep the same system prompt prefix as their parent for cache hits.
   const parentSessionContext = parentSessionId
-    ? `\nYour parent OpenCode session ID is: ${parentSessionId}\nYou can send a message back to the parent session with:\nkimaki send --session ${parentSessionId} --prompt 'your update here' --agent <current_agent>\nDo NOT message the parent session unless the user explicitly asks you to.`
+    ? `\n${getParentSessionInstructions(parentSessionId)}`
     : ''
   return `
 The user is reading your messages from inside Discord, via kimaki.dev
@@ -556,7 +659,7 @@ interface BashToolInput {
 \`description\` is shown in Discord when the bash command is longer than 50 characters.
 \`hasSideEffect\` distinguishes essential bash calls from read-only ones in low-verbosity mode.
 
-Your current OpenCode session ID is: ${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${parentSessionContext}
+${SESSION_ID_LINE_PREFIX}${sessionId}${channelId ? `\nYour current Discord channel ID is: ${channelId}` : ''}${threadId ? `\nYour current Discord thread ID is: ${threadId}` : ''}${guildId ? `\nYour current Discord guild ID is: ${guildId}` : ''}${parentSessionContext}
 
 Per-turn Discord metadata like the current user, current agent, and Discord thread title is delivered in synthetic user message parts.
 
