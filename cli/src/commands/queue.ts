@@ -19,6 +19,7 @@ import {
 import {
   getOrCreateRuntime,
   getRuntime,
+  type ThreadSessionRuntime,
 } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { asSubtext, extractQueueSuffix, QUEUE_PREFIX } from '../message-formatting.js'
@@ -95,6 +96,35 @@ function buildQueueRemoveRow({
       .setLabel('Remove from queue')
       .setStyle(ButtonStyle.Secondary),
   )
+}
+
+// Reply "Queued message" and remember the ack so the drain indicator replies to it.
+async function replyQueuedAck({
+  command,
+  runtime,
+  threadId,
+  queueId,
+  position,
+}: {
+  command: CommandContext['command']
+  runtime: ThreadSessionRuntime
+  threadId: string
+  queueId: string
+  position?: number
+}): Promise<void> {
+  await command.reply({
+    content: asSubtext(`Queued message${position ? ` (position ${position})` : ''}`),
+    components: [buildQueueRemoveRow({ threadId, queueId })],
+    flags: SILENT_MESSAGE_FLAGS,
+  })
+  const ack = await command.fetchReply().catch((error: unknown) => {
+    return new Error('Failed to fetch queue ack message', { cause: error })
+  })
+  if (ack instanceof Error) {
+    logger.error(`[QUEUE] ${ack.message}`)
+    return
+  }
+  await runtime.setQueueAckMessageId({ queueId, messageId: ack.id })
 }
 
 export async function handleQueueRemoveButton(
@@ -220,16 +250,12 @@ export async function handleQueueCommand({
   })
 
   if (enqueueResult.queued && enqueueResult.queueId) {
-    const responseText = asSubtext(`Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`)
-    await command.reply({
-      content: responseText,
-      components: [
-        buildQueueRemoveRow({
-          threadId: thread.id,
-          queueId: enqueueResult.queueId,
-        }),
-      ],
-      flags: SILENT_MESSAGE_FLAGS,
+    await replyQueuedAck({
+      command,
+      runtime,
+      threadId: thread.id,
+      queueId: enqueueResult.queueId,
+      position: enqueueResult.position,
     })
     return
   }
@@ -411,16 +437,12 @@ export async function handleQueueCommandCommand({
   })
 
   if (enqueueResult.queued && enqueueResult.queueId) {
-    const responseText = asSubtext(`Queued message${enqueueResult.position ? ` (position ${enqueueResult.position})` : ''}`)
-    await command.reply({
-      content: responseText,
-      components: [
-        buildQueueRemoveRow({
-          threadId: thread.id,
-          queueId: enqueueResult.queueId,
-        }),
-      ],
-      flags: SILENT_MESSAGE_FLAGS,
+    await replyQueuedAck({
+      command,
+      runtime,
+      threadId: thread.id,
+      queueId: enqueueResult.queueId,
+      position: enqueueResult.position,
     })
     logger.log(
       `[QUEUE] User ${command.user.displayName} queued command /${commandName} in thread ${channel.id}`,

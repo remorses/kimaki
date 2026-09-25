@@ -54,7 +54,6 @@ import {
   formatPart,
   formatTaskToolTitle,
   planAssistantTurnFlush,
-  QUEUE_PREFIX,
   sessionPartContent,
   sessionPartKind,
   shouldLeadWithBlankLine,
@@ -3218,15 +3217,7 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const displayText = next.command
-      ? `/${next.command.name}`
-      : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
-    if (displayText.trim()) {
-      await sendThreadMessage(
-        this.thread,
-        `${QUEUE_PREFIX}**${next.username}:** ${displayText}`,
-      )
-    }
+    await this.sendQueueDrainIndicator(next)
 
     this.markQuestionQueueHandoffStarted(sessionId)
     await this.submitViaOpencodeQueue(next)
@@ -4330,6 +4321,60 @@ export class ThreadSessionRuntime {
     })
   }
 
+  /** Record the /queue ack message so the drain indicator can reply to it. */
+  async setQueueAckMessageId({
+    queueId,
+    messageId,
+  }: {
+    queueId: string
+    messageId: string
+  }): Promise<void> {
+    await this.dispatchAction(async () => {
+      const item = this.state?.queueItems.find((i) => i.queueId === queueId)
+      if (!item) {
+        return
+      }
+      const updated = { ...item, queueAckMessageId: messageId }
+      const persistResult = await updateThreadQueueItemPayload({
+        queueId,
+        payloadJson: JSON.stringify(updated),
+      }).catch((error) => {
+        return new Error('Failed to update persisted queue item', { cause: error })
+      })
+      if (persistResult instanceof Error) {
+        logger.error(`[QUEUE] ${persistResult.message} ${queueId}`)
+      }
+      threadState.updateQueueItemById(this.threadId, queueId, () => updated)
+    })
+  }
+
+  // Silent reply to the message that queued the item. The thread starter
+  // message lives in the parent channel, so it cannot be a reply target.
+  private async sendQueueDrainIndicator(item: QueuedMessage): Promise<void> {
+    const replyTarget = item.queueAckMessageId
+      ?? (item.sourceMessageId !== this.threadId ? item.sourceMessageId : undefined)
+    const content = (() => {
+      if (replyTarget) {
+        return asSubtext('Executing queued prompt')
+      }
+      const preview = item.command
+        ? `/${item.command.name}`
+        : item.prompt.replace(/\s+/g, ' ').trim().slice(0, 150)
+      return asSubtext(`Executing queued prompt from ${item.username}: ${preview}`)
+    })()
+    const sendResult = await this.thread.send({
+      content,
+      flags: SILENT_MESSAGE_FLAGS,
+      allowedMentions: { parse: [], repliedUser: false },
+      ...(replyTarget
+        ? { reply: { messageReference: replyTarget, failIfNotExists: false } }
+        : {}),
+    }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    if (sendResult instanceof Error) {
+      discordLogger.error('Failed to send queue drain indicator:', sendResult)
+    }
+  }
+
   // ── Queue Drain ─────────────────────────────────────────────
 
   /**
@@ -4375,15 +4420,7 @@ export class ThreadSessionRuntime {
     // Show queued message indicator only for messages that actually waited
     // behind a running request — not for the first immediate dispatch.
     if (showIndicator) {
-      const displayText = next.command
-        ? `/${next.command.name}`
-        : `${next.prompt.slice(0, 150)}${next.prompt.length > 150 ? '...' : ''}`
-      if (displayText.trim()) {
-        await sendThreadMessage(
-          this.thread,
-          `${QUEUE_PREFIX}**${next.username}:** ${displayText}`,
-        )
-      }
+      await this.sendQueueDrainIndicator(next)
     }
 
     // Start dispatch (detached — does not block the action queue).
