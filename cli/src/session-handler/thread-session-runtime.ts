@@ -44,7 +44,7 @@ import {
   NOTIFY_MESSAGE_FLAGS,
   raceDiscordRename,
   DISCORD_THREAD_RENAME_TIMEOUT_MS,
-  resolveThreadFooterNotifyUserId,
+  resolveThreadFooterMentionUserId,
   resolveWorkingDirectory,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
@@ -5318,27 +5318,17 @@ export class ThreadSessionRuntime {
       ? didLatestUserTurnUseSleepTool({ events: this.eventBuffer, sessionId })
       : false
     const shouldNotifyUser = !hasQueuedMessage && !didUseSleepTool
-    const notifyUserId = store.getState().footerNotificationsEnabled && shouldNotifyUser
-      ? await resolveThreadFooterNotifyUserId({
+    const mentionUserId = store.getState().footerMentionsEnabled && shouldNotifyUser
+      ? await resolveThreadFooterMentionUserId({
           sessionUserId: this.state?.sessionUserId,
           thread: this.thread,
         })
       : undefined
+    const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
     const footerText = asSubtext(
-      `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`,
+      `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`,
     )
     this.stopTyping()
-
-    // Re-add before the footer so the footer stays the last message.
-    if (notifyUserId) {
-      const renotifyResult = await renotifyThreadMember({
-        thread: this.thread,
-        userId: notifyUserId,
-      })
-      if (renotifyResult instanceof Error) {
-        discordLogger.warn(`[FOOTER] Failed to re-add thread member: ${renotifyResult.message}`)
-      }
-    }
 
     await sendThreadMessage(this.thread, footerText, {
       flags: shouldNotifyUser ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS,

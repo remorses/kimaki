@@ -67,9 +67,9 @@ e2eTest('queue advanced: footer emission', () => {
   )
 
   test(
-    'enable-footer-notifications mentions the thread creator',
+    'enable-footer-mentions mentions the thread creator',
     async () => {
-      store.setState({ footerNotificationsEnabled: true })
+      store.setState({ footerMentionsEnabled: true })
       try {
         await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
           content: 'Reply with exactly: footer-with-mention',
@@ -99,7 +99,7 @@ e2eTest('queue advanced: footer emission', () => {
           -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
         `)
       } finally {
-        store.setState({ footerNotificationsEnabled: false })
+        store.setState({ footerMentionsEnabled: false })
       }
     },
     8_000,
