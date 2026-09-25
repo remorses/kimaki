@@ -32,7 +32,7 @@ import {
   getDefaultModel,
   resolveDisplayedModelId,
 } from '../session-handler/model-utils.js'
-import { findAgentByName } from '../session-handler/agent-utils.js'
+import { findAgentByName, resolveAgentPreference } from '../session-handler/agent-utils.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
 import { getThinkingValuesForModel, thinkingProvidersFromListedModels } from '../thinking-utils.js'
 import {
@@ -285,59 +285,17 @@ export async function ensureSessionPreferencesSnapshot({
   )
 }
 
-const LAST_USER_AGENT_PAGE_SIZE = 50
-const LAST_USER_AGENT_MAX_PAGES = 10
-
 /**
- * Agent of the newest user message in a session, paging back from the end.
- * Long agentic turns hold many assistant messages after one user message.
- */
-async function getLastUserMessageAgent({
-  getClient,
-  sessionId,
-  directory,
-  before,
-  page = 0,
-}: {
-  getClient: Exclude<Awaited<ReturnType<typeof initializeOpencodeForDirectory>>, Error>
-  sessionId: string
-  directory?: string
-  before?: string
-  page?: number
-}): Promise<OpenCodeSdkError | string | undefined> {
-  if (page >= LAST_USER_AGENT_MAX_PAGES) return undefined
-  const response = await (async () => {
-    return getClient().session.messages({
-      sessionID: sessionId,
-      directory,
-      limit: LAST_USER_AGENT_PAGE_SIZE,
-      before,
-    })
-  })().catch((cause) => new OpenCodeSdkError({ operation: 'session.messages', cause }))
-  if (response instanceof Error) return response
-  if (response.error || !response.data) {
-    return new OpenCodeSdkError({ operation: 'session.messages', cause: response.error })
-  }
-  const newestUser = response.data
-    .map((message) => message.info)
-    .filter((info) => info.role === 'user')
-    .sort((a, b) => b.time.created - a.time.created)[0]
-  if (newestUser?.role === 'user') return newestUser.agent
-  const cursor = response.response.headers.get('X-Next-Cursor')
-  if (!cursor) return undefined
-  return getLastUserMessageAgent({ getClient, sessionId, directory, before: cursor, page: page + 1 })
-}
-
-/**
- * Copy the agent, model and variant onto a forked session. The fork must run
- * the same agent and model as the source: a different agent changes tools and
- * prompts, which busts the prompt cache. The agent comes from the fork's own
- * history (the fork point, also right for /fork at an earlier message), with
- * the source DB preference as fallback.
+ * Copy the agent, model and variant onto a forked session. Kimaki re-selects
+ * the agent from its DB each turn, so without this the fork switches to the
+ * default agent. The agent comes from the forked session info (OpenCode copies
+ * the selected agent at the fork point), with the source DB preference as
+ * fallback.
  */
 export async function copySessionPreferences({
   sourceSessionId,
   targetSessionId,
+  forkedAgent,
   channelId,
   appId,
   getClient,
@@ -345,15 +303,14 @@ export async function copySessionPreferences({
 }: {
   sourceSessionId: string
   targetSessionId: string
+  /** `agent` of the SessionInfo returned by session.fork. */
+  forkedAgent?: string
   channelId?: string
   appId?: string
   getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
   directory?: string
 }) {
-  const [historyAgent, preferredAgent, modelInfo, variant] = await Promise.all([
-    getClient instanceof Error
-      ? undefined
-      : getLastUserMessageAgent({ getClient, sessionId: targetSessionId, directory }),
+  const [preferredAgent, modelInfo, variant] = await Promise.all([
     resolveAgentPreference({ sessionId: sourceSessionId, channelId }),
     getCurrentModelInfo({
       sessionId: sourceSessionId,
@@ -368,12 +325,7 @@ export async function copySessionPreferences({
       appId,
     }),
   ])
-  if (historyAgent instanceof Error) {
-    modelLogger.warn(
-      `[MODEL] Could not read fork history agent for ${targetSessionId}, using DB preference: ${historyAgent.message}`,
-    )
-  }
-  const agent = (historyAgent instanceof Error ? undefined : historyAgent) || preferredAgent
+  const agent = forkedAgent || preferredAgent
   if (agent) {
     await setSessionAgent(targetSessionId, agent)
   }

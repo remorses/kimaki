@@ -4,11 +4,47 @@ import { describe, expect, test } from 'vitest'
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
+  isSystemPromptForSession,
   KIMAKI_INSTRUCTION_ENTRY_KEY,
   KIMAKI_SYSTEM_PROMPT_MARKER,
+  systemPromptHasParentSession,
 } from './system-message.js'
 
 describe('system-message', () => {
+  // Regression: forks must keep the inherited kimaki instruction entry (source
+  // IDs) for prompt-cache reuse, and get their own IDs in per-turn context.
+  test('detects inherited fork instructions and sends new identity per turn', () => {
+    const sourceSystem = getOpencodeSystemMessage({ sessionId: 'ses_source', threadId: 'thread_source' })
+    expect(isSystemPromptForSession({ system: sourceSystem, sessionId: 'ses_source' })).toBe(true)
+    expect(isSystemPromptForSession({ system: sourceSystem, sessionId: 'ses_fork' })).toBe(false)
+    expect(systemPromptHasParentSession({ system: sourceSystem, parentSessionId: 'ses_parent' })).toBe(false)
+    expect(
+      systemPromptHasParentSession({
+        system: getOpencodeSystemMessage({ sessionId: 'ses_child', parentSessionId: 'ses_parent' }),
+        parentSessionId: 'ses_parent',
+      }),
+    ).toBe(true)
+    expect(
+      getOpencodePromptContext({
+        sessionId: 'ses_fork',
+        threadId: 'thread_fork',
+        systemPromptFromSourceSession: true,
+        parentSessionId: 'ses_parent_added_later',
+      }),
+    ).toMatchInlineSnapshot(`
+      "<system-reminder>
+      Your current OpenCode session ID is: ses_fork
+      Your current Discord thread ID is: thread_fork
+      This session was forked. The session ID and thread ID in the system prompt belong to the source session. Use the IDs above instead in every kimaki command (--session, --parent-session, --thread, session archive).
+      Your parent OpenCode session ID is: ses_parent_added_later
+      You can send a message back to the parent session with:
+      kimaki send --session ses_parent_added_later --prompt 'your update here' --agent <current_agent>
+      Do NOT message the parent session unless the user explicitly asks you to.
+      </system-reminder>
+      "
+    `)
+  })
+
   test('instruction entry key is a valid OpenCode api key', () => {
     expect(KIMAKI_INSTRUCTION_ENTRY_KEY).toMatch(/^[a-z0-9][a-z0-9._-]*$/)
   })
