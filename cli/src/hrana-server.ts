@@ -297,7 +297,7 @@ export async function evictExistingInstance({
     ? body.wrapperPid
     : null
 
-  hranaLogger.log(`Evicting existing kimaki process (PID: ${targetPid}) on port ${port}`)
+  hranaLogger.log(`Evicting existing kimaki process (PID: ${targetPid}, wrapper: ${wrapperPid ?? 'none'}) on port ${port}`)
   const killResult = errore.try(
     () => {
       process.kill(wrapperPid ?? targetPid, 'SIGTERM')

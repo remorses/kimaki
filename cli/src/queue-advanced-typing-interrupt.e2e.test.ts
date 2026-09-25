@@ -106,9 +106,9 @@ e2eTest('queue advanced: typing interrupt', () => {
         "--- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-setup
         --- from: assistant (TestBot)
-        > *using deterministic-provider/deterministic-v2*
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
+        -# *using deterministic-provider/deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-advanced-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
         --- from: assistant (TestBot)
@@ -116,8 +116,8 @@ e2eTest('queue advanced: typing interrupt', () => {
         --- from: user (queue-advanced-tester)
         Reply with exactly: typing-stop-interrupt-final
         --- from: assistant (TestBot)
-        > ok
-        > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const timeline = await th.text({ showTyping: true })

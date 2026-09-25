@@ -6,7 +6,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
-import type { Message, Part } from '@opencode-ai/sdk/v2'
+import type { SessionMessageInfo } from '@opencode/client'
 import type { CommandContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { getThreadSession } from '../database.js'
@@ -17,6 +17,7 @@ import {
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { listAllMessages } from '../opencode-pagination.js'
+import { readV2AssistantToolPart } from '../message-formatting.js'
 
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -25,33 +26,28 @@ export function formatContextBreakdown({
   messages,
   lastAssistantId,
   inputTokens,
+  systemChars,
 }: {
-  messages: Array<{ info: Message; parts: Part[] }>
+  messages: SessionMessageInfo[]
   lastAssistantId: string
   inputTokens: number
+  // Kimaki-visible instructions. OpenCode base prompts are not exposed, so they land in other.
+  systemChars: number
 }): string | undefined {
   if (inputTokens <= 0) return undefined
-  const lastIndex = messages.findIndex((message) => message.info.id === lastAssistantId)
+  const lastIndex = messages.findIndex((message) => message.id === lastAssistantId)
   if (lastIndex < 0) return undefined
   const history = messages.slice(0, lastIndex)
-  const compactIndex = history.findLastIndex((message) =>
-    message.parts.some((part) => part.type === 'compaction'),
-  )
+  const compactIndex = history.findLastIndex((message) => message.type === 'compaction')
   const active = history.slice(compactIndex < 0 ? 0 : compactIndex + 1)
-  const system = [...active].reverse().find((message) =>
-    message.info.role === 'user' && message.info.system,
-  )
-  const systemChars = system?.info.role === 'user' ? system.info.system?.length ?? 0 : 0
   const toolChars = new Map<string, number>()
   for (const message of active) {
-    if (message.info.role !== 'assistant') continue
-    for (const part of message.parts) {
+    if (message.type !== 'assistant') continue
+    for (const part of message.content) {
       if (part.type !== 'tool') continue
-      const output = part.state.status === 'completed' && !part.state.time.compacted
-        ? part.state.output
-        : part.state.status === 'error' ? part.state.error : ''
-      const chars = JSON.stringify(part.state.input).length + output.length
-      toolChars.set(part.tool, (toolChars.get(part.tool) ?? 0) + chars)
+      const { input, output, error } = readV2AssistantToolPart(part)
+      const chars = JSON.stringify(input).length + (error ?? output).length
+      toolChars.set(part.name, (toolChars.get(part.name) ?? 0) + chars)
     }
   }
 
@@ -198,6 +194,7 @@ export async function handleContextUsageCommand({
     const modelID = model.id
     const providerID = model.providerID
     const totalTokens = tokens ? getTokenTotal(tokens) : 0
+    const inputTokens = tokens ? tokens.input + tokens.cache.read + tokens.cache.write : 0
 
     const totalCost = assistantMessages.reduce((sum, m) => {
       if (m.type === 'assistant') {
@@ -240,10 +237,22 @@ export async function handleContextUsageCommand({
       )
     }
 
+    const instructions = await client.session.instructions.entry
+      .list({ sessionID: sessionId })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.instructions.entry.list', cause: e }))
+    if (instructions instanceof Error) {
+      logger.error('[CONTEXT-USAGE] Failed to list instructions:', instructions)
+    }
+    const systemChars = instructions instanceof Error
+      ? 0
+      : instructions.reduce((total, entry) => {
+          return total + (typeof entry.value === 'string' ? entry.value.length : JSON.stringify(entry.value).length)
+        }, 0)
     const breakdown = formatContextBreakdown({
       messages,
-      lastAssistantId: lastAssistant.info.id,
+      lastAssistantId: lastAssistant.id,
       inputTokens,
+      systemChars,
     })
     if (breakdown) lines.push(breakdown)
 
