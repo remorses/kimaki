@@ -119,6 +119,8 @@ import {
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
+  isSystemPromptForSession,
+  systemPromptHasParentSession,
   KIMAKI_INSTRUCTION_ENTRY_KEY,
   type AgentInfo,
   type RepliedMessageContext,
@@ -2865,13 +2867,23 @@ export class ThreadSessionRuntime {
       }
       return fetched.topic?.trim() || undefined
     })()
-    const instructionsResult = await this.persistSessionSystemInstructions({
+    const instructionsResult = await this.resolveSessionSystemInstructions({
       client: getClient(),
       sessionId: session.id,
       agents: agentResult.agents,
       channelTopic,
     })
     if (instructionsResult instanceof Error) return instructionsResult
+    const systemPromptFromSourceSession = !isSystemPromptForSession({
+      system: instructionsResult,
+      sessionId: session.id,
+    })
+    const parentSessionIdMissingFromInstructions = (() => {
+      const parentSessionId = this.state?.parentSessionId
+      if (!parentSessionId) return undefined
+      if (systemPromptHasParentSession({ system: instructionsResult, parentSessionId })) return undefined
+      return parentSessionId
+    })()
     releaseCurrentThreadIngress()
     await this.sendNewSessionModelInfo({
       createdNewSession,
@@ -2883,6 +2895,12 @@ export class ThreadSessionRuntime {
       sessionId: session.id,
       prompt: input.prompt,
       syntheticContext: getOpencodePromptContext({
+        // Only forks need IDs here: their pinned instructions name the source.
+        sessionId: systemPromptFromSourceSession ? session.id : undefined,
+        threadId: systemPromptFromSourceSession ? this.thread.id : undefined,
+        systemPromptFromSourceSession,
+        // A parent set after the first turn is missing from pinned instructions.
+        parentSessionId: parentSessionIdMissingFromInstructions,
         username: input.username,
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
@@ -3965,8 +3983,8 @@ export class ThreadSessionRuntime {
   // ── Session Ensure ──────────────────────────────────────────
   // Creates or reuses the OpenCode session for this thread.
 
-  /** Session IDs with instructions already persisted by this runtime. */
-  private sessionSystemInstructionsWritten = new Set<string>()
+  /** Pinned kimaki instruction value per session, resolved once per runtime. */
+  private sessionSystemInstructions = new Map<string, string>()
 
   /** Cached per-session scheduled task info for the system message. */
   private scheduledTaskContextCache = new Map<
@@ -4014,7 +4032,13 @@ export class ThreadSessionRuntime {
     return context
   }
 
-  private async persistSessionSystemInstructions({
+  /**
+   * Kimaki instructions are pinned per session: written on the first turn,
+   * never rewritten. A changed entry would add a large superseding system
+   * message to history. Forks inherit the source entry from session.fork, so
+   * they keep it and get their new IDs in per-turn context instead.
+   */
+  private async resolveSessionSystemInstructions({
     client,
     sessionId,
     agents,
@@ -4024,8 +4048,28 @@ export class ThreadSessionRuntime {
     sessionId: string
     agents: AgentInfo[]
     channelTopic?: string
-  }) {
-    if (this.sessionSystemInstructionsWritten.has(sessionId)) return null
+  }): Promise<OpenCodeSdkError | string> {
+    const cached = this.sessionSystemInstructions.get(sessionId)
+    if (cached) return cached
+    const entries = await client.session.instructions.entry.list({
+      sessionID: sessionId,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'session.instructions.entry.list',
+      cause,
+    }))
+    if (entries instanceof Error) {
+      logger.warn(
+        `[SYSTEM INSTRUCTIONS] Failed to list for session ${sessionId}: ${entries.message}`,
+      )
+      return entries
+    }
+    const pinned = entries.find((entry) => {
+      return entry.key === KIMAKI_INSTRUCTION_ENTRY_KEY
+    })?.value
+    if (typeof pinned === 'string' && pinned) {
+      this.sessionSystemInstructions.set(sessionId, pinned)
+      return pinned
+    }
     const topic = channelTopic ?? await (async () => {
       if (this.thread.parent?.type === ChannelType.GuildText) {
         return this.thread.parent.topic?.trim() || undefined
@@ -4059,8 +4103,8 @@ export class ThreadSessionRuntime {
       )
       return result
     }
-    this.sessionSystemInstructionsWritten.add(sessionId)
-    return null
+    this.sessionSystemInstructions.set(sessionId, value)
+    return value
   }
 
   private async ensureSession({

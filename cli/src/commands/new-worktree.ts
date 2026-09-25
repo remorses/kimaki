@@ -783,12 +783,10 @@ async function handleWorktreeInThread({
         return
       }
 
-      // No system prompt copy: OpenCode's env block (cwd) precedes the kimaki
-      // system prompt, so a fork into another directory never shares the
-      // source cache prefix. The fork pins its own prompt on its first turn.
       await copySessionPreferences({
         sourceSessionId,
         targetSessionId: forkedSession.id,
+        forkedAgent: forkedSession.agent,
         channelId: parent.id,
         appId,
         getClient,

@@ -26,8 +26,6 @@ import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { copySessionPreferences } from './model.js'
-import { copySessionSystemPrompt } from '../system-message.js'
-import { OpenCodeSdkError } from '../errors.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import { extractQueueSuffix } from '../message-formatting.js'
 
@@ -84,62 +82,57 @@ export async function forkSessionToBtwThread({
     return new Error('Could not resolve parent text channel')
   }
 
-  // Fork must succeed before creating the Discord thread to avoid orphan threads
-  const messages = await getClientResult().message.list({
-    sessionID: sessionId,
-    limit: 1,
-    order: 'desc',
-  }).catch((error: unknown) => {
-    return new Error('Failed to load session messages for fork', { cause: error })
-  })
-  if (messages instanceof Error) return messages
-  const boundaryMessageID = messages.data[0]?.id
-  if (!boundaryMessageID) {
-    return new Error('Failed to fork session: no messages to copy')
+  // Fork and thread creation are independent round trips, so run them together.
+  // If either side fails, remove whichever side succeeded.
+  // session.fork copies messages, agent, model and the kimaki instruction
+  // entry, so the fork keeps the source prompt prefix and cache.
+  const [forkSettled, threadSettled] = await Promise.allSettled([
+    getClientResult().session.fork({
+      sessionID: sessionId,
+      boundary: { type: 'through' },
+    }),
+    textChannel.threads.create({
+      name: `btw: ${prompt}`.slice(0, 100),
+      autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      reason: `btw fork from session ${sessionId}`,
+    }),
+  ])
+  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value : undefined
+  const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value : undefined
+  if (!forkedSession || !createdThread) {
+    await Promise.all([
+      createdThread?.delete('btw fork setup failed').catch((error) => {
+        logger.warn(`Could not delete orphan btw thread ${createdThread.id}:`, error)
+      }),
+      forkedSession && getClientResult()
+        .session.remove({ sessionID: forkedSession.id })
+        .catch((error: unknown) => {
+          logger.warn(`Could not delete orphan btw session ${forkedSession.id}:`, error)
+        }),
+    ])
+    if (forkSettled.status === 'rejected') {
+      return new Error('Failed to fork session', { cause: forkSettled.reason })
+    }
+    return new Error('Failed to create the btw thread', {
+      cause: threadSettled.status === 'rejected' ? threadSettled.reason : undefined,
+    })
   }
-  const forkedSession = await getClientResult().session.fork({
-    sessionID: sessionId,
-    boundary: { type: 'through' },
-  }).catch((error: unknown) => {
-    return new Error('Failed to fork session', { cause: error })
-  })
-  if (forkedSession instanceof Error) return forkedSession
+  const thread = createdThread
   const channelId = sourceThread.parentId || sourceThread.id
   const sourceThreadLink = `<#${sourceThread.id}>`
 
-  // The fork must run with the source agent, model and pinned system prompt,
-  // so its request prefix is byte-identical and hits the source prompt cache.
-  // `false` (source not pinned yet) is the only fallback; I/O errors fail setup.
-  const copyStartedAt = Date.now()
-  const [, copiedSystem, history] = await Promise.all([
+  await Promise.all([
+    // Kimaki re-selects the agent from its DB on every turn. Copy the fork
+    // point agent too, or the fork switches to the default agent.
     copySessionPreferences({
       sourceSessionId: sessionId,
       targetSessionId: forkedSession.id,
+      forkedAgent: forkedSession.agent,
       channelId,
       appId,
       getClient: getClientResult,
       directory: sdkDirectory,
     }),
-    copySessionSystemPrompt({
-      sourceSessionId: sessionId,
-      targetSessionId: forkedSession.id,
-    }),
-    getClientResult().session.messages({
-      sessionID: forkedSession.id,
-      directory: sdkDirectory,
-      limit: 10,
-    }).catch((cause) => new OpenCodeSdkError({ operation: 'session.messages', cause })),
-  ])
-  if (copiedSystem instanceof Error) {
-    await cleanup()
-    return new Error(`Could not copy the source system prompt to the fork: ${copiedSystem.message}`, {
-      cause: copiedSystem,
-    })
-  }
-
-  const copyMs = Date.now() - copyStartedAt
-  const routeStartedAt = Date.now()
-  await Promise.all([
     // DB mapping must complete before dispatch so the thread is routable
     (async () => {
       await setThreadSession(thread.id, forkedSession.id)
@@ -204,16 +197,6 @@ export async function forkSessionToBtwThread({
     appId,
     sessionId: forkedSession.id,
   })
-  if (history instanceof Error || history.error) {
-    logger.warn('Could not load copied messages for btw cache diagnostics:', history)
-  } else {
-    const last = history.data?.findLast(({ info }) =>
-      info.role === 'assistant' && typeof info.time.completed === 'number',
-    )?.info
-    if (last?.role === 'assistant') {
-      runtime.seedForkPromptCacheBaseline(last)
-    }
-  }
   // Not awaited: the caller confirms in the source thread right away while the
   // runtime resolves preferences and dispatches. Failures are reported in the fork.
   void runtime.enqueueIncoming({

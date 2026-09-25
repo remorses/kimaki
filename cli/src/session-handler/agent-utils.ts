@@ -30,6 +30,30 @@ export function findAgentByName<T extends { id?: string; name: string }>({
   })
 }
 
+/** Unvalidated agent preference: session agent, else channel agent unless a session model is pinned. */
+export async function resolveAgentPreference({
+  sessionId,
+  channelId,
+}: {
+  sessionId: string
+  channelId?: string
+}): Promise<string | undefined> {
+  const sessionAgent = await getSessionAgent(sessionId)
+  if (sessionAgent) {
+    return sessionAgent
+  }
+
+  const sessionModel = await getSessionModel(sessionId)
+  if (sessionModel) {
+    return undefined
+  }
+
+  if (!channelId) {
+    return undefined
+  }
+  return getChannelAgent(channelId)
+}
+
 export async function resolveValidatedAgentPreference({
   agent,
   sessionId,
