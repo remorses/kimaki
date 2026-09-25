@@ -21,7 +21,7 @@ import {
   getRuntime,
 } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { asSubtext, QUEUE_PREFIX } from '../message-formatting.js'
+import { asSubtext, extractQueueSuffix, QUEUE_PREFIX } from '../message-formatting.js'
 import { store } from '../store.js'
 
 const logger = createLogger(LogPrefix.QUEUE)
@@ -146,8 +146,17 @@ export async function handleQueueCommand({
   command,
   appId,
 }: CommandContext): Promise<void> {
-  const message = command.options.getString('message', true)
+  // /queue always queues; a typed suffix is redundant, so only strip it.
+  const message = extractQueueSuffix(command.options.getString('message', true)).prompt
   const channel = command.channel
+
+  if (!message.trim()) {
+    await command.reply({
+      content: 'Write a message to queue',
+      flags: MessageFlags.Ephemeral | SILENT_MESSAGE_FLAGS,
+    })
+    return
+  }
 
   if (!channel) {
     await command.reply({
