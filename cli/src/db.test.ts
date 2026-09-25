@@ -623,6 +623,63 @@ describe('getDb', () => {
     }
   })
 
+  test('shares one initialization between concurrent callers', async () => {
+    await closeDb()
+
+    const [first, second] = await Promise.all([getDb(), getDb()])
+
+    expect(first).toBe(second)
+  })
+
+  test('retries database initialization after a failed attempt', async () => {
+    await closeDb()
+
+    const previousDbUrl = process.env['KIMAKI_DB_URL']
+    const previousLockPort = process.env['KIMAKI_LOCK_PORT']
+    const dbPath = path.join(
+      process.cwd(),
+      `tmp/test-db-init-retry-${crypto.randomUUID().slice(0, 8)}.db`,
+    )
+
+    try {
+      process.env['KIMAKI_LOCK_PORT'] = String(chooseLockPort({ key: 'db-init-retry-test' }))
+      const firstStart = await startHranaServer({ dbPath })
+      if (firstStart instanceof Error) throw firstStart
+      process.env['KIMAKI_DB_URL'] = firstStart
+
+      // Bring the server down so the first initialization fails, then call getDb.
+      await stopHranaServer()
+      await expect(getDb()).rejects.toThrow()
+
+      // The server comes back on the same port; the next call must retry.
+      const secondStart = await startHranaServer({ dbPath })
+      if (secondStart instanceof Error) throw secondStart
+      process.env['KIMAKI_DB_URL'] = secondStart
+
+      await expect(getDb()).resolves.toBeDefined()
+    } finally {
+      await closeDb()
+      await stopHranaServer()
+      if (previousDbUrl === undefined) {
+        delete process.env['KIMAKI_DB_URL']
+      } else {
+        process.env['KIMAKI_DB_URL'] = previousDbUrl
+      }
+      if (previousLockPort === undefined) {
+        delete process.env['KIMAKI_LOCK_PORT']
+      } else {
+        process.env['KIMAKI_LOCK_PORT'] = previousLockPort
+      }
+      for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        try {
+          fs.unlinkSync(file)
+        } catch {
+          // Test cleanup best effort.
+        }
+      }
+    }
+  })
+
   test('createPendingWorkspace creates parent and child rows', async () => {
     const db = await getDb()
     const threadId = `test-workspace-${Date.now()}`
