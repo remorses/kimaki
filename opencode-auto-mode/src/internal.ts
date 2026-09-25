@@ -1,7 +1,7 @@
-// Kimaki entry. Always on. Do not register this file as an OpenCode plugin
-// module on its own; Kimaki re-exports the initializer.
+import { Plugin } from '@opencode/plugin'
+import { createAutoModeSetup } from './plugin.ts'
 
-import type { Plugin } from '@opencode-ai/plugin'
-import { createAutoModePlugin } from './plugin.ts'
-
-export const autoModeInternal: Plugin = createAutoModePlugin({ alwaysEnabled: true })
+export const autoModeInternal = Plugin.define({
+  id: 'kimaki.auto-mode.internal',
+  setup: createAutoModeSetup({ alwaysEnabled: true }),
+})
