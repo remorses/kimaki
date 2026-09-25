@@ -44,7 +44,7 @@ import {
   NOTIFY_MESSAGE_FLAGS,
   raceDiscordRename,
   DISCORD_THREAD_RENAME_TIMEOUT_MS,
-  resolveThreadFooterMentionUserId,
+  resolveThreadFooterNotifyUserId,
   resolveWorkingDirectory,
 } from '../discord-utils.js'
 import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
@@ -162,8 +162,7 @@ import {
   getPromptCacheClear,
   formatPromptCacheClearMessage,
   getIdleTokenUsageDelta,
-  getDerivedSubtaskIndex,
-  getDerivedSubtaskAgentType,
+  getDerivedSubtaskLabel,
   getTokenUsageSessionIdsForIdle,
   isDerivedChildSession,
   getLatestAssistantMessageIdForLatestUserTurn,
@@ -1315,17 +1314,12 @@ export class ThreadSessionRuntime {
       return undefined
     }
 
-    const subtaskIndex = getDerivedSubtaskIndex({
+    const label = getDerivedSubtaskLabel({
       events: this.eventBuffer,
       mainSessionId,
       candidateSessionId,
     })
-    const agentType = getDerivedSubtaskAgentType({
-      events: this.eventBuffer,
-      mainSessionId,
-      candidateSessionId,
-    })
-    const label = `${agentType || 'task'}-${subtaskIndex || 1}`
+    if (!label) return undefined
     const assistantMessageId = this.getLatestAssistantMessageIdForCurrentTurn({
       sessionId: candidateSessionId,
     })
@@ -2061,12 +2055,9 @@ export class ThreadSessionRuntime {
 
   private async unquoteFinalTextPart(): Promise<void> {
     const parts = this.getCurrentTurnParts()
-    const finalPart = planAssistantTurnFlush({
-      parts,
-      mode: 'final',
-    }).sendParts.at(-1)
-    if (!finalPart || finalPart.quoteText || finalPart.part.type !== 'text') return
-    const last = finalPart.part
+    const finalPart = parts.findLast((part) => part.type === 'text' || part.type === 'tool')
+    if (!finalPart || finalPart.type !== 'text') return
+    const last = finalPart
     const db = await getDb()
     const row = await db.query.part_messages.findFirst({
       where: { part_id: last.id },
@@ -5327,17 +5318,27 @@ export class ThreadSessionRuntime {
       ? didLatestUserTurnUseSleepTool({ events: this.eventBuffer, sessionId })
       : false
     const shouldNotifyUser = !hasQueuedMessage && !didUseSleepTool
-    const mentionUserId = store.getState().footerMentionsEnabled && shouldNotifyUser
-      ? await resolveThreadFooterMentionUserId({
+    const notifyUserId = store.getState().footerNotificationsEnabled && shouldNotifyUser
+      ? await resolveThreadFooterNotifyUserId({
           sessionUserId: this.state?.sessionUserId,
           thread: this.thread,
         })
       : undefined
-    const mention = mentionUserId ? ` <@${mentionUserId}>` : ''
     const footerText = asSubtext(
-      `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*${mention}`,
+      `*${projectInfo}${sessionDuration}${contextInfo}${modelInfo}${agentInfo}*`,
     )
     this.stopTyping()
+
+    // Re-add before the footer so the footer stays the last message.
+    if (notifyUserId) {
+      const renotifyResult = await renotifyThreadMember({
+        thread: this.thread,
+        userId: notifyUserId,
+      })
+      if (renotifyResult instanceof Error) {
+        discordLogger.warn(`[FOOTER] Failed to re-add thread member: ${renotifyResult.message}`)
+      }
+    }
 
     await sendThreadMessage(this.thread, footerText, {
       flags: shouldNotifyUser ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS,
