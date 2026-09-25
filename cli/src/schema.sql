@@ -195,6 +195,14 @@ CREATE TABLE IF NOT EXISTS `session_start_sources` (
 	CONSTRAINT `fk_session_start_sources_scheduled_task_id_scheduled_tasks_id_fk` FOREIGN KEY (`scheduled_task_id`) REFERENCES `scheduled_tasks`(`id`) ON UPDATE CASCADE ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS `thread_queue_items` (
+	`id` integer PRIMARY KEY AUTOINCREMENT,
+	`queue_id` text NOT NULL UNIQUE,
+	`thread_id` text NOT NULL,
+	`payload_json` text NOT NULL,
+	`created_at` datetime DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS `thread_sessions` (
 	`thread_id` text PRIMARY KEY,
 	`session_id` text NOT NULL,

@@ -73,9 +73,8 @@ describe('question answered after external abort resumes session', () => {
       if (!client) {
         throw new Error('Expected opencode client')
       }
-      await client.session.abort({
+      await client.session.interrupt({
         sessionID: sessionId,
-        directory: ctx.directories.projectDirectory,
       })
 
       // Wait until kimaki sees the session go idle (mirrors a user answering

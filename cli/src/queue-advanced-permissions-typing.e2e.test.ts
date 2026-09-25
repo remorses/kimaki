@@ -136,7 +136,7 @@ describe('queue advanced: typing around permissions', () => {
         ✅ Permission **accepted**
         [user clicks button]
 
-        permission-flow-done
+        > permission-flow-done
         > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
 

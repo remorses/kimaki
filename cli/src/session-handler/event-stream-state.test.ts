@@ -4,6 +4,7 @@ import type { V2Event } from '@opencode/client'
 import { describe, expect, test } from 'vitest'
 import {
   derivePendingPermissionRequests,
+  didLatestExecutionUseTool,
   didQuestionQueueHandoffSinceLatestQuestionAsked,
   getAssistantMessageIdsForLatestExecution,
   compactSubagentRoutingEvidence,
@@ -22,7 +23,10 @@ import {
   isDerivedChildSession,
   isEventForSessionTree,
   isSessionBusy,
+  parseEventBufferEvent,
+  shouldRetainSessionEvent,
   shouldShowRetryNotice,
+  trimEventBuffer,
   type EventBufferEntry,
   type EventBufferEvent,
 } from './event-stream-state.js'
@@ -329,6 +333,34 @@ describe('native execution state', () => {
       sessionId: sessionID,
       upToIndex: 1,
     })).toBe(10)
+  })
+
+  test('finds a tool only in the latest execution', () => {
+    const sessionID = 'ses_main'
+    const toolStarted = (name: string): Extract<V2Event, { type: 'session.tool.input.started' }> => ({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.input.started',
+      durable: durable(),
+      data: {
+        sessionID,
+        assistantMessageID: `msg_${eventId}`,
+        id: `call_${eventId}`,
+        name,
+      },
+    })
+    const events = [
+      entry(executionStarted(sessionID)),
+      entry(toolStarted('kimaki_sleep')),
+      entry(executionSucceeded(sessionID)),
+      entry(executionStarted(sessionID)),
+      entry(toolStarted('read')),
+    ]
+
+    expect(didLatestExecutionUseTool({ events, sessionId: sessionID, toolName: 'kimaki_sleep' }))
+      .toBe(false)
+    expect(didLatestExecutionUseTool({ events, sessionId: sessionID, toolName: 'read' }))
+      .toBe(true)
   })
 
   test('native execution terminal events settle busy state', () => {
@@ -799,5 +831,136 @@ describe('native subagent session tree', () => {
           },
         ]
       `)
+  })
+})
+
+describe('event buffer trim and busy derivation during task children', () => {
+  const mainSessionID = 'ses_parent'
+  const childSessionID = 'ses_task_child'
+
+  function parentBusy(): EventBufferEntry {
+    return entry({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.status',
+      data: {
+        sessionID: mainSessionID,
+        status: { type: 'busy' },
+      },
+    })
+  }
+
+  function taskInputStarted(): EventBufferEntry {
+    return entry({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.input.started',
+      durable: durable(),
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_asst',
+        id: 'call_task',
+        name: 'task',
+      },
+    })
+  }
+
+  function taskSuccess(): EventBufferEntry {
+    return entry({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.tool.success',
+      durable: { ...durable(), version: 2 },
+      data: {
+        sessionID: mainSessionID,
+        assistantMessageID: 'msg_asst',
+        id: 'call_task',
+        content: [{ type: 'text', text: 'done' }],
+        metadata: { sessionID: childSessionID, status: 'completed' },
+        executed: true,
+      },
+    })
+  }
+
+  function childTextEnded(index: number): EventBufferEntry {
+    return entry({
+      id: `evt_${++eventId}`,
+      created: eventId,
+      type: 'session.text.ended',
+      durable: durable(),
+      data: {
+        sessionID: childSessionID,
+        assistantMessageID: 'msg_child',
+        ordinal: index,
+        text: 'child output',
+      },
+    })
+  }
+
+  test('isSessionBusy stays true for a running parent task even without status events', () => {
+    expect(isSessionBusy({
+      events: [taskInputStarted()],
+      sessionId: mainSessionID,
+    })).toBe(true)
+  })
+
+  test('isSessionBusy is false after the same parent task succeeds without status events', () => {
+    expect(isSessionBusy({
+      events: [taskInputStarted(), taskSuccess()],
+      sessionId: mainSessionID,
+    })).toBe(false)
+  })
+
+  test('trim keeps parent busy across a child-session event flood', () => {
+    const events = [
+      parentBusy(),
+      taskInputStarted(),
+      entry(sessionCreated({ sessionID: childSessionID, parentID: mainSessionID })),
+      ...Array.from({ length: 1000 }, (_, index) => childTextEnded(index)),
+    ]
+    const trimmed = trimEventBuffer({
+      events,
+      mainSessionId: mainSessionID,
+      max: 1000,
+      isKnownChildSession: (sessionId) => sessionId === childSessionID,
+    })
+    expect(trimmed.length).toBeLessThanOrEqual(1000)
+    expect(isSessionBusy({ events: trimmed, sessionId: mainSessionID })).toBe(true)
+  })
+
+  test('shouldRetainSessionEvent drops child output but keeps parent task starts', () => {
+    expect(shouldRetainSessionEvent({
+      event: taskInputStarted().event,
+      mainSessionId: mainSessionID,
+      isKnownChildSession: (sessionId) => sessionId === childSessionID,
+    })).toBe(true)
+    expect(shouldRetainSessionEvent({
+      event: childTextEnded(1).event,
+      mainSessionId: mainSessionID,
+      isKnownChildSession: (sessionId) => sessionId === childSessionID,
+    })).toBe(false)
+    expect(shouldRetainSessionEvent({
+      event: sessionCreated({ sessionID: childSessionID, parentID: mainSessionID }),
+      mainSessionId: mainSessionID,
+      isKnownChildSession: (sessionId) => sessionId === childSessionID,
+    })).toBe(true)
+  })
+})
+
+describe('parseEventBufferEvent', () => {
+  test('parses kimaki-local queue markers without inventing extra fields', () => {
+    const parsed = parseEventBufferEvent(JSON.stringify({
+      type: 'kimaki.queue-dispatch.started',
+      data: { sessionID: 'ses_main', extra: true },
+    }))
+    expect(parsed).toEqual({
+      type: 'kimaki.queue-dispatch.started',
+      data: { sessionID: 'ses_main' },
+    })
+  })
+
+  test('rejects unknown undotted types', () => {
+    const parsed = parseEventBufferEvent(JSON.stringify({ type: 'garbage' }))
+    expect(parsed).toBeInstanceOf(Error)
   })
 })
