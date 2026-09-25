@@ -154,8 +154,8 @@ describe('question text before dropdown after abort retry', () => {
         ABORT_RETRY_LEFTOVER_TEXT_MARKER
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        abort-retry-started
-        LEFTOVER_ABORTED_TEXT
+        > abort-retry-started
+        > LEFTOVER_ABORTED_TEXT
         --- from: user (question-abort-retry-tester)
         QUESTION_AFTER_ABORT_RETRY_MARKER
         --- from: assistant (TestBot)

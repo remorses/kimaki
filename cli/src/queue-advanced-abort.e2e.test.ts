@@ -205,7 +205,7 @@ e2eTest('queue advanced: abort and retry', () => {
         Reply with exactly: abort-no-footer-setup
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         --- from: user (queue-advanced-tester)
         SLOW_ABORT_MARKER run long response"

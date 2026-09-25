@@ -552,13 +552,13 @@ describe('worktree lifecycle', () => {
         Reply with exactly: before-worktree
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         Creating worktree in <#THREAD_ID>
         --- from: user (worktree-tester)
         Reply with exactly: after-source-thread
         --- from: assistant (TestBot)
-        ok
+        > ok
         > *project ⋅ main ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(sourceText).toContain('Reply with exactly: before-worktree')
@@ -576,7 +576,7 @@ describe('worktree lifecycle', () => {
         --- from: user (worktree-tester)
         Reply with exactly: after-worktree-thread
         --- from: assistant (TestBot)
-        ok
+        > ok
         > *WORKTREE_NAME ⋅ opencode/kimaki-WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ source-model-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Worktree:')
@@ -672,7 +672,7 @@ describe('worktree lifecycle', () => {
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *CHANNEL_WORKTREE_NAME ⋅ opencode/kimaki-CHANNEL_WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
       expect(worktreeText).toContain('Branch:')
@@ -806,12 +806,12 @@ describe('worktree lifecycle', () => {
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *non-git-project ⋅ opencode/kimaki-opncd-v2-kmk-… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
-        ok
+        > ok
         > *non-git-project ⋅ opencode/kimaki-opncd-v2-kmk-… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
       expect(text).toContain('Reply with exactly: non-git-first')
@@ -897,7 +897,7 @@ describe('worktree lifecycle', () => {
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
         > *using deterministic-provider/deterministic-v2*
-        ok
+        > ok
         > *AUTO_WORKTREE_FOLDER ⋅ opencode/kimaki-rply-wth-exct… ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000901>"
       `)
 

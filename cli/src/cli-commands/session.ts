@@ -4,7 +4,7 @@ import { z } from 'zod'
 import dedent from 'string-dedent'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
-import * as errore from 'errore'
+import type { SessionInfo } from '@opencode/client'
 import type { OpencodeClient } from '../opencode.js'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
@@ -116,19 +116,7 @@ function formatTokenCount(count: number): string {
 }
 
 type GatheredSession = {
-  session: {
-    id: string
-    title?: string
-    location: { directory: string }
-    time: { updated: number }
-    tokens?: {
-      input: number
-      output: number
-      reasoning: number
-      cache: { read: number; write: number }
-    }
-    model?: { id?: string }
-  }
+  session: SessionInfo
   projectDirectory: string
   status: 'idle' | 'busy' | 'showing-question'
 }
@@ -158,9 +146,9 @@ cli
       const projectDirectories = options.all
         ? Array.from(
             new Set(
-              (await getAllTextChannelDirectories()).map((directory) =>
-                path.resolve(directory),
-              ),
+              (await getAllTextChannelDirectories()).map((directory) => {
+                return path.resolve(directory)
+              }),
             ),
           )
         : [path.resolve(options.project || '.')]
@@ -196,6 +184,7 @@ cli
           listAllSessions({
             client,
             directory: projectDirectory,
+            parentId: null,
             order: 'desc',
           }),
           client.session.active().catch(() => null),
@@ -331,7 +320,7 @@ cli
         const tokens = contextInfo(entry)
         const tokensText = tokens ? ` | tokens: ${formatTokenCount(tokens)}` : ''
         console.log(
-          `${session.id} | ${session.title || 'Untitled Session'} | ${session.location.directory} | ${updatedAt} | ${source}${threadInfo}${startedBy}${statusInfo}`,
+          `${session.id} | ${session.title || 'Untitled Session'} | ${session.location.directory} | ${updatedAt} | ${source}${statusInfo}${tokensText}${threadInfo}${startedBy}`,
         )
       }
 

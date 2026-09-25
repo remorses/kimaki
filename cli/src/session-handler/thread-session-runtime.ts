@@ -47,7 +47,6 @@ import {
   QUEUE_PREFIX,
   STATUS_PREFIX,
   WORKTREE_PREFIX,
-  LEGACY_WORKTREE_PREFIX,
 } from '../message-formatting.js'
 export {
   isEssentialToolName,
@@ -77,6 +76,11 @@ import {
   appendSessionEventsSinceLastTimestamp,
   getSessionEventSnapshot,
   cancelSessionSleepForThread,
+  insertThreadQueueItem,
+  listAllThreadQueueItems,
+  deleteThreadQueueItem,
+  deleteThreadQueueItems,
+  updateThreadQueueItemPayload,
 } from '../database.js'
 import * as orm from 'drizzle-orm'
 import * as schema from '../schema.js'
@@ -657,6 +661,7 @@ export type EnqueueResult = {
   queued: boolean
   position?: number
   queueId?: string
+  accepted?: boolean
 }
 
 export type PreprocessResult = {
@@ -669,6 +674,7 @@ export type PreprocessResult = {
 }
 
 export type IngressInput = {
+  queueId?: string
   prompt: string
   userId: string
   username: string
@@ -720,6 +726,7 @@ export type PreparedAdmission = {
   command?: { name: string; arguments: string }
   noReply?: boolean
   scheduledTaskRunId?: number
+  admissionId?: string
 }
 
 export function buildPreparedAdmissionValue<TClient>({
@@ -1003,7 +1010,18 @@ export class ThreadSessionRuntime {
       ]
     })
 
-    this.eventBuffer = hydratedEvents.slice(-ThreadSessionRuntime.EVENT_BUFFER_MAX)
+    this.eventBuffer = trimEventBuffer({
+      events: hydratedEvents,
+      mainSessionId: sessionId,
+      max: ThreadSessionRuntime.EVENT_BUFFER_MAX,
+      isKnownChildSession: (candidateSessionId) => {
+        return isDerivedChildSession({
+          events: hydratedEvents,
+          mainSessionId: sessionId,
+          candidateSessionId,
+        })
+      },
+    })
     const lastHydratedEvent = this.eventBuffer[this.eventBuffer.length - 1]
     this.nextEventIndex = lastHydratedEvent
       ? Number(lastHydratedEvent.eventIndex || 0) + 1
@@ -1290,6 +1308,20 @@ export class ThreadSessionRuntime {
     if (!compactedEvent) {
       return
     }
+    if (!shouldRetainSessionEvent({
+      event: compactedEvent,
+      mainSessionId: this.state?.sessionId,
+      isKnownChildSession: (candidateSessionId) => {
+        return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
+          || isDerivedChildSession({
+            events: this.eventBuffer,
+            mainSessionId: this.state?.sessionId || '',
+            candidateSessionId,
+          })
+      },
+    })) {
+      return
+    }
 
     const timestamp = compactedEvent.type === 'kimaki.queue-dispatch.started'
       || compactedEvent.type === 'kimaki.queue-dispatch.settled'
@@ -1305,9 +1337,19 @@ export class ThreadSessionRuntime {
       timestamp,
       eventIndex,
     })
-    if (this.eventBuffer.length > ThreadSessionRuntime.EVENT_BUFFER_MAX) {
-      this.eventBuffer.splice(0, this.eventBuffer.length - ThreadSessionRuntime.EVENT_BUFFER_MAX)
-    }
+    this.eventBuffer = trimEventBuffer({
+      events: this.eventBuffer,
+      mainSessionId: this.state?.sessionId,
+      max: ThreadSessionRuntime.EVENT_BUFFER_MAX,
+      isKnownChildSession: (candidateSessionId) => {
+        return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
+          || isDerivedChildSession({
+            events: this.eventBuffer,
+            mainSessionId: this.state?.sessionId || '',
+            candidateSessionId,
+          })
+      },
+    })
     this.persistEventBufferDebounced.trigger()
   }
 
@@ -2414,7 +2456,7 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const next = threadState.dequeueItem(this.threadId)
+    const next = this.state?.queueItems[0]
     if (!next) {
       return
     }
@@ -2430,10 +2472,11 @@ export class ThreadSessionRuntime {
     }
 
     // Native queue delivery waits behind the open form. Steer would abort it.
-    await this.submitViaOpencodeQueue({
+    const result = await this.submitViaOpencodeQueue({
       ...next,
       mode: 'local-queue',
     })
+    if (result.accepted) await this.acknowledgeAcceptedQueueItem(next)
   }
 
   private async handleSessionStatus(
@@ -2595,6 +2638,7 @@ export class ThreadSessionRuntime {
     images,
     delivery,
     noReply,
+    admissionId,
   }: {
     client: OpencodeClient
     sessionId: string
@@ -2602,6 +2646,7 @@ export class ThreadSessionRuntime {
     images: DiscordFileAttachment[]
     delivery: 'steer' | 'queue'
     noReply?: boolean
+    admissionId?: string
   }): Promise<Error | null> {
     if (noReply) {
       const result = await client.session.synthetic({
@@ -2623,6 +2668,7 @@ export class ThreadSessionRuntime {
     })).filter((file) => file.uri)
     const result = await client.session.prompt({
       sessionID: sessionId,
+      id: admissionId,
       text,
       files: files.length > 0 ? files : undefined,
       delivery,
@@ -2813,6 +2859,7 @@ export class ThreadSessionRuntime {
       command: input.command,
       noReply: input.noReply,
       scheduledTaskRunId: sessionStartSource?.scheduledTaskRunId,
+      admissionId: input.queueId ? `msg_kimaki_${input.queueId}` : undefined,
     })
   }
 
@@ -2828,7 +2875,7 @@ export class ThreadSessionRuntime {
       variant: admission.variant,
     })
     if (selectionResult instanceof Error) return selectionResult
-    const wasBusy = this.isMainSessionBusy()
+    const wasBusy = this.isBusy()
     if (!admission.noReply && !wasBusy) {
       this.markQueueDispatchBusy(admission.sessionId)
     }
@@ -2839,6 +2886,7 @@ export class ThreadSessionRuntime {
       images: admission.images,
       delivery: admission.delivery,
       noReply: admission.noReply,
+      admissionId: admission.admissionId,
     })
     if (result instanceof Error) {
       if (!admission.noReply) this.markQueueDispatchIdle(admission.sessionId)
@@ -2877,6 +2925,7 @@ export class ThreadSessionRuntime {
   private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
     await this.supersedePendingSleep(input)
     if (this.abortInFlight) await this.abortInFlight
+    let accepted = false
     await this.dispatchAction(async () => {
       if (input.expectedSessionId && this.state?.sessionId !== input.expectedSessionId) {
         logger.log(
@@ -2913,8 +2962,9 @@ export class ThreadSessionRuntime {
       logger.log(
         `[INGRESS] session.prompt accepted sessionId=${admission.sessionId} threadId=${this.threadId}`,
       )
+      accepted = true
     })
-    return { queued: false }
+    return { queued: false, accepted }
   }
 
   /**
@@ -2983,7 +3033,9 @@ export class ThreadSessionRuntime {
 
       // Determine if the message is genuinely waiting in queue
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
-      const position = stateAfterEnqueue?.queueItems.length ?? 0
+      const position = stateAfterEnqueue?.queueItems.filter((item) => {
+        return item.queueId !== this.dispatchingQueueId
+      }).length ?? 0
       const willDrainNow = stateAfterEnqueue
         ? (
           stateAfterEnqueue.queueItems.length > 0
@@ -3252,7 +3304,7 @@ export class ThreadSessionRuntime {
       : undefined
     const abortInFlight = sessionId && apiAbortPromise
       ? apiAbortPromise.then(async () => {
-        if (!this.isMainSessionBusy()) return
+        if (!this.isBusy()) return
         await this.waitForEvent({
           predicate: (event) => isSessionSettledEvent({ event, sessionId }),
           sinceTimestamp: getLatestExecutionStartedTimestamp({
@@ -3521,19 +3573,14 @@ export class ThreadSessionRuntime {
       )
       return 'unavailable'
     }
-    const statusResponse = await getClient().session.status({
-      directory: this.sdkDirectory,
-    }).catch((error) => {
+    const activeSessions = await getClient().session.active().catch((error: unknown) => {
       logger.warn(
         `[QUEUE] Failed to read session status while restoring queue for ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
       )
       return undefined
     })
-    if (!statusResponse || statusResponse.error) {
-      return 'unavailable'
-    }
-    const sessionStatus = statusResponse.data?.[sessionId]
-    if (!sessionStatus || sessionStatus.type === 'idle') {
+    if (!activeSessions) return 'unavailable'
+    if (!activeSessions[sessionId]) {
       this.markQueueDispatchIdle(sessionId)
       return 'idle'
     }
@@ -3553,7 +3600,6 @@ export class ThreadSessionRuntime {
         logger.error(
           `[QUEUE] Failed to persist accept of ${item.queueId}: ${persistResult.message}`,
         )
-        return
       }
       threadState.removeQueueItemById(this.threadId, item.queueId!)
     })
@@ -3622,7 +3668,11 @@ export class ThreadSessionRuntime {
     // Start dispatch detached so native events can continue through the action queue.
     const dispatchSessionId = thread.sessionId
     if (dispatchSessionId) this.markQueueDispatchBusy(dispatchSessionId)
-    void this.dispatchPrompt(next).catch(async (err) => {
+    let accepted = false
+    void this.dispatchPrompt(next).then(async (wasAccepted) => {
+      accepted = wasAccepted
+      if (wasAccepted) await this.acknowledgeAcceptedQueueItem(next)
+    }).catch(async (err) => {
       logger.error('[DISPATCH] Prompt dispatch failed:', err)
       void notifyError(err, 'Runtime prompt dispatch failed')
       if (dispatchSessionId) {
@@ -3644,7 +3694,7 @@ export class ThreadSessionRuntime {
   // The listener is already running, so this only handles
   // session ensure + model/agent + SDK call + state.
 
-  private async dispatchPrompt(input: QueuedMessage): Promise<void> {
+  private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
     const admission = await this.prepareAdmission({
       input,
       delivery: 'queue',
@@ -3654,22 +3704,23 @@ export class ThreadSessionRuntime {
       const sessionId = this.state?.sessionId
       if (sessionId) this.markQueueDispatchIdle(sessionId)
       await this.handleAdmissionError(admission)
-      return
+      return false
     }
     if (!admission.command) {
       const result = await this.submitPreparedAdmission(admission)
       if (result instanceof Error) {
         void notifyError(result, 'Local queue OpenCode admission failed')
         await this.handleAdmissionError(result)
+        return false
       }
-      return
+      return true
     }
-    await this.submitPreparedCommand(admission)
+    return this.submitPreparedCommand(admission)
   }
 
-  private async submitPreparedCommand(admission: PreparedAdmission): Promise<void> {
+  private async submitPreparedCommand(admission: PreparedAdmission): Promise<boolean> {
     const command = admission.command
-    if (!command) return
+    if (!command) return false
     const settleDispatch = () => this.markQueueDispatchIdle(admission.sessionId)
     const selectionResult = await this.applyNativeSessionSelection({
       client: admission.client,
@@ -3681,7 +3732,7 @@ export class ThreadSessionRuntime {
     if (selectionResult instanceof Error) {
       settleDispatch()
       await this.handleAdmissionError(selectionResult)
-      return
+      return false
     }
     const signal = AbortSignal.timeout(30_000)
     const result = await admission.client.session.command({
@@ -3699,7 +3750,7 @@ export class ThreadSessionRuntime {
         source: admission.source,
         agent: admission.agent,
       })
-      return
+      return true
     }
     const response = result.error
     if (signal.aborted) {
@@ -3707,26 +3758,27 @@ export class ThreadSessionRuntime {
       await this.handleAdmissionError(
         new Error('Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.'),
       )
-      return
+      return false
     }
     const wasAborted: boolean = isAbortError(response)
     if (wasAborted) {
       settleDispatch()
       this.stopTyping()
-      return
+      return true
     }
     const causeMessage = result.message
     // Native command errors have route-dependent shapes, so match normalized text.
     if (causeMessage.includes('Command not found')) {
       settleDispatch()
       await this.handleAdmissionError(new Error(`Command not found: "${command.name}"`))
-      return
+      return false
     }
     settleDispatch()
     void notifyError(response, 'Failed to send command to OpenCode')
     await this.handleAdmissionError(
       new Error(`Unexpected bot Error: ${causeMessage || response.message}`, { cause: response }),
     )
+    return false
   }
 
   // ── Session Ensure ──────────────────────────────────────────
@@ -3890,13 +3942,8 @@ export class ThreadSessionRuntime {
         logger.warn(
           `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
         )
-      } else if (sessionResponse.id) {
-        session = sessionResponse
       } else {
-        const sdkMessage = extractSdkErrorMessage(sessionResponse.error)
-        logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}: ${sdkMessage}, response=${JSON.stringify(sessionResponse)}`,
-        )
+        session = sessionResponse
       }
     }
 
@@ -3922,9 +3969,7 @@ export class ThreadSessionRuntime {
         permissions: sessionPermissions,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.create', cause: e }))
       if (createResult instanceof Error) {
-        const causeMessage = createResult.cause instanceof Error
-          ? createResult.cause.message
-          : String(createResult.cause ?? '')
+        const causeMessage = extractSdkErrorMessage(createResult.cause)
         logger.error(
           `[ENSURE SESSION] session.create failed: ${createResult.message} cause=${causeMessage}`,
         )
@@ -4159,7 +4204,11 @@ export class ThreadSessionRuntime {
       : `${truncatedFolder} ⋅ `
     const hasQueuedMessage = this.getQueueLength() > 0
     const didUseSleepTool = sessionId
-      ? didLatestUserTurnUseSleepTool({ events: this.eventBuffer, sessionId })
+      ? didLatestExecutionUseTool({
+          events: this.eventBuffer,
+          sessionId,
+          toolName: 'kimaki_sleep',
+        })
       : false
     const shouldNotifyUser = !hasQueuedMessage && !didUseSleepTool
     const mentionUserId = store.getState().footerMentionsEnabled && shouldNotifyUser
@@ -4287,7 +4336,6 @@ export class ThreadSessionRuntime {
       username: '',
       appId: this.appId,
       mode: 'opencode',
-      resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
     })
     return true

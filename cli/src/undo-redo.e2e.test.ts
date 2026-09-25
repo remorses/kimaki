@@ -203,15 +203,15 @@ e2eTest('/undo sets revert state and cleans up on next prompt', () => {
         > *using deterministic-provider/deterministic-v2*
         > creating undo file
 
-        ▏shell _Create undo marker file_
+        ┣ shell _Create undo marker file_
 
-        undo file created
+        > undo file created
         > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>
         Undone - reverted last assistant message
         --- from: user (undo-tester)
         Reply with exactly: after-undo-message
         --- from: assistant (TestBot)
-        ok
+        > ok
         > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
       `)
     },

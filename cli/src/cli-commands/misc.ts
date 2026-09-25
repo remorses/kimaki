@@ -36,7 +36,6 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
-import { resolveUploadToDiscordSessionId } from '../bash-tool-schema-plugin.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -49,9 +48,7 @@ cli
   .option('-s, --session <sessionId>', 'OpenCode session ID')
   .action(async (files: string[], options: { session?: string }) => {
     try {
-      const sessionId = resolveUploadToDiscordSessionId({
-        flagSessionId: options.session,
-      })
+      const sessionId = options.session
 
       if (!sessionId) {
         cliLogger.error('Session ID is required. Use --session <sessionId>')
