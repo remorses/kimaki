@@ -1528,12 +1528,27 @@ export function getDerivedSubtaskAgentType({
       event: entry.event,
       mainSessionId,
     })
-    if (!candidate || candidate.childSessionId !== candidateSessionId) {
+    if (!candidate || candidate.childSessionId !== candidateSessionId || !candidate.subagentType) {
       continue
     }
     return candidate.subagentType
   }
   return undefined
+}
+
+export function getDerivedSubtaskLabel({
+  events,
+  mainSessionId,
+  candidateSessionId,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId: string
+  candidateSessionId: string
+}): string | undefined {
+  const index = getDerivedSubtaskIndex({ events, mainSessionId, candidateSessionId })
+  if (!index) return undefined
+  const agent = getDerivedSubtaskAgentType({ events, mainSessionId, candidateSessionId })
+  return `${agent || 'task'}-${index}`
 }
 
 export function getDerivedSubagentSessions({

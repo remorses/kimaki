@@ -13,6 +13,7 @@ import {
   getEventBufferSessionId,
   getCurrentTurnStartTime,
   getDerivedSubtaskIndex,
+  getDerivedSubtaskLabel,
   getLatestAssistantMessageIdForLatestUserTurn,
   getLatestRunInfo,
   getLatestTurnTokenUsage,
@@ -1099,6 +1100,79 @@ describe('real-session-task-user-interruption', () => {
       mainSessionId: sessionId,
       candidateSessionId: 'ses_nonexistent',
     })).toBe(undefined)
+  })
+
+  test('does not label a child before its task call identifies it', () => {
+    const candidateSessionId = 'ses_child_without_task_metadata'
+    const childCreated = eventEntry({
+      type: 'session.created',
+      properties: {
+        sessionID: candidateSessionId,
+        info: {
+          id: candidateSessionId,
+          slug: 'child',
+          projectID: 'prj_1',
+          directory: '/test',
+          parentID: sessionId,
+          title: 'child task',
+          version: '1',
+          time: { created: 1, updated: 1 },
+        },
+      },
+    })
+    const beforeTaskMetadata = [...events, childCreated]
+    expect(isDerivedChildSession({
+      events: beforeTaskMetadata,
+      mainSessionId: sessionId,
+      candidateSessionId,
+    })).toBe(true)
+    expect(getDerivedSubtaskLabel({
+      events: beforeTaskMetadata,
+      mainSessionId: sessionId,
+      candidateSessionId,
+    })).toBeUndefined()
+  })
+
+  test('uses task agent and order for parallel child sessions', () => {
+    const captured = loadFixture('real-session-task-three-parallel-sleeps.jsonl')
+    const taskEvents = structuredClone(captured.filter((entry) => entry.event.type === 'message.part.updated'
+      && entry.event.properties.part.type === 'tool'
+      && entry.event.properties.part.tool === 'task'
+      && entry.event.properties.part.state.status === 'running'
+      && entry.event.properties.part.state.metadata?.sessionId))
+    expect(taskEvents).toHaveLength(3)
+    const children = taskEvents.map((entry) => {
+      if (entry.event.type !== 'message.part.updated') throw new Error('Missing task event')
+      const part = entry.event.properties.part
+      if (part.type !== 'tool' || (part.state.status !== 'running' && part.state.status !== 'completed')) throw new Error('Missing task')
+      const childId = part.state.metadata?.sessionId
+      if (typeof childId !== 'string') throw new Error('Missing child session')
+      part.state.input = { subagent_type: 'general' }
+      return childId
+    })
+
+    expect(children.map((candidateSessionId) => getDerivedSubtaskLabel({
+      events: taskEvents,
+      mainSessionId: getSessionId(captured),
+      candidateSessionId,
+    }))).toMatchInlineSnapshot(`
+      [
+        "general-1",
+        "general-2",
+        "general-3",
+      ]
+    `)
+
+    const laterUpdate = structuredClone(taskEvents[1])
+    if (laterUpdate?.event.type !== 'message.part.updated') throw new Error('Missing task update')
+    const laterPart = laterUpdate.event.properties.part
+    if (laterPart.type !== 'tool' || (laterPart.state.status !== 'running' && laterPart.state.status !== 'completed')) throw new Error('Missing task')
+    laterPart.state.input = {}
+    expect(getDerivedSubtaskLabel({
+      events: [...taskEvents, laterUpdate],
+      mainSessionId: getSessionId(captured),
+      candidateSessionId: children[1]!,
+    })).toMatchInlineSnapshot(`"general-2"`)
   })
 
   test('getDerivedSubagentSessions returns latest tasks first with agent labels', () => {
