@@ -57,14 +57,14 @@
     "unbash": "^4.0.11"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.16.2",
-    "@opencode-ai/sdk": "^1.18.23",
+    "@opencode/client": "2.0.2",
+    "@opencode/plugin": "2.0.2",
     "@types/node": "^24.3.0",
     "opencode-deterministic-provider": "workspace:^",
     "rimraf": "^6.0.1"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "*",
-    "@opencode-ai/sdk": "*"
+    "@opencode/client": "2.0.2",
+    "@opencode/plugin": "2.0.2"
   }
 }

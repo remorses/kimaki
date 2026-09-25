@@ -1,9 +1,7 @@
-// End-to-end: a real OpenCode server loads this plugin and a fake LLM.
-// No real API calls. The deterministic provider plays both the coding model
-// and the Haiku-shaped classifier.
+// End-to-end: a real local OpenCode v2 server loads this plugin and a fake LLM.
 
-import { createOpencodeClient } from '@opencode-ai/sdk/v2'
-import { spawn, type ChildProcess, execFileSync } from 'node:child_process'
+import { OpenCode, type SessionMessageInfo } from '@opencode/client'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -16,6 +14,8 @@ import {
 } from 'opencode-deterministic-provider'
 
 const USAGE = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+const SERVER_PASSWORD = 'auto-mode-e2e'
+const AUTHORIZATION = `Basic ${Buffer.from(`opencode:${SERVER_PASSWORD}`).toString('base64')}`
 
 function textParts(delta: string, id: string) {
   return [
@@ -27,13 +27,13 @@ function textParts(delta: string, id: string) {
   ]
 }
 
-function bashCall(command: string, id: string): DeterministicMatcher['then']['parts'] {
+function shellCall(command: string, id: string): DeterministicMatcher['then']['parts'] {
   return [
     { type: 'stream-start', warnings: [] },
     {
       type: 'tool-call',
       toolCallId: id,
-      toolName: 'bash',
+      toolName: 'shell',
       input: JSON.stringify({ command, description: 'test command' }),
     },
     { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
@@ -46,26 +46,25 @@ function createMatchers(): DeterministicMatcher[] {
       id: 'ls-call',
       priority: 100,
       when: { latestUserTextIncludes: 'AUTO_MODE_LS' },
-      then: { parts: bashCall('ls', 'ls-call-1') },
+      then: { parts: shellCall('ls', 'ls-call-1') },
     },
     {
       id: 'chmod-call',
       priority: 100,
       when: { latestUserTextIncludes: 'AUTO_MODE_CHMOD' },
-      then: { parts: bashCall('chmod 777 /tmp/auto-mode-e2e-never', 'chmod-call-1') },
+      then: { parts: shellCall('chmod 777 /tmp/auto-mode-e2e-never', 'chmod-call-1') },
     },
     {
       id: 'push-call',
       priority: 100,
       when: { latestUserTextIncludes: 'AUTO_MODE_PUSH' },
-      then: { parts: bashCall('git push --force origin AUTO_MODE_PUSH', 'push-call-1') },
+      then: { parts: shellCall('git push --force origin AUTO_MODE_PUSH', 'push-call-1') },
     },
     {
       id: 'classifier-push-fast',
       priority: 200,
       when: {
-        latestUserTextIncludes: 'STAGE=fast',
-        rawPromptIncludes: 'git push --force origin AUTO_MODE_PUSH',
+        rawPromptIncludes: '\\nSTAGE=fast\\n',
       },
       then: { parts: textParts('1', 'fast-push') },
     },
@@ -73,8 +72,7 @@ function createMatchers(): DeterministicMatcher[] {
       id: 'classifier-push-detailed',
       priority: 200,
       when: {
-        latestUserTextIncludes: 'STAGE=detailed',
-        rawPromptIncludes: 'git push --force origin AUTO_MODE_PUSH',
+        rawPromptIncludes: '\\nSTAGE=detailed\\n',
       },
       then: {
         parts: textParts('{"decision":"block","reason":"force push"}', 'detailed-push'),
@@ -92,30 +90,20 @@ function createMatchers(): DeterministicMatcher[] {
   ]
 }
 
-function toolErrorText(state: Record<string, unknown>) {
-  const error = state.error
-  if (typeof error === 'string') return error
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = (error as { message?: unknown }).message
-    if (typeof message === 'string') return message
-  }
-  if (typeof state.output === 'string') return state.output
-  return JSON.stringify(state)
-}
-
-function toolParts(messages: Array<{ parts?: Array<Record<string, unknown>> }>) {
+function toolParts(messages: SessionMessageInfo[]) {
   const tools: Array<{ tool?: string; status?: string; error?: string }> = []
   for (const message of messages) {
-    for (const part of message.parts ?? []) {
+    if (message.type !== 'assistant') continue
+    for (const part of message.content) {
       if (part.type !== 'tool') continue
-      const state = (part.state ?? {}) as Record<string, unknown>
-      const status = typeof state.status === 'string' ? state.status : undefined
+      const state = part.state
+      const status = state.status
       if (status !== 'completed' && status !== 'error') continue
-      tools.push({
-        tool: typeof part.tool === 'string' ? part.tool : undefined,
-        status,
-        ...(status === 'error' ? { error: toolErrorText(state) } : {}),
-      })
+      if (state.status === 'error') {
+        tools.push({ tool: part.name, status, error: state.error.message })
+        continue
+      }
+      tools.push({ tool: part.name, status })
     }
   }
   return [...new Map(tools.map((tool) => [JSON.stringify(tool), tool])).values()]
@@ -139,6 +127,7 @@ async function freePort() {
 async function waitForHealth(port: number) {
   for (let attempt = 0; attempt < 60; attempt++) {
     const ok = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      headers: { authorization: AUTHORIZATION },
       signal: AbortSignal.timeout(1000),
     })
       .then((response) => response.status < 500)
@@ -171,6 +160,7 @@ beforeAll(async () => {
   for (const [key, value] of Object.entries({
     ...xdg,
     OPENCODE_AUTO_MODE: JSON.stringify({ model: 'main' }),
+    OPENCODE_PASSWORD: SERVER_PASSWORD,
   })) {
     savedEnv[key] = process.env[key]
     process.env[key] = value
@@ -182,7 +172,7 @@ beforeAll(async () => {
   const providerNpm = pathToFileURL(
     path.resolve(process.cwd(), '..', 'opencode-deterministic-provider', 'src', 'index.ts'),
   ).href
-  const pluginEntry = pathToFileURL(path.join(import.meta.dirname, 'index.ts')).href
+  const pluginEntry = import.meta.dirname
   const deterministic = buildDeterministicOpencodeConfig({
     providerName: 'deterministic-provider',
     providerNpm,
@@ -196,7 +186,7 @@ beforeAll(async () => {
     JSON.stringify(
       {
         ...deterministic,
-        plugin: [pluginEntry],
+        plugins: [pluginEntry],
         lsp: false,
         formatter: false,
         permission: {
@@ -210,14 +200,15 @@ beforeAll(async () => {
   )
 
   port = await freePort()
-  const opencode = execFileSync('which', ['opencode'], { encoding: 'utf8' }).trim()
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...xdg,
-    OPENCODE_AUTO_MODE: JSON.stringify({ model: 'main' }),
-  }
-  delete env.KIMAKI
-  serverProcess = spawn(opencode, ['serve', '--port', String(port), '--hostname', '127.0.0.1'], {
+  const env = Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      ...xdg,
+      OPENCODE_AUTO_MODE: JSON.stringify({ model: 'main' }),
+      OPENCODE_PASSWORD: SERVER_PASSWORD,
+    }).filter(([key]) => key !== 'KIMAKI'),
+  )
+  serverProcess = spawn('opencode2', ['serve', '--port', String(port), '--hostname', '127.0.0.1'], {
     cwd: projectDir,
     stdio: 'pipe',
     env,
@@ -241,55 +232,42 @@ afterAll(async () => {
 })
 
 async function runPrompt(text: string) {
-  const client = createOpencodeClient({
+  const client = OpenCode.make({
     baseUrl: `http://127.0.0.1:${port}`,
-    directory: projectDir,
+    headers: { authorization: AUTHORIZATION },
   })
   const created = await client.session.create({
-    directory: projectDir,
     title: text,
+    location: { directory: projectDir },
+    model: { providerID: 'deterministic-provider', id: 'deterministic-v2' },
   })
-  const sessionID = created.data?.id
-  if (!sessionID) {
-    throw new Error(`session.create failed: ${JSON.stringify(created)}\n${stderrLines.join('\n')}`)
-  }
-  await client.session.promptAsync({
+  const sessionID = created.id
+  await client.session.prompt({
     sessionID,
-    directory: projectDir,
-    model: { providerID: 'deterministic-provider', modelID: 'deterministic-v2' },
-    parts: [{ type: 'text', text }],
+    text,
   })
   const pollStart = Date.now()
   while (Date.now() - pollStart < 20_000) {
-    const messages = await client.session.messages({
-      sessionID,
-      directory: projectDir,
-    })
-    const tools = toolParts(messages.data ?? [])
-    if (tools.some((tool) => tool.status === 'completed' || tool.status === 'error')) {
-      return tools
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    const messages = await client.message.list({ sessionID })
+    const tools = toolParts(messages.data)
+    if (tools.length > 0) return tools
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  const messages = await client.session.messages({
-    sessionID,
-    directory: projectDir,
-  })
-  return toolParts(messages.data ?? [])
+  throw new Error(`No tool result received\n${stderrLines.join('\n')}`)
 }
 
 describe('opencode auto-mode e2e', () => {
-  test('skips read-only bash without blocking', async () => {
+  test('skips read-only shell without blocking', async () => {
     const tools = await runPrompt('AUTO_MODE_LS')
     expect(tools).toMatchInlineSnapshot(`
       [
         {
           "status": "completed",
-          "tool": "bash",
+          "tool": "shell",
         },
       ]
     `)
-    const ls = tools.find((tool) => tool.tool === 'bash')
+    const ls = tools.find((tool) => tool.tool === 'shell')
     expect(ls?.status).toBe('completed')
   }, 30_000)
 
@@ -300,11 +278,11 @@ describe('opencode auto-mode e2e', () => {
         {
           "error": "[auto-mode] chmod 777",
           "status": "error",
-          "tool": "bash",
+          "tool": "shell",
         },
       ]
     `)
-    const chmod = tools.find((tool) => tool.tool === 'bash')
+    const chmod = tools.find((tool) => tool.tool === 'shell')
     expect(chmod?.status).toBe('error')
     expect(chmod?.error ?? '').toContain('[auto-mode]')
   }, 30_000)
@@ -316,11 +294,11 @@ describe('opencode auto-mode e2e', () => {
         {
           "error": "[auto-mode] force push",
           "status": "error",
-          "tool": "bash",
+          "tool": "shell",
         },
       ]
     `)
-    const push = tools.find((tool) => tool.tool === 'bash')
+    const push = tools.find((tool) => tool.tool === 'shell')
     expect(push?.status).toBe('error')
     expect(push?.error ?? '').toContain('force push')
   }, 30_000)
