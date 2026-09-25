@@ -21,6 +21,7 @@ import {
 import {
   waitForFooterMessage,
   waitForBotMessageContaining,
+  waitForBotReplyTo,
   waitForMessageById,
 } from './test-utils.js'
 import { getThreadSession } from './database.js'
@@ -124,12 +125,17 @@ e2eTest('queue + interrupt drain ordering', () => {
         afterAuthorId: TEST_USER_ID,
       })
 
+      const indicator = await waitForBotReplyTo({
+        discord: ctx.discord,
+        threadId: thread.id,
+        replyToMessageId: queueStatusMessage.id,
+        timeout: 12_000,
+      })
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
         timeout: 12_000,
-        afterMessageIncludes: 'archived-queue-survives',
-        afterAuthorId: ctx.discord.botUserId,
+        afterMessageId: indicator.id,
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -149,7 +155,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: archived-queue-survives
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -231,12 +237,17 @@ e2eTest('queue + interrupt drain ordering', () => {
       // 5. Wait for the final state: the interrupt message should get its own
       //    ok reply, then the queued message should drain and get processed.
       //    We wait for the queued message's footer as the final signal.
+      const indicator = await waitForBotReplyTo({
+        discord: ctx.discord,
+        threadId: thread.id,
+        replyToMessageId: queueStatusMessage.id,
+        timeout: 12_000,
+      })
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
         timeout: 12_000,
-        afterMessageIncludes: 'queued-behind-slow',
-        afterAuthorId: ctx.discord.botUserId,
+        afterMessageId: indicator.id,
       })
 
       // 6. Capture the full interaction in an inline snapshot.
@@ -257,7 +268,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: queued-behind-slow
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -273,7 +284,7 @@ e2eTest('queue + interrupt drain ordering', () => {
       expect(interruptUserLine).toBeGreaterThan(-1)
 
       const queueDispatchLine = lines.findIndex((line) => {
-        return line.includes('» **interrupt-tester:** Reply with exactly: queued-behind-slow')
+        return line.includes('Executing queued prompt')
       })
       expect(queueDispatchLine).toBeGreaterThan(-1)
 

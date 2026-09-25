@@ -954,6 +954,7 @@ export async function startDiscordBot({
             message.author.displayName,
           sourceMessageId: message.id,
           sourceThreadId: thread.id,
+          sourceChannelId: message.channelId,
           appId: currentAppId,
           agent: cliInjectedAgent,
           model: cliInjectedModel,
@@ -1166,6 +1167,7 @@ export async function startDiscordBot({
             message.member?.displayName || message.author.displayName,
           sourceMessageId: message.id,
           sourceThreadId: thread.id,
+          sourceChannelId: message.channelId,
           appId: currentAppId,
           preprocess: async () => {
             return preprocessNewThreadMessage({

@@ -61,6 +61,8 @@ export type QueuedMessage = {
   // messages that originated from Discord and skip re-mirroring them.
   sourceMessageId?: string
   sourceThreadId?: string
+  // Channel holding sourceMessageId. The thread starter lives in the parent.
+  sourceChannelId?: string
   // Message the drain indicator replies to. Set for /queue slash commands to
   // the "Queued message" ack. Falls back to sourceMessageId.
   queueAckMessageId?: string
@@ -306,26 +308,6 @@ export function removeQueueItemById(
     return { threads: newThreads }
   })
   return removedItem
-}
-
-export function updateQueueItemById(
-  threadId: string,
-  queueId: string,
-  updater: (item: QueuedMessage) => QueuedMessage,
-): void {
-  store.setState((s) => {
-    const t = s.threads.get(threadId)
-    if (!t) return s
-    if (!t.queueItems.some((item) => item.queueId === queueId)) return s
-    const newThreads = new Map(s.threads)
-    newThreads.set(threadId, {
-      ...t,
-      queueItems: t.queueItems.map((item) => {
-        return item.queueId === queueId ? updater(item) : item
-      }),
-    })
-    return { threads: newThreads }
-  })
 }
 
 /**

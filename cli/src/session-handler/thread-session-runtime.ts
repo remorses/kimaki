@@ -719,6 +719,9 @@ export type IngressInput = {
   // messages that originated from Discord and skip re-mirroring them.
   sourceMessageId?: string
   sourceThreadId?: string
+  // Channel that holds the source message. Differs from the thread for the
+  // thread starter message, which lives in the parent channel.
+  sourceChannelId?: string
   repliedMessage?: RepliedMessageContext
   images?: DiscordFileAttachment[]
   appId?: string
@@ -789,6 +792,12 @@ export type IngressInput = {
    * runtime stays platform-agnostic — it just awaits the callback.
    */
   preprocess?: () => Promise<PreprocessResult>
+  /**
+   * Posts the "Queued message" ack and returns its Discord message ID. Runs
+   * inside the serialized enqueue, before any drain can start, so the drain
+   * indicator can always reply to it. Only called when the item really waits.
+   */
+  onLocalQueued?: (queued: { queueId: string; position: number }) => Promise<string>
 }
 
 function resolveTurnSource(input: {
@@ -3744,6 +3753,7 @@ export class ThreadSessionRuntime {
       parentSessionId: input.parentSessionId,
       sourceMessageId: input.sourceMessageId,
       sourceThreadId: input.sourceThreadId,
+      sourceChannelId: input.sourceChannelId,
       repliedMessage: input.repliedMessage,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
@@ -3753,10 +3763,27 @@ export class ThreadSessionRuntime {
     let result: EnqueueResult = { queued: false, queueId }
 
     await this.dispatchAction(async () => {
+      // Determine if the message will genuinely wait in queue
+      const position = (this.state?.queueItems.length ?? 0) + 1
+      result = this.isBusy()
+        ? { queued: true, position, queueId }
+        : { queued: false, queueId }
+
+      // Post the ack before the item is visible to any drain path.
+      const queueAckMessageId = result.queued && input.onLocalQueued
+        ? await input.onLocalQueued({ queueId, position }).catch((error) => {
+          logger.error(`[QUEUE] Failed to post queue ack for ${queueId}:`, error)
+          return undefined
+        })
+        : undefined
+      const item: QueuedMessage = queueAckMessageId
+        ? { ...queuedMessage, queueAckMessageId }
+        : queuedMessage
+
       const persistResult = await insertThreadQueueItem({
         queueId,
         threadId: this.threadId,
-        payloadJson: JSON.stringify(queuedMessage),
+        payloadJson: JSON.stringify(item),
       }).catch((error) => {
         return new Error('Failed to persist queued message', { cause: error })
       })
@@ -3766,20 +3793,8 @@ export class ThreadSessionRuntime {
         )
         throw persistResult
       }
-      threadState.enqueueItem(this.threadId, queuedMessage)
-
-      // Determine if the message is genuinely waiting in queue
+      threadState.enqueueItem(this.threadId, item)
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
-      const position = stateAfterEnqueue?.queueItems.length ?? 0
-      const willDrainNow = stateAfterEnqueue
-        ? (
-          stateAfterEnqueue.queueItems.length > 0
-          && !this.isBusy()
-        )
-        : false
-      result = !willDrainNow && position > 0
-        ? { queued: true, position, queueId }
-        : { queued: false, queueId }
 
       if (this.hasPendingQuestionUi()) {
         this.maybeHandoffQueuedItemForPendingQuestion({
@@ -4321,38 +4336,11 @@ export class ThreadSessionRuntime {
     })
   }
 
-  /** Record the /queue ack message so the drain indicator can reply to it. */
-  async setQueueAckMessageId({
-    queueId,
-    messageId,
-  }: {
-    queueId: string
-    messageId: string
-  }): Promise<void> {
-    await this.dispatchAction(async () => {
-      const item = this.state?.queueItems.find((i) => i.queueId === queueId)
-      if (!item) {
-        return
-      }
-      const updated = { ...item, queueAckMessageId: messageId }
-      const persistResult = await updateThreadQueueItemPayload({
-        queueId,
-        payloadJson: JSON.stringify(updated),
-      }).catch((error) => {
-        return new Error('Failed to update persisted queue item', { cause: error })
-      })
-      if (persistResult instanceof Error) {
-        logger.error(`[QUEUE] ${persistResult.message} ${queueId}`)
-      }
-      threadState.updateQueueItemById(this.threadId, queueId, () => updated)
-    })
-  }
-
-  // Silent reply to the message that queued the item. The thread starter
-  // message lives in the parent channel, so it cannot be a reply target.
+  // Silent reply to the message that queued the item. Discord replies must
+  // reference a message in the same channel.
   private async sendQueueDrainIndicator(item: QueuedMessage): Promise<void> {
     const replyTarget = item.queueAckMessageId
-      ?? (item.sourceMessageId !== this.threadId ? item.sourceMessageId : undefined)
+      ?? (item.sourceChannelId === this.threadId ? item.sourceMessageId : undefined)
     const content = (() => {
       if (replyTarget) {
         return asSubtext('Executing queued prompt')
@@ -4366,9 +4354,9 @@ export class ThreadSessionRuntime {
       content,
       flags: SILENT_MESSAGE_FLAGS,
       allowedMentions: { parse: [], repliedUser: false },
-      ...(replyTarget
-        ? { reply: { messageReference: replyTarget, failIfNotExists: false } }
-        : {}),
+      reply: replyTarget
+        ? { messageReference: replyTarget, failIfNotExists: false }
+        : undefined,
     }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send queue drain indicator:', sendResult)

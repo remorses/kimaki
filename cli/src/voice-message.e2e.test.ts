@@ -43,6 +43,7 @@ import {
   initTestGitRepo,
   waitForFooterMessage,
   waitForBotMessageContaining,
+  waitForBotReplyTo,
   waitForThreadState,
 } from './test-utils.js'
 
@@ -1083,7 +1084,7 @@ e2eTest('voice message handling', () => {
         timeout: 4_000,
       })
 
-      await th.user(TEST_USER_ID).sendVoiceMessage()
+      const voiceMessage = await th.user(TEST_USER_ID).sendVoiceMessage()
 
       // 3. Transcription should appear, followed by queue notification
       await waitForBotMessageContaining({
@@ -1122,25 +1123,14 @@ e2eTest('voice message handling', () => {
         throw new Error('Expected queue ack message')
       }
 
-      const dispatchPrefix = '» **voice-tester:** Voice message transcription from Discord user:'
-      const messagesWithDispatch = await waitForBotMessageContaining({
+      // The drain indicator is a silent reply to the voice message.
+      const dispatchMessage = await waitForBotReplyTo({
         discord,
         threadId: thread.id,
-        text: dispatchPrefix,
-        afterMessageId: queueAckMessage.id,
+        replyToMessageId: voiceMessage.id,
         timeout: 8_000,
       })
-      const dispatchMessage = messagesWithDispatch.find((message) => {
-        return (
-          message.author.id === discord.botUserId
-          && message.content.includes(dispatchPrefix)
-        )
-      })
-      expect(dispatchMessage).toBeDefined()
-
-      if (!dispatchMessage) {
-        throw new Error('Expected queued dispatch indicator message')
-      }
+      expect(dispatchMessage.content).toBe('-# Executing queued prompt')
 
       await waitForBotMessageContaining({
         discord,
@@ -1183,8 +1173,7 @@ e2eTest('voice message handling', () => {
         -# Queued at position 1. Edit or delete your message to update the queue
         slow-response-done
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **voice-tester:** Voice message transcription from Discord user:
-        Queue this task for later
+        -# Executing queued prompt
         session-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

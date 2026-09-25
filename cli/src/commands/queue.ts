@@ -19,7 +19,7 @@ import {
 import {
   getOrCreateRuntime,
   getRuntime,
-  type ThreadSessionRuntime,
+  type IngressInput,
 } from '../session-handler/thread-session-runtime.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { asSubtext, extractQueueSuffix, QUEUE_PREFIX } from '../message-formatting.js'
@@ -98,33 +98,24 @@ function buildQueueRemoveRow({
   )
 }
 
-// Reply "Queued message" and remember the ack so the drain indicator replies to it.
-async function replyQueuedAck({
+// Replies "Queued message" and returns the ack id, so the drain indicator can
+// reply to it. The runtime calls this inside the serialized enqueue.
+function replyQueuedAck({
   command,
-  runtime,
   threadId,
-  queueId,
-  position,
 }: {
   command: CommandContext['command']
-  runtime: ThreadSessionRuntime
   threadId: string
-  queueId: string
-  position?: number
-}): Promise<void> {
-  await command.reply({
-    content: asSubtext(`Queued message${position ? ` (position ${position})` : ''}`),
-    components: [buildQueueRemoveRow({ threadId, queueId })],
-    flags: SILENT_MESSAGE_FLAGS,
-  })
-  const ack = await command.fetchReply().catch((error: unknown) => {
-    return new Error('Failed to fetch queue ack message', { cause: error })
-  })
-  if (ack instanceof Error) {
-    logger.error(`[QUEUE] ${ack.message}`)
-    return
+}): NonNullable<IngressInput['onLocalQueued']> {
+  return async ({ queueId, position }) => {
+    await command.reply({
+      content: asSubtext(`Queued message (position ${position})`),
+      components: [buildQueueRemoveRow({ threadId, queueId })],
+      flags: SILENT_MESSAGE_FLAGS,
+    })
+    const ack = await command.fetchReply()
+    return ack.id
   }
-  await runtime.setQueueAckMessageId({ queueId, messageId: ack.id })
 }
 
 export async function handleQueueRemoveButton(
@@ -247,16 +238,11 @@ export async function handleQueueCommand({
     username: command.user.displayName,
     appId,
     mode: 'local-queue',
+    onLocalQueued: replyQueuedAck({ command, threadId: thread.id }),
   })
 
-  if (enqueueResult.queued && enqueueResult.queueId) {
-    await replyQueuedAck({
-      command,
-      runtime,
-      threadId: thread.id,
-      queueId: enqueueResult.queueId,
-      position: enqueueResult.position,
-    })
+  // onLocalQueued already posted the ack.
+  if (enqueueResult.queued) {
     return
   }
 
@@ -434,16 +420,11 @@ export async function handleQueueCommandCommand({
     appId,
     command: commandPayload,
     mode: 'local-queue',
+    onLocalQueued: replyQueuedAck({ command, threadId: thread.id }),
   })
 
-  if (enqueueResult.queued && enqueueResult.queueId) {
-    await replyQueuedAck({
-      command,
-      runtime,
-      threadId: thread.id,
-      queueId: enqueueResult.queueId,
-      position: enqueueResult.position,
-    })
+  // onLocalQueued already posted the ack.
+  if (enqueueResult.queued) {
     logger.log(
       `[QUEUE] User ${command.user.displayName} queued command /${commandName} in thread ${channel.id}`,
     )

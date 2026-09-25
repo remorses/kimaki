@@ -44,6 +44,7 @@ import {
   waitForMessageById,
   waitForBotMessageCount,
   waitForBotReplyAfterUserMessage,
+  waitForBotReplyTo,
   waitForThreadState,
   getMessageVisibleText,
 } from './test-utils.js'
@@ -795,32 +796,14 @@ e2eTest('thread message queue ordering', () => {
       })
       expect(queuedStatusMessage.content.startsWith('-# Queued message')).toBe(true)
 
-      const expectedDispatchIndicator = `» **queue-tester:** ${queuedPrompt}`
-      const messagesWithDispatch = await waitForBotMessageContaining({
+      // The drain indicator is a silent reply to the /queue ack.
+      const dispatchIndicatorMessage = await waitForBotReplyTo({
         discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: expectedDispatchIndicator,
-        afterMessageId: queuedStatusMessage.id,
+        replyToMessageId: queuedStatusMessage.id,
         timeout: 8_000,
       })
-
-      const queuedStatusIndex = messagesWithDispatch.findIndex((message) => {
-        return message.id === queuedStatusMessage.id
-      })
-      const dispatchIndicatorIndex = messagesWithDispatch.findIndex((message) => {
-        return (
-          message.author.id === discord.botUserId &&
-          message.content.includes(expectedDispatchIndicator)
-        )
-      })
-      expect(queuedStatusIndex).toBeGreaterThan(-1)
-      expect(dispatchIndicatorIndex).toBeGreaterThan(queuedStatusIndex)
-
-      const dispatchIndicatorMessage = messagesWithDispatch[dispatchIndicatorIndex]
-      if (!dispatchIndicatorMessage) {
-        throw new Error('Expected dispatch indicator message')
-      }
+      expect(dispatchIndicatorMessage.content).toBe('-# Executing queued prompt')
 
       await waitForBotMessageContaining({
         discord,
@@ -849,7 +832,7 @@ e2eTest('thread message queue ordering', () => {
         -# Queued message (position 2)
         race-final
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: queued-from-slash
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -903,7 +886,8 @@ e2eTest('thread message queue ordering', () => {
         messageId: secondQueueAck.messageId,
         timeout: 4_000,
       })
-      expect(secondQueueAckMessage.content).toContain('Queued message (position 1)')
+      // The first /queue item is still in flight, so it holds position 1.
+      expect(secondQueueAckMessage.content).toContain('Queued message (position 2)')
 
       const { id: thirdQueueInteractionId } = await th.user(TEST_USER_ID).runSlashCommand({
         name: 'queue',
@@ -923,11 +907,11 @@ e2eTest('thread message queue ordering', () => {
         messageId: thirdQueueAck.messageId,
         timeout: 4_000,
       })
-      expect(thirdQueueAckMessage.content).toContain('Queued message (position 2)')
+      expect(thirdQueueAckMessage.content).toContain('Queued message (position 3)')
 
       const serializedComponents = JSON.stringify(secondQueueAckMessage.components)
       const customIdMatch = serializedComponents.match(
-        /"custom_id"\s*:\s*"(html_action:[^"]+)"/,
+        /"custom_id"\s*:\s*"(queue_remove:[^"]+)"/,
       )
       if (!customIdMatch?.[1]) {
         throw new Error(
@@ -953,21 +937,19 @@ e2eTest('thread message queue ordering', () => {
       expect(removeAckMessage.content).toContain('Removed queued message')
       expect(removeAckMessage.content).toContain('removed-queued-message')
 
-      await waitForBotMessageContaining({
+      const indicator = await waitForBotReplyTo({
         discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: '» **queue-tester:** Reply with exactly: kept-queued-message',
-        afterMessageId: removeAckMessage.id,
+        replyToMessageId: thirdQueueAckMessage.id,
         timeout: 8_000,
       })
+      expect(indicator.content).toBe('-# Executing queued prompt')
 
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 8_000,
-        afterMessageIncludes: 'ok',
-        afterAuthorId: discord.botUserId,
+        afterMessageId: indicator.id,
       })
 
       const threadText = await th.text()
@@ -976,17 +958,22 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: clear-queue-setup
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
-        » **queue-tester:** Reply with exactly: race-final
-        Removed queued message (was position 1): Reply with exactly: removed-queued-message
-        -# Queued message (position 2)
-        > race-final
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: kept-queued-message"
+        -# Removed queued message: Reply with exactly: removed-queued-message
+        » **queue-tester:** Reply with exactly: race-final
+        -# Queued message (position 3)
+        race-final
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        -# Executing queued prompt
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
-      expect(threadText).not.toContain('» **queue-tester:** Reply with exactly: removed-queued-message')
-      expect(threadText).toContain('kept-queued-message')
+      // The removed item never drained, so nothing replies to its ack.
+      const finalMessages = await th.getMessages()
+      expect(finalMessages.some((message) => {
+        return message.message_reference?.message_id === secondQueueAckMessage.id
+      })).toBe(false)
     },
     12_000,
   )
@@ -1250,20 +1237,20 @@ e2eTest('thread message queue ordering', () => {
       expect(updatedItem!.prompt).not.toContain('original-queued')
 
       // 6. Wait for the queue to drain and verify the edited prompt was dispatched.
-      await waitForBotMessageContaining({
+      // The drain indicator is a silent reply to the user's queued message.
+      const indicator = await waitForBotReplyTo({
         discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: '» **queue-tester:** Reply with exactly: edited-queued',
+        replyToMessageId: queuedMsg.id,
         timeout: 8_000,
       })
+      expect(indicator.content).toBe('-# Executing queued prompt')
 
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
         timeout: 8_000,
-        afterMessageIncludes: 'edited-queued',
-        afterAuthorId: discord.botUserId,
+        afterMessageId: indicator.id,
       })
 
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -1278,7 +1265,7 @@ e2eTest('thread message queue ordering', () => {
         -# **queue-tester** edited queued message
         slow-busy-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: edited-queued
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -1362,7 +1349,7 @@ e2eTest('thread message queue ordering', () => {
       expect(removedItem).toBeUndefined()
 
       // 6. Wait for the slow session to finish and verify the removed
-      // message was never dispatched as a queue drain (no » indicator).
+      // message was never dispatched as a queue drain (no drain indicator).
       await waitForFooterMessage({
         discord,
         threadId: thread.id,
@@ -1371,9 +1358,9 @@ e2eTest('thread message queue ordering', () => {
 
       const finalText = await th.text()
       // The user message text appears in the thread, but the queue dispatch
-      // indicator (» **username:** ...) should NOT appear because the item
-      // was removed from the queue before drain.
-      expect(finalText).not.toContain('» **queue-tester:** Reply with exactly: will-be-removed')
+      // indicator should NOT appear because the item was removed from the
+      // queue before drain.
+      expect(finalText).not.toContain('Executing queued prompt')
       expect(finalText).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
         SLOW_BUSY_MARKER Reply with exactly: remove-queue-setup

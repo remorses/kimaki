@@ -312,6 +312,40 @@ export async function waitForBotMessageContaining({
   )
 }
 
+/** Poll until a bot message that is a Discord reply to `replyToMessageId` appears. */
+export async function waitForBotReplyTo({
+  discord,
+  threadId,
+  replyToMessageId,
+  timeout,
+}: {
+  discord: DigitalDiscord
+  threadId: string
+  replyToMessageId: string
+  timeout: number
+}): Promise<APIMessage> {
+  const effectiveTimeout = normalizeWaitTimeout(timeout)
+  const start = Date.now()
+  while (Date.now() - start < effectiveTimeout) {
+    const messages = await discord.thread(threadId).getMessages()
+    const match = messages.find((message) => {
+      return (
+        message.author.id === discord.botUserId &&
+        message.message_reference?.message_id === replyToMessageId
+      )
+    })
+    if (match) {
+      return match
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
+  }
+  throw new Error(
+    `Timed out waiting for bot reply to message ${replyToMessageId} in thread ${threadId}`,
+  )
+}
+
 /** Poll until a specific message id appears in thread history. */
 export async function waitForMessageById({
   discord,
@@ -378,31 +412,40 @@ export async function waitForFooterMessage({
   timeout,
   afterMessageIncludes,
   afterAuthorId,
+  afterMessageId,
 }: {
   discord: DigitalDiscord
   threadId: string
   timeout: number
   afterMessageIncludes?: string
   afterAuthorId?: string
+  afterMessageId?: string
 }): Promise<APIMessage[]> {
   const effectiveTimeout = normalizeWaitTimeout(timeout)
   const start = Date.now()
   let lastMessages: APIMessage[] = []
+  const hasAnchor = Boolean(afterMessageIncludes || afterMessageId)
   while (Date.now() - start < effectiveTimeout) {
     const messages = await discord.thread(threadId).getMessages()
     lastMessages = messages
-    const afterIndex = afterMessageIncludes
-      ? messages.findLastIndex((message) => {
-          if (!getMessageVisibleText(message).includes(afterMessageIncludes)) {
-            return false
-          }
-          if (!afterAuthorId) {
-            return true
-          }
-          return message.author.id === afterAuthorId
-        })
-      : -1
-    if (afterMessageIncludes && afterIndex === -1) {
+    const afterIndex = (() => {
+      if (afterMessageId) {
+        return messages.findIndex((message) => message.id === afterMessageId)
+      }
+      if (!afterMessageIncludes) {
+        return -1
+      }
+      return messages.findLastIndex((message) => {
+        if (!getMessageVisibleText(message).includes(afterMessageIncludes)) {
+          return false
+        }
+        if (!afterAuthorId) {
+          return true
+        }
+        return message.author.id === afterAuthorId
+      })
+    })()
+    if (hasAnchor && afterIndex === -1) {
       await new Promise((resolve) => {
         setTimeout(resolve, 100)
       })

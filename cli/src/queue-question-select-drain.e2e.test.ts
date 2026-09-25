@@ -7,6 +7,7 @@ import {
 } from './queue-advanced-e2e-setup.js'
 import {
   waitForBotMessageContaining,
+  waitForBotReplyTo,
   waitForFooterMessage,
 } from './test-utils.js'
 import { pendingQuestionContexts } from './commands/ask-question.js'
@@ -35,26 +36,29 @@ async function waitForPendingQuestion({
   throw new Error('Timed out waiting for pending question context')
 }
 
-async function expectNoBotMessageContaining({
+async function expectNoBotReplyTo({
   discord,
   threadId,
-  text,
+  replyToMessageId,
   timeout,
 }: {
   discord: Parameters<typeof waitForBotMessageContaining>[0]['discord']
   threadId: string
-  text: string
+  replyToMessageId: string
   timeout: number
 }): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeout) {
     const messages = await discord.thread(threadId).getMessages()
     const match = messages.find((message) => {
-      return message.author.id === discord.botUserId && message.content.includes(text)
+      return (
+        message.author.id === discord.botUserId &&
+        message.message_reference?.message_id === replyToMessageId
+      )
     })
     if (match) {
       throw new Error(
-        `Unexpected bot message containing ${JSON.stringify(text)} while it should still be queued`,
+        `Unexpected bot reply to ${replyToMessageId} while it should still be queued`,
       )
     }
     await new Promise<void>((resolve) => {
@@ -112,32 +116,41 @@ describe('queue drain after question select answer', () => {
           name: 'queue',
           options: [{ name: 'message', type: 3, value: firstQueuedPrompt }],
         })
-      await th.waitForInteractionAck({
+      const firstAck = await th.waitForInteractionAck({
         interactionId: firstQueueInteractionId,
         timeout: 8_000,
       })
+      if (!firstAck.messageId) {
+        throw new Error('Expected first /queue ack message id')
+      }
 
-      await waitForBotMessageContaining({
+      // The pending question hands off the first item right away. Its
+      // indicator must still reply to the /queue ack, not fall back to text.
+      const firstIndicator = await waitForBotReplyTo({
         discord: ctx.discord,
         threadId: thread.id,
-        text: `» **question-select-tester:** ${firstQueuedPrompt}`,
+        replyToMessageId: firstAck.messageId,
         timeout: 8_000,
       })
+      expect(firstIndicator.content).toBe('-# Executing queued prompt')
 
       const { id: secondQueueInteractionId } = await th.user(TEST_USER_ID)
         .runSlashCommand({
           name: 'queue',
           options: [{ name: 'message', type: 3, value: secondQueuedPrompt }],
         })
-      await th.waitForInteractionAck({
+      const secondAck = await th.waitForInteractionAck({
         interactionId: secondQueueInteractionId,
         timeout: 8_000,
       })
+      if (!secondAck.messageId) {
+        throw new Error('Expected second /queue ack message id')
+      }
 
-      await expectNoBotMessageContaining({
+      await expectNoBotReplyTo({
         discord: ctx.discord,
         threadId: thread.id,
-        text: `» **question-select-tester:** ${secondQueuedPrompt}`,
+        replyToMessageId: secondAck.messageId,
         timeout: 200,
       })
 
@@ -151,25 +164,17 @@ describe('queue drain after question select answer', () => {
         timeout: 8_000,
       })
 
-      await waitForFooterMessage({
+      const secondIndicator = await waitForBotReplyTo({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
-        afterMessageIncludes: `» **question-select-tester:** ${firstQueuedPrompt}`,
-        afterAuthorId: ctx.discord.botUserId,
-      })
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: `» **question-select-tester:** ${secondQueuedPrompt}`,
+        replyToMessageId: secondAck.messageId,
         timeout: 8_000,
       })
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
         timeout: 8_000,
-        afterMessageIncludes: `» **question-select-tester:** ${secondQueuedPrompt}`,
-        afterAuthorId: ctx.discord.botUserId,
+        afterMessageId: secondIndicator.id,
       })
 
       const timeline = await th.text({ showInteractions: true })
@@ -182,23 +187,21 @@ describe('queue drain after question select answer', () => {
         How to proceed?
         ✓ _Alpha_
         [user interaction]
-        » **question-select-tester:** QUESTION_SELECT_DRAIN_FIRST_MARKER
         -# Queued message (position 1)
+        -# Executing queued prompt
         [user interaction]
         -# Queued message (position 1)
         [user selects dropdown: 0]
         » **question-select-tester:** Alpha
         question-drain-first
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **question-select-tester:** Reply with exactly: post-question-second
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(timeline).toContain('How to proceed?')
       expect(timeline).toContain('[user selects dropdown: 0]')
-      expect(timeline).toContain(`» **question-select-tester:** ${firstQueuedPrompt}`)
       expect(timeline).toContain('question-drain-first')
-      expect(timeline).toContain(`» **question-select-tester:** ${secondQueuedPrompt}`)
       expect(timeline).toContain('ok')
     },
     15_000,

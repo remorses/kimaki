@@ -15,6 +15,7 @@ import { initializeOpencodeForDirectory } from './opencode.js'
 import { buildLongPromptMessage } from './cli-runner.js'
 import {
   waitForBotMessageContaining,
+  waitForBotReplyTo,
   waitForFooterMessage,
   waitForThreadState,
 } from './test-utils.js'
@@ -176,11 +177,18 @@ e2eTest('queue delete message', () => {
         description: 'CLI-injected message waits in local queue',
       })
 
-      // The drain repost is the last message containing the queued prompt.
+      // The drain indicator is a silent reply to the CLI-injected message.
+      const indicator = await waitForBotReplyTo({
+        discord: ctx.discord,
+        threadId: thread.id,
+        replyToMessageId: injected.id,
+        timeout: 8_000,
+      })
+      expect(indicator.content).toBe('-# Executing queued prompt')
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        afterMessageIncludes: '» **queue-delete-tester:**',
+        afterMessageId: indicator.id,
         timeout: 8_000,
       })
 
@@ -199,11 +207,7 @@ e2eTest('queue delete message', () => {
         -# Queued at position 1. Edit or delete your message to update the queue
         slow-busy-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-delete-tester:** Prompt attached as file (2448 chars)
-
-        > » **kimaki-cli:** Reply with exactly: cli-queued filler line filler line filler line filler line fil…
-
-        <attach...
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
