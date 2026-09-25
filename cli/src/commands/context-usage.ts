@@ -6,6 +6,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
+import type { Message, Part } from '@opencode-ai/sdk/v2'
 import type { CommandContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { getThreadSession } from '../database.js'
@@ -18,6 +19,56 @@ import { createLogger, LogPrefix } from '../logger.js'
 
 
 const logger = createLogger(LogPrefix.SESSION)
+
+export function formatContextBreakdown({
+  messages,
+  lastAssistantId,
+  inputTokens,
+}: {
+  messages: Array<{ info: Message; parts: Part[] }>
+  lastAssistantId: string
+  inputTokens: number
+}): string | undefined {
+  if (inputTokens <= 0) return undefined
+  const lastIndex = messages.findIndex((message) => message.info.id === lastAssistantId)
+  if (lastIndex < 0) return undefined
+  const history = messages.slice(0, lastIndex)
+  const compactIndex = history.findLastIndex((message) =>
+    message.parts.some((part) => part.type === 'compaction'),
+  )
+  const active = history.slice(compactIndex < 0 ? 0 : compactIndex + 1)
+  const system = [...active].reverse().find((message) =>
+    message.info.role === 'user' && message.info.system,
+  )
+  const systemChars = system?.info.role === 'user' ? system.info.system?.length ?? 0 : 0
+  const toolChars = new Map<string, number>()
+  for (const message of active) {
+    if (message.info.role !== 'assistant') continue
+    for (const part of message.parts) {
+      if (part.type !== 'tool') continue
+      const output = part.state.status === 'completed' && !part.state.time.compacted
+        ? part.state.output
+        : part.state.status === 'error' ? part.state.error : ''
+      const chars = JSON.stringify(part.state.input).length + output.length
+      toolChars.set(part.tool, (toolChars.get(part.tool) ?? 0) + chars)
+    }
+  }
+
+  const estimates = [
+    { name: 'system', tokens: Math.ceil(systemChars / 4) },
+    ...[...toolChars].map(([name, chars]) => ({ name: `tool ${name}`, tokens: Math.ceil(chars / 4) })),
+  ].sort((a, b) => b.tokens - a.tokens)
+  const estimated = estimates.reduce((total, entry) => total + entry.tokens, 0)
+  const scale = estimated > inputTokens ? inputTokens / estimated : 1
+  const visible = estimates.slice(0, 5).map((entry) => ({
+    name: entry.name,
+    tokens: Math.floor(entry.tokens * scale),
+  }))
+  const other = inputTokens - visible.reduce((total, entry) => total + entry.tokens, 0)
+  const format = ({ name, tokens }: { name: string; tokens: number }) =>
+    `${name} ${(tokens / inputTokens * 100).toFixed(1)}% (${tokens.toLocaleString('en-US')})`
+  return `**Estimated input mix:** ${[...visible.filter((entry) => entry.tokens > 0), { name: 'other', tokens: other }].map(format).join(' · ')} tokens (other includes messages and unexposed prompts)`
+}
 
 function getTokenTotal({
   input,
@@ -142,6 +193,7 @@ export async function handleContextUsageCommand({
 
     const { tokens, modelID, providerID } = lastAssistant.info
     const totalTokens = getTokenTotal(tokens)
+    const inputTokens = tokens.input + tokens.cache.read + tokens.cache.write
 
     // Sum cost across all assistant messages for accurate session total
     // (AssistantMessage.cost is per-message, not cumulative)
@@ -187,6 +239,13 @@ export async function handleContextUsageCommand({
         `**Context usage:** ${formattedTokens} tokens (context limit unavailable)`,
       )
     }
+
+    const breakdown = formatContextBreakdown({
+      messages,
+      lastAssistantId: lastAssistant.info.id,
+      inputTokens,
+    })
+    if (breakdown) lines.push(breakdown)
 
     if (modelID) {
       lines.push(`**Model:** ${modelID}`)
