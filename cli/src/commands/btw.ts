@@ -29,6 +29,7 @@ import { copySessionPreferences } from './model.js'
 import { copySessionSystemPrompt } from '../system-message.js'
 import { OpenCodeSdkError } from '../errors.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
+import { extractQueueSuffix } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
@@ -244,7 +245,11 @@ export async function handleBtwCommand({
 
   const threadChannel = channel
 
-  const prompt = command.options.getString('prompt', true)
+  const { prompt, forceQueue } = extractQueueSuffix(command.options.getString('prompt', true))
+  if (!prompt.trim()) {
+    await command.reply({ content: 'Write a question to fork', flags: MessageFlags.Ephemeral })
+    return
+  }
 
   const resolved = await resolveWorkingDirectory({
     channel: threadChannel,
@@ -263,6 +268,32 @@ export async function handleBtwCommand({
   await command.deferReply({ flags: MessageFlags.Ephemeral })
 
   try {
+    if (forceQueue) {
+      if (!await getThreadSession(threadChannel.id)) {
+        await command.editReply('No active session in this thread. Start a session, then retry /btw.')
+        return
+      }
+      const runtime = getOrCreateRuntime({
+        threadId: threadChannel.id,
+        thread: threadChannel,
+        projectDirectory,
+        sdkDirectory: workingDirectory,
+        channelId: threadChannel.parentId || threadChannel.id,
+        appId,
+      })
+      const queued = await runtime.enqueueIncoming({
+        prompt,
+        queuedAction: 'btw',
+        userId: command.user.id,
+        username: command.user.displayName,
+        appId,
+        mode: 'local-queue',
+      })
+      await command.editReply(queued.queued
+        ? `Btw fork queued at position ${queued.position}. It will start after the earlier prompts finish.`
+        : 'Btw fork started. The new thread will appear shortly.')
+      return
+    }
     const result = await forkSessionToBtwThread({
       sourceThread: threadChannel,
       projectDirectory,

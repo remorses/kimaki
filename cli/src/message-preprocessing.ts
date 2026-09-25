@@ -18,7 +18,6 @@ import {
   resolveMentions,
   resolveContentMentions,
   serializeMessageExtras,
-  extractQueueSuffix,
   getFileAttachments,
   getTextAttachments,
 } from './message-formatting.js'
@@ -29,6 +28,7 @@ import { getCompactSessionContext, getLastSessionId } from './markdown.js'
 import { getThreadSession, getThreadWorktreeOrWorkspace } from './database.js'
 import { resolveWorkingDirectory, resolveTextChannel, sendThreadMessage } from './discord-utils.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
+import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
 import { createNewSessionThread } from './commands/session.js'
 import type { TranscriptionResult } from './voice.js'
 import * as errore from 'errore'
@@ -178,14 +178,14 @@ export async function resolveMessagePrompt({
   forceQueue?: boolean
   /** Append serialized embeds, polls and forwards of `message`. */
   includeExtras?: boolean
-}): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode'>> {
-  const qs = extractQueueSuffix(text)
+}): Promise<Pick<PreprocessResult, 'prompt' | 'images' | 'mode' | 'queuedAction'>> {
+  const qs = extractBtwQueueSuffix(text)
   const [images, textAttachments] = await Promise.all([
     getFileAttachments(message),
     getTextAttachments(message),
   ])
   const prompt = [
-    qs.prompt,
+    qs.forceBtw && !qs.forceQueue && !forceQueue ? text : qs.prompt,
     includeExtras ? serializeMessageExtras(message) : '',
     textAttachments,
   ]
@@ -195,6 +195,7 @@ export async function resolveMessagePrompt({
     prompt,
     images: images.length > 0 ? images : undefined,
     mode: qs.forceQueue || forceQueue ? 'local-queue' : 'opencode',
+    queuedAction: (qs.forceQueue || forceQueue) && qs.forceBtw ? 'btw' : undefined,
   }
 }
 

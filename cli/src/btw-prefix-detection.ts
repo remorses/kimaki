@@ -7,7 +7,10 @@
 // - btw as its own final line: "text\nbtw"
 // Non-matches: "btw fix this" (start only), "hello btw" (no punctuation)
 
+import { extractQueueSuffix } from './message-formatting.js'
+
 const BTW_SUFFIX_RE = /(?:[.!?,;:])\s*btw\.?\s*$|\n\s*btw\.?\s*$/i
+const BTW_QUEUE_SUFFIX_RE = /(?:[.!?,;:])\s*btw\s+queue\.?\s*$|\n\s*btw\s+queue\.?\s*$/i
 
 export function extractBtwSuffix(
   content: string,
@@ -16,4 +19,12 @@ export function extractBtwSuffix(
     return { prompt: content, forceBtw: false }
   }
   return { prompt: content.replace(BTW_SUFFIX_RE, '').trimEnd(), forceBtw: true }
+}
+
+export function extractBtwQueueSuffix(content: string) {
+  const queued = BTW_QUEUE_SUFFIX_RE.test(content)
+    ? { prompt: content.replace(/\s+queue\.?\s*$/i, ''), forceQueue: true }
+    : extractQueueSuffix(content)
+  const btw = extractBtwSuffix(queued.prompt)
+  return { prompt: btw.prompt, forceQueue: queued.forceQueue, forceBtw: btw.forceBtw }
 }

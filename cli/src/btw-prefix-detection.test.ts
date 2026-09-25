@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { extractBtwSuffix } from './btw-prefix-detection.js'
+import { extractBtwSuffix, extractBtwQueueSuffix } from './btw-prefix-detection.js'
 
 describe('extractBtwSuffix', () => {
   test('matches after period', () => {
@@ -101,4 +101,42 @@ describe('extractBtwSuffix', () => {
       }
     `)
   })
+})
+
+test('btw queue suffix keeps both actions in order', () => {
+  expect([
+    'Explain this. btw queue',
+    'Explain this. btw. queue',
+    'Explain this\nbtw queue',
+    'Explain this. btw',
+    'Explain this. queue',
+  ].map(extractBtwQueueSuffix)).toMatchInlineSnapshot(`
+    [
+      {
+        "forceBtw": true,
+        "forceQueue": true,
+        "prompt": "Explain this",
+      },
+      {
+        "forceBtw": true,
+        "forceQueue": true,
+        "prompt": "Explain this",
+      },
+      {
+        "forceBtw": true,
+        "forceQueue": true,
+        "prompt": "Explain this",
+      },
+      {
+        "forceBtw": true,
+        "forceQueue": false,
+        "prompt": "Explain this",
+      },
+      {
+        "forceBtw": false,
+        "forceQueue": true,
+        "prompt": "Explain this",
+      },
+    ]
+  `)
 })

@@ -24,6 +24,8 @@ export type QueuedMessage = {
   // The text content to send to the OpenCode session (user message or
   // transcribed voice message). Always present.
   prompt: string
+  // A queued fork runs after earlier source turns, not as a source prompt.
+  queuedAction?: 'btw'
   // Discord user ID of the message author. Used for permission checks
   // and attribution in the session start source tracking.
   userId: string

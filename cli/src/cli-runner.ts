@@ -56,7 +56,7 @@ import {
   AttachmentBuilder,
 } from 'discord.js'
 import { discordApiUrl, getDiscordRestApiUrl, getGatewayProxyRestBaseUrl, getInternetReachableBaseUrl } from './discord-urls.js'
-import { extractQueueSuffix } from './message-formatting.js'
+import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -249,10 +249,12 @@ export function buildLongPromptMessage(prompt: string): {
   content: string
   fileText: string
 } {
-  const { prompt: fileText, forceQueue } = extractQueueSuffix(prompt)
+  const { prompt: stripped, forceQueue, forceBtw } = extractBtwQueueSuffix(prompt)
+  const fileText = forceBtw && !forceQueue ? prompt : stripped
   const preview = fileText.slice(0, 100).replace(/\n/g, ' ')
   const summary = `Prompt attached as file (${fileText.length} chars)\n\n> ${preview}…`
-  return { content: forceQueue ? `${summary}\n\nqueue` : summary, fileText }
+  const suffix = forceBtw ? 'btw queue' : 'queue'
+  return { content: forceQueue ? `${summary}\n\n${suffix}` : summary, fileText }
 }
 
 function promptAttachmentBlob(text: string) {

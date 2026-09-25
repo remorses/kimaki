@@ -59,7 +59,7 @@ import {
 } from './system-message.js'
 import YAML from 'yaml'
 import { resolveContentMentions } from './message-formatting.js'
-import { extractBtwSuffix } from './btw-prefix-detection.js'
+import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
@@ -825,11 +825,9 @@ export async function startDiscordBot({
         // `. btw` suffix mirrors /btw for fast side-question forks.
         // Works like queue: just the word "btw" at the end after punctuation
         // or newline. The whole message (minus the suffix) becomes the fork prompt.
-        const btwResult =
-          projectDirectory && worktreeInfo?.status !== 'pending'
-            ? extractBtwSuffix(message.content || '')
-            : null
-        if (btwResult?.forceBtw && projectDirectory && !isLeadingMentionToOtherUser) {
+        const suffix = extractBtwQueueSuffix(message.content || '')
+        if (suffix.forceBtw && !suffix.forceQueue && projectDirectory
+          && worktreeInfo?.status !== 'pending' && !isLeadingMentionToOtherUser) {
           threadIngressSlot?.release()
           const btwSdkDir =
             worktreeInfo?.status === 'ready' &&
@@ -840,7 +838,7 @@ export async function startDiscordBot({
             sourceThread: thread,
             projectDirectory,
             sdkDirectory: btwSdkDir,
-            prompt: btwResult.prompt,
+            prompt: suffix.prompt,
             userId: message.author.id,
             username:
               message.member?.displayName || message.author.displayName,
@@ -919,7 +917,7 @@ export async function startDiscordBot({
           }
           void cancelPendingFileUpload(thread.id)
         }
-        if (!hasVoiceAttachment) {
+        if (!hasVoiceAttachment && !suffix.forceQueue) {
           await dismissSourceUi()
         }
 
@@ -982,7 +980,7 @@ export async function startDiscordBot({
             })
             // Routing must finish before touching source UI. This chain is separate
             // from dispatchAction, so abort waiting does not block session events.
-            if (hasVoiceAttachment && !result.skip) {
+            if (hasVoiceAttachment && !result.skip && result.mode !== 'local-queue') {
               await dismissSourceUi()
             }
             return result
@@ -1234,17 +1232,18 @@ export async function startDiscordBot({
       if (!runtime) return
 
       // Same resolution as initial ingress, so the edited prompt matches.
-      const { prompt, mode } = await resolveMessagePrompt({
+      const { prompt, mode, queuedAction } = await resolveMessagePrompt({
         message,
         text: resolveContentMentions(message),
       })
 
       // If the edit removed the queue suffix, remove the item from the queue.
       // If the suffix is still present, update the prompt.
-      const result = await runtime.updateQueuedMessage(
-        message.id,
-        mode === 'local-queue' ? prompt : '',
-      )
+      const result = await runtime.updateQueuedMessage({
+        sourceMessageId: message.id,
+        newPrompt: mode === 'local-queue' ? prompt : '',
+        queuedAction,
+      })
 
       if (result.found && channel.isThread()) {
         const displayName =

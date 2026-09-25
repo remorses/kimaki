@@ -128,4 +128,61 @@ describe('voice routing preserves source questions', () => {
       expect(transcript).not.toContain('expired')
     })
   }
+
+  test('queued btw waits for the source question answer', async () => {
+    const marker = 'QUESTION_SELECT_QUEUE_MARKER queued btw question'
+    await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({ content: marker })
+    const source = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (thread) => thread.name === marker,
+    })
+    const th = ctx.discord.thread(source.id)
+    const messages = await waitForBotMessageContaining({
+      discord: ctx.discord, threadId: source.id, text: 'How to proceed?', timeout: 4_000,
+    })
+    const question = messages.find((message) => message.content.includes('How to proceed?'))
+    if (!question) throw new Error('Expected question message')
+    const customId = JSON.stringify(question.components).match(/"custom_id":"(ask_question:[^"]+)"/)?.[1]
+    if (!customId) throw new Error('Expected question dropdown')
+
+    await th.user(TEST_USER_ID).sendMessage({ content: 'Explain the result. btw queue' })
+    const interaction = await th.user(TEST_USER_ID).selectMenu({
+      messageId: question.id, customId, values: ['0'],
+    })
+    await th.waitForInteractionAck({ interactionId: interaction.id, timeout: 4_000 })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: source.id, timeout: 4_000 })
+    const fork = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (thread) => thread.id !== source.id && (thread.name?.startsWith('btw:') ?? false),
+    })
+    await waitForFooterMessage({ discord: ctx.discord, threadId: fork.id, timeout: 4_000 })
+    const transcript = (await th.text({ showInteractions: true })).replaceAll(fork.id, 'FORK_THREAD')
+    expect(transcript).toMatchInlineSnapshot(`
+      "--- from: user (voice-question-tester)
+      QUESTION_SELECT_QUEUE_MARKER queued btw question
+      --- from: assistant (TestBot)
+      -# *using deterministic-provider/deterministic-v2*
+      **Select action**
+      How to proceed?
+      ✓ _Alpha_
+      --- from: user (voice-question-tester)
+      Explain the result. btw queue
+      [user selects dropdown: 0]
+      --- from: assistant (TestBot)
+      » **voice-question-tester:** Alpha
+      -# Queued at position 1. Edit or delete your message to update the queue
+      tool done
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+      -# Executing queued prompt
+      Session forked! Continue in <#FORK_THREAD>"
+    `)
+    expect(transcript.indexOf('tool done')).toBeLessThan(transcript.indexOf('Session forked!'))
+    expect((await ctx.discord.thread(fork.id).text()).replaceAll(source.id, 'SOURCE_THREAD')).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Reusing context from <#SOURCE_THREAD> to answer prompt...
+      Explain the result
+      ok
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    `)
+  }, 12_000)
 })

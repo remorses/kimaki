@@ -555,6 +555,93 @@ e2eTest('thread message queue ordering', () => {
     12_000,
   )
 
+  test('btw queue forks after the current turn and includes its answer', async () => {
+    const start = 'Reply with exactly: SLOW_BUSY_MARKER queued-fork-source'
+    await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({ content: start })
+    const source = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 4_000,
+      predicate: (thread) => thread.name === start,
+    })
+    const th = discord.thread(source.id)
+    await waitForBotMessageContaining({
+      discord, threadId: source.id, userId: TEST_USER_ID,
+      text: 'slow-busy-reply', timeout: 10_000,
+    })
+    await th.user(TEST_USER_ID).sendMessage({
+      content: 'Reply with exactly: earlier-queue. queue',
+    })
+    await th.user(TEST_USER_ID).sendMessage({
+      content: 'Reply with exactly: queued-fork-answer. btw queue',
+    })
+
+    const before = await th.text()
+    expect(before).not.toContain('Session forked!')
+
+    const fork = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 8_000,
+      predicate: (thread) => thread.id !== source.id && (thread.name?.startsWith('btw:') ?? false),
+    })
+    await waitForBotMessageContaining({
+      discord, threadId: fork.id, userId: TEST_USER_ID,
+      text: 'ok', timeout: 8_000,
+    })
+    await waitForFooterMessage({ discord, threadId: fork.id, timeout: 8_000 })
+    await waitForBotMessageContaining({
+      discord, threadId: source.id, userId: TEST_USER_ID,
+      text: 'Session forked!', timeout: 8_000,
+    })
+    const sourceText = await th.text()
+    expect(sourceText.replace(/<#[0-9]+>/g, '<#FORK_THREAD>')).toMatchInlineSnapshot(`
+      "--- from: user (queue-tester)
+      Reply with exactly: SLOW_BUSY_MARKER queued-fork-source
+      --- from: assistant (TestBot)
+      -# *using deterministic-provider/deterministic-v2*
+      slow-busy-reply
+      --- from: user (queue-tester)
+      Reply with exactly: earlier-queue. queue
+      Reply with exactly: queued-fork-answer. btw queue
+      --- from: assistant (TestBot)
+      -# Queued at position 1. Edit or delete your message to update the queue
+      -# Queued at position 2. Edit or delete your message to update the queue
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+      -# Executing queued prompt
+      ok
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+      -# Executing queued prompt
+      Session forked! Continue in <#FORK_THREAD>"
+    `)
+    expect(sourceText.indexOf('*project ⋅ main ⋅')).toBeLessThan(sourceText.indexOf('Session forked!'))
+    expect(sourceText.indexOf('earlier-queue')).toBeLessThan(sourceText.indexOf('Session forked!'))
+    expect((await discord.thread(fork.id).text()).replace(/<#[0-9]+>/g, '<#SOURCE_THREAD>')).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Reusing context from <#SOURCE_THREAD> to answer prompt...
+      Reply with exactly: queued-fork-answer
+      ok
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    `)
+
+    await discord.thread(fork.id).user(TEST_USER_ID).runSlashCommand({
+      name: 'queue',
+      options: [{ name: 'message', type: 3, value: 'Reply with exactly: nested-fork. btw' }],
+    })
+    const nested = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+      timeout: 8_000,
+      predicate: (thread) => thread.id !== source.id && thread.id !== fork.id && (thread.name?.startsWith('btw:') ?? false),
+    })
+    await waitForBotMessageContaining({
+      discord, threadId: nested.id, userId: TEST_USER_ID,
+      text: 'ok', timeout: 8_000,
+    })
+    await waitForFooterMessage({ discord, threadId: nested.id, timeout: 8_000 })
+    expect((await discord.thread(nested.id).text()).replace(/<#[0-9]+>/g, '<#SOURCE_THREAD>')).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Reusing context from <#SOURCE_THREAD> to answer prompt...
+      Reply with exactly: nested-fork
+      ok
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    `)
+  }, 16_000)
+
   test(
     'two rapid text messages in thread — both processed in order',
     async () => {
