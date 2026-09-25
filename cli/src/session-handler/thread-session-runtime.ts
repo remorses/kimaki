@@ -3646,6 +3646,8 @@ export class ThreadSessionRuntime {
       const persistResult = await deleteThreadQueueItem(item.queueId!).catch((error) => {
         return new Error('Failed to delete persisted queue item', { cause: error })
       })
+      // Drop it from memory anyway so it is not re-sent. Restart replay of a prompt is a no-op:
+      // OpenCode keeps the first `msg_kimaki_<queueId>` admission.
       if (persistResult instanceof Error) {
         logger.error(
           `[QUEUE] Failed to persist accept of ${item.queueId}: ${persistResult.message}`,
@@ -3754,6 +3756,14 @@ export class ThreadSessionRuntime {
       const sessionId = this.state?.sessionId
       if (sessionId) this.markQueueDispatchIdle(sessionId)
       await this.handleAdmissionError(admission)
+      return false
+    }
+    // /abort or a remove may have dropped the item while admission was prepared.
+    const stillQueued = threadState.getThreadState(this.threadId)?.queueItems.some((item) => {
+      return input.queueId ? item.queueId === input.queueId : item === input
+    })
+    if (!stillQueued) {
+      this.markQueueDispatchIdle(admission.sessionId)
       return false
     }
     if (!admission.command) {
