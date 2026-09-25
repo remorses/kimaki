@@ -478,9 +478,9 @@ test('routes one native child tool and replays captured durable event shapes', a
     NATIVE_SUBAGENT_PARENT: delegate this check
     --- from: assistant (TestBot)
     > *using deterministic-provider/deterministic-v2*
-    ▏explore-1 ⋅ shell _echo native-child-tool-ok_
+    ┣ explore-1 ⋅ shell _echo native-child-tool-ok_
 
-    Parent received native child
+    > Parent received native child
     > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
   `)
 
@@ -724,7 +724,7 @@ test('keeps distinct parallel child labels live and after durable replay', async
 
   const finishedText = await th.text()
   const snapshotText = finishedText.replace(
-    /(▏explore-\d[^\n]*\n▏explore-\d[^\n]*)/,
+    /(┣ explore-\d[^\n]*\n┣ explore-\d[^\n]*)/,
     (match) => match.split('\n').sort().join('\n'),
   )
   expect(snapshotText).toMatchInlineSnapshot(`
@@ -732,10 +732,10 @@ test('keeps distinct parallel child labels live and after durable replay', async
     PARALLEL_SUBAGENT_PARENT: delegate both checks
     --- from: assistant (TestBot)
     > *using deterministic-provider/deterministic-v2*
-    ▏explore-1 ⋅ shell _echo parallel-child-a-ok_
-    ▏explore-2 ⋅ shell _echo parallel-child-b-ok_
+    ┣ explore-1 ⋅ shell _echo parallel-child-a-ok_
+    ┣ explore-2 ⋅ shell _echo parallel-child-b-ok_
 
-    Parent received parallel native children
+    > Parent received parallel native children
     > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
   `)
   expect(finishedText.split('\n').filter((line) => {

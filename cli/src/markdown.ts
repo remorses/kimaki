@@ -266,8 +266,13 @@ export class ShareMarkdown {
     const messages = sessionMessagesAscending(messagesResult).map(toGenericSessionMessage)
 
     // If lastAssistantOnly, filter to only the last assistant message
+    const lastAssistant = lastAssistantOnly
+      ? messages.findLast((message) => message.info.role === 'assistant')
+      : undefined
     const messagesToRender = lastAssistantOnly
-      ? messages.filter((m) => m.info.role === 'assistant').slice(-1)
+      ? lastAssistant
+        ? [lastAssistant]
+        : []
       : messages
 
     // Build markdown

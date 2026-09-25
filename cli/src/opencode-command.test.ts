@@ -7,16 +7,12 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   ensureKimakiCommandShim,
-  getIncompatibleOpencodeVersionError,
   getSpawnCommandAndArgs,
-  INCOMPATIBLE_OPENCODE_MAJOR_VERSION,
-  isIncompatibleOpencodeMajor,
   parseOpencodeVersion,
   sanitizeShimExecArgv,
   selectResolvedCommand,
   splitCommandLookupOutput,
 } from './opencode-command.js'
-import { OpencodeIncompatibleVersionError } from './errors.js'
 
 describe('parseOpencodeVersion', () => {
   test('extracts major.minor.patch from opencode --version output', () => {
@@ -47,28 +43,17 @@ describe('parseOpencodeVersion', () => {
   })
 })
 
-describe('isIncompatibleOpencodeMajor', () => {
-  test('rejects the incompatible major and allows every other major', () => {
-    expect(INCOMPATIBLE_OPENCODE_MAJOR_VERSION).toBe(2)
-    expect(isIncompatibleOpencodeMajor({ major: 2 })).toBe(true)
-    expect(isIncompatibleOpencodeMajor({ major: 1 })).toBe(false)
-    expect(isIncompatibleOpencodeMajor({ major: 0 })).toBe(false)
-    expect(isIncompatibleOpencodeMajor({ major: 3 })).toBe(false)
-  })
-})
+describe('getRequiredOpencodeVersionError', () => {
+  test('requires OpenCode major 2', async () => {
+    const { getRequiredOpencodeVersionError } = await import('./opencode.js')
 
-describe('getIncompatibleOpencodeVersionError', () => {
-  test('returns a tagged error for OpenCode 2.x', () => {
-    const error = getIncompatibleOpencodeVersionError('2.0.0')
-    expect(error).toBeInstanceOf(OpencodeIncompatibleVersionError)
-    expect(error?.message).toMatchInlineSnapshot(
-      `"Kimaki is not compatible with OpenCode version 2.0.0. Install an OpenCode 1.x release."`,
+    expect(getRequiredOpencodeVersionError('2.0.2')).toBeNull()
+    expect(getRequiredOpencodeVersionError('1.1.65')?.message).toMatchInlineSnapshot(
+      `"Kimaki requires OpenCode 2.x, but found version 1.1.65."`,
     )
-  })
-
-  test('allows 1.x and unparseable output', () => {
-    expect(getIncompatibleOpencodeVersionError('1.4.0')).toBeNull()
-    expect(getIncompatibleOpencodeVersionError('opencode')).toBeNull()
+    expect(getRequiredOpencodeVersionError('opencode')?.message).toMatchInlineSnapshot(
+      `"Kimaki requires OpenCode 2.x, but could not read the installed version."`,
+    )
   })
 })
 

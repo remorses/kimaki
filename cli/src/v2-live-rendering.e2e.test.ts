@@ -57,7 +57,7 @@ test('shows tools before completion, sends one tool line, and renames from nativ
   const liveMessages = await waitForBotMessageContaining({
     discord: ctx.discord,
     threadId: thread.id,
-    text: '▏shell',
+    text: '┣ shell',
     timeout: 4_000,
   })
   const liveText = await th.text()
@@ -66,10 +66,10 @@ test('shows tools before completion, sends one tool line, and renames from nativ
     LIVE_RENDER_MARKER
     --- from: assistant (TestBot)
     > *using deterministic-provider/deterministic-v2*
-    Checking the project
+    > Checking the project
 
-    ▏shell _echo live-render_
-    ⻟context usage 10%"
+    ┣ shell _echo live-render_
+    ⬦ context usage 10%"
   `)
   expect(liveMessages.some((message) => isFooterMessage({ message, botUserId: ctx.discord.botUserId }))).toBe(false)
   expect(liveText).not.toContain('Live rendering complete')
@@ -86,23 +86,23 @@ test('shows tools before completion, sends one tool line, and renames from nativ
     LIVE_RENDER_MARKER
     --- from: assistant (TestBot)
     > *using deterministic-provider/deterministic-v2*
-    Checking the project
+    > Checking the project
 
-    ▏shell _echo live-render_
-    ⻟context usage 10%
+    ┣ shell _echo live-render_
+    ⬦ context usage 10%
 
-    Live rendering complete
+    > Live rendering complete
     > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
   `)
-  expect(finishedText.split('\n').filter((line) => line.startsWith('▏shell'))).toHaveLength(1)
+  expect(finishedText.split('\n').filter((line) => line.startsWith('┣ shell'))).toHaveLength(1)
   // OpenCode's configured model default has a 200,000-token context window.
-  expect(finishedText).toContain('⻟context usage 10%')
-  expect(finishedText.indexOf('Checking the project')).toBeLessThan(finishedText.indexOf('▏shell'))
-  expect(finishedText.indexOf('▏shell')).toBeLessThan(finishedText.indexOf('Live rendering complete'))
+  expect(finishedText).toContain('⬦ context usage 10%')
+  expect(finishedText.indexOf('Checking the project')).toBeLessThan(finishedText.indexOf('┣ shell'))
+  expect(finishedText.indexOf('┣ shell')).toBeLessThan(finishedText.indexOf('Live rendering complete'))
 
   const channel = await ctx.botClient.channels.fetch(thread.id)
   if (!channel?.isThread()) throw new Error('Missing Discord thread')
-  await channel.setName('⻟Original title')
+  await channel.setName('⬦ Original title')
   const sessionID = await getThreadSession(thread.id)
   const client = getOpencodeClient(ctx.directories.projectDirectory)
   if (!sessionID || !client) throw new Error('Missing OpenCode session')
@@ -110,5 +110,5 @@ test('shows tools before completion, sends one tool line, and renames from nativ
   await expect.poll(async () => {
     const updated = await ctx.botClient.channels.fetch(thread.id, { force: true })
     return updated?.isThread() ? updated.name : undefined
-  }, { timeout: 4_000, interval: 100 }).toBe('⻟Native renamed title')
+  }, { timeout: 4_000, interval: 100 }).toBe('⬦ Native renamed title')
 }, 15_000)

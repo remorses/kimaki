@@ -19,7 +19,10 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { disposeRuntimesForDirectory } from '../session-handler/thread-session-runtime.js'
+import {
+  disposeRuntimesForDirectory,
+  restorePersistedLocalQueues,
+} from '../session-handler/thread-session-runtime.js'
 import { registerCommands, type AgentInfo, type OpencodeCommand } from '../discord-command-registration.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)

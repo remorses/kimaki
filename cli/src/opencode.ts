@@ -38,6 +38,7 @@ import {
   resolvePresetModels,
 } from '@subrouter/cli'
 import { applyPatchApiId, shouldUseApplyPatch } from '@subrouter/opencode/provider'
+import { execAsync } from './exec-async.js'
 import { resolveOpencode2Command } from './opencode2.js'
 
 export type OpencodeClient = OpenCodeClient
@@ -708,11 +709,20 @@ export function resolveOpencodeCommand(): string {
   return resolved
 }
 
+export function getRequiredOpencodeVersionError(output: string): Error | null {
+  const parsed = parseOpencodeVersion(output)
+  if (!parsed) {
+    return new Error('Kimaki requires OpenCode 2.x, but could not read the installed version.')
+  }
+  if (parsed.major === 2) return null
+  return new Error(`Kimaki requires OpenCode 2.x, but found version ${parsed.raw}.`)
+}
+
 export async function assertCompatibleOpencodeVersion({
   resolvedCommand = resolveOpencodeCommand(),
 }: {
   resolvedCommand?: string
-} = {}): Promise<OpencodeIncompatibleVersionError | true> {
+} = {}): Promise<Error | true> {
   const { command, args } = getSpawnCommandAndArgs({
     resolvedCommand,
     baseArgs: ['--version'],
@@ -723,11 +733,8 @@ export async function assertCompatibleOpencodeVersion({
   ).catch((cause) => {
     return new Error('Failed to read OpenCode version', { cause })
   })
-  if (result instanceof Error) {
-    opencodeLogger.warn(result.message)
-    return true
-  }
-  const incompatible = getIncompatibleOpencodeVersionError(
+  if (result instanceof Error) return result
+  const incompatible = getRequiredOpencodeVersionError(
     `${result.stdout}\n${result.stderr}`,
   )
   if (incompatible) return incompatible
@@ -1684,31 +1691,32 @@ export type SdkErrorResponse = {
  * Extract a human-readable message from an OpenCode SDK error response.
  * Probes each known shape and falls back to a generic message.
  */
-export function extractSdkErrorMessage(error: SdkErrorResponse | null | undefined): string {
-  if (!error) {
+export function extractSdkErrorMessage(error: unknown): string {
+  if (!error || typeof error !== 'object') {
     return 'Unknown OpenCode API error'
   }
+  const response: SdkErrorResponse = error
 
-  if (error.data?.message) {
-    const name = error.name ? `${error.name}: ` : ''
-    const ref = error.data.ref ? ` (${error.data.ref})` : ''
-    return `${name}${error.data.message}${ref}`
+  if (response.data?.message) {
+    const name = response.name ? `${response.name}: ` : ''
+    const ref = response.data.ref ? ` (${response.data.ref})` : ''
+    return `${name}${response.data.message}${ref}`
   }
 
-  if (error.message) {
-    return error.message
+  if (response.message) {
+    return response.message
   }
 
-  if (error.errors && error.errors.length > 0) {
-    return JSON.stringify(error.errors)
+  if (response.errors && response.errors.length > 0) {
+    return JSON.stringify(response.errors)
   }
 
-  if (error._tag) {
-    return error._tag
+  if (response._tag) {
+    return response._tag
   }
 
-  if (error.name) {
-    return error.name
+  if (response.name) {
+    return response.name
   }
 
   return 'Unknown OpenCode API error'
