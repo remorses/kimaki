@@ -185,12 +185,6 @@ test('projects large output, action buttons, held flush, and duplicate replay', 
           "type": "hold-part",
         },
         {
-          "destination": "main",
-          "partId": "msg_hold:tool:buttons_1",
-          "reason": "open-text",
-          "type": "hold-part",
-        },
-        {
           "content": "Choose now",
           "deliveryId": "msg_hold:text:0",
           "destination": {
@@ -310,7 +304,7 @@ describe('Discord event projection parts', () => {
             "type": "store-part",
           },
           {
-            "content": "Hello world",
+            "content": "> Hello world",
             "deliveryId": "msg_1:text:0",
             "destination": {
               "label": "main",
@@ -369,7 +363,7 @@ describe('Discord event projection parts', () => {
             "type": "skip-part",
           },
           {
-            "content": "⺪thinking",
+            "content": "┣ thinking",
             "deliveryId": "msg_1:reasoning:1",
             "destination": {
               "label": "main",
@@ -476,7 +470,7 @@ describe('Discord event projection parts', () => {
             "type": "store-part",
           },
           {
-            "content": "▏shell _echo ok_",
+            "content": "┣ shell _echo ok_",
             "deliveryId": "msg_1:tool:call_1:running",
             "destination": {
               "label": "main",
@@ -537,7 +531,7 @@ describe('Discord event projection parts', () => {
             "type": "skip-part",
           },
           {
-            "content": "▏read",
+            "content": "┣ read",
             "deliveryId": "msg_1:tool:call_2:running",
             "destination": {
               "label": "main",
@@ -695,7 +689,7 @@ describe('Discord event projection parts', () => {
           "type": "store-part",
         },
         {
-          "content": "▏explore-1 ⋅ shell _pwd_",
+          "content": "┣ explore-1 ⋅ shell _pwd_",
           "deliveryId": "msg_child:tool:child_call",
           "destination": {
             "label": "explore-1",
@@ -830,7 +824,7 @@ describe('Discord event projection terminals and forms', () => {
             "type": "store-part",
           },
           {
-            "content": "Finished",
+            "content": "> Finished",
             "deliveryId": "msg_1:text:0",
             "destination": {
               "label": "main",

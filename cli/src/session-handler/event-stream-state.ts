@@ -183,6 +183,12 @@ export function compactSubagentRoutingEvidence(
   }
 }
 
+// Scans backward for the latest session-scoped lifecycle event.
+// Busy on queue-dispatch.started, execution.started, step.started, or
+// status busy/retry. Idle on execution terminals and session.idle.
+// If those were evicted from the bounded buffer, a still-running parent
+// task tool also counts as busy. That stops `. queue` from draining
+// (and the 3s interrupt plugin from aborting) while a subagent is in flight.
 export function isSessionBusy({
   events,
   sessionId,
@@ -193,6 +199,8 @@ export function isSessionBusy({
   upToIndex?: number
 }): boolean {
   const end = upToIndex ?? events.length - 1
+  const terminalTaskIds = new Set<string>()
+  const pendingTaskIds = new Set<string>()
   for (let i = end; i >= 0; i--) {
     const event = events[i]?.event
     if (!event || getEventBufferSessionId(event) !== sessionId) continue
@@ -211,8 +219,19 @@ export function isSessionBusy({
     if (event.type === 'session.status') {
       return event.data.status.type === 'busy' || event.data.status.type === 'retry'
     }
+    if (event.type === 'session.tool.success' || event.type === 'session.tool.failed') {
+      terminalTaskIds.add(event.data.id)
+      continue
+    }
+    if (
+      event.type === 'session.tool.input.started'
+      && event.data.name === 'task'
+      && !terminalTaskIds.has(event.data.id)
+    ) {
+      pendingTaskIds.add(event.data.id)
+    }
   }
-  return false
+  return pendingTaskIds.size > 0
 }
 
 export function getLatestExecutionStartedTimestamp({
@@ -236,6 +255,30 @@ export function getLatestExecutionStartedTimestamp({
     }
   }
   return undefined
+}
+
+export function didLatestExecutionUseTool({
+  events,
+  sessionId,
+  toolName,
+  upToIndex,
+}: {
+  events: EventBufferEntry[]
+  sessionId: string
+  toolName: string
+  upToIndex?: number
+}): boolean {
+  const end = upToIndex ?? events.length - 1
+  for (let i = end; i >= 0; i--) {
+    const event = events[i]?.event
+    if (!event || getEventBufferSessionId(event) !== sessionId) continue
+    if (event.type === 'session.execution.started') return false
+    if (
+      event.type === 'session.tool.input.started'
+      && event.data.name === toolName
+    ) return true
+  }
+  return false
 }
 
 export function hasVisibleV2OutputSinceExecutionStart({
@@ -931,4 +974,79 @@ export function isEventForSessionTree({
     mainSessionId,
     candidateSessionId: parented.parentID,
   })
+}
+
+// Child task sessions emit thousands of text/tool/step events. Those are
+// still handled live for Discord display, but they must not occupy the bounded
+// buffer or they evict parent busy/lifecycle events and `. queue` drains early.
+// Keep child session/message lifecycle so token tracking and subtask identity
+// still derive after the part flood.
+export function shouldRetainSessionEvent({
+  event,
+  mainSessionId,
+  isKnownChildSession,
+}: {
+  event: EventBufferEvent
+  mainSessionId?: string
+  isKnownChildSession: (sessionId: string) => boolean
+}): boolean {
+  if (event.type.endsWith('.delta')) {
+    return false
+  }
+  if (event.type === 'tui.toast.show') {
+    return true
+  }
+
+  const eventSessionId = getEventBufferSessionId(event)
+  if (!eventSessionId) {
+    return true
+  }
+  if (!mainSessionId) {
+    return false
+  }
+  if (eventSessionId === mainSessionId) {
+    return true
+  }
+
+  const parented = getParentSession(event)
+  const isChild = isKnownChildSession(eventSessionId)
+    || parented?.parentID === mainSessionId
+    || Boolean(parented && isKnownChildSession(parented.parentID))
+  if (!isChild) {
+    return false
+  }
+  if (
+    event.type === 'session.text.ended'
+    || event.type === 'session.reasoning.ended'
+    || event.type === 'session.step.started'
+    || event.type === 'session.step.ended'
+    || event.type.startsWith('session.tool.')
+  ) {
+    return false
+  }
+  return true
+}
+
+export function trimEventBuffer({
+  events,
+  mainSessionId,
+  max,
+  isKnownChildSession,
+}: {
+  events: EventBufferEntry[]
+  mainSessionId?: string
+  max: number
+  isKnownChildSession: (sessionId: string) => boolean
+}): EventBufferEntry[] {
+  const retained = events.filter((entry) => {
+    return shouldRetainSessionEvent({
+      event: entry.event,
+      mainSessionId,
+      isKnownChildSession,
+    })
+  })
+  if (retained.length <= max) {
+    return retained
+  }
+  return retained.slice(-max)
 }

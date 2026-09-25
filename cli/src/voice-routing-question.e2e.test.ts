@@ -100,8 +100,8 @@ describe('voice routing preserves source questions', () => {
           📝 **Transcribed message:** Explain routing without changing the source btw
           Session forked! Continue in <#TARGET_THREAD>
           [user selects dropdown: 0]
-          ⺩**voice-question-tester:** Alpha
-          tool done
+          » **voice-question-tester:** Alpha
+          > tool done
           > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
         `)
       } else {
@@ -120,8 +120,8 @@ describe('voice routing preserves source questions', () => {
           📝 **Transcribed message:** Explain routing without changing the source new-session
           Created new session in <#TARGET_THREAD>
           [user selects dropdown: 0]
-          ⺩**voice-question-tester:** Alpha
-          tool done
+          » **voice-question-tester:** Alpha
+          > tool done
           > *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000991>"
         `)
       }

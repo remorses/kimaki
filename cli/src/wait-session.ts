@@ -83,6 +83,21 @@ export async function waitForSessionComplete({
   while (Date.now() - startTime < timeoutMs) {
     const activeSessions = await getClient().session.active()
     const sessionStatus = activeSessions[sessionId]
+    const isBusy = Boolean(sessionStatus)
+
+    // A session parked on a form reports active but will never complete
+    // on its own, so treat a live form as done for automation and stop
+    // waiting. Guard on busy: an orphaned form left after an abort
+    // (session idle) must fall through to the normal idle/completion checks.
+    if (isBusy) {
+      const pendingForms = await getClient().form
+        .list({ sessionID: sessionId })
+        .catch(() => [])
+      if (Array.isArray(pendingForms) && pendingForms.length > 0) {
+        waitLogger.log(`Session ${sessionId} is showing a user question; treating as complete`)
+        return
+      }
+    }
 
     const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
