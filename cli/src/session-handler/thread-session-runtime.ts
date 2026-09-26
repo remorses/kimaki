@@ -1579,6 +1579,15 @@ export class ThreadSessionRuntime {
     this.persistEventBufferDebounced.trigger()
   }
 
+  seedForkPromptCacheBaseline(message: Extract<OpenCodeMessage, { role: 'assistant' }>): void {
+    if (message.sessionID !== this.state?.sessionId || this.eventBuffer.length > 0) return
+    this.appendEventToBuffer({
+      id: `fork-cache-baseline-${message.id}`,
+      type: 'message.updated',
+      properties: { sessionID: message.sessionID, info: message },
+    })
+  }
+
   // Queue-dispatch lifecycle markers are synthetic buffer-only events.
   // They are not fed into handleEvent(), so they do not emit Discord messages;
   // they only stabilize event-derived busy/idle gating for local queue drains.

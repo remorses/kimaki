@@ -118,7 +118,7 @@ export async function forkSessionToBtwThread({
   // The fork must run with the source agent, model and pinned system prompt,
   // so its request prefix is byte-identical and hits the source prompt cache.
   // `false` (source not pinned yet) is the only fallback; I/O errors fail setup.
-  const [, copiedSystem] = await Promise.all([
+  const [, copiedSystem, history] = await Promise.all([
     copySessionPreferences({
       sourceSessionId: sessionId,
       targetSessionId: forkedSession.id,
@@ -131,6 +131,11 @@ export async function forkSessionToBtwThread({
       sourceSessionId: sessionId,
       targetSessionId: forkedSession.id,
     }),
+    getClientResult().session.messages({
+      sessionID: forkedSession.id,
+      directory: sdkDirectory,
+      limit: 10,
+    }).catch((cause) => new OpenCodeSdkError({ operation: 'session.messages', cause })),
   ])
   if (copiedSystem instanceof Error) {
     await cleanup()
@@ -195,6 +200,16 @@ export async function forkSessionToBtwThread({
     appId,
     sessionId: forkedSession.id,
   })
+  if (history instanceof Error || history.error) {
+    logger.warn('Could not load copied messages for btw cache diagnostics:', history)
+  } else {
+    const last = history.data?.findLast(({ info }) =>
+      info.role === 'assistant' && typeof info.time.completed === 'number',
+    )?.info
+    if (last?.role === 'assistant') {
+      runtime.seedForkPromptCacheBaseline(last)
+    }
+  }
   // Not awaited: the caller confirms in the source thread right away while the
   // runtime resolves preferences and dispatches. Failures are reported in the fork.
   void runtime.enqueueIncoming({

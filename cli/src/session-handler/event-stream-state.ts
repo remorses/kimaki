@@ -884,6 +884,7 @@ export type PromptCacheClear = {
   currentCacheRead: number
   previousMessageId: string
   currentMessageId: string
+  minutesSincePreviousMessage: number
 }
 
 function hasPruneBetween({
@@ -1031,6 +1032,9 @@ export function getPromptCacheClear({
       currentCacheRead: current.tokens.cache.read,
       previousMessageId: info.id,
       currentMessageId: current.id,
+      minutesSincePreviousMessage: Math.max(0, Math.round(
+        (current.time.created - info.time.completed) / 60_000,
+      )),
     }
   }
   return undefined
@@ -1049,7 +1053,7 @@ export function formatPromptCacheClearMessage(
   clear: PromptCacheClear,
   systemDiff?: { additions: number; deletions: number },
 ): string {
-  const tokens = `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)})`
+  const tokens = `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)}) (${clear.minutesSincePreviousMessage} mins passed)`
   if (!systemDiff || (systemDiff.additions === 0 && systemDiff.deletions === 0)) {
     return tokens
   }

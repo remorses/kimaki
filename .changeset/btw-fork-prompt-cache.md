@@ -12,5 +12,6 @@ Now:
 - **A same-directory fork (`/btw`, `/fork`) reuses the pinned system prompt of its source.** The per-turn context tells the model that the fork has a new session ID and thread ID, and which IDs to use in kimaki commands. `/new-worktree` forks run in another directory, so OpenCode's environment block differs and they cannot share the cache.
 - **A fork keeps the agent of its fork point**, not only the source model and variant. `/new-worktree` forks keep it too.
 - **`. btw` starts sooner.** The fork and the Discord thread are created at the same time, setup steps run in parallel, and "Session forked!" appears before the prompt is sent. If one side fails, Kimaki removes the other.
+- **Cache misses are visible in `. btw` and `/btw` threads.** The first reply compares its cache usage with the copied history and reports a substantial drop in cache reads. Cache-miss notices also show how many minutes passed since the previous assistant message ended, to help distinguish an expired cache from a changed prompt.
 
 Changes to the channel topic, the agent list, or Kimaki's prompt text now apply to new sessions only. Existing sessions keep their pinned system prompt, so their prompt cache stays valid.

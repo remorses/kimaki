@@ -1832,7 +1832,52 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
+      minutesSincePreviousMessage: 0,
     })
+  })
+
+  test('detects a fork cache miss against its copied assistant history', () => {
+    const sessionId = 'ses_btw_fork'
+    const events = [
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_copied_assistant',
+        parentID: 'msg_copied_user',
+        created: 1000,
+        tokens: {
+          input: 100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 20000, write: 0 },
+        },
+      }),
+      userEvent({ sessionId, messageId: 'msg_btw_user', created: 301000 }),
+      assistantEvent({
+        sessionId,
+        messageId: 'msg_btw_assistant',
+        parentID: 'msg_btw_user',
+        created: 301001,
+        tokens: {
+          input: 20100,
+          output: 10,
+          reasoning: 0,
+          cache: { read: 0, write: 20100 },
+        },
+      }),
+    ]
+    const clear = getPromptCacheClear({
+      events,
+      sessionId,
+      currentMessageId: 'msg_btw_assistant',
+    })
+    expect(clear).toEqual({
+      expectedCacheRead: 20000,
+      currentCacheRead: 0,
+      previousMessageId: 'msg_copied_assistant',
+      currentMessageId: 'msg_btw_assistant',
+      minutesSincePreviousMessage: 5,
+    })
+    expect(formatPromptCacheClearMessage(clear!)).toBe('prompt cache missed (20k → 0) (5 mins passed)')
   })
 
   test('detects a miss on the second turn when the first turn only wrote cache', () => {
@@ -1874,6 +1919,7 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
+      minutesSincePreviousMessage: 0,
     })
   })
 
@@ -1929,6 +1975,7 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_2',
       currentMessageId: 'msg_asst_3',
+      minutesSincePreviousMessage: 0,
     })
   })
 
@@ -1971,6 +2018,7 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 8000,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
+      minutesSincePreviousMessage: 0,
     })
   })
 
@@ -2142,6 +2190,7 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
+      minutesSincePreviousMessage: 0,
     })
   })
 
@@ -2196,6 +2245,7 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2b',
+      minutesSincePreviousMessage: 0,
     })
   })
 
@@ -2289,6 +2339,7 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_3',
+      minutesSincePreviousMessage: 0,
     })
   })
 
@@ -2438,13 +2489,15 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
-    })).toBe('prompt cache missed (20k → 0)')
+      minutesSincePreviousMessage: 5,
+    })).toBe('prompt cache missed (20k → 0) (5 mins passed)')
     expect(formatPromptCacheClearMessage({
       expectedCacheRead: 20000,
       currentCacheRead: 0,
       previousMessageId: 'msg_asst_1',
       currentMessageId: 'msg_asst_2',
-    }, { additions: 4, deletions: 1 })).toBe('prompt cache missed (20k → 0), system +4 -1')
+      minutesSincePreviousMessage: 0,
+    }, { additions: 4, deletions: 1 })).toBe('prompt cache missed (20k → 0) (0 mins passed), system +4 -1')
   })
 })
 
