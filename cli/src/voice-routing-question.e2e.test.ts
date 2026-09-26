@@ -101,7 +101,7 @@ describe('voice routing preserves source questions', () => {
           Session forked! Continue in <#TARGET_THREAD>
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
-          > tool done
+          tool done
           -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
         `)
       } else {
@@ -121,7 +121,7 @@ describe('voice routing preserves source questions', () => {
           Created new session in <#TARGET_THREAD>
           [user selects dropdown: 0]
           » **voice-question-tester:** Alpha
-          > tool done
+          tool done
           -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
         `)
       }

@@ -8,7 +8,11 @@ import {
   Routes,
   SlashCommandBuilder,
 } from 'discord.js'
-import type { Command as OpencodeCommand } from '@opencode-ai/sdk/v2'
+export type OpencodeCommand = {
+  name: string
+  description?: string
+  source?: string
+}
 import { createDiscordRest } from './discord-urls.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { store, type RegisteredUserCommand } from './store.js'
@@ -299,11 +303,6 @@ export async function registerCommands({
       .toJSON(),
 
     new SlashCommandBuilder()
-      .setName('share')
-      .setDescription(truncateCommandDescription('Share the current session as a public URL'))
-      .setDMPermission(false)
-      .toJSON(),
-    new SlashCommandBuilder()
       .setName('diff')
       .setDescription(truncateCommandDescription('Show git diff as a shareable URL'))
       .setDMPermission(false)
@@ -587,7 +586,9 @@ export async function registerCommands({
       name: cmd.name,
       discordCommandName: commandName,
       description,
-      source: cmd.source,
+      source: cmd.source === 'skill' || cmd.source === 'mcp' || cmd.source === 'command'
+        ? cmd.source
+        : undefined,
     })
 
     commands.push(

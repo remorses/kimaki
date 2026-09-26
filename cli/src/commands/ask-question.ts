@@ -12,7 +12,7 @@ import {
 import crypto from 'node:crypto'
 import { sendThreadMessage, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from '../discord-utils.js'
 import { getOpencodeClient } from '../opencode.js'
-import { DiscordOperationError } from '../errors.js'
+import { DiscordOperationError, OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { getRuntime } from '../session-handler/thread-session-runtime.js'
@@ -23,27 +23,35 @@ const logger = createLogger(LogPrefix.ASK_QUESTION)
 export type AskUserQuestionInput = {
   questions: Array<{
     question: string
-    header: string // max 12 chars
+    header: string
+    key?: string
     options: Array<{
       label: string
       description: string
+      value?: string
     }>
-    multiple?: boolean // optional, defaults to false
+    multiple?: boolean
   }>
 }
 
 export type CancelQuestionResult = 'no-pending' | 'replied' | 'reply-failed'
 
+type QuestionThread = {
+  id: string
+  send(...args: Parameters<ThreadChannel['send']>): Promise<{ id: string }>
+}
+
 type PendingQuestionContext = {
   sessionId: string
   directory: string
-  thread: ThreadChannel
+  thread: QuestionThread
   requestId: string // OpenCode question request ID for replying
   questions: AskUserQuestionInput['questions']
   answers: Record<number, string[]> // questionIndex -> selected labels
   totalQuestions: number
   contextHash: string
-
+  customAnswerQuestionIndex?: number
+  pendingSubmission?: boolean
 }
 
 // Store pending question contexts by hash.
@@ -65,6 +73,21 @@ export function areAllQuestionsAnswered({
     }
   }
   return true
+}
+
+export function resolveQuestionSelection({
+  question,
+  selectedValues,
+}: {
+  question: AskUserQuestionInput['questions'][number]
+  selectedValues: string[]
+}): string[] | null {
+  if (selectedValues.includes('other')) return null
+  return selectedValues.map((value) => {
+    const optionIndex = parseInt(value, 10)
+    const option = question.options[optionIndex]
+    return option?.value || option?.label || `Option ${optionIndex + 1}`
+  })
 }
 
 export function findPendingQuestionContextForRequest({
@@ -115,6 +138,13 @@ export function hasPendingQuestionForThread(threadId: string): boolean {
   })
 }
 
+export function isWaitingForCustomQuestionAnswer(threadId: string): boolean {
+  return [...pendingQuestionContexts.values()].some((context) => {
+    return context.thread.id === threadId
+      && (context.customAnswerQuestionIndex !== undefined || context.pendingSubmission === true)
+  })
+}
+
 /**
  * Show dropdown menus for question tool input.
  * Sends one message per question with the dropdown directly under the question text.
@@ -127,7 +157,7 @@ export async function showAskUserQuestionDropdowns({
   input,
   silent,
 }: {
-  thread: ThreadChannel
+  thread: QuestionThread
   sessionId: string
   directory: string
   requestId: string // OpenCode question request ID
@@ -209,7 +239,7 @@ export async function showAskUserQuestionDropdowns({
       deletePendingQuestionContextsForRequest({ threadId: thread.id, requestId })
       const client = getOpencodeClient(directory)
       if (client) {
-        await client.session.abort({ sessionID: sessionId }).catch((error) => {
+        await client.session.interrupt({ sessionID: sessionId }).catch((error) => {
           logger.error('Failed to abort session after question send failure:', error)
         })
       }
@@ -273,18 +303,19 @@ export async function handleAskQuestionSelectMenu(
     return
   }
 
-  // Check if "other" was selected
-  if (selectedValues.includes('other')) {
-    // User wants to provide custom answer
-    // For now, mark as "Other" - they can type in chat
-    context.answers[questionIndex] = ['Other (please type your answer in chat)']
-  } else {
-    // Map value indices back to option labels
-    context.answers[questionIndex] = selectedValues.map((v) => {
-      const optIdx = parseInt(v, 10)
-      return question.options[optIdx]?.label || `Option ${optIdx + 1}`
+  const selectedAnswers = resolveQuestionSelection({
+    question,
+    selectedValues,
+  })
+  if (selectedAnswers === null) {
+    context.customAnswerQuestionIndex = questionIndex
+    await interaction.editReply({
+      content: `**${question.header}**\n${question.question}\n_Type your answer in chat._`,
+      components: [],
     })
+    return
   }
+  context.answers[questionIndex] = selectedAnswers
 
   // Update this question's message: show answer and remove dropdown
   const answeredText = context.answers[questionIndex]!.join(', ')
@@ -310,7 +341,11 @@ export async function handleAskQuestionSelectMenu(
       threadId: context.thread.id,
       requestId: context.requestId,
     })
-    await submitQuestionAnswers(context)
+    const submitted = await submitQuestionAnswers(context)
+    if (!submitted) {
+      pendingQuestionContexts.set(contextHash, context)
+      context.pendingSubmission = true
+    }
   }
 }
 
@@ -335,7 +370,7 @@ function formatQuestionAnswersText(context: PendingQuestionContext): string {
 /** Resume the session by feeding the answers back as a new user prompt. */
 async function resumeSessionWithAnswers(
   context: PendingQuestionContext,
-): Promise<void> {
+): Promise<boolean> {
   const runtime = getRuntime(context.thread.id)
   const resumed = await runtime?.resumeWithText({
     text: formatQuestionAnswersText(context),
@@ -345,7 +380,35 @@ async function resumeSessionWithAnswers(
       context.thread,
       '✗ Failed to submit answers: session is no longer active',
     )
+    return false
   }
+  return true
+}
+
+function formAnswerFromSelectedLabels({
+  questions,
+  answers,
+}: {
+  questions: AskUserQuestionInput['questions']
+  answers: string[][]
+}) {
+  const answer: Record<string, string | string[]> = {}
+  for (const [index, selected] of answers.entries()) {
+    const value = selected.length === 1 ? selected[0] : selected
+    if (value === undefined) {
+      continue
+    }
+    answer[questions[index]?.key || `q${index}`] = value
+  }
+  return answer
+}
+
+function formatFormReplyError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message
+  }
+  return 'Unknown error'
 }
 
 /**
@@ -353,25 +416,25 @@ async function resumeSessionWithAnswers(
  *
  * The decision is based on whether the session still has a live run:
  *
- * - Busy: a live run is parked on the question. Reply so it continues.
+ * - Busy: a live run is parked on the form. Reply so it continues.
  * - Idle: the run was aborted (from this or another opencode client). Replying
  *   would resolve a dead run and the session would never continue, so resume it
  *   with the answers as a fresh prompt instead.
  *
- * Note: `question.list` is not a reliable signal here. After an abort the
- * question request can stay in the pending list but orphaned (no run awaiting
+ * Note: a pending form can stay after abort but orphaned (no run awaiting
  * it), so a reply would succeed yet the session would still not continue. The
  * session busy state, derived from the event stream, is the accurate signal.
- * The reply `.error` check is a safety net for the case where the request was
- * actually removed while the session still looked busy.
  */
 async function submitQuestionAnswers(
   context: PendingQuestionContext,
-): Promise<void> {
+): Promise<boolean> {
   const client = getOpencodeClient(context.directory)
   if (!client) {
-    logger.error('OpenCode server not found for directory')
-    return
+    await sendThreadMessage(
+      context.thread,
+      '✗ Failed to submit answers: OpenCode server not found for directory',
+    )
+    return false
   }
 
   const runtime = getRuntime(context.thread.id)
@@ -380,32 +443,36 @@ async function submitQuestionAnswers(
     logger.log(
       `Session ${context.sessionId} idle; resuming with answers for question ${context.requestId}`,
     )
-    await resumeSessionWithAnswers(context)
-    return
+    return await resumeSessionWithAnswers(context)
   }
 
   const answers = context.questions.map((_, i) => {
     return context.answers[i] || []
   })
-
-  // throwOnError is off on this client, so failures come back in `.error`.
-  const replyResult = await client.question
-    .reply({ requestID: context.requestId, directory: context.directory, answers })
-    .catch((error) => ({ error }))
-
-  if (!replyResult.error) {
+  const replyResult = await client.form.reply({
+    sessionID: context.sessionId,
+    formID: context.requestId,
+    answer: formAnswerFromSelectedLabels({
+      questions: context.questions,
+      answers,
+    }),
+  }).catch((error: unknown) => error)
+  if (replyResult !== undefined && replyResult !== null) {
+    const message = formatFormReplyError(replyResult)
+    if (message.includes('already settled')) {
+      logger.log(`Form ${context.requestId} already settled`)
+      return true
+    }
     logger.log(
-      `Submitted answers for question ${context.requestId} in session ${context.sessionId}`,
+      `Reply failed for question ${context.requestId}; resuming session ${context.sessionId} with answers`,
     )
-    return
+    return await resumeSessionWithAnswers(context)
   }
 
-  // Reply failed (the request was removed while the session still looked busy).
-  // Resume so the answer still reaches the model.
   logger.log(
-    `Reply failed for question ${context.requestId}; resuming session ${context.sessionId} with answers`,
+    `Submitted answers for question ${context.requestId} in session ${context.sessionId}`,
   )
-  await resumeSessionWithAnswers(context)
+  return true
 }
 
 /**
@@ -488,11 +555,29 @@ export async function cancelPendingQuestion(
     return 'no-pending'
   }
 
-  // undefined means teardown/cleanup — just remove context, don't reply.
-  // The session is already being torn down or the caller wants to dismiss
-  // the question without providing an answer (e.g. voice/attachment-only
-  // messages where content needs transcription before it can be an answer).
+  // Keep the Discord context until OpenCode confirms cancellation. This lets
+  // callers retry if the server is temporarily unavailable.
   if (userMessage === undefined) {
+    const client = getOpencodeClient(context.directory)
+    if (!client) {
+      logger.error('Failed to cancel question: OpenCode server not found for directory')
+      return 'reply-failed'
+    }
+
+    const cancelResult = await client.form.cancel({
+      sessionID: context.sessionId,
+      formID: context.requestId,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'form.cancel',
+      cause,
+    }))
+    if (cancelResult instanceof Error) {
+      logger.warn(
+        `Failed to cancel pending form ${context.requestId}: ${cancelResult.message}`,
+      )
+      return 'reply-failed'
+    }
+
     deletePendingQuestionContextsForRequest({
       threadId: context.thread.id,
       requestId: context.requestId,
@@ -500,29 +585,64 @@ export async function cancelPendingQuestion(
     return 'no-pending'
   }
 
-  try {
-    const client = getOpencodeClient(context.directory)
-    if (!client) {
-      throw new Error('OpenCode server not found for directory')
-    }
-
-    const answers = context.questions.map((_, i) => {
-      return context.answers[i] || [userMessage]
-    })
-
-    await client.question.reply({
-      requestID: context.requestId,
-      directory: context.directory,
-      answers,
-    })
-
-    logger.log(`Answered question ${context.requestId} with user message`)
-  } catch (error) {
-    logger.error('Failed to answer question:', error)
-    // Keep context pending so the user can retry.
-    // Caller should not consume the user message since reply failed.
+  const client = getOpencodeClient(context.directory)
+  if (!client) {
+    logger.error('Failed to answer question: OpenCode server not found for directory')
     return 'reply-failed'
   }
+
+  if (context.pendingSubmission) {
+    const submitted = await submitQuestionAnswers(context)
+    if (!submitted) return 'reply-failed'
+    deletePendingQuestionContextsForRequest({
+      threadId: context.thread.id,
+      requestId: context.requestId,
+    })
+    return 'replied'
+  }
+
+  const customAnswerQuestionIndex = context.customAnswerQuestionIndex
+  if (customAnswerQuestionIndex === undefined) return 'no-pending'
+  const answersByQuestion = {
+    ...context.answers,
+    [customAnswerQuestionIndex]: [userMessage],
+  }
+  if (!areAllQuestionsAnswered({
+    totalQuestions: context.totalQuestions,
+    answers: answersByQuestion,
+  })) {
+    context.answers = answersByQuestion
+    delete context.customAnswerQuestionIndex
+    return 'replied'
+  }
+
+  const answers = Array.from({ length: context.totalQuestions }, (_, index) => {
+    return answersByQuestion[index] || []
+  })
+  const replyResult = await client.form.reply({
+    sessionID: context.sessionId,
+    formID: context.requestId,
+    answer: formAnswerFromSelectedLabels({
+      questions: context.questions,
+      answers,
+    }),
+  }).catch((error: unknown) => error)
+  if (replyResult !== undefined && replyResult !== null) {
+    const message = formatFormReplyError(replyResult)
+    if (message.includes('already settled')) {
+      deletePendingQuestionContextsForRequest({
+        threadId: context.thread.id,
+        requestId: context.requestId,
+      })
+      return 'replied'
+    }
+    logger.error('Failed to answer question:', replyResult)
+    return 'reply-failed'
+  }
+
+  context.answers = answersByQuestion
+  delete context.customAnswerQuestionIndex
+  logger.log(`Answered question ${context.requestId} with user message`)
 
   deletePendingQuestionContextsForRequest({
     threadId: context.thread.id,

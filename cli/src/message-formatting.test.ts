@@ -1,14 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, describe, test, expect } from 'vitest'
-import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
+import { asDiscordQuote, asSubtext, batchChunksForDiscord, collectSessionChunks, formatBashToolTitle, formatPart, formatTaskToolTitle, formatTodoList, getTextAttachments, planAssistantTurnFlush, quotedTextFitsOneDiscordMessage, serializeEmbeds, serializePoll, serializeMessageSnapshots, sessionMessagesAscending, sessionPartContent, shouldLeadWithBlankLine, TEXT_ATTACHMENT_INLINE_LIMIT_BYTES } from './message-formatting.js'
 import { getDataDir } from './config.js'
-import type { Collection, Embed, Message, MessageSnapshot, Poll } from 'discord.js'
-import type { Part } from '@opencode-ai/sdk/v2'
+import type { DiscordSessionPart, SerializableMessageSnapshot } from './message-formatting.js'
 
 describe('formatPart', () => {
   test('callout text is returned without a diamond prefix', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'text',
       sessionID: 'ses_test',
@@ -24,7 +23,7 @@ describe('formatPart', () => {
   })
 
   test('regular text has no diamond prefix', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'text',
       sessionID: 'ses_test',
@@ -35,7 +34,7 @@ describe('formatPart', () => {
   })
 
   test('heading text has no diamond prefix', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'text',
       sessionID: 'ses_test',
@@ -46,32 +45,6 @@ describe('formatPart', () => {
       "## Summary
       Done."
     `)
-  })
-
-  test('synthetic user context stays hidden', () => {
-    const part: Part = {
-      id: 'prt_branch',
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID: 'msg_user',
-      text: '\n[current git branch is main]\n',
-      synthetic: true,
-    }
-    expect(formatPart(part)).toBe('')
-  })
-
-  test('ignored plugin notices stay visible', () => {
-    const part: Part = {
-      id: 'prt_notice',
-      type: 'text',
-      sessionID: 'ses_test',
-      messageID: 'msg_notice',
-      text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-      ignored: true,
-    }
-    expect(formatPart(part)).toBe(
-      'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-    )
   })
 
 })
@@ -420,13 +393,13 @@ describe('planAssistantTurnFlush', () => {
     `)
   })
 
-  test('progress still quotes two-line earlier text', () => {
+  test('progress leaves two-line text unquoted', () => {
     expect(
       plan(
         [text('t1', 'line one\nline two'), tool('tool1'), text('t2', 'answer')],
         'progress',
       ).send.find((entry) => entry.id === 't1'),
-    ).toEqual({ id: 't1', quoteText: true })
+    ).toEqual({ id: 't1', quoteText: false })
   })
 
   test('progress keeps sleep-tool quote context after that tool is already sent', () => {
@@ -517,42 +490,19 @@ describe('collectSessionChunks', () => {
     id,
     text,
     messageID,
-    synthetic,
   }: {
     id: string
     text: string
     messageID: string
-    synthetic?: boolean
-  }): Part {
+  }): DiscordSessionPart {
     return {
       id,
       type: 'text',
       sessionID: 'ses_test',
       messageID,
       text,
-      synthetic,
     }
   }
-
-  test('skips synthetic text parts', () => {
-    const { chunks } = collectSessionChunks({
-      messages: [
-        {
-          info: { role: 'assistant', id: 'msg_1', parentID: 'msg_user' },
-          parts: [
-            textPart({
-              id: 'branch',
-              text: '\n[current git branch is main]\n',
-              messageID: 'msg_1',
-              synthetic: true,
-            }),
-            textPart({ id: 't1', text: 'working', messageID: 'msg_1' }),
-          ],
-        },
-      ],
-    })
-    expect(chunks.map((chunk) => chunk.content)).toEqual(['> working'])
-  })
 
   test('quotes short text throughout a turn', () => {
     const { chunks } = collectSessionChunks({
@@ -588,7 +538,6 @@ describe('collectSessionChunks', () => {
               sessionID: 'ses_test',
               messageID: 'msg_1',
               tool: 'read',
-              callID: 'call_tool1',
               state: { status: 'completed', input: {}, output: '', title: '', metadata: {}, time: { start: 0, end: 0 } },
             },
           ],
@@ -639,7 +588,6 @@ describe('collectSessionChunks', () => {
               sessionID: 'ses_test',
               messageID: 'msg_1',
               tool: 'question',
-              callID: 'call_q1',
               state: { status: 'completed', input: {}, output: '', title: '', metadata: {}, time: { start: 0, end: 0 } },
             },
             textPart({ id: 't2', text: 'thanks', messageID: 'msg_1' }),
@@ -678,6 +626,30 @@ describe('collectSessionChunks', () => {
         "> second turn done",
       ]
     `)
+  })
+})
+
+describe('sessionMessagesAscending', () => {
+  test('orders v2 messages oldest first without changing equal timestamps', () => {
+    const messages = [
+      { id: 'new', time: { created: 30 } },
+      { id: 'same-a', time: { created: 20 } },
+      { id: 'old', time: { created: 10 } },
+      { id: 'same-b', time: { created: 20 } },
+    ]
+
+    expect(sessionMessagesAscending(messages).map((message) => message.id)).toEqual([
+      'old',
+      'same-a',
+      'same-b',
+      'new',
+    ])
+    expect(messages.map((message) => message.id)).toEqual([
+      'new',
+      'same-a',
+      'old',
+      'same-b',
+    ])
   })
 })
 
@@ -728,12 +700,11 @@ describe('formatTaskToolTitle', () => {
     input?: { description?: string; subagent_type?: string }
     title?: string
     sessionId?: string
-  }): Extract<Part, { type: 'tool' }> {
+  }): Extract<DiscordSessionPart, { type: 'tool' }> {
     const base = {
       id: 'prt_task',
       type: 'tool' as const,
       tool: 'task',
-      callID: 'call_task',
       sessionID: 'ses_parent',
       messageID: 'msg_assistant',
     }
@@ -912,13 +883,12 @@ describe('formatBashToolTitle', () => {
 
 describe('formatTodoList', () => {
   test('formats active todo with number, dot, and two spaces', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'tool',
       tool: 'todowrite',
       sessionID: 'ses_test',
       messageID: 'msg_test',
-      callID: 'call_test',
       state: {
         status: 'completed',
         input: {
@@ -944,13 +914,12 @@ describe('formatTodoList', () => {
       status: i === 11 ? 'in_progress' : 'completed',
     }))
 
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'tool',
       tool: 'todowrite',
       sessionID: 'ses_test',
       messageID: 'msg_test',
-      callID: 'call_test',
       state: {
         status: 'completed',
         input: { todos },
@@ -965,13 +934,12 @@ describe('formatTodoList', () => {
   })
 
   test('lowercases first letter of content', () => {
-    const part: Part = {
+    const part: DiscordSessionPart = {
       id: 'test',
       type: 'tool',
       tool: 'todowrite',
       sessionID: 'ses_test',
       messageID: 'msg_test',
-      callID: 'call_test',
       state: {
         status: 'completed',
         input: {
@@ -996,7 +964,7 @@ describe('serializeEmbeds', () => {
     author?: { name: string }
     footer?: { text: string }
     fields?: Array<{ name: string; value: string; inline?: boolean }>
-  }): Embed {
+  }) {
     return {
       title: data.title ?? null,
       description: data.description ?? null,
@@ -1004,7 +972,7 @@ describe('serializeEmbeds', () => {
       author: data.author ?? null,
       footer: data.footer ?? null,
       fields: data.fields ?? [],
-    } as unknown as Embed
+    }
   }
 
   test('serializes a full embed with all fields', () => {
@@ -1080,26 +1048,25 @@ describe('serializeEmbeds', () => {
   })
 })
 
-// Helper to create a fake Map-like Collection for tests
-function fakeCollection<K, V>(entries: [K, V][]): Collection<K, V> {
+function fakeCollection<K, V>(entries: [K, V][]) {
   const map = new Map(entries)
   return {
     size: map.size,
     [Symbol.iterator]: map[Symbol.iterator].bind(map),
-  } as unknown as Collection<K, V>
+  }
 }
 
 describe('serializePoll', () => {
   function fakePoll(data: {
     question: string
     answers: Array<{ id: number; text: string | null }>
-  }): Poll {
+  }) {
     return {
       question: { text: data.question },
       answers: fakeCollection(
         data.answers.map((a) => [a.id, { text: a.text }]),
       ),
-    } as unknown as Poll
+    }
   }
 
   test('serializes a poll with question and answers', () => {
@@ -1145,12 +1112,19 @@ describe('serializePoll', () => {
 describe('serializeMessageSnapshots', () => {
   function fakeSnapshot(data: {
     content?: string
-    embeds?: Embed[]
-  }): MessageSnapshot {
+    embeds?: Array<{
+      title?: string | null
+      description?: string | null
+      url?: string | null
+      author?: { name: string } | null
+      footer?: { text: string } | null
+      fields: Array<{ name: string; value: string }>
+    }>
+  }) {
     return {
       content: data.content ?? '',
       embeds: data.embeds ?? [],
-    } as unknown as MessageSnapshot
+    }
   }
 
   function fakeEmbed(data: {
@@ -1160,7 +1134,7 @@ describe('serializeMessageSnapshots', () => {
     author?: { name: string }
     footer?: { text: string }
     fields?: Array<{ name: string; value: string }>
-  }): Embed {
+  }) {
     return {
       title: data.title ?? null,
       description: data.description ?? null,
@@ -1168,11 +1142,11 @@ describe('serializeMessageSnapshots', () => {
       author: data.author ?? null,
       footer: data.footer ?? null,
       fields: data.fields ?? [],
-    } as unknown as Embed
+    }
   }
 
   test('serializes a forwarded message with content', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       ['1', fakeSnapshot({ content: 'Hello from another channel' })],
     ])
     expect(serializeMessageSnapshots(snapshots)).toMatchInlineSnapshot(`
@@ -1183,7 +1157,7 @@ describe('serializeMessageSnapshots', () => {
   })
 
   test('serializes forwarded message with content and embeds', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       [
         '1',
         fakeSnapshot({
@@ -1205,19 +1179,19 @@ describe('serializeMessageSnapshots', () => {
   })
 
   test('returns empty string for no snapshots', () => {
-    const empty = fakeCollection<string, MessageSnapshot>([])
+    const empty = fakeCollection<string, SerializableMessageSnapshot>([])
     expect(serializeMessageSnapshots(empty)).toBe('')
   })
 
   test('skips snapshots with no content', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       ['1', fakeSnapshot({})],
     ])
     expect(serializeMessageSnapshots(snapshots)).toBe('')
   })
 
   test('serializes multiple forwarded messages', () => {
-    const snapshots = fakeCollection<string, MessageSnapshot>([
+    const snapshots = fakeCollection([
       ['1', fakeSnapshot({ content: 'First forwarded' })],
       ['2', fakeSnapshot({ content: 'Second forwarded' })],
     ])
@@ -1259,7 +1233,7 @@ describe('getTextAttachments', () => {
       attachments: new Map(attachments.map((attachment) => {
         return [attachment.id, attachment]
       })),
-    } as unknown as Message
+    }
   }
 
   function snapshotAttachments(result: string) {

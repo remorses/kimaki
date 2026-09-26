@@ -17,7 +17,7 @@ import type {
   ThreadChannel,
 } from 'discord.js'
 const { ChannelType, GuildMember, MessageFlags, PermissionsBitField, REST, Routes } = discord
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import type { OpencodeClient } from './opencode.js'
 import { discordApiUrl } from './discord-urls.js'
 import { Lexer } from 'marked'
 import { splitTablesFromMarkdown } from './format-tables.js'
@@ -117,13 +117,21 @@ export function hasKimakiAdminPermission(
   return isOwner || isAdmin || canManageServer || hasKimakiRole
 }
 
-export async function resolveGuildMessageMember(
-  message: Message,
-): Promise<GuildMemberType | null> {
+export async function resolveGuildMessageMember<TMember>(
+  message: {
+    id: string
+    author: { id: string }
+    member?: TMember | null
+    guild?: { members: object } | null
+  },
+): Promise<TMember | null> {
   if (!message.guild) return null
   if (message.member) return message.member
 
-  const fetchedMember = await message.guild.members
+  const members = message.guild.members as {
+    fetch(id: string): Promise<TMember>
+  }
+  const fetchedMember = await members
     .fetch(message.author.id)
     .catch((e) => new Error('Failed to fetch guild member', { cause: e }))
   if (fetchedMember instanceof Error) {
@@ -260,14 +268,14 @@ export async function archiveThread({
         const sessionResponse = await client.session.get({
           sessionID: sessionId,
         })
-        if (!sessionResponse.data) {
+        if (!sessionResponse.title) {
           return
         }
-        const currentTitle = sessionResponse.data.title || ''
+        const currentTitle = sessionResponse.title
         const newTitle = currentTitle.startsWith('📁')
           ? currentTitle
           : `📁 ${currentTitle}`.trim()
-        await client.session.update({
+        await client.session.rename({
           sessionID: sessionId,
           title: newTitle,
         })
@@ -731,18 +739,20 @@ export function splitMarkdownForDiscord({
   return chunks
 }
 
-export async function sendThreadMessage(
-  thread: ThreadChannel | TextChannel,
+export async function sendThreadMessage<TMessage extends { id: string }>(
+  thread: {
+    send(...args: Parameters<ThreadChannel['send']>): Promise<TMessage>
+  },
   content: string,
   options?: { flags?: number },
-): Promise<Message> {
+): Promise<TMessage> {
   const MAX_LENGTH = 2000
 
   // Split content into text and CV2 component segments (tables → Container components)
   const segments = splitTablesFromMarkdown(content)
   const baseFlags = options?.flags ?? SILENT_MESSAGE_FLAGS
 
-  let firstMessage: Message | undefined
+  let firstMessage: TMessage | undefined
 
   for (const segment of segments) {
     if (segment.type === 'components') {

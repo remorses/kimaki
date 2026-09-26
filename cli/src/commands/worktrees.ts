@@ -85,7 +85,6 @@ type WorktreeRow = {
   guildId: string | null
   createdAt: Date | null
   source: 'kimaki' | 'opencode' | 'manual'
-  workspaceId: string | null
   // DB-only worktrees (pending/error) won't appear in git list
   dbStatus: 'ready' | 'pending' | 'error'
   // Git-level flags that block deletion
@@ -354,7 +353,6 @@ async function buildWorktreeRows({
       guildId: null,
       createdAt: toDate(dbMatch?.created_at),
       source,
-      workspaceId: dbMatch?.workspace_id ?? null,
       dbStatus,
       locked: gw.locked,
       prunable: gw.prunable,
@@ -372,7 +370,6 @@ async function buildWorktreeRows({
       guildId: null,
       createdAt: toDate(ws.created_at),
       source: 'kimaki' as const,
-      workspaceId: ws.workspace_id,
       dbStatus: ws.status === 'error' ? 'error' : ws.status === 'pending' ? 'pending' : 'ready',
       locked: false,
       prunable: false,
@@ -635,12 +632,14 @@ async function handleDeleteWorktreeAction({
     return
   }
 
-  // SDK-created workspaces must be removed through OpenCode so its workspace
-  // table stays in sync. Legacy/manual worktrees have no workspace_id, so they
-  // still use the direct git cleanup path.
+  // OpenCode tracks managed worktrees by directory, not by workspace ID.
   const displayName = row.branch ?? row.name
-  const deleteResult = row.workspaceId
-    ? await deleteWorkspace({ projectDirectory, workspaceId: row.workspaceId })
+  const deleteResult = row.source !== 'manual'
+    ? await deleteManagedWorktree({
+        projectDirectory,
+        worktreeDirectory: row.directory,
+        branchName: row.branch,
+      })
     : await deleteWorktree({
         projectDirectory,
         worktreeDirectory: row.directory,
@@ -680,22 +679,32 @@ async function handleDeleteWorktreeAction({
   })
 }
 
-async function deleteWorkspace({
+async function deleteManagedWorktree({
   projectDirectory,
-  workspaceId,
+  worktreeDirectory,
+  branchName,
 }: {
   projectDirectory: string
-  workspaceId: string
+  worktreeDirectory: string
+  branchName: string | null
 }) {
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
-  const response = await getClient().experimental.workspace.remove({
-    id: workspaceId,
-    directory: projectDirectory,
-  }).catch((e) => new OpenCodeSdkError({ operation: 'workspace.remove', cause: e }))
+  const response = await getClient().worktree.remove({
+    location: { directory: projectDirectory },
+    directory: worktreeDirectory,
+    force: false,
+  }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'worktree.remove', cause: e }))
   if (response instanceof Error) return response
-  if (response.error) return new Error(`Workspace removal failed: ${JSON.stringify(response.error)}`)
+
+  if (!branchName) return
+  const deleteBranchResult = await git(projectDirectory, [
+    'branch',
+    '-d',
+    branchName,
+  ])
+  if (deleteBranchResult instanceof Error) return deleteBranchResult
 }
 
 export async function handleWorktreesCommand({

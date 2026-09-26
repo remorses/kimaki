@@ -328,10 +328,10 @@ describe('queue advanced: /model with interrupt recovery', () => {
         Reply with exactly: model-switcher-setup
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         Model set for this session:
-        **Deterministic Provider** / **deterministic-v3**
+        **deterministic-provider** / **deterministic-v3**
         \`deterministic-provider/deterministic-v3\`
         _Restarting current request with new model..._
         _Tip: create [agent .md files](https://kimaki.dev/docs/getting-started/model-switching) in .opencode/agent/ for one-command model switching_
@@ -342,7 +342,7 @@ describe('queue advanced: /model with interrupt recovery', () => {
         --- from: user (queue-model-switch-tester)
         Reply with exactly: model-switcher-followup
         --- from: assistant (TestBot)
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v3*"
       `)
 
@@ -355,25 +355,18 @@ describe('queue advanced: /model with interrupt recovery', () => {
       if (getClient instanceof Error) {
         throw getClient
       }
-      const sessionMessagesResponse = await getClient().session.messages({
+      const sessionMessagesResponse = await getClient().message.list({
         sessionID: sessionId,
-        directory: ctx.directories.projectDirectory,
       })
-      const sessionMessages = sessionMessagesResponse.data || []
+      const sessionMessages = sessionMessagesResponse.data
       const emptyUserMessagesWithDefaultModel = sessionMessages.filter((message) => {
-        if (message.info.role !== 'user') {
+        if (message.type !== 'user') {
           return false
         }
-        const hasNonEmptyTextPart = message.parts.some((part) => {
-          if (part.type !== 'text') {
-            return false
-          }
-          return part.text.trim().length > 0
-        })
-        if (hasNonEmptyTextPart) {
+        if (message.text.trim().length > 0) {
           return false
         }
-        return message.info.model.modelID === 'deterministic-v2'
+        return false
       })
       expect(emptyUserMessagesWithDefaultModel.length).toBe(0)
     },

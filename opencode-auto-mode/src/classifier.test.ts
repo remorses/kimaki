@@ -1,9 +1,11 @@
 import { createGateway } from '@ai-sdk/gateway'
+import { OpenCode } from '@opencode/client'
 import http from 'node:http'
 import { afterEach, describe, expect, test } from 'vitest'
 import { jevDecision, parseDetailedDecision, parseFastDecision } from './classifier.ts'
-import { classifyWithJev } from './classify.ts'
+import { AutoModeClassifier, classifyWithJev, type MainModel } from './classify.ts'
 import { getDefaultConfig, JEV_MODEL } from './config.ts'
+import autoMode from './index.ts'
 import { sessionContextFromMessages } from './plugin.ts'
 
 const originalGatewayKey = process.env.AI_GATEWAY_API_KEY
@@ -11,6 +13,15 @@ const originalGatewayKey = process.env.AI_GATEWAY_API_KEY
 afterEach(() => {
   if (originalGatewayKey === undefined) delete process.env.AI_GATEWAY_API_KEY
   else process.env.AI_GATEWAY_API_KEY = originalGatewayKey
+})
+
+describe('plugin contract', () => {
+  test('exports one native OpenCode v2 plugin', () => {
+    expect(autoMode).toMatchObject({
+      id: 'kimaki.auto-mode',
+      setup: expect.any(Function),
+    })
+  })
 })
 
 describe('parseFastDecision', () => {
@@ -174,50 +185,119 @@ describe('classifyWithJev', () => {
   })
 })
 
+describe('AutoModeClassifier', () => {
+  test('uses native generate.text for both main-model stages', async () => {
+    const requests: Array<{ prompt: string; model?: MainModel }> = []
+    const server = http.createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => chunks.push(chunk))
+      request.on('end', () => {
+        const body: {
+          prompt: string
+          model?: MainModel
+        } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        requests.push(body)
+        const text = body.prompt.includes('\nSTAGE=fast\n')
+          ? '1'
+          : '{"decision":"block","reason":"force push"}'
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ data: { text } }))
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Expected HTTP server address')
+    const client = OpenCode.make({ baseUrl: `http://127.0.0.1:${address.port}` })
+    const classifier = new AutoModeClassifier(client.generate.text)
+    const result = await classifier.classify({
+      config: { ...getDefaultConfig(), model: 'main' },
+      input: {
+        tool: 'shell',
+        args: { command: 'git push --force' },
+        userText: 'push the branch',
+      },
+      mainModel: { providerID: 'deterministic', id: 'main-model' },
+    })
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()))
+    })
+
+    expect(result).toEqual({ decision: 'block', reason: 'force push' })
+    expect(requests).toHaveLength(2)
+    expect(
+      requests.map((request) => ({
+        stage: request.prompt.includes('\nSTAGE=fast\n') ? 'fast' : 'detailed',
+        model: request.model,
+      })),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "model": {
+            "id": "main-model",
+            "providerID": "deterministic",
+          },
+          "stage": "fast",
+        },
+        {
+          "model": {
+            "id": "main-model",
+            "providerID": "deterministic",
+          },
+          "stage": "detailed",
+        },
+      ]
+    `)
+  })
+})
+
 describe('sessionContextFromMessages', () => {
   test('uses all text from the latest user message and its selected model', () => {
     expect(
-      sessionContextFromMessages([
-        {
-          info: {
+      sessionContextFromMessages({
+        messages: [
+          {
             role: 'user',
-            model: { providerID: 'anthropic', modelID: 'old' },
+            content: [{ type: 'text', text: 'old' }],
           },
-          parts: [{ type: 'text', text: 'old' }],
-        },
-        {
-          info: {
+          {
             role: 'user',
-            model: { providerID: 'openai', modelID: 'gpt-main' },
+            content: [
+              { type: 'text', text: 'deploy it' },
+              { type: 'text', text: 'to preview' },
+            ],
           },
-          parts: [
-            { type: 'text', text: 'deploy it' },
-            { type: 'text', text: 'to preview' },
-          ],
-        },
-      ]),
+        ],
+        model: { providerID: 'openai', id: 'gpt-main' },
+      }),
     ).toEqual({
       kind: 'ok',
       userText: 'deploy it\nto preview',
-      mainModel: { providerID: 'openai', modelID: 'gpt-main' },
+      mainModel: { providerID: 'openai', id: 'gpt-main' },
     })
   })
 
-  test('fails when the latest user turn has no model', () => {
+  test('fails when the latest user turn has no text', () => {
     expect(
-      sessionContextFromMessages([
-        {
-          info: {
+      sessionContextFromMessages({
+        messages: [
+          {
             role: 'user',
-            model: { providerID: 'openai', modelID: 'gpt-old' },
+            content: [{ type: 'text', text: 'old request' }],
           },
-          parts: [{ type: 'text', text: 'old request' }],
-        },
-        {
-          info: { role: 'user' },
-          parts: [{ type: 'text', text: 'current request' }],
-        },
-      ]),
+          { role: 'assistant', content: [{ type: 'text', text: 'response' }] },
+        ],
+        model: { providerID: 'openai', id: 'gpt-main' },
+      }),
+    ).toEqual({
+      kind: 'ok',
+      userText: 'old request',
+      mainModel: { providerID: 'openai', id: 'gpt-main' },
+    })
+    expect(
+      sessionContextFromMessages({
+        messages: [{ role: 'user', content: [{ type: 'media' }] }],
+        model: { providerID: 'openai', id: 'gpt-main' },
+      }),
     ).toEqual({ kind: 'error' })
   })
 })

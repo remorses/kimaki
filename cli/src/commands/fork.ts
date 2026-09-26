@@ -25,9 +25,10 @@ import {
 import {
   collectSessionChunks,
   batchChunksForDiscord,
+  sessionMessagesToGeneric,
 } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import * as errore from 'errore'
+import { parseEventBufferEvent } from '../session-handler/event-stream-state.js'
 
 const sessionLogger = createLogger(LogPrefix.SESSION)
 const forkLogger = createLogger(LogPrefix.FORK)
@@ -66,16 +67,7 @@ function parsePersistedEventRows({
   rows: Array<{ event_json: string; timestamp: number; event_index: number; id: number }>
 }) {
   return rows.flatMap((row) => {
-    const parsed = errore.try(
-      () => {
-        return JSON.parse(row.event_json)
-      },
-      (error) => {
-        return new Error('Failed to parse persisted event JSON', {
-          cause: error,
-        })
-      },
-    )
+    const parsed = parseEventBufferEvent(row.event_json)
     if (parsed instanceof Error) {
       forkLogger.warn(
         `[fork] Skipping invalid persisted event row ${row.id}: ${parsed.message}`,
@@ -166,8 +158,9 @@ export async function handleForkCommand(
   }
 
   try {
-    const messagesResponse = await getClient().session.messages({
+    const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
+      order: 'asc',
     })
 
     if (!messagesResponse.data) {
@@ -178,7 +171,7 @@ export async function handleForkCommand(
     }
 
     const userMessages = messagesResponse.data.filter(
-      (m: { info: { role: string } }) => m.info.role === 'user',
+      (m) => m.type === 'user',
     )
 
     if (userMessages.length === 0) {
@@ -193,27 +186,17 @@ export async function handleForkCommand(
     // Filter out synthetic parts (branch context, memory reminders, etc.)
     // injected by the opencode plugin — they clutter the dropdown preview.
     const options = recentMessages
-      .map(
-        (
-          m: {
-            parts: Array<{ type: string; text?: string; synthetic?: boolean }>
-            info: { id: string; time: { created: number } }
-          },
-          index: number,
-        ) => {
-          const textPart = m.parts.find((p) => {
-            return p.type === 'text' && !p.synthetic && typeof p.text === 'string'
-          })
-          if (!textPart?.text) {
+      .map((m, index) => {
+          if (m.type !== 'user' || !m.text) {
             return null
           }
-          const preview = textPart.text.slice(0, 80)
+          const preview = m.text.slice(0, 80)
           const label = `${index + 1}. ${preview}${preview.length >= 80 ? '...' : ''}`
 
           return {
             label: label.slice(0, 100),
-            value: m.info.id,
-            description: new Date(m.info.time.created)
+            value: m.id,
+            description: new Date(m.time.created)
               .toLocaleString()
               .slice(0, 50),
           }
@@ -301,15 +284,15 @@ export async function handleForkSelectMenu(
   try {
     const forkResponse = await getClient().session.fork({
       sessionID: sessionId,
-      messageID: selectedMessageId,
-    })
+      boundary: { type: 'before', messageID: selectedMessageId },
+    }).catch((error: unknown) => new Error('Failed to fork session', { cause: error }))
 
-    if (!forkResponse.data) {
+    if (forkResponse instanceof Error) {
       await interaction.editReply('Failed to fork session')
       return
     }
 
-    const forkedSession = forkResponse.data
+    const forkedSession = forkResponse
     const parentChannel = getThreadChannel(interaction.channel)
     if (parentChannel instanceof Error) {
       await interaction.editReply(parentChannel.message)
@@ -347,13 +330,14 @@ export async function handleForkSelectMenu(
     )
 
     // Fetch and display the last assistant messages from the forked session
-    const messagesResponse = await getClient().session.messages({
+    const messagesResponse = await getClient().message.list({
       sessionID: forkedSession.id,
+      order: 'asc',
     })
 
     if (messagesResponse.data) {
       const { chunks } = collectSessionChunks({
-        messages: messagesResponse.data,
+        messages: sessionMessagesToGeneric(messagesResponse.data),
         limit: 30,
       })
       const batched = batchChunksForDiscord(chunks)

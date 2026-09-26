@@ -1,27 +1,18 @@
-// ThreadSessionRuntime — one per active thread.
-// Owns resource handles (listener controller, typing timers, part buffer).
-// Delegates all state to the global store via thread-runtime-state.ts transitions.
-//
-// This is the sole session orchestrator. Discord handlers and slash commands
-// call runtime APIs (enqueueIncoming, abortActiveRun, etc.) without inspecting
-// run internals.
+// One runtime owns the resources and event effects for one Discord thread.
 
 import crypto from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { ChannelType, type Client, type ThreadChannel } from 'discord.js'
+import { ChannelType, ComponentType, type Client, type ThreadChannel } from 'discord.js'
 import type {
-  Event as OpenCodeEvent,
-  Part,
   PermissionRequest,
-  QuestionRequest,
-  Message as OpenCodeMessage,
-} from '@opencode-ai/sdk/v2'
+  V2Event,
+} from '@opencode/client'
 import path from 'node:path'
 import prettyMilliseconds from 'pretty-ms'
 import * as errore from 'errore'
 import * as threadState from './thread-runtime-state.js'
-import type { QueuedMessage } from './thread-runtime-state.js'
-import type { OpencodeClient } from '@opencode-ai/sdk/v2'
+import { parseQueuedMessagePayload, type QueuedMessage } from './thread-runtime-state.js'
+import type { OpencodeClient } from '../opencode.js'
 import {
   getOpencodeClient,
   initializeOpencodeForDirectory,
@@ -31,6 +22,7 @@ import {
   extractSdkErrorMessage,
 } from '../opencode.js'
 import { isAbortError } from '../utils.js'
+import { listAllSessions } from '../opencode-pagination.js'
 import {
   registerEventListener,
   unregisterEventListener,
@@ -47,21 +39,21 @@ import {
   resolveThreadFooterMentionUserId,
   resolveWorkingDirectory,
 } from '../discord-utils.js'
-import type { DiscordFileAttachment, SessionPartKind } from '../message-formatting.js'
+import type {
+  DiscordFileAttachment,
+} from '../message-formatting.js'
 import {
   asDiscordQuote,
   asSubtext,
-  formatPart,
-  formatTaskToolTitle,
-  planAssistantTurnFlush,
   QUEUE_PREFIX,
   sessionPartContent,
-  sessionPartKind,
-  shouldLeadWithBlankLine,
-  shouldQuoteIntermediateTextPart,
   STATUS_PREFIX,
   WORKTREE_PREFIX,
-  type AssistantTurnFlushMode,
+} from '../message-formatting.js'
+export {
+  isEssentialToolName,
+  isEssentialToolPart,
+  isShellToolName,
 } from '../message-formatting.js'
 import {
   getChannelVerbosity,
@@ -97,14 +89,13 @@ import * as schema from '../schema.js'
 import {
   showPermissionButtons,
   addPermissionRequestToContext,
-  arePatternsCoveredBy,
+  canGroupPermissionRequests,
   pendingPermissionContexts,
 } from '../commands/permissions.js'
 import {
   showAskUserQuestionDropdowns,
   pendingQuestionContexts,
   cancelPendingQuestion,
-  findPendingQuestionContextForRequest,
 } from '../commands/ask-question.js'
 import {
   showActionButtons,
@@ -128,14 +119,13 @@ import {
 import {
   getOpencodePromptContext,
   getOpencodeSystemMessage,
-  writeSessionSystemPrompt,
+  KIMAKI_INSTRUCTION_ENTRY_KEY,
   type AgentInfo,
   type RepliedMessageContext,
   type WorktreeInfo,
   type ScheduledTaskSystemContext,
 } from '../system-message.js'
 import { getDataDir } from '../config.js'
-import { countSystemPromptDiffLines } from '../cache-rewrite.js'
 import { store } from '../store.js'
 import {
   trackEvent,
@@ -151,37 +141,38 @@ import {
   isOpencodeSessionEventLogEnabled,
 } from './opencode-session-event-log.js'
 import {
-  doesLatestUserTurnHaveNaturalCompletion,
-  didLatestUserTurnUseSleepTool,
   didQuestionQueueHandoffSinceLatestQuestionAsked,
-  deriveLatestUnansweredQuestion,
-  getAssistantMessageIdsForLatestUserTurn,
-  getCurrentTurnStartTime,
+  getContextUsageNoticePercentage,
+  getAssistantMessageIdsForLatestExecution,
   isSessionBusy,
   getLatestRunInfo,
-  getPromptCacheClear,
-  formatPromptCacheClearMessage,
-  getIdleTokenUsageDelta,
-  getDerivedSubtaskIndex,
-  getDerivedSubtaskAgentType,
-  getTokenUsageSessionIdsForIdle,
+  getDerivedSubtaskLabel,
   isDerivedChildSession,
-  getLatestAssistantMessageIdForLatestUserTurn,
-  getAssistantMessageKind,
-  hasAssistantMessageCompletedBefore,
-  isAssistantMessageInLatestUserTurn,
-  isAssistantMessageNaturalCompletion,
-  shouldBufferSessionEvent,
+  isEventForSessionTree,
+  shouldShowRetryNotice,
+  getLatestAssistantMessageIdForLatestExecution,
+  getLatestExecutionStartedTimestamp,
+  didLatestExecutionUseTool,
+  getEventBufferSessionId,
+  hasSeenNativeDurableEvent,
+  compactSubagentRoutingEvidence,
+  parseEventBufferEvent,
   shouldRetainSessionEvent,
   trimEventBuffer,
   type EventBufferEvent,
   type EventBufferEntry,
 } from './event-stream-state.js'
+import {
+  applyDiscordProjectionActions,
+  createDiscordProjectionState,
+  projectDiscordActions,
+  projectDiscordFlushActions,
+  type DiscordAction,
+  type DiscordProjectionState,
+  type ProjectedForm,
+  type TerminalAnalytics,
+} from './discord-event-projection.js'
 
-// Track multiple pending permissions per thread (keyed by permission ID).
-// OpenCode handles blocking/sequencing — we just need to track all pending
-// permissions to avoid duplicates and properly clean up on reply/teardown.
-// The runtime is the sole owner of pending permissions per thread.
 export const pendingPermissions = new Map<
   string, // threadId
   Map<
@@ -191,13 +182,13 @@ export const pendingPermissions = new Map<
       messageId: string
       directory: string
       contextHash: string
-      dedupeKey: string
     }
   > // permissionId -> data
 >()
 import {
   getThinkingValuesForModel,
   matchThinkingValue,
+  thinkingProvidersFromListedModels,
 } from '../thinking-utils.js'
 import { execAsync } from '../worktrees.js'
 import {
@@ -226,19 +217,54 @@ function stripToastSessionId({ message }: { message: string }): string {
   return message.replace(TOAST_SESSION_ID_REGEX, '').trimEnd()
 }
 
+function isEphemeralV2StreamEvent(event: { type: string }) {
+  return (
+    event.type === 'session.text.delta'
+    || event.type === 'session.reasoning.delta'
+    || event.type === 'session.tool.input.delta'
+    || event.type === 'session.tool.progress'
+    || event.type === 'session.compaction.delta'
+  )
+}
+
+function isSessionSettledEvent({
+  event,
+  sessionId,
+}: {
+  event: EventBufferEvent
+  sessionId: string
+}) {
+  if (getEventBufferSessionId(event) !== sessionId) return false
+  return (
+    event.type === 'kimaki.queue-dispatch.settled'
+    || event.type === 'session.idle'
+    || event.type === 'session.execution.interrupted'
+    || event.type === 'session.execution.succeeded'
+    || event.type === 'session.execution.failed'
+  )
+}
+
 const shouldLogSessionEvents =
   process.env['KIMAKI_LOG_SESSION_EVENTS'] === '1' ||
   process.env['KIMAKI_VITEST'] === '1'
 
-// ── Registry ─────────────────────────────────────────────────────
-// Runtime instances are kept in a plain Map (not Zustand — the Map
-// is not reactive state, just a lookup for resource handles).
+type NativeDurableV2Event = Extract<V2Event, { durable: object }>
+
+export function orderNativeRecoveryEvents(
+  events: readonly NativeDurableV2Event[],
+): NativeDurableV2Event[] {
+  return [...events].sort((left, right) => {
+    if (left.created !== right.created) return left.created - right.created
+    if (left.durable.aggregateID !== right.durable.aggregateID) {
+      return left.durable.aggregateID.localeCompare(right.durable.aggregateID)
+    }
+    return left.durable.seq - right.durable.seq
+  })
+}
 
 const runtimes = new Map<string, ThreadSessionRuntime>()
 
-// Per-thread FIFO for Discord arrival order of one-shot slash calls vs messages.
-// Covers /plan-agent (no prompt) and /foo-cmd /foo-skill. OpenCode already
-// queues promptAsync. /model, /agent, and /compact are not on this queue.
+// Preserve arrival order between one-shot slash calls and messages.
 const threadIngressChains = new Map<string, Promise<void>>()
 const threadIngressSlotAls = new AsyncLocalStorage<ThreadIngressSlot | undefined>()
 
@@ -491,14 +517,7 @@ export function disposeInactiveRuntimes({
   }
 }
 
-// ── Pending UI cleanup ───────────────────────────────────────────
-// Clears all pending interactive UI state for a thread on dispose/delete.
-// Uses existing cancel functions which handle upstream replies (so OpenCode
-// doesn't hang waiting for answers that will never come).
-
 function cleanupPendingUiForThread(threadId: string): void {
-  // Permissions: reject each pending permission so OpenCode doesn't hang,
-  // then delete the per-thread tracking map.
   const threadPerms = pendingPermissions.get(threadId)
   if (threadPerms) {
     for (const [, entry] of threadPerms) {
@@ -512,8 +531,8 @@ function cleanupPendingUiForThread(threadId: string): void {
           void Promise.all(
             requestIds.map((requestId) => {
               return client.permission.reply({
+                sessionID: ctx.permission.sessionID,
                 requestID: requestId,
-                directory: ctx.directory,
                 reply: 'reject',
               })
             }),
@@ -525,16 +544,9 @@ function cleanupPendingUiForThread(threadId: string): void {
     pendingPermissions.delete(threadId)
   }
 
-  // Questions: cancel deletes pending context without replying to OpenCode.
   void cancelPendingQuestion(threadId)
-
-  // Action buttons: resolves context and clears timer.
   cancelPendingActionButtons(threadId)
-
-  // File uploads: resolves with empty files so OpenCode unblocks.
   void cancelPendingFileUpload(threadId)
-
-  // HTML actions: clears registered action callbacks for this thread.
   cancelHtmlActionsForThread(threadId)
 }
 
@@ -580,42 +592,6 @@ function getTokenTotal(tokens: TokenUsage): number {
     tokens.cache.read +
     tokens.cache.write
   )
-}
-
-/**
- * Built-in read-only tools that are hidden in default verbosity mode.
- * Any tool NOT in this list is considered "essential" and shown,
- * which means custom tools, MCP tools, and plugin tools are visible by default.
- */
-const HIDDEN_READONLY_TOOLS = [
-  'read',
-  'glob',
-  'grep',
-  'describe-media',
-  'todoread',
-]
-
-/** Check if a tool part is "essential" (shown in text-and-essential-tools mode). */
-export function isEssentialToolName(toolName: string): boolean {
-  // Hide known read-only built-in tools; show everything else
-  // (custom tools, MCP tools, plugin tools are visible by default)
-  return !HIDDEN_READONLY_TOOLS.some((name) => {
-    return toolName === name || toolName.endsWith(`_${name}`)
-  })
-}
-
-export function isEssentialToolPart(part: Part): boolean {
-  if (part.type !== 'tool') {
-    return false
-  }
-  if (!isEssentialToolName(part.tool)) {
-    return false
-  }
-  if (part.tool === 'bash') {
-    const hasSideEffect = part.state.input?.hasSideEffect
-    return hasSideEffect !== false
-  }
-  return true
 }
 
 // ── Thread title derivation ──────────────────────────────────────
@@ -682,112 +658,45 @@ export function deriveThreadNameFromSessionTitle({
   return candidate
 }
 
-// ── Ingress input type ───────────────────────────────────────────
-
 export type EnqueueResult = {
-  /** True if the message is waiting in queue behind an active run. */
   queued: boolean
-  /** Queue position (1-based). Only set when queued is true. */
   position?: number
-  /** Stable queue entry id. Set when the item was placed in the local queue. */
   queueId?: string
+  accepted?: boolean
 }
 
-/**
- * Result of the preprocess callback. Returns the resolved prompt, images,
- * and mode after expensive async work (voice transcription, context fetch,
- * attachment download) completes.
- */
 export type PreprocessResult = {
   prompt: string
   images?: DiscordFileAttachment[]
   repliedMessage?: RepliedMessageContext
-  /** Resolved mode based on voice transcription result. */
   mode: 'opencode' | 'local-queue'
-  /** When true, preprocessing determined the message should be silently dropped. */
   skip?: boolean
-  /** Agent name extracted from voice transcription. Applied to the session if set. */
   agent?: string
 }
 
 export type IngressInput = {
+  queueId?: string
   prompt: string
   userId: string
   username: string
-  // Discord message ID and thread ID for the source message, embedded in
-  // <discord-user> synthetic context so the external sync loop can detect
-  // messages that originated from Discord and skip re-mirroring them.
   sourceMessageId?: string
   sourceThreadId?: string
   repliedMessage?: RepliedMessageContext
   images?: DiscordFileAttachment[]
   appId?: string
   command?: { name: string; arguments: string }
-  /**
-   * `opencode` (default): send via session.promptAsync and let opencode
-   * serialize pending user turns internally.
-   * `local-queue`: keep in kimaki's local queue (used by /queue flows).
-   */
   mode?: 'opencode' | 'local-queue'
-  // Force a new assistant-part routing window by resetting run-state to
-  // running before enqueue. Used by model-switch retry flows where old
-  // assistant IDs can linger briefly after abort.
-  resetAssistantForNewRun?: boolean
-  // First-dispatch-only overrides (used when creating a new session)
   agent?: string
   model?: string
-  /**
-   * Thinking-level variant from `/xxx-agent variant:`. Applied after
-   * agent/model snapshot so it wins over cascade for this turn.
-   */
   variant?: string
-  /**
-   * Raw permission rule strings from --permission flag ("tool:action" or
-   * "tool:pattern:action"). Parsed into PermissionRuleset entries by
-   * parsePermissionRules() and appended after buildSessionPermissions()
-   * so they win via opencode's findLast() evaluation. Only used on
-   * session creation (first dispatch).
-   */
   permissions?: string[]
   injectionGuardPatterns?: string[]
-  /**
-   * Parent OpenCode session ID from explicit `kimaki send --parent-session` only.
-   * Stored once on first ingress and injected into the child system message.
-   * Never set for /btw, /fork, or task/subagent children (keeps system prompt cache).
-   */
   parentSessionId?: string
   sessionStartSource?: { scheduleKind: 'at' | 'cron'; scheduledTaskId?: number; scheduledTaskRunId?: number }
-  /** Optional guard for retries: skip enqueue when session has changed. */
   expectedSessionId?: string
-  /**
-   * When true, the message is added to the session context without triggering
-   * the AI agent loop. Used for messages that should be visible to the model
-   * on the next real turn but should not cause a response on their own
-   * (e.g. user-to-user replies in a thread).
-   */
   noReply?: boolean
-  /**
-   * True only for the wake prompt posted by the kimaki_sleep task runner.
-   * Every other ingress cancels a pending sleep; this one must not, because it
-   * is delivering that sleep rather than superseding it.
-   */
   isSleepWake?: boolean
-  /**
-   * Product-analytics turn source. Defaults to discord. Set retry/cli/scheduled
-   * at the ingress site so DAU queries can exclude non-user activity.
-   */
   analyticsSource?: AnalyticsTurnSource
-  /**
-   * Lazy preprocessing callback. When set, the runtime serializes it via a
-   * lightweight promise chain (preprocessChain) to resolve prompt/images/mode
-   * from the raw Discord message. This replaces the threadIngressQueue in
-   * discord-bot.ts: expensive async work (voice transcription, context fetch,
-   * attachment download) runs in arrival order but outside dispatchAction,
-   * so SSE event handling and permission UI are not blocked.
-   *
-   * The closure captures Discord objects (Message, ThreadChannel) so the
-   * runtime stays platform-agnostic — it just awaits the callback.
-   */
   preprocess?: () => Promise<PreprocessResult>
 }
 
@@ -801,6 +710,48 @@ function resolveTurnSource(input: {
     return 'scheduled'
   }
   return 'discord'
+}
+
+export type PreparedAdmission = {
+  client: OpencodeClient
+  sessionId: string
+  text: string
+  images: DiscordFileAttachment[]
+  agent: string
+  model: { providerID: string; modelID: string }
+  variant?: string
+  delivery: 'steer' | 'queue'
+  inputKind: 'prompt' | 'command'
+  source: AnalyticsTurnSource
+  ingressMode: AnalyticsIngressMode
+  command?: { name: string; arguments: string }
+  noReply?: boolean
+  scheduledTaskRunId?: number
+  admissionId?: string
+}
+
+export function buildPreparedAdmissionValue<TClient>({
+  prompt,
+  syntheticContext,
+  ...admission
+}: Omit<PreparedAdmission, 'client' | 'text'> & {
+  client: TClient
+  prompt: string
+  syntheticContext: string
+}) {
+  const imageList = admission.images.map((image) => {
+    return `- ${image.sourceUrl || image.filename}`
+  }).join('\n')
+  const promptWithImages = imageList
+    ? `${prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
+    : prompt
+  return {
+    ...admission,
+    client: admission.client,
+    text: admission.inputKind === 'command'
+      ? syntheticContext
+      : [promptWithImages, syntheticContext].filter(Boolean).join('\n'),
+  }
 }
 
 function trackTurnStarted({
@@ -822,39 +773,6 @@ function trackTurnStarted({
   })
 }
 
-function parseQueuedMessagePayload({
-  queueId,
-  payloadJson,
-}: {
-  queueId: string
-  payloadJson: string
-}): QueuedMessage | Error {
-  return errore.try(
-    () => {
-      const parsed = JSON.parse(payloadJson) as QueuedMessage
-      if (!parsed || typeof parsed !== 'object') {
-        return new Error('Queued message payload is not an object')
-      }
-      if (typeof parsed.prompt !== 'string') {
-        return new Error('Queued message payload is missing prompt')
-      }
-      if (typeof parsed.userId !== 'string') {
-        return new Error('Queued message payload is missing userId')
-      }
-      if (typeof parsed.username !== 'string') {
-        return new Error('Queued message payload is missing username')
-      }
-      return { ...parsed, queueId }
-    },
-    (error) => {
-      return new Error('Failed to parse queued message payload', { cause: error })
-    },
-  )
-}
-
-// Rewrite `{ prompt: "/build foo" }` → `{ prompt: "", command: { name, arguments }, mode: "local-queue" }`
-// when the prompt's leading token matches a registered opencode command.
-// Skip if a command is already set or there's no prompt to inspect.
 function maybeConvertLeadingCommand(input: IngressInput): IngressInput {
   if (input.command) return input
   if (!input.prompt) return input
@@ -902,44 +820,25 @@ export class ThreadSessionRuntime {
   private disposed = false
   private dispatchingQueueId: string | undefined
 
-  // Typing indicator scheduler handles.
-  // `typingKeepaliveTimeout` is the 7s keepalive loop while a run stays busy.
-  // `typingRepulseDebounce` collapses clustered immediate re-pulses after bot
-  // messages into one last pulse, because Discord hides typing on the next bot
-  // message and showing multiple back-to-back POSTs is wasteful.
   private typingKeepaliveTimeout: ReturnType<typeof setTimeout> | null = null
   private readonly typingRepulseDebounce: ReturnType<typeof createDebouncedTimeout>
-  private readonly deferredQuestionShow: ReturnType<typeof createDebouncedTimeout>
 
-  private static TYPING_REPULSE_DEBOUNCE_MS = 500
-  private static DEFERRED_QUESTION_SHOW_MS = 1000
+  private static readonly TYPING_REPULSE_DEBOUNCE_MS = 500
 
-  // Notification throttles for retry/context notices.
-  private lastDisplayedContextPercentage = 0
-  private lastRateLimitDisplayTime = 0
-  private userSystemByMessageId = new Map<string, string>()
-
-  // Last OpenCode session title we applied to Discord. Dedupes session.updated
-  // so we only call setName once per distinct title. Not persisted.
+  // Discord rename failures are usually rate limits, so do not retry one title.
   private appliedOpencodeTitle: string | undefined
 
-  // Part output buffering (write-side cache, not domain state)
-  private partBuffer = new Map<string, Map<string, Part>>()
-  private shownQuestionRequestIds = new Set<string>()
+  private abortInFlight: Promise<void> | null = null
+  private discordProjection: DiscordProjectionState = createDiscordProjectionState()
 
   // Derivable cache (perf optimization for provider.list API call)
   private modelContextLimit: number | undefined
   private modelContextLimitKey: string | undefined
   private lastPromptWorktreeKey: string | null | undefined
-  private lastSentPartKind: SessionPartKind | undefined
 
-  // Bounded buffer of recent SSE events with timestamps.
-  // Used by waitForEvent() to scan for specific events that arrived
-  // after a given point in time (e.g. wait for session.idle after abort).
-  // Generic: any future "wait for X event" can reuse this buffer.
-  private static EVENT_BUFFER_MAX = 1000
-  private static EVENT_BUFFER_DB_FLUSH_MS = 2_000
-  private static EVENT_BUFFER_TEXT_MAX_CHARS = 512
+  private static readonly EVENT_BUFFER_MAX = 1000
+  private static readonly EVENT_BUFFER_DB_FLUSH_MS = 2_000
+  private static readonly EVENT_BUFFER_TEXT_MAX_CHARS = 512
   private eventBuffer: EventBufferEntry[] = []
   private nextEventIndex = 0
   private persistEventBufferDebounced: ReturnType<
@@ -947,18 +846,9 @@ export class ThreadSessionRuntime {
   >
   private readonly sentPartIdsBootstrap: Promise<void>
 
-  // Serialized action queue for per-thread runtime transitions.
-  // Ingress and event handling both flow through this queue to keep ordering
-  // deterministic and avoid interleaving shared mutable structures.
   private actionQueue: Array<() => Promise<void>> = []
   private processingAction = false
 
-  // Lightweight promise chain for serializing preprocess callbacks.
-  // Runs OUTSIDE dispatchAction so heavy work (voice transcription, context
-  // fetch, attachment download) doesn't block SSE event handling, permission
-  // UI, or queue drain. Only preprocess ordering is serialized here; the
-  // resolved input is then routed through the normal enqueue paths which
-  // use dispatchAction internally.
   private preprocessChain: Promise<void> = Promise.resolve()
 
   constructor(opts: RuntimeOptions) {
@@ -974,13 +864,14 @@ export class ThreadSessionRuntime {
         error,
       )
     })
-    // Register with the single global SSE listener. Events for this
-    // directory are demuxed and dispatched through our action queue.
-    registerEventListener(this.threadId, (event) => {
+    registerEventListener(this.threadId, (event, context) => {
       if (this.disposed) return
       void this.dispatchAction(async () => {
         await this.sentPartIdsBootstrap
-        await this.handleEvent(event)
+        if (context.reconnected) {
+          await this.reconcileAfterReconnect()
+        }
+        await this.ingestEvent(event)
       })
     })
     this.persistEventBufferDebounced = createDebouncedProcessFlush({
@@ -1004,17 +895,6 @@ export class ThreadSessionRuntime {
         this.restartTypingKeepalive({ sendNow: true })
       },
     })
-    this.deferredQuestionShow = createDebouncedTimeout({
-      delayMs: ThreadSessionRuntime.DEFERRED_QUESTION_SHOW_MS,
-      callback: () => {
-        if (this.disposed) {
-          return
-        }
-        void this.dispatchAction(async () => {
-          await this.tryShowPendingQuestion({ ignoreUnfinishedText: true })
-        })
-      },
-    })
   }
 
   private consumeWorktreePromptChange(
@@ -1026,7 +906,6 @@ export class ThreadSessionRuntime {
     return changed
   }
 
-  // Read own state from global store
   get state(): threadState.ThreadRunState | undefined {
     return threadState.getThreadState(this.threadId)
   }
@@ -1035,11 +914,7 @@ export class ThreadSessionRuntime {
     return this.isBusy() ? 'running' : 'idle'
   }
 
-  private getLastRuntimeActivityTimestamp({
-    nowMs: _nowMs,
-  }: {
-    nowMs: number
-  }): number {
+  private getLastRuntimeActivityTimestamp(): number {
     const lastEvent = this.eventBuffer[this.eventBuffer.length - 1]
     const lastEventTimestamp = lastEvent?.timestamp
     if (typeof lastEventTimestamp === 'number' && Number.isFinite(lastEventTimestamp)) {
@@ -1084,7 +959,7 @@ export class ThreadSessionRuntime {
     idleCandidate: boolean
     inactiveForMs: number
   } {
-    const lastActivityTimestamp = this.getLastRuntimeActivityTimestamp({ nowMs })
+    const lastActivityTimestamp = this.getLastRuntimeActivityTimestamp()
     return {
       idleCandidate: this.isIdleCandidateForInactivityCheck(),
       inactiveForMs: Math.max(0, nowMs - lastActivityTimestamp),
@@ -1120,16 +995,7 @@ export class ThreadSessionRuntime {
     }
 
     const hydratedEvents: EventBufferEntry[] = rows.flatMap((row) => {
-      const eventResult = errore.try(
-        () => {
-          return JSON.parse(row.event_json) as EventBufferEvent
-        },
-        (error) => {
-          return new Error('Failed to parse persisted session event JSON', {
-            cause: error,
-          })
-        },
-      )
+      const eventResult = parseEventBufferEvent(row.event_json)
       if (eventResult instanceof Error) {
         logger.warn(
           `[SESSION EVENT DB] Skipping invalid persisted event row for session ${sessionId}: ${eventResult.message}`,
@@ -1173,9 +1039,7 @@ export class ThreadSessionRuntime {
     }
 
     const events = this.eventBuffer.flatMap((entry) => {
-      const eventSessionId = entry.event.type === 'queue.question-handoff-started'
-        ? entry.event.properties.sessionID
-        : getOpencodeEventSessionId(entry.event)
+      const eventSessionId = getEventBufferSessionId(entry.event)
       if (eventSessionId !== sessionId) {
         return []
       }
@@ -1224,52 +1088,6 @@ export class ThreadSessionRuntime {
     return isSessionBusy({ events: this.eventBuffer, sessionId })
   }
 
-  private async persistIngressVariant({
-    sessionId,
-    channelId,
-    appId,
-    agentPreference,
-    getClient,
-    variant,
-  }: {
-    sessionId: string
-    channelId?: string
-    appId?: string
-    agentPreference?: string
-    getClient: Awaited<ReturnType<typeof initializeOpencodeForDirectory>>
-    variant?: string
-  }) {
-    if (!variant) return
-    if (getClient instanceof Error) return
-    const variantModelInfo = await getCurrentModelInfo({
-      sessionId,
-      channelId,
-      appId,
-      agentPreference,
-      getClient,
-      directory: this.sdkDirectory,
-    })
-    if (variantModelInfo.type === 'none') return
-    const providersResponse = await getClient()
-      .provider.list({ directory: this.sdkDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error || !providersResponse.data) return
-    const matchedVariant = matchThinkingValue({
-      requestedValue: variant,
-      availableValues: getThinkingValuesForModel({
-        providers: providersResponse.data.all,
-        providerId: variantModelInfo.providerID,
-        modelId: variantModelInfo.modelID,
-      }),
-    })
-    if (!matchedVariant) return
-    await setSessionModel({
-      sessionId,
-      modelId: variantModelInfo.model,
-      variant: matchedVariant,
-    })
-  }
-
   private getAssistantMessageIdsForCurrentTurn({
     sessionId,
     upToIndex,
@@ -1278,7 +1096,7 @@ export class ThreadSessionRuntime {
     upToIndex?: number
   }): Set<string> {
     const normalizedIndex = upToIndex === undefined ? undefined : upToIndex - 1
-    return getAssistantMessageIdsForLatestUserTurn({
+    return getAssistantMessageIdsForLatestExecution({
       events: this.eventBuffer,
       sessionId,
       upToIndex: normalizedIndex,
@@ -1293,7 +1111,7 @@ export class ThreadSessionRuntime {
     upToIndex?: number
   }): string | undefined {
     const normalizedIndex = upToIndex === undefined ? undefined : upToIndex - 1
-    return getLatestAssistantMessageIdForLatestUserTurn({
+    return getLatestAssistantMessageIdForLatestExecution({
       events: this.eventBuffer,
       sessionId,
       upToIndex: normalizedIndex,
@@ -1315,17 +1133,12 @@ export class ThreadSessionRuntime {
       return undefined
     }
 
-    const subtaskIndex = getDerivedSubtaskIndex({
+    const label = getDerivedSubtaskLabel({
       events: this.eventBuffer,
       mainSessionId,
       candidateSessionId,
     })
-    const agentType = getDerivedSubtaskAgentType({
-      events: this.eventBuffer,
-      mainSessionId,
-      candidateSessionId,
-    })
-    const label = `${agentType || 'task'}-${subtaskIndex || 1}`
+    if (!label) return undefined
     const assistantMessageId = this.getLatestAssistantMessageIdForCurrentTurn({
       sessionId: candidateSessionId,
     })
@@ -1346,15 +1159,12 @@ export class ThreadSessionRuntime {
     this.disposed = true
     unregisterEventListener(this.threadId)
     void this.persistEventBufferDebounced.dispose()
-    this.deferredQuestionShow.clear()
     this.stopTyping()
 
     // Release large internal buffers so GC can reclaim memory immediately
     // instead of waiting for the runtime object itself to become unreachable.
     this.eventBuffer = []
     this.nextEventIndex = 0
-    this.partBuffer.clear()
-    this.shownQuestionRequestIds.clear()
     this.preprocessChain = Promise.resolve()
 
     // Don't clear actionQueue here — queued closures own resolve/reject for
@@ -1432,111 +1242,60 @@ export class ThreadSessionRuntime {
   private compactEventForEventBuffer(
     event: EventBufferEvent,
   ): EventBufferEvent | undefined {
-    if (event.type === 'queue.question-handoff-started') {
+    if (event.type.startsWith('kimaki.')) {
       return this.finalizeCompactedEventForEventBuffer(structuredClone(event))
-    }
-
-    if (event.type === 'session.diff') {
-      return undefined
     }
 
     const compacted = structuredClone(event)
 
-    if (compacted.type === 'message.updated') {
-      // Strip heavy fields from ALL roles. Derivation only needs lightweight
-      // metadata (id, role, sessionID, parentID, time, finish, error, modelID,
-      // providerID, mode, tokens). The parts array on assistant messages grows
-      // with every tool call and was the primary OOM vector — 1000 buffer entries
-      // each carrying the full cumulative parts array reached 4GB+.
-      const info = compacted.properties.info as Record<string, unknown>
-      const partsSummary = Array.isArray(info.parts)
-        ? info.parts.flatMap((part) => {
-            if (!part || typeof part !== 'object') {
-              return [] as Array<{ id: string; type: string }>
-            }
-            const candidate = part as { id?: unknown; type?: unknown }
-            if (
-              typeof candidate.id !== 'string'
-              || typeof candidate.type !== 'string'
-            ) {
-              return [] as Array<{ id: string; type: string }>
-            }
-            return [{ id: candidate.id, type: candidate.type }]
-          })
-        : []
-      if (info.role === 'user' && typeof info.id === 'string' && typeof info.system === 'string') {
-        this.userSystemByMessageId.set(info.id, info.system)
-      }
-      delete info.system
-      delete info.tools
-      delete info.parts
-      if (partsSummary.length > 0) {
-        info.partsSummary = partsSummary
-      }
+    if (compacted.type === 'session.text.ended') {
+      compacted.data.text = this.compactTextForEventBuffer(compacted.data.text)
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
-    if (compacted.type !== 'message.part.updated') {
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    const part = compacted.properties.part
-
-    if (part.type === 'text') {
-      part.text = this.compactTextForEventBuffer(part.text)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (part.type === 'reasoning') {
-      part.text = this.compactTextForEventBuffer(part.text)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (part.type === 'snapshot') {
-      part.snapshot = this.compactTextForEventBuffer(part.snapshot)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (part.type === 'step-start' && part.snapshot) {
-      part.snapshot = this.compactTextForEventBuffer(part.snapshot)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (part.type !== 'tool') {
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    const state = part.state
-    // Preserve subagent_type for task tools so derivation can build labels
-    // like "explore-1" instead of generic "task-1" after compaction strips input
-    const taskSubagentType =
-      part.tool === 'task' ? state.input?.subagent_type : undefined
-    state.input = {}
-    if (typeof taskSubagentType === 'string') {
-      state.input.subagent_type = taskSubagentType
-    }
-
-    if (state.status === 'pending') {
-      state.raw = this.compactTextForEventBuffer(state.raw)
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (state.status === 'running') {
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (state.status === 'completed') {
-      state.output = this.compactTextForEventBuffer(state.output)
-      delete state.attachments
-      return this.finalizeCompactedEventForEventBuffer(compacted)
-    }
-
-    if (state.status === 'error') {
-      state.error = this.compactTextForEventBuffer(state.error)
+    if (compacted.type === 'session.reasoning.ended') {
+      compacted.data.text = this.compactTextForEventBuffer(compacted.data.text)
       return this.finalizeCompactedEventForEventBuffer(compacted)
     }
 
     return this.finalizeCompactedEventForEventBuffer(compacted)
+  }
+
+  // One ingress for live SSE and session.log replay. Durable identity
+  // drops reconnect overlap before Discord effects; ephemeral deltas pass.
+  private async ingestEvent(event: V2Event): Promise<void> {
+    const sessionId = this.state?.sessionId
+    const inSessionTree = Boolean(
+      sessionId
+      && isEventForSessionTree({
+        events: this.eventBuffer,
+        event,
+        mainSessionId: sessionId,
+      }),
+    )
+    if (inSessionTree && hasSeenNativeDurableEvent({
+      events: this.eventBuffer,
+      event,
+    })) {
+      return
+    }
+    if (event.type === 'session.tool.progress') {
+      const evidence = compactSubagentRoutingEvidence(event)
+      if (evidence && sessionId && inSessionTree) {
+        const alreadyBuffered = this.eventBuffer.some((entry) => {
+          const buffered = entry.event
+          return buffered.type === 'kimaki.subagent.routing'
+            && buffered.data.sessionID === evidence.data.sessionID
+            && buffered.data.assistantMessageID === evidence.data.assistantMessageID
+            && buffered.data.id === evidence.data.id
+            && buffered.data.childSessionID === evidence.data.childSessionID
+        })
+        if (!alreadyBuffered) this.appendEventToBuffer(evidence)
+      }
+    } else if (sessionId && !isEphemeralV2StreamEvent(event) && inSessionTree) {
+      this.appendEventToBuffer(event)
+    }
+    await this.handleEvent(event)
   }
 
   private appendEventToBuffer(event: EventBufferEvent): void {
@@ -1549,12 +1308,23 @@ export class ThreadSessionRuntime {
       mainSessionId: this.state?.sessionId,
       isKnownChildSession: (candidateSessionId) => {
         return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
+          || isDerivedChildSession({
+            events: this.eventBuffer,
+            mainSessionId: this.state?.sessionId || '',
+            candidateSessionId,
+          })
       },
     })) {
       return
     }
 
-    const timestamp = Date.now()
+    const timestamp = compactedEvent.type === 'kimaki.queue-dispatch.started'
+      || compactedEvent.type === 'kimaki.queue-dispatch.settled'
+      || compactedEvent.type === 'kimaki.question-queue-handoff.started'
+      || compactedEvent.type === 'kimaki.subagent.routing'
+      || compactedEvent.type === 'server.connected'
+      ? Date.now()
+      : compactedEvent.created
     const eventIndex = this.nextEventIndex
     this.nextEventIndex += 1
     this.eventBuffer.push({
@@ -1568,40 +1338,48 @@ export class ThreadSessionRuntime {
       max: ThreadSessionRuntime.EVENT_BUFFER_MAX,
       isKnownChildSession: (candidateSessionId) => {
         return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
+          || isDerivedChildSession({
+            events: this.eventBuffer,
+            mainSessionId: this.state?.sessionId || '',
+            candidateSessionId,
+          })
       },
     })
     this.persistEventBufferDebounced.trigger()
   }
 
-  // Queue-dispatch lifecycle markers are synthetic buffer-only events.
-  // They are not fed into handleEvent(), so they do not emit Discord messages;
-  // they only stabilize event-derived busy/idle gating for local queue drains.
+  // Native busy arrives after admission, so this marker closes the queue drain race.
   private markQueueDispatchBusy(sessionId: string): void {
     this.appendEventToBuffer({
-      id: `synthetic-${crypto.randomUUID()}`,
-      type: 'session.status',
-      properties: {
+      type: 'kimaki.queue-dispatch.started',
+      data: {
         sessionID: sessionId,
-        status: { type: 'busy' },
       },
     })
+    this.ensureTypingNow()
   }
 
   private markQueueDispatchIdle(sessionId: string): void {
     this.appendEventToBuffer({
-      id: `synthetic-${crypto.randomUUID()}`,
-      type: 'session.idle',
-      properties: {
+      type: 'kimaki.queue-dispatch.settled',
+      data: {
         sessionID: sessionId,
       },
     })
   }
 
-  private markQuestionQueueHandoffStarted(sessionId: string): void {
+  private markQuestionQueueHandoffStarted({
+    sessionId,
+    requestId,
+  }: {
+    sessionId: string
+    requestId?: string
+  }): void {
     this.appendEventToBuffer({
-      type: 'queue.question-handoff-started',
-      properties: {
+      type: 'kimaki.question-queue-handoff.started',
+      data: {
         sessionID: sessionId,
+        requestID: requestId,
       },
     })
   }
@@ -1610,8 +1388,7 @@ export class ThreadSessionRuntime {
    * Generic event waiter: polls the event buffer until a matching event
    * appears (with timestamp >= sinceTimestamp), or timeout/abort.
    *
-   * Unlike the old idleWaiter (a promise wired into handleSessionIdle),
-   * this has zero coupling to specific event handlers — it just scans
+   * This has zero coupling to specific event handlers. It scans
    * the buffer that handleEvent() fills. Works for any event type.
    */
   private async waitForEvent(opts: {
@@ -1659,90 +1436,82 @@ export class ThreadSessionRuntime {
   }
 
   // ── Session Demux Guard ─────────────────────────────────────
-  // Events scoped to a session must match the current session.
-  // Global events (tui.toast.show) bypass the guard.
-  // Subtask sessions also bypass — they're tracked in subtaskSessions.
+  // Session events must belong to the current event-derived session tree.
+  // Global events such as tui.toast.show bypass this guard.
 
-  private async handleEvent(event: OpenCodeEvent): Promise<void> {
+  private async handleEvent(event: V2Event): Promise<void> {
+    // session.diff can carry repeated full-file before/after snapshots and is
+    // not used by event-derived runtime state, queueing, typing, or UI routing.
     const sessionId = this.state?.sessionId
-    if (!shouldBufferSessionEvent({
-      event,
-      mainSessionId: sessionId,
-      isKnownChildSession: (candidateSessionId) => {
-        return Boolean(this.getSubtaskInfoForSession(candidateSessionId))
-      },
-    })) {
-      return
-    }
-
-    // Skip message.part.delta from the event buffer — no derivation function
-    // (isSessionBusy, doesLatestUserTurnHaveNaturalCompletion, waitForEvent,
-    // etc.) uses them. During long streaming responses they flood the 1000-slot
-    // buffer, evicting session.status busy events that isSessionBusy needs,
-    // causing tryDrainQueue to drain the local queue while the session is
-    // actually still busy. This was the root cause of "? queue" messages
-    // interrupting instead of queuing.
-    // Child task part floods are also dropped at retain time for the same reason.
-    if (event.type !== 'message.part.delta') {
-      this.appendEventToBuffer(event)
-    }
-
     const eventSessionId = getOpencodeEventSessionId(event)
     const toastSessionId = event.type === 'tui.toast.show'
-      ? extractToastSessionId({ message: event.properties.message })
+      ? extractToastSessionId({
+          message: event.data.message,
+        })
       : undefined
-
-    if (shouldLogSessionEvents) {
-      const eventDetails = (() => {
-        if (event.type === 'session.error') {
-          const errorName = event.properties.error?.name || 'unknown'
-          return ` error=${errorName}`
-        }
-        if (event.type === 'session.status') {
-          const status = event.properties.status || 'unknown'
-          return ` status=${status}`
-        }
-        if (event.type === 'message.updated') {
-          return ` role=${event.properties.info.role} messageID=${event.properties.info.id}`
-        }
-        if (event.type === 'message.part.updated') {
-          const partType = event.properties.part.type
-          const partId = event.properties.part.id
-          const messageId = event.properties.part.messageID
-          const toolSuffix = partType === 'tool'
-            ? ` tool=${event.properties.part.tool} status=${event.properties.part.state.status}`
-            : ''
-          return ` part=${partType} partID=${partId} messageID=${messageId}${toolSuffix}`
-        }
-        return ''
-      })()
-      logger.log(
-        `[EVENT] type=${event.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}${eventDetails}`,
-      )
-    }
-
     const isGlobalEvent = event.type === 'tui.toast.show'
     const isScopedToastEvent = Boolean(toastSessionId)
 
-    // Drop events that don't match current session (stale events from
-    // previous sessions), unless it's a global event or a subtask session.
-    if (!isGlobalEvent && eventSessionId && eventSessionId !== sessionId) {
-      if (!this.getSubtaskInfoForSession(eventSessionId)) {
-        return // stale event from previous session
+    if (shouldLogSessionEvents) {
+      logger.log(
+        `[EVENT] type=${event.type} eventSessionId=${eventSessionId || 'none'} activeSessionId=${sessionId || 'none'} ${this.formatRunStateForLog()}`,
+      )
+    }
+
+    if (!isGlobalEvent && sessionId && eventSessionId && eventSessionId !== sessionId) {
+      if (!isDerivedChildSession({
+        events: this.eventBuffer,
+        mainSessionId: sessionId,
+        candidateSessionId: eventSessionId,
+      })) {
+        return
       }
     }
-    if (isScopedToastEvent && toastSessionId !== sessionId) {
-      if (!this.getSubtaskInfoForSession(toastSessionId!)) {
+    if (isScopedToastEvent && sessionId && toastSessionId && toastSessionId !== sessionId) {
+      if (!isDerivedChildSession({
+        events: this.eventBuffer,
+        mainSessionId: sessionId,
+        candidateSessionId: toastSessionId,
+      })) {
         return
       }
     }
 
-    if (isOpencodeSessionEventLogEnabled()) {
-      const eventLogResult = await appendOpencodeSessionEventLog({
-        threadId: this.threadId,
-        projectDirectory: this.projectDirectory,
+    if (sessionId) {
+      if (
+        event.type === 'session.tool.success'
+        && event.data.sessionID === sessionId
+        && !this.modelContextLimit
+      ) {
+        const runInfo = getLatestRunInfo({ events: this.eventBuffer, sessionId })
+        if (runInfo.providerID && runInfo.model) {
+          await this.ensureModelContextLimit({
+            providerID: runInfo.providerID,
+            modelID: runInfo.model,
+          })
+        }
+      }
+      const verbosity = await this.getVerbosity()
+      const actions = projectDiscordActions({
         event,
+        events: this.eventBuffer,
+        projectedParts: this.discordProjection.parts,
+        pendingForms: this.discordProjection.pendingForms,
+        shownFormIds: this.discordProjection.shownFormIds,
+        mainSessionId: sessionId,
+        verbosity,
+        deliveredPartIds: new Set(this.state?.sentPartIds),
+        largeOutputThresholdTokens: 3_000,
+        modelContextLimit: this.modelContextLimit,
       })
+      await this.executeDiscordActions(actions)
+    }
+    if (isEphemeralV2StreamEvent(event)) {
+      return
+    }
+
+    if (isOpencodeSessionEventLogEnabled()) {
+      const eventLogResult = await appendOpencodeSessionEventLog(event)
       if (eventLogResult instanceof Error) {
         logger.error(
           '[SESSION EVENT JSONL] Failed to write session event log:',
@@ -1751,54 +1520,521 @@ export class ThreadSessionRuntime {
       }
     }
 
+    // Control-plane events keep named handlers; they do not render assistant output.
     switch (event.type) {
-      case 'message.updated':
-        await this.handleMessageUpdated(event.properties.info)
+      case 'session.renamed':
+        await this.handleSessionRenamed(event.data)
         break
-      case 'message.part.updated':
-        await this.handlePartUpdated(event.properties.part)
-        break
-      case 'session.idle':
-        await completeScheduledTaskRunsForSession(event.properties.sessionID)
-        await this.handleSessionIdle(event.properties.sessionID)
-        break
-      case 'session.error':
-        if (event.properties.sessionID) {
-          const sessionError = event.properties.error
-          const errorMessage = sessionError && typeof sessionError === 'object'
-            ? String(sessionError.data?.message || sessionError.name || 'Session failed')
-            : 'Session failed'
-          await failScheduledTaskRunsForSession({
-            sessionId: event.properties.sessionID,
-            error: errorMessage,
-          })
-        }
-        await this.handleSessionError(event.properties)
-        break
-      case 'permission.asked':
-        await this.handlePermissionAsked(event.properties)
-        break
-      case 'permission.replied':
-        this.handlePermissionReplied(event.properties)
-        break
-      case 'question.asked':
-        await this.handleQuestionAsked(event.properties)
-        break
-      case 'question.replied':
-        this.handleQuestionReplied(event.properties)
+      case 'session.text.started':
+      case 'session.text.ended':
+      case 'session.reasoning.started':
+      case 'session.reasoning.ended':
+      case 'session.tool.input.started':
+      case 'session.tool.called':
+      case 'session.tool.success':
+      case 'session.tool.failed':
+      case 'session.execution.succeeded':
+      case 'session.execution.interrupted':
+      case 'session.execution.failed':
         break
       case 'session.status':
-        await this.handleSessionStatus(event.properties)
+        await this.handleSessionStatus(event)
         break
-      case 'session.updated':
-        await this.handleSessionUpdated(event.properties.info)
+      case 'session.step.started':
+        break
+      case 'permission.asked':
+        await this.handlePermissionAsked(event.data)
+        break
+      case 'permission.replied':
+        this.handlePermissionReplied({
+          sessionID: event.data.sessionID,
+          requestID: event.data.requestID,
+          reply: event.data.reply,
+        })
+        break
+      case 'form.created':
+      case 'form.replied':
+      case 'form.cancelled':
+        break
+      case 'session.inbox.enqueued':
+      case 'session.inbox.cancelled':
+      case 'session.inbox.delivered':
+        break
+      case 'session.execution.started':
         break
       case 'tui.toast.show':
-        await this.handleTuiToast(event.properties)
+        await this.handleTuiToast({
+          message: event.data.message,
+          variant: event.data.variant,
+          title: event.data.title,
+          duration: event.data.duration,
+        })
         break
       default:
         break
     }
+  }
+
+  private async executeDiscordActions(actions: readonly DiscordAction[]): Promise<void> {
+    for (const action of actions) {
+      this.discordProjection = applyDiscordProjectionActions({
+        state: this.discordProjection,
+        actions: [action],
+      })
+      if (action.type === 'store-part') {
+        continue
+      }
+      if (action.type === 'render-part') {
+        await this.renderProjectedPart(action)
+        continue
+      }
+      if (action.type === 'hold-part' || action.type === 'skip-part') {
+        continue
+      }
+      if (action.type === 'show-large-output') {
+        const result = await this.thread.send({
+          content: asSubtext(`${STATUS_PREFIX}${action.content}`),
+          flags: SILENT_MESSAGE_FLAGS,
+        }).catch((cause) => new DiscordOperationError({ operation: 'sendMessage', cause }))
+        if (result instanceof Error) discordLogger.error('Failed to send large output notice:', result)
+        continue
+      }
+      if (action.type === 'show-action-buttons') {
+        await this.showProjectedActionButtons(action.sessionId)
+        continue
+      }
+      if (action.type === 'show-form') {
+        await this.showProjectedForm(action.form)
+        continue
+      }
+      if (action.type === 'settle-form') {
+        await this.settleV2Form({
+          sessionId: action.sessionId,
+          formId: action.formId,
+        })
+        continue
+      }
+      if (action.type === 'start-typing') {
+        if (action.immediate) this.restartTypingKeepalive({ sendNow: true })
+        else this.ensureTypingNow()
+        continue
+      }
+      if (action.type === 'stop-typing') {
+        this.stopTyping()
+        continue
+      }
+      if (action.type === 'show-context-usage') {
+        await this.showContextUsageNotice(action.sessionId)
+        continue
+      }
+      if (action.type === 'show-prompt-cache-clear') {
+        const result = await this.thread.send({
+          content: asSubtext(action.message),
+          flags: SILENT_MESSAGE_FLAGS,
+        }).catch((cause) => new DiscordOperationError({ operation: 'sendMessage', cause }))
+        if (result instanceof Error) discordLogger.error('Failed to send prompt cache notice:', result)
+        continue
+      }
+      if (action.type === 'unquote-final-text') {
+        await this.unquoteFinalText(action)
+        continue
+      }
+      if (action.type === 'send-footer') {
+        const result = await this.emitFooter({
+          completedAt: action.completedAt,
+          runStartTime: action.startedAt,
+        }).catch((cause) => new DiscordOperationError({ operation: 'sendFooter', cause }))
+        if (result instanceof Error) discordLogger.error('Failed to send v2 execution footer:', result)
+        continue
+      }
+      if (action.type === 'send-error') {
+        const result = await sendThreadMessage(
+          this.thread,
+          `✗ ${action.message}`,
+          { flags: NOTIFY_MESSAGE_FLAGS },
+        ).catch((cause) => new DiscordOperationError({ operation: 'sendMessage', cause }))
+        if (result instanceof Error) discordLogger.error('Failed to send execution error:', result)
+        continue
+      }
+      if (action.type === 'record-terminal-analytics') {
+        this.recordTerminalAnalytics(action.analytics)
+        continue
+      }
+      if (action.type === 'complete-scheduled-task') {
+        await completeScheduledTaskRunsForSession(action.sessionId)
+        continue
+      }
+      if (action.type === 'fail-scheduled-task') {
+        await failScheduledTaskRunsForSession({
+          sessionId: action.sessionId,
+          error: action.error,
+        })
+        continue
+      }
+      if (action.type === 'reset-run') {
+        this.resetPerRunState()
+        continue
+      }
+      if (action.type === 'drain-queue') {
+        await this.tryDrainQueue({ showIndicator: true })
+      }
+    }
+  }
+
+  private async renderProjectedPart(
+    action: Extract<DiscordAction, { type: 'render-part' }>,
+  ): Promise<void> {
+    threadState.updateThread(this.threadId, (thread) => {
+      const sentPartIds = new Set(thread.sentPartIds)
+      sentPartIds.add(action.deliveryId)
+      return { ...thread, sentPartIds }
+    })
+    const result = await sendSessionPartMessage(this.thread, action.content, {
+      leadWithBlankLine: action.leadWithBlankLine,
+    }).catch((cause) => new DiscordOperationError({ operation: 'sendMessage', cause }))
+    if (result instanceof Error) {
+      threadState.updateThread(this.threadId, (thread) => {
+        const sentPartIds = new Set(thread.sentPartIds)
+        sentPartIds.delete(action.deliveryId)
+        return { ...thread, sentPartIds }
+      })
+      discordLogger.error(`Failed to render ${action.destination.label} part ${action.deliveryId}:`, result)
+      return
+    }
+    await setPartMessage({
+      partId: action.deliveryId,
+      messageId: result.id,
+      threadId: this.thread.id,
+    })
+    if (action.repulseTyping) this.requestTypingRepulse()
+  }
+
+  // Only edits when the Discord body is exactly the quote Kimaki sent, so model text starting with `> ` stays.
+  private async unquoteFinalText(
+    action: Extract<DiscordAction, { type: 'unquote-final-text' }>,
+  ): Promise<void> {
+    const db = await getDb()
+    const row = await db.query.part_messages.findFirst({
+      where: { part_id: action.partId },
+      columns: { message_id: true },
+    }).catch((cause) => new DiscordOperationError({ operation: 'getPartMessage', cause }))
+    if (row instanceof Error) {
+      discordLogger.error(`Failed to find Discord message for ${action.partId}:`, row)
+      return
+    }
+    if (!row?.message_id) return
+    const message = await this.thread.messages.fetch(row.message_id)
+      .catch((cause) => new DiscordOperationError({ operation: 'fetchMessage', cause }))
+    if (message instanceof Error) {
+      discordLogger.error(`Failed to fetch Discord message for ${action.partId}:`, message)
+      return
+    }
+    const leadWithBlankLine = message.content.startsWith('\n')
+    const quoted = sessionPartContent({
+      content: asDiscordQuote(action.content),
+      leadWithBlankLine,
+    })
+    if (message.content !== quoted) return
+    const edited = await message.edit({
+      content: sessionPartContent({ content: action.content, leadWithBlankLine }),
+    }).catch((cause) => new DiscordOperationError({ operation: 'editMessage', cause }))
+    if (edited instanceof Error) {
+      discordLogger.error(`Failed to unquote final text ${action.partId}:`, edited)
+    }
+  }
+
+  private async showProjectedActionButtons(sessionId: string): Promise<void> {
+    this.stopTyping()
+    const request = await waitForQueuedActionButtonsRequest({ sessionId, timeoutMs: 1_500 })
+    if (!request) {
+      logger.warn(`[ACTION] No queued action-buttons request found for session ${sessionId}`)
+      return
+    }
+    if (request.threadId !== this.thread.id) {
+      logger.warn('[ACTION] Ignoring queued action-buttons for different thread')
+      return
+    }
+    const result = await showActionButtons({
+      thread: this.thread,
+      sessionId: request.sessionId,
+      directory: request.directory,
+      buttons: request.buttons,
+      silent: this.getQueueLength() > 0,
+    }).catch((cause) => new DiscordOperationError({ operation: 'showActionButtons', cause }))
+    if (!(result instanceof Error)) return
+    logger.error('[ACTION] Failed to show action buttons:', result)
+    await sendThreadMessage(this.thread, `Failed to show action buttons: ${result.message}`, {
+      flags: NOTIFY_MESSAGE_FLAGS,
+    })
+  }
+
+  private recordTerminalAnalytics(analytics: TerminalAnalytics): void {
+    const usageProperties = {
+      tokens_input: analytics.usage.input,
+      tokens_output: analytics.usage.output,
+      tokens_reasoning: analytics.usage.reasoning,
+      tokens_cache_read: analytics.usage.cacheRead,
+      tokens_cache_write: analytics.usage.cacheWrite,
+      tokens_total: analytics.usage.total,
+      cost: analytics.usage.cost,
+      assistant_message_count: analytics.usage.assistantMessageCount,
+      is_subagent: analytics.isSubagent,
+    } satisfies AnalyticsProps
+    trackEvent('tokens_used', Object.assign(
+      usageProperties,
+      analytics.usage.model ? { model: analytics.usage.model } : null,
+      analytics.usage.providerID ? { provider: analytics.usage.providerID } : null,
+    ))
+    if (!analytics.isMainSession) return
+    trackEvent('turn_completed', {
+      duration_sec: analytics.durationSec,
+      outcome: analytics.outcome,
+    })
+  }
+
+  private async reconcileAfterReconnect(): Promise<void> {
+    const sessionId = this.state?.sessionId
+    const client = getOpencodeClient(this.sdkDirectory)
+    if (!sessionId || !client) return
+
+    const [sessionIdsResult, formsResult] = await Promise.all([
+      this.listNativeSessionTree({ client, mainSessionId: sessionId }),
+      client.form.list({ sessionID: sessionId }).catch((cause) => {
+        return new OpenCodeSdkError({ operation: 'form.list.reconcile', cause })
+      }),
+    ])
+
+    if (sessionIdsResult instanceof Error) {
+      logger.warn('[RECONNECT] Failed to list native session tree:', sessionIdsResult)
+    } else {
+      const logResults = await Promise.all(sessionIdsResult.map((replaySessionId) => {
+        return this.readNativeSessionLog({ client, sessionId: replaySessionId })
+      }))
+      const replayEvents: NativeDurableV2Event[] = []
+      for (const result of logResults) {
+        if (result instanceof Error) {
+          logger.warn('[RECONNECT] Failed to read native session log:', result)
+          continue
+        }
+        replayEvents.push(...result)
+      }
+      for (const event of orderNativeRecoveryEvents(replayEvents)) {
+        await this.ingestEvent(event)
+      }
+    }
+
+    if (formsResult instanceof Error) {
+      logger.warn('[RECONNECT] Failed to reconcile forms:', formsResult)
+      return
+    }
+    for (const form of formsResult) {
+      const stateResult = await client.form.state({
+        sessionID: sessionId,
+        formID: form.id,
+      }).catch((cause) => new OpenCodeSdkError({
+        operation: 'form.state.reconcile',
+        cause,
+      }))
+      if (stateResult instanceof Error) {
+        logger.warn(`[RECONNECT] Failed to read form ${form.id} state:`, stateResult)
+        continue
+      }
+      if (stateResult.status === 'pending') {
+        const fields = form.fields.flatMap((field): Array<Extract<
+          V2Event,
+          { type: 'form.created' }
+        >['data']['form']['fields'][number]> => {
+          if (field.type === 'string') return [{
+            key: field.key,
+            type: 'string' as const,
+            title: field.title,
+            description: field.description,
+            options: field.options,
+          }]
+          if (field.type === 'multiselect') return [{
+            key: field.key,
+            type: 'multiselect' as const,
+            title: field.title,
+            description: field.description,
+            options: field.options,
+          }]
+          return []
+        })
+        const [firstField, ...remainingFields] = fields
+        if (!firstField) continue
+        const formEvent: Extract<V2Event, { type: 'form.created' }> = {
+          id: `reconnect-form-created:${form.id}`,
+          created: Date.now(),
+          type: 'form.created',
+          data: {
+            form: {
+              id: form.id,
+              sessionID: form.sessionID,
+              title: form.title,
+              metadata: form.metadata,
+              fields: [firstField, ...remainingFields],
+            },
+          },
+        }
+        await this.handleEvent(formEvent)
+        continue
+      }
+      const settledEvent: Extract<V2Event, { type: 'form.cancelled' }> = {
+        id: `reconnect-form-settled:${form.id}`,
+        created: Date.now(),
+        type: 'form.cancelled',
+        data: { sessionID: sessionId, id: form.id },
+      }
+      await this.handleEvent(settledEvent)
+    }
+  }
+
+  private latestRecoverySequence(sessionId: string): number {
+    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
+      const event = this.eventBuffer[i]?.event
+      if (!event || getEventBufferSessionId(event) !== sessionId) continue
+      switch (event.type) {
+        case 'session.execution.started':
+        case 'session.execution.succeeded':
+        case 'session.execution.failed':
+        case 'session.execution.interrupted':
+        case 'session.step.started':
+        case 'session.step.streamed':
+        case 'session.step.ended':
+        case 'session.step.failed':
+        case 'session.text.started':
+        case 'session.text.ended':
+        case 'session.reasoning.started':
+        case 'session.reasoning.ended':
+        case 'session.tool.input.started':
+        case 'session.tool.input.ended':
+        case 'session.tool.called':
+        case 'session.tool.success':
+        case 'session.tool.failed':
+        case 'session.retry.scheduled':
+        case 'session.compaction.started':
+        case 'session.compaction.ended':
+        case 'session.compaction.failed':
+        case 'session.inbox.enqueued':
+        case 'session.inbox.cancelled':
+        case 'session.inbox.delivered':
+        case 'session.inbox.delivery.changed':
+          return event.durable.seq
+        default:
+          continue
+      }
+    }
+    return 0
+  }
+
+  private async readNativeSessionLog({
+    client,
+    sessionId,
+  }: {
+    client: OpencodeClient
+    sessionId: string
+  }): Promise<NativeDurableV2Event[] | Error> {
+    const events: NativeDurableV2Event[] = []
+    const result = await (async () => {
+      for await (const item of client.session.log({
+        sessionID: sessionId,
+        after: this.latestRecoverySequence(sessionId),
+      })) {
+        if (
+          item.type === 'log.synced'
+          || item.type === 'session.usage.recorded'
+          || item.type === 'session.message.content.updated'
+        ) {
+          continue
+        }
+        events.push(item)
+      }
+    })().catch((cause) => new OpenCodeSdkError({
+      operation: `session.log.reconcile.${sessionId}`,
+      cause,
+    }))
+    if (result instanceof Error) return result
+    return events
+  }
+
+  private async listNativeSessionTree({
+    client,
+    mainSessionId,
+  }: {
+    client: OpencodeClient
+    mainSessionId: string
+  }): Promise<string[] | Error> {
+    const sessionIds = [mainSessionId]
+    for (let parentIndex = 0; parentIndex < sessionIds.length; parentIndex++) {
+      const parentID = sessionIds[parentIndex]!
+      const children = await listAllSessions({
+        client,
+        parentId: parentID,
+        order: 'asc',
+      })
+      if (children instanceof Error) return children
+      sessionIds.push(...children.map((session) => session.id))
+    }
+    return sessionIds
+  }
+
+  private async settleV2Form({
+    sessionId,
+    formId,
+  }: {
+    sessionId: string
+    formId: string
+  }): Promise<void> {
+    if (sessionId !== this.state?.sessionId) return
+    const contexts = [...pendingQuestionContexts.entries()].filter(([, context]) => {
+      return context.thread.id === this.thread.id && context.requestId === formId
+    })
+    const contextHashes = new Set(contexts.map(([contextHash]) => contextHash))
+    if (contextHashes.size > 0) {
+      const messages = await this.thread.messages.fetch({ limit: 100 }).catch((cause) => {
+        return new DiscordOperationError({ operation: 'fetchQuestionMessages', cause })
+      })
+      if (messages instanceof Error) {
+        discordLogger.error('Failed to fetch settled form messages:', messages)
+      } else {
+        for (const message of messages.values()) {
+          const hasFormControl = message.components.some((row) => {
+            if (row.type !== ComponentType.ActionRow) return false
+            return row.components.some((component) => {
+              if (typeof component.customId !== 'string') return false
+              const [prefix, contextHash] = component.customId.split(':')
+              return prefix === 'ask_question' && contextHashes.has(contextHash || '')
+            })
+          })
+          if (!hasFormControl) continue
+          const editResult = await message.edit({ components: [] }).catch((cause) => {
+            return new DiscordOperationError({ operation: 'disableQuestionControls', cause })
+          })
+          if (editResult instanceof Error) {
+            discordLogger.error('Failed to disable settled form controls:', editResult)
+          }
+        }
+      }
+    }
+    for (const [contextHash] of contexts) pendingQuestionContexts.delete(contextHash)
+    this.onInteractiveUiStateChanged()
+  }
+
+  private async showProjectedForm(form: ProjectedForm): Promise<void> {
+    this.stopTyping()
+    await showAskUserQuestionDropdowns({
+      thread: this.thread,
+      sessionId: form.sessionId,
+      directory: this.sdkDirectory,
+      requestId: form.formId,
+      input: { questions: form.questions },
+      silent: this.getQueueLength() > 0,
+    })
+    this.maybeHandoffQueuedItemForPendingQuestion({
+      sessionId: form.sessionId,
+      requestId: form.formId,
+      reason: 'question-shown',
+    })
   }
 
   // ── Serialized Action Queue (§7.4) ──────────────────────────
@@ -2002,231 +2238,24 @@ export class ThreadSessionRuntime {
     return getChannelVerbosity(this.getVerbosityChannelId())
   }
 
-  private storePart(part: Part): void {
-    const messageParts =
-      this.partBuffer.get(part.messageID) || new Map<string, Part>()
-    messageParts.set(part.id, part)
-    this.partBuffer.set(part.messageID, messageParts)
-  }
-
-  private getBufferedParts(messageID: string): Part[] {
-    return Array.from(this.partBuffer.get(messageID)?.values() ?? [])
-  }
-
-  private clearBufferedPartsForMessages(messageIDs: ReadonlyArray<string>): void {
-    const uniqueMessageIDs = new Set(messageIDs)
-    uniqueMessageIDs.forEach((messageID) => {
-      this.partBuffer.delete(messageID)
-    })
-  }
-
-  private hasBufferedStepFinish(messageID: string): boolean {
-    return this.getBufferedParts(messageID).some((part) => {
-      return part.type === 'step-finish'
-    })
-  }
-
-  private shouldSendPlannedPart({
-    part,
-    mode,
-  }: {
-    part: Part
-    mode: AssistantTurnFlushMode
-  }): boolean {
-    if (part.type === 'step-start' || part.type === 'step-finish') {
-      return false
-    }
-    if (part.type === 'tool' && part.state.status === 'pending') {
-      return false
-    }
-    if (part.type === 'text' && !part.time?.end && mode === 'progress') {
-      return false
-    }
-    if (part.type === 'text' && part.synthetic === true) {
-      return false
-    }
-    return true
-  }
-
-  private getCurrentTurnParts(): Part[] {
-    const sessionId = this.state?.sessionId
-    const messageIds = sessionId
-      ? [...this.getAssistantMessageIdsForCurrentTurn({ sessionId })]
-      : []
-    if (messageIds.length > 0) {
-      return messageIds.flatMap((id) => this.getBufferedParts(id))
-    }
-    return []
-  }
-
-  private async unquoteFinalTextPart(): Promise<void> {
-    const parts = this.getCurrentTurnParts()
-    const finalPart = planAssistantTurnFlush({
-      parts,
-      mode: 'final',
-    }).sendParts.at(-1)
-    if (!finalPart || finalPart.quoteText || finalPart.part.type !== 'text') return
-    const last = finalPart.part
-    const db = await getDb()
-    const row = await db.query.part_messages.findFirst({
-      where: { part_id: last.id },
-      columns: { message_id: true },
-    }).catch((e) => new DiscordOperationError({ operation: 'getPartMessage', cause: e }))
-    if (row instanceof Error) {
-      discordLogger.error(`Failed to find Discord message for ${last.id}:`, row)
-      return
-    }
-    const messageId = row?.message_id
-    if (!messageId) return
-    const message = await this.thread.messages.fetch(messageId)
-      .catch((e) => new DiscordOperationError({ operation: 'fetchMessage', cause: e }))
-    if (message instanceof Error) {
-      discordLogger.error(`Failed to fetch Discord message for ${last.id}:`, message)
-      return
-    }
-    const formatted = formatPart(last)
-    const leadWithBlankLine = message.content.startsWith('\n')
-    const quoted = sessionPartContent({
-      content: asDiscordQuote(formatted),
-      leadWithBlankLine,
-    })
-    if (message.content !== quoted) return
-    const plain = sessionPartContent({
-      content: formatted,
-      leadWithBlankLine,
-    })
-    const edited = await message.edit({ content: plain })
-      .catch((e) => new DiscordOperationError({ operation: 'editMessage', cause: e }))
-    if (edited instanceof Error) {
-      discordLogger.error(`ERROR: Failed to unquote final text ${last.id}:`, edited)
-    }
-  }
-
   private async flushCurrentTurnParts({
     mode,
-    throughPartId,
-    skipPartId,
     repulseTyping = true,
   }: {
-    mode: AssistantTurnFlushMode
-    throughPartId?: string
-    skipPartId?: string
+    mode: 'progress' | 'interactive' | 'final'
     repulseTyping?: boolean
   }): Promise<void> {
-    const parts = this.getCurrentTurnParts()
-    const planned = planAssistantTurnFlush({
-      parts,
+    const sessionId = this.state?.sessionId
+    if (!sessionId) return
+    const actions = projectDiscordFlushActions({
+      parts: this.discordProjection.parts,
+      mainSessionId: sessionId,
       mode,
-      throughPartId,
+      repulseTyping,
+      verbosity: await this.getVerbosity(),
+      deliveredPartIds: new Set(this.state?.sentPartIds),
     })
-    for (const { part, quoteText } of planned.sendParts) {
-      if (this.state?.sentPartIds.has(part.id)) {
-        continue
-      }
-      if (skipPartId && part.id === skipPartId) {
-        continue
-      }
-      if (!this.shouldSendPlannedPart({ part, mode })) {
-        continue
-      }
-      if (part.type === 'tool' && part.tool === 'task') {
-        continue
-      }
-      const pulseTyping =
-        part.type === 'text' && part.ignored === true
-          ? false
-          : repulseTyping
-      await this.sendPartMessage({
-        part,
-        quoteText,
-        repulseTyping: pulseTyping,
-      })
-    }
-  }
-
-  private async sendPartMessage({
-    part,
-    repulseTyping = true,
-    quoteText = false,
-  }: {
-    part: Part
-    repulseTyping?: boolean
-    quoteText?: boolean
-  }): Promise<void> {
-    const verbosity = await this.getVerbosity()
-    if (verbosity === 'text_only' && part.type !== 'text') {
-      return
-    }
-    if (verbosity === 'text_and_essential_tools') {
-      if (part.type !== 'text' && !(part.type === 'tool' && isEssentialToolPart(part))) {
-        return
-      }
-    }
-
-    const formatted = formatPart(part)
-    const quote =
-      quoteText
-      && shouldQuoteIntermediateTextPart({
-        part,
-        isLastInTurn: false,
-      })
-    const content = quote ? asDiscordQuote(formatted) : formatted
-    if (!content.trim() || content.length === 0) {
-      return
-    }
-    if (this.state?.sentPartIds.has(part.id)) {
-      return
-    }
-    // Mark as sent BEFORE the async send to prevent concurrent flushes
-    // from sending the same part while this await is in-flight.
-    threadState.updateThread(this.threadId, (t) => {
-      const newIds = new Set(t.sentPartIds)
-      newIds.add(part.id)
-      return { ...t, sentPartIds: newIds }
-    })
-
-    const kind = sessionPartKind(part)
-    const sendResult = await sendSessionPartMessage(this.thread, content, {
-      leadWithBlankLine: shouldLeadWithBlankLine({
-        previousKind: this.lastSentPartKind,
-        nextKind: kind,
-      }),
-    })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-    if (sendResult instanceof Error) {
-      threadState.updateThread(this.threadId, (t) => {
-        const newIds = new Set(t.sentPartIds)
-        newIds.delete(part.id)
-        return { ...t, sentPartIds: newIds }
-      })
-      discordLogger.error(
-        `ERROR: Failed to send part ${part.id}:`,
-        sendResult,
-      )
-      return
-    }
-    this.lastSentPartKind = kind
-    await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
-    if (repulseTyping) {
-      this.requestTypingRepulse()
-    }
-  }
-
-  private async showInteractiveUi({
-    skipPartId,
-    show,
-  }: {
-    skipPartId?: string
-    flushMessageId?: string
-    show: () => Promise<void>
-  }): Promise<void> {
-    this.stopTyping()
-    await this.flushCurrentTurnParts({
-      mode: 'interactive',
-      throughPartId: skipPartId,
-      skipPartId,
-    })
-    await show()
+    await this.executeDiscordActions(actions)
   }
 
   private async ensureModelContextLimit({
@@ -2244,21 +2273,20 @@ export class ThreadSessionRuntime {
     if (!client) {
       return
     }
-    const providersResponse = await client.provider.list({ directory: this.sdkDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResponse instanceof Error) {
+    const modelsResponse = await client.model.list({
+      location: { directory: this.sdkDirectory },
+    })
+      .catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+    if (modelsResponse instanceof Error) {
       logger.error(
         'Failed to fetch provider info for context limit:',
-        providersResponse,
+        modelsResponse,
       )
       return
     }
-    const provider = providersResponse.data?.all?.find(
-      (p) => {
-        return p.id === providerID
-      },
-    )
-    const model = provider?.models?.[modelID]
+    const model = modelsResponse.data.find((candidate) => {
+      return candidate.providerID === providerID && candidate.modelID === modelID
+    })
     const contextLimit = model?.limit?.context || getFallbackContextLimit({
       providerID,
     })
@@ -2269,103 +2297,12 @@ export class ThreadSessionRuntime {
     this.modelContextLimitKey = key
   }
 
-  // ── Event Handlers ──────────────────────────────────────────
-  // Extracted from session-handler.ts eventHandler closure.
-  // These operate on runtime instance state + global store transitions.
-
-  private async handleMessageUpdated(msg: OpenCodeMessage): Promise<void> {
-    const sessionId = this.state?.sessionId
-
-    if (msg.role !== 'assistant') {
-      return
-    }
-    if (msg.summary === true) {
-      this.clearBufferedPartsForMessages([msg.id])
-      logger.info(`[SKIP] message.updated for compaction summary ${msg.id}`)
-      return
-    }
-    if (msg.sessionID !== sessionId) {
-      const subtaskInfo = this.getSubtaskInfoForSession(msg.sessionID)
-      if (subtaskInfo) {
-        for (const part of this.getBufferedParts(msg.id)) {
-          await this.handleSubtaskPart(part, subtaskInfo)
-        }
-      }
-      return
-    }
-    if (!sessionId) {
-      return
-    }
-    if (!isAssistantMessageInLatestUserTurn({
+  // Show prior-step usage at the next V2 step, not immediately above the footer.
+  private async showContextUsageNotice(sessionId: string): Promise<void> {
+    if (!isSessionBusy({
       events: this.eventBuffer,
       sessionId,
-      messageId: msg.id,
     })) {
-      this.clearBufferedPartsForMessages([msg.id])
-      logger.info(`[SKIP] message.updated for old assistant message ${msg.id}, not in latest user turn`)
-      return
-    }
-
-    const knownMessage = this.partBuffer.has(msg.id)
-
-    // promptAsync paths can deliver complete parts via message.updated even when
-    // message.part.updated events are sparse or absent. Seed the part buffer
-    // from message.parts when we have not seen per-part events for this message.
-    if (!knownMessage) {
-      const messageParts = (() => {
-        const candidate: { parts?: unknown } = msg as { parts?: unknown }
-        if (!Array.isArray(candidate.parts)) {
-          return [] as Part[]
-        }
-        return candidate.parts.filter((part): part is Part => {
-          if (!part || typeof part !== 'object') {
-            return false
-          }
-          const maybePart = part as {
-            id?: unknown
-            type?: unknown
-            messageID?: unknown
-          }
-          return (
-            typeof maybePart.id === 'string' &&
-            typeof maybePart.type === 'string' &&
-            typeof maybePart.messageID === 'string'
-          )
-        })
-      })()
-      messageParts.forEach((part) => {
-        this.storePart(part)
-      })
-    }
-
-    await this.flushCurrentTurnParts({
-      mode: 'progress',
-    })
-
-    const wasAlreadyCompleted = hasAssistantMessageCompletedBefore({
-      events: this.eventBuffer,
-      sessionId,
-      messageId: msg.id,
-      upToIndex: this.eventBuffer.length - 2,
-    })
-    const completedAt = msg.time.completed
-    if (!wasAlreadyCompleted && typeof completedAt === 'number') {
-      if (isAssistantMessageNaturalCompletion({ message: msg })) {
-        await this.handleNaturalAssistantCompletion({
-          completedMessageId: msg.id,
-          completedAt,
-        })
-        return
-      }
-      await this.maybeNotifyPromptCacheClear({ sessionId, messageId: msg.id })
-    }
-
-    // Context usage notice.
-    // Skip the final assistant update for a run: by the time the last
-    // message.updated arrives, the final text part has already ended and the
-    // buffered parts usually include step-finish, so a notice here would land
-    // immediately above the footer and add noise.
-    if (this.hasBufferedStepFinish(msg.id)) {
       return
     }
     const latestRunInfo = getLatestRunInfo({
@@ -2383,554 +2320,19 @@ export class ThreadSessionRuntime {
       providerID: latestRunInfo.providerID,
       modelID: latestRunInfo.model,
     })
-    if (!this.modelContextLimit) {
-      return
-    }
-    const currentPercentage = Math.floor(
-      (latestRunInfo.tokensUsed / this.modelContextLimit) * 100,
-    )
-    const thresholdCrossed = Math.floor(currentPercentage / 10) * 10
-    if (
-      thresholdCrossed <= this.lastDisplayedContextPercentage ||
-      thresholdCrossed < 10
-    ) {
-      return
-    }
-    this.lastDisplayedContextPercentage = thresholdCrossed
+    if (!this.modelContextLimit) return
+    const currentPercentage = getContextUsageNoticePercentage({
+      events: this.eventBuffer,
+      sessionId,
+      contextLimit: this.modelContextLimit,
+    })
+    if (currentPercentage === undefined) return
     const chunk = asSubtext(`context usage ${currentPercentage}%`)
     const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
       .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send context usage notice:', sendResult)
     }
-  }
-
-  private async handlePartUpdated(part: Part): Promise<void> {
-    const sessionId = this.state?.sessionId
-    const messageKind = getAssistantMessageKind({
-      events: this.eventBuffer,
-      sessionId: part.sessionID,
-      messageId: part.messageID,
-    })
-
-    if (messageKind === 'summary') {
-      this.clearBufferedPartsForMessages([part.messageID])
-      logger.info(`[SKIP] message.part.updated for compaction summary ${part.messageID}`)
-      return
-    }
-
-    if (part.type === 'text' && part.synthetic === true) {
-      return
-    }
-
-    if (part.type === 'text' && part.ignored === true) {
-      await this.sendPartMessage({ part, repulseTyping: false })
-      return
-    }
-
-    this.storePart(part)
-
-    if (messageKind === 'unknown') {
-      return
-    }
-
-    const subtaskInfo = this.getSubtaskInfoForSession(part.sessionID)
-    const isSubtaskEvent = Boolean(subtaskInfo)
-
-    if (part.sessionID !== sessionId && !isSubtaskEvent) {
-      return
-    }
-
-    if (isSubtaskEvent && subtaskInfo) {
-      await this.handleSubtaskPart(part, subtaskInfo)
-      return
-    }
-
-    await this.handleMainPart(part)
-  }
-
-  private async handleMainPart(part: Part): Promise<void> {
-    const sessionId = this.state?.sessionId
-
-    if (part.type === 'step-start') {
-      this.ensureTypingNow()
-      return
-    }
-
-    if (part.type === 'tool' && part.state.status === 'running') {
-      await this.flushCurrentTurnParts({
-        mode: 'progress',
-      })
-      const held = planAssistantTurnFlush({
-        parts: this.getCurrentTurnParts(),
-        mode: 'progress',
-      }).hold.some((entry) => entry.id === part.id)
-      if (held) {
-        return
-      }
-      if (!this.state?.sentPartIds.has(part.id) && part.tool !== 'task') {
-        await this.sendPartMessage({ part })
-      }
-
-      if (part.tool === 'task' && !this.state?.sentPartIds.has(part.id)) {
-        const taskDisplay = formatTaskToolTitle(part)
-        if (taskDisplay && (await this.getVerbosity()) !== 'text_only') {
-          threadState.updateThread(this.threadId, (t) => {
-            const newIds = new Set(t.sentPartIds)
-            newIds.add(part.id)
-            return { ...t, sentPartIds: newIds }
-          })
-          const sendResult = await sendSessionPartMessage(this.thread, taskDisplay, {
-            leadWithBlankLine: shouldLeadWithBlankLine({
-              previousKind: this.lastSentPartKind,
-              nextKind: 'tool',
-            }),
-          })
-            .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-          if (sendResult instanceof Error) {
-            threadState.updateThread(this.threadId, (t) => {
-              const newIds = new Set(t.sentPartIds)
-              newIds.delete(part.id)
-              return { ...t, sentPartIds: newIds }
-            })
-            discordLogger.error(
-              `ERROR: Failed to send task part ${part.id}:`,
-              sendResult,
-            )
-            return
-          }
-          this.lastSentPartKind = 'tool'
-          await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
-        }
-      }
-      return
-    }
-
-    // Action buttons tool handler
-    if (
-      part.type === 'tool' &&
-      part.state.status === 'completed' &&
-      part.tool.endsWith('kimaki_action_buttons')
-    ) {
-      const sessionId = this.state?.sessionId
-      await this.showInteractiveUi({
-        skipPartId: part.id,
-        flushMessageId: part.messageID,
-        show: async () => {
-          if (!sessionId) {
-            return
-          }
-          const request = await waitForQueuedActionButtonsRequest({
-            sessionId,
-            timeoutMs: 1500,
-          })
-          if (!request) {
-            logger.warn(
-              `[ACTION] No queued action-buttons request found for session ${sessionId}`,
-            )
-            return
-          }
-          if (request.threadId !== this.thread.id) {
-            logger.warn(
-              `[ACTION] Ignoring queued action-buttons for different thread`,
-            )
-            return
-          }
-          const showResult = await showActionButtons({
-            thread: this.thread,
-            sessionId: request.sessionId,
-            directory: request.directory,
-            buttons: request.buttons,
-            silent: this.getQueueLength() > 0,
-          }).catch((e) => new DiscordOperationError({ operation: 'showActionButtons', cause: e }))
-          if (showResult instanceof Error) {
-            logger.error(
-              '[ACTION] Failed to show action buttons:',
-              showResult,
-            )
-            await sendThreadMessage(
-              this.thread,
-              `Failed to show action buttons: ${showResult.message}`,
-              { flags: NOTIFY_MESSAGE_FLAGS },
-            )
-          }
-        },
-      })
-      return
-    }
-
-    // Large output notification for completed tools
-    if (part.type === 'tool' && part.state.status === 'completed') {
-      const sessionId = this.state?.sessionId
-      if (sessionId) {
-        const isCurrentRunMessage = isAssistantMessageInLatestUserTurn({
-          events: this.eventBuffer,
-          sessionId,
-          messageId: part.messageID,
-        })
-        if (!isCurrentRunMessage) {
-          logger.info(`[SKIP] tool part ${part.id} for old assistant message ${part.messageID}, not in latest user turn`)
-          return
-        }
-      }
-      const showLargeOutput = await (async () => {
-        const verbosity = await this.getVerbosity()
-        if (verbosity === 'text_only') {
-          return false
-        }
-        if (verbosity === 'text_and_essential_tools') {
-          return isEssentialToolPart(part)
-        }
-        return true
-      })()
-      if (showLargeOutput) {
-        const output = part.state.output || ''
-        const outputTokens = Math.ceil(output.length / 4)
-        const largeOutputThreshold = 3000
-        if (outputTokens >= largeOutputThreshold) {
-          if (sessionId) {
-            const latestRunInfo = getLatestRunInfo({
-              events: this.eventBuffer,
-              sessionId,
-            })
-            if (latestRunInfo.providerID && latestRunInfo.model) {
-              await this.ensureModelContextLimit({
-                providerID: latestRunInfo.providerID,
-                modelID: latestRunInfo.model,
-              })
-            }
-          }
-          const formattedTokens =
-            outputTokens >= 1000
-              ? `${(outputTokens / 1000).toFixed(1)}k`
-              : String(outputTokens)
-          const percentageSuffix = (() => {
-            if (!this.modelContextLimit) {
-              return ''
-            }
-            const pct = (outputTokens / this.modelContextLimit) * 100
-            if (pct < 1) {
-              return ''
-            }
-            return ` (${pct.toFixed(1)}%)`
-          })()
-          const chunk = asSubtext(`${STATUS_PREFIX}${part.tool} returned ${formattedTokens} tokens${percentageSuffix}`)
-          const largeOutputResult = await this.thread.send({
-            content: chunk,
-            flags: SILENT_MESSAGE_FLAGS,
-          }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-          if (largeOutputResult instanceof Error) {
-            discordLogger.error('Failed to send large output notice:', largeOutputResult)
-          }
-        }
-      }
-    }
-
-    if (part.type === 'reasoning') {
-      await this.flushCurrentTurnParts({ mode: 'progress' })
-      return
-    }
-
-    if (part.type === 'text') {
-      await this.flushCurrentTurnParts({ mode: 'progress' })
-      if (part.time?.end) {
-        await this.tryShowPendingQuestion()
-      }
-      return
-    }
-
-    if (part.type === 'step-finish') {
-      this.ensureTypingKeepalive()
-    }
-  }
-
-  private async handleSubtaskPart(
-    part: Part,
-    subtaskInfo: { label: string; assistantMessageId?: string },
-  ): Promise<void> {
-    const verbosity = await this.getVerbosity()
-    if (verbosity === 'text_only') {
-      return
-    }
-    if (verbosity === 'text_and_essential_tools') {
-      if (!isEssentialToolPart(part)) {
-        return
-      }
-    }
-    if (part.type === 'step-start' || part.type === 'step-finish') {
-      return
-    }
-    if (part.type === 'tool' && part.state.status === 'pending') {
-      return
-    }
-    if (part.type === 'text') {
-      return
-    }
-    if (
-      !subtaskInfo.assistantMessageId ||
-      part.messageID !== subtaskInfo.assistantMessageId
-    ) {
-      return
-    }
-
-    const content = formatPart(part, subtaskInfo.label)
-    if (!content.trim() || this.state?.sentPartIds.has(part.id)) {
-      return
-    }
-    const kind = sessionPartKind(part)
-    const sendResult = await sendSessionPartMessage(this.thread, content, {
-      leadWithBlankLine: shouldLeadWithBlankLine({
-        previousKind: this.lastSentPartKind,
-        nextKind: kind,
-      }),
-    })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-    if (sendResult instanceof Error) {
-      discordLogger.error(
-        `ERROR: Failed to send subtask part ${part.id}:`,
-        sendResult,
-      )
-      return
-    }
-    this.lastSentPartKind = kind
-    threadState.updateThread(this.threadId, (t) => {
-      const newIds = new Set(t.sentPartIds)
-      newIds.add(part.id)
-      return { ...t, sentPartIds: newIds }
-    })
-    await setPartMessage({ partId: part.id, messageId: sendResult.id, threadId: this.thread.id })
-    this.requestTypingRepulse()
-  }
-
-  private trackIdleTokenUsage({
-    sessionId,
-    idleEventIndex,
-  }: {
-    sessionId: string
-    idleEventIndex: number
-  }): void {
-    const usage = getIdleTokenUsageDelta({
-      events: this.eventBuffer,
-      sessionId,
-      idleEventIndex,
-    })
-    if (!usage) {
-      return
-    }
-
-    const properties: AnalyticsProps = {
-      tokens_input: usage.input,
-      tokens_output: usage.output,
-      tokens_reasoning: usage.reasoning,
-      tokens_cache_read: usage.cacheRead,
-      tokens_cache_write: usage.cacheWrite,
-      tokens_total: usage.total,
-      cost: usage.cost,
-      assistant_message_count: usage.assistantMessageCount,
-      is_subagent: Boolean(this.getSubtaskInfoForSession(sessionId)),
-    }
-    if (usage.model) {
-      properties.model = usage.model
-    }
-    if (usage.providerID) {
-      properties.provider = usage.providerID
-    }
-    trackEvent('tokens_used', properties)
-  }
-
-  private trackIdleTokenUsageForSessionTree(idleSessionId: string): void {
-    let idleEventIndex: number | undefined
-    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
-      const event = this.eventBuffer[i]?.event
-      if (event?.type === 'session.idle' && event.properties.sessionID === idleSessionId) {
-        idleEventIndex = i
-        break
-      }
-    }
-    if (idleEventIndex === undefined) {
-      return
-    }
-    const mainSessionId = this.state?.sessionId
-    const sessionIds = mainSessionId
-      ? getTokenUsageSessionIdsForIdle({
-        events: this.eventBuffer,
-        mainSessionId,
-        idleSessionId,
-        upToIndex: idleEventIndex,
-      })
-      : [idleSessionId]
-    for (const sessionId of sessionIds) {
-      this.trackIdleTokenUsage({
-        sessionId,
-        idleEventIndex,
-      })
-    }
-  }
-
-  private async handleSessionIdle(idleSessionId: string): Promise<void> {
-    this.trackIdleTokenUsageForSessionTree(idleSessionId)
-
-    const sessionId = this.state?.sessionId
-
-    // ── Subtask idle ──────────────────────────────────────────
-    const subtask = this.getSubtaskInfoForSession(idleSessionId)
-    if (subtask) {
-      logger.log(
-        `[SUBTASK IDLE] Subtask "${subtask?.label}" completed`,
-      )
-      return
-    }
-
-    // ── Main session idle ─────────────────────────────────────
-    // The event is also pushed into the event buffer by handleEvent(),
-    // so waitForEvent() consumers (abort settlement) will see it too.
-    if (idleSessionId === sessionId) {
-      const shouldDrainQueuedMessages = doesLatestUserTurnHaveNaturalCompletion({
-        events: this.eventBuffer,
-        sessionId: idleSessionId,
-      })
-
-      logger.log(
-        `[SESSION IDLE] session became idle sessionId=${sessionId} drainQueue=${shouldDrainQueuedMessages} ${this.formatRunStateForLog()}`,
-      )
-      await this.persistEventBufferDebounced.flush()
-
-      if (!shouldDrainQueuedMessages) {
-        return
-      }
-      // Drain any local-queue items that arrived while the session was busy
-      // (e.g. slow voice transcription with queueMessage=true completing
-      // during or just before idle). Same pattern as handleSessionError.
-      await this.tryDrainQueue({ showIndicator: true })
-      return
-    }
-  }
-
-  private async handleNaturalAssistantCompletion({
-    completedMessageId,
-    completedAt,
-  }: {
-    completedMessageId: string
-    completedAt: number
-  }): Promise<void> {
-    const sessionId = this.state?.sessionId
-    if (!sessionId) {
-      return
-    }
-
-    const assistantMessageIds = [
-      ...this.getAssistantMessageIdsForCurrentTurn({ sessionId }),
-    ]
-    if (assistantMessageIds.length === 0) {
-      return
-    }
-
-    await this.flushCurrentTurnParts({
-      mode: 'final',
-      repulseTyping: false,
-    })
-    await this.unquoteFinalTextPart()
-
-    await this.maybeNotifyPromptCacheClear({
-      sessionId,
-      messageId: completedMessageId,
-    })
-
-    // Skip footer if model produced no visible output (no text, no tool calls,
-    // just step-start/step-finish lifecycle parts). This happens when the model
-    // decides not to respond.
-    const hasVisibleOutput = assistantMessageIds.some((msgId) => {
-      const parts = this.getBufferedParts(msgId)
-      return parts.some(
-        (part) => part.type !== 'step-start' && part.type !== 'step-finish',
-      )
-    })
-    if (!hasVisibleOutput) {
-      this.stopTyping()
-      this.resetPerRunState()
-      this.clearBufferedPartsForMessages(assistantMessageIds)
-      logger.log(
-        `[ASSISTANT COMPLETED] no visible output, skipping footer for message ${completedMessageId} sessionId=${sessionId}`,
-      )
-      return
-    }
-
-    this.stopTyping()
-
-    const turnStartTime = getCurrentTurnStartTime({
-      events: this.eventBuffer,
-      sessionId,
-    })
-    if (turnStartTime !== undefined) {
-      // Track before Discord footer side effects so successful turns are
-      // counted even when footer delivery fails.
-      const durationSec = Math.max(
-        0,
-        Math.round((completedAt - turnStartTime) / 1000),
-      )
-      trackEvent('turn_completed', {
-        duration_sec: durationSec,
-      })
-      await this.emitFooter({
-        completedAt,
-        runStartTime: turnStartTime,
-      })
-    }
-
-    this.resetPerRunState()
-    this.clearBufferedPartsForMessages(assistantMessageIds)
-    logger.log(
-      `[ASSISTANT COMPLETED] footer emitted for message ${completedMessageId} sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-    )
-  }
-
-  private async handleSessionError(properties: {
-    sessionID?: string
-    error?: {
-      name?: string
-      data?: {
-        message?: string
-        statusCode?: number
-        providerID?: string
-        isRetryable?: boolean
-        responseBody?: string
-      }
-    }
-  }): Promise<void> {
-    const sessionId = this.state?.sessionId
-    if (!properties.sessionID || properties.sessionID !== sessionId) {
-      logger.log(
-        `Ignoring error for different session (expected: ${sessionId}, got: ${properties.sessionID})`,
-      )
-      return
-    }
-
-    // Skip abort errors — they are expected when operations are cancelled
-    if (properties.error?.name === 'MessageAbortedError') {
-      logger.log(
-        `[SESSION ERROR] Operation aborted (expected) sessionId=${sessionId} ${this.formatRunStateForLog()}`,
-      )
-      await this.persistEventBufferDebounced.flush()
-      return
-    }
-
-    const errorMessage = truncateSessionErrorMessage(
-      formatSessionErrorFromProps(properties.error),
-    )
-    logger.error(`Sending error to thread: ${errorMessage}`)
-    await sendThreadMessage(
-      this.thread,
-      `✗ opencode session error: ${errorMessage}`,
-      { flags: NOTIFY_MESSAGE_FLAGS },
-    )
-    await this.persistEventBufferDebounced.flush()
-
-    // Inject synthetic idle so isSessionBusy() returns false and queued
-    // messages can drain. Without this, a session error leaves the event
-    // buffer in a "busy" state forever (no session.idle follows the error),
-    // causing local-queue items to be stuck indefinitely. See #74.
-    this.markQueueDispatchIdle(sessionId)
-    await this.tryDrainQueue({ showIndicator: true })
   }
 
   private async handlePermissionAsked(
@@ -2950,26 +2352,13 @@ export class ThreadSessionRuntime {
 
     const subtaskLabel = subtaskInfo?.label
 
-    const dedupeKey = buildPermissionDedupeKey({
-      permission,
-      directory: this.sdkDirectory,
-    })
     const threadPermissions = pendingPermissions.get(this.thread.id)
     const existingPending = threadPermissions
       ? Array.from(threadPermissions.values()).find((pending) => {
-          if (pending.dedupeKey === dedupeKey) {
-            return true
-          }
           if (pending.directory !== this.sdkDirectory) {
             return false
           }
-          if (pending.permission.permission !== permission.permission) {
-            return false
-          }
-          return arePatternsCoveredBy({
-            patterns: permission.patterns,
-            coveringPatterns: pending.permission.patterns,
-          })
+          return canGroupPermissionRequests({ permission, existing: pending.permission })
         })
       : undefined
 
@@ -2986,11 +2375,10 @@ export class ThreadSessionRuntime {
         messageId: existingPending.messageId,
         directory: this.sdkDirectory,
         contextHash: existingPending.contextHash,
-        dedupeKey,
       })
       const added = addPermissionRequestToContext({
         contextHash: existingPending.contextHash,
-        requestId: permission.id,
+        permission,
       })
       if (!added) {
         logger.log(
@@ -3001,7 +2389,7 @@ export class ThreadSessionRuntime {
     }
 
     logger.log(
-      `Permission requested: permission=${permission.permission}, patterns=${permission.patterns.join(', ')}${subtaskLabel ? `, subtask=${subtaskLabel}` : ''}`,
+      `Permission requested: action=${permission.action}, resources=${permission.resources.join(', ')}${subtaskLabel ? `, subtask=${subtaskLabel}` : ''}`,
     )
 
     this.stopTyping()
@@ -3021,7 +2409,6 @@ export class ThreadSessionRuntime {
       messageId,
       directory: this.sdkDirectory,
       contextHash,
-      dedupeKey,
     })
   }
 
@@ -3059,121 +2446,14 @@ export class ThreadSessionRuntime {
     this.onInteractiveUiStateChanged()
   }
 
-  private hasUnfinishedTextPart(messageID: string): boolean {
-    return this.getBufferedParts(messageID).some((part) => {
-      return part.type === 'text' && !part.time?.end
-    })
-  }
-
-  // OpenCode emits question.asked when the tool starts, often before the
-  // preceding text part gets time.end. Showing the dropdown on that event
-  // holds the action queue while Discord posts, so the later text-end cannot
-  // send and dumps after the queued » user: indicator. Wait for text-end.
-  private async tryShowPendingQuestion({
-    ignoreUnfinishedText = false,
-  } = {}): Promise<boolean> {
-    const sessionId = this.state?.sessionId
-    if (!sessionId) {
-      return false
-    }
-
-    const request = deriveLatestUnansweredQuestion({
-      events: this.eventBuffer,
-      sessionId,
-    })
-    if (!request) {
-      this.deferredQuestionShow.clear()
-      return false
-    }
-    if (
-      this.shownQuestionRequestIds.has(request.id)
-      || findPendingQuestionContextForRequest({
-        threadId: this.thread.id,
-        requestId: request.id,
-      })
-    ) {
-      this.deferredQuestionShow.clear()
-      return true
-    }
-
-    const messageId = request.tool?.messageID
-    if (!ignoreUnfinishedText && messageId && this.hasUnfinishedTextPart(messageId)) {
-      return false
-    }
-
-    this.shownQuestionRequestIds.add(request.id)
-    await this.showInteractiveUi({
-      flushMessageId: messageId,
-      show: async () => {
-        await showAskUserQuestionDropdowns({
-          thread: this.thread,
-          sessionId,
-          directory: this.sdkDirectory,
-          requestId: request.id,
-          input: { questions: request.questions },
-          silent: this.getQueueLength() > 0,
-        })
-      },
-    })
-    this.deferredQuestionShow.clear()
-    this.maybeHandoffQueuedItemForPendingQuestion({
-      sessionId,
-      reason: 'question-shown',
-    })
-    return true
-  }
-
-  private async handleQuestionAsked(
-    questionRequest: QuestionRequest,
-  ): Promise<void> {
-    const sessionId = this.state?.sessionId
-    if (questionRequest.sessionID !== sessionId) {
-      logger.log(
-        `[QUESTION IGNORED] Question for different session (expected: ${sessionId}, got: ${questionRequest.sessionID})`,
-      )
-      return
-    }
-
-    logger.log(
-      `Question requested: id=${questionRequest.id}, questions=${questionRequest.questions.length}`,
-    )
-
-    const shown = await this.tryShowPendingQuestion()
-    if (!shown) {
-      this.deferredQuestionShow.trigger()
-    }
-  }
-
-  private handleQuestionReplied(properties: { sessionID: string }): void {
-    const sessionId = this.state?.sessionId
-    if (properties.sessionID !== sessionId) {
-      return
-    }
-    this.deferredQuestionShow.clear()
-    this.onInteractiveUiStateChanged()
-
-    // When a question is answered and the local queue has items, the model may
-    // continue the same run without ever reaching the local-queue idle gate.
-    // Hand off only the next queued item to OpenCode immediately so the queue
-    // resumes, but keep later items local so their `» user:` indicators still
-    // appear one-by-one when they actually become active.
-    this.maybeHandoffQueuedItemForPendingQuestion({
-      sessionId,
-      reason: 'question-replied',
-    })
-  }
-
-  // Detached helper promise for the "question blocks while local queue has
-  // items" flow. Prevents overlapping single-item handoffs when the question is
-  // shown, answered, and new /queue items arrive close together.
-  private questionQueueHandoffPromise: Promise<void> | null = null
-
   private maybeHandoffQueuedItemForPendingQuestion({
     sessionId,
+    requestId,
     reason,
   }: {
     sessionId: string | undefined
-    reason: 'question-shown' | 'question-replied' | 'queue-added-during-question'
+    requestId?: string
+    reason: 'question-shown' | 'queue-added-during-question'
   }): void {
     if (!sessionId) {
       return
@@ -3187,21 +2467,18 @@ export class ThreadSessionRuntime {
     if (this.getQueueLength() === 0) {
       return
     }
-    if (this.questionQueueHandoffPromise) {
-      return
-    }
     logger.log(
       `[QUESTION QUEUE HANDOFF] Queue has ${this.getQueueLength()} items, handing off first item (${reason})`,
     )
-    this.questionQueueHandoffPromise = this.handoffQueuedItemForPendingQuestion({
+    // Mark before detached work so repeated form events cannot hand off twice.
+    this.markQuestionQueueHandoffStarted({ sessionId, requestId })
+    void this.handoffQueuedItemForPendingQuestion({
       sessionId,
     }).catch((error) => {
       logger.error('[QUESTION QUEUE HANDOFF] Failed to hand off queued message:', error)
       if (error instanceof Error) {
         void notifyError(error, 'Failed to hand off queued message during pending question')
       }
-    }).finally(() => {
-      this.questionQueueHandoffPromise = null
     })
   }
 
@@ -3220,7 +2497,7 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const next = threadState.dequeueItem(this.threadId)
+    const next = this.state?.queueItems[0]
     if (!next) {
       return
     }
@@ -3235,43 +2512,23 @@ export class ThreadSessionRuntime {
       )
     }
 
-    this.markQuestionQueueHandoffStarted(sessionId)
-    await this.submitViaOpencodeQueue(next)
+    // Native queue delivery waits behind the open form. Steer would abort it.
+    const result = await this.submitViaOpencodeQueue({
+      ...next,
+      mode: 'local-queue',
+    })
+    if (result.accepted) await this.acknowledgeAcceptedQueueItem(next)
   }
 
-  private async handleSessionStatus(properties: {
-    sessionID: string
-    status:
-      | { type: 'idle' }
-      | { type: 'retry'; attempt: number; message: string; next: number }
-      | { type: 'busy' }
-  }): Promise<void> {
+  private async handleSessionStatus(
+    event: Extract<V2Event, { type: 'session.status' }>,
+  ): Promise<void> {
+    const properties = event.data
     const sessionId = this.state?.sessionId
-    if (properties.sessionID !== sessionId) {
-      return
-    }
-
-    if (properties.status.type === 'idle') {
-      this.stopTyping()
-      return
-    }
-
-    if (properties.status.type === 'busy') {
-      this.ensureTypingNow()
-      return
-    }
-
-    if (properties.status.type !== 'retry') {
-      return
-    }
-
-    // Throttle to once per 10 seconds
+    if (properties.sessionID !== sessionId) return
+    if (properties.status.type !== 'retry') return
+    if (!shouldShowRetryNotice({ events: this.eventBuffer, event })) return
     const now = Date.now()
-    if (now - this.lastRateLimitDisplayTime < 10_000) {
-      return
-    }
-    this.lastRateLimitDisplayTime = now
-
     const { attempt, message, next } = properties.status
     const remainingMs = Math.max(0, next - now)
     const remainingSec = Math.ceil(remainingMs / 1000)
@@ -3301,12 +2558,9 @@ export class ThreadSessionRuntime {
   // - race setName() against an AbortSignal.timeout() so a throttled call never
   //   blocks the event loop
   // - fail soft (log + continue) on timeout, 429, or any other error
-  private async handleSessionUpdated(info: {
-    id: string
-    title: string
-  }): Promise<void> {
+  private async handleSessionRenamed(info: Extract<V2Event, { type: 'session.renamed' }>['data']): Promise<void> {
     // Only act on the main session for this thread
-    if (info.id !== this.state?.sessionId) {
+    if (info.sessionID !== this.state?.sessionId) {
       return
     }
     const normalizedTitle = info.title.trim()
@@ -3317,7 +2571,7 @@ export class ThreadSessionRuntime {
       sessionTitle: info.title,
       currentName: this.thread.name,
     })
-    // Mark before setName so concurrent session.updated events don't stack
+    // Mark before setName so concurrent session.renamed events don't stack
     // renames. Keep the mark on failure — retry is almost always a rate limit.
     this.appliedOpencodeTitle = normalizedTitle
     if (!desiredName) {
@@ -3380,257 +2634,251 @@ export class ThreadSessionRuntime {
 
   // ── Ingress API ─────────────────────────────────────────────
 
-  /**
-   * Submit a user turn directly to opencode's internal session queue.
-   * This is the default path for normal Discord messages.
-   *
-   * Mirrors dispatchPrompt's preference resolution, abort handling, and error
-   * recovery so that promptAsync receives the same agent/model/variant/system
-   * fields that the local-queue path provides.
-   */
-  private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
-    await this.supersedePendingSleep(input)
-    let skippedBySessionGuard = false
+  private async applyNativeSessionSelection({
+    client,
+    sessionId,
+    agent,
+    model,
+    variant,
+  }: {
+    client: OpencodeClient
+    sessionId: string
+    agent?: string
+    model: { providerID: string; modelID: string }
+    variant?: string
+  }): Promise<Error | null> {
+    if (agent) {
+      const agentResult = await client.session.switchAgent({
+        sessionID: sessionId,
+        agent,
+      }).catch((cause) => new OpenCodeSdkError({
+        operation: 'session.switchAgent',
+        cause,
+      }))
+      if (agentResult instanceof Error) return agentResult
+    }
+    const modelResult = await client.session.switchModel({
+      sessionID: sessionId,
+      model: {
+        providerID: model.providerID,
+        id: model.modelID,
+        variant,
+      },
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'session.switchModel',
+      cause,
+    }))
+    if (modelResult instanceof Error) return modelResult
+    return null
+  }
 
-    await this.dispatchAction(async () => {
-      if (
-        input.expectedSessionId &&
-        this.state?.sessionId !== input.expectedSessionId
-      ) {
-        logger.log(
-          `[ENQUEUE] Skipping stale promptAsync enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
-        )
-        skippedBySessionGuard = true
-        return
-      }
+  private async submitNativeAdmission({
+    client,
+    sessionId,
+    text,
+    images,
+    delivery,
+    noReply,
+    admissionId,
+  }: {
+    client: OpencodeClient
+    sessionId: string
+    text: string
+    images: DiscordFileAttachment[]
+    delivery: 'steer' | 'queue'
+    noReply?: boolean
+    admissionId?: string
+  }): Promise<Error | null> {
+    if (noReply) {
+      const result = await client.session.synthetic({
+        sessionID: sessionId,
+        text,
+        description: 'Discord context',
+        delivery,
+        resume: false,
+      }).catch((cause) => new OpenCodeSdkError({
+        operation: 'session.synthetic',
+        cause,
+      }))
+      return result instanceof Error ? result : null
+    }
 
-      // Context-only messages (noReply) should not create a new session.
-      // If there is no existing session, silently skip.
-      if (input.noReply) {
-        const existingSessionId = this.state?.sessionId || await getThreadSession(this.thread.id) || undefined
-        if (!existingSessionId) {
-          logger.log(
-            `[INGRESS] Skipping noReply message for thread ${this.threadId}: no existing session`,
-          )
-          return
-        }
-      }
+    const files = images.map((image) => ({
+      uri: image.url || image.sourceUrl || '',
+      name: image.filename,
+    })).filter((file) => file.uri)
+    const result = await client.session.prompt({
+      sessionID: sessionId,
+      id: admissionId,
+      text,
+      files: files.length > 0 ? files : undefined,
+      delivery,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'session.prompt',
+      cause,
+    }))
+    return result instanceof Error ? result : null
+  }
 
-      // Helper: stop typing and drain queued local messages on error.
-      const cleanupOnError = async (errorMessage: string) => {
-        this.stopTyping()
-        await sendThreadMessage(this.thread, errorMessage, {
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
-        await this.tryDrainQueue({ showIndicator: true })
-      }
+  private async handleAdmissionError(error: Error): Promise<void> {
+    this.stopTyping()
+    await sendThreadMessage(this.thread, `✗ ${error.message}`, {
+      flags: NOTIFY_MESSAGE_FLAGS,
+    })
+  }
 
-      // ── Ensure session ──────────────────────────────────────
-      const sessionResult = await this.ensureSession({
-        prompt: input.prompt,
-        agent: input.agent,
-        permissions: input.permissions,
-        injectionGuardPatterns: input.injectionGuardPatterns,
-        sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
-        sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
-      })
-      if (sessionResult instanceof Error) {
-        await cleanupOnError(`✗ ${sessionResult.message}`)
-        return
-      }
-
-      const { session, getClient, createdNewSession } = sessionResult
-
-      const updatePermissionsResult = await this.updateExistingSessionPermissions({
-        client: getClient(),
-        sessionId: session.id,
-        createdNewSession,
-        permissions: input.permissions,
-      })
-      if (updatePermissionsResult instanceof Error) {
-        await cleanupOnError(`Failed to update session permissions: ${updatePermissionsResult.message}`)
-        return
-      }
-
-      // ── Resolve model + agent preferences (mirrors dispatchPrompt) ──
-      const channelId = this.channelId
-      const resolvedAppId = input.appId
-
-      // Explicit agent prompts (for example /plan-agent <prompt>) must update
-      // the session preference before dispatch. Otherwise the model can resolve
-      // from the requested agent while OpenCode keeps running the old agent.
-      if (input.agent) {
-        await setSessionAgent(session.id, input.agent)
-        await clearSessionModel(session.id)
-      }
-
-      if (input.model) {
-        const validatedModel = await validateModelId({
-          model: input.model,
-          getClient,
-          directory: this.sdkDirectory,
-        })
-        if (validatedModel instanceof Error) {
-          await cleanupOnError(`Failed to resolve model: ${validatedModel.message}`)
-          return
-        }
-      }
-
-      await ensureSessionPreferencesSnapshot({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-        getClient,
-        directory: this.sdkDirectory,
-        agentOverride: input.agent,
-        modelOverride: input.model,
-        force: createdNewSession,
-      })
-
-      const agentResult = await resolveValidatedAgentPreference({
-        agent: input.agent,
-        sessionId: session.id,
-        channelId,
-        getClient,
-        directory: this.sdkDirectory,
-      }).catch((e) => new OpenCodeSdkError({ operation: 'resolveAgent', cause: e }))
-      if (agentResult instanceof Error) {
-        await cleanupOnError(`Failed to resolve agent: ${agentResult.message}`)
-        return
-      }
-      const resolvedAgent = agentResult.agentPreference
-      const availableAgents = agentResult.agents
-      releaseCurrentThreadIngress()
-
-      await this.persistIngressVariant({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-        agentPreference: resolvedAgent,
-        getClient,
-        variant: input.variant,
-      })
-
-      const [modelResult, preferredVariant] = await Promise.all([
-        (async () => {
-          if (input.model) {
-            return validateModelId({
-              model: input.model,
-              getClient,
-              directory: this.sdkDirectory,
-            })
+  private async prepareAdmission({
+    input,
+    delivery,
+    ingressMode,
+  }: {
+    input: IngressInput & {
+      sessionStartScheduleKind?: 'at' | 'cron'
+      sessionStartScheduledTaskId?: number
+      sessionStartScheduledTaskRunId?: number
+    }
+    delivery: 'steer' | 'queue'
+    ingressMode: AnalyticsIngressMode
+  }): Promise<PreparedAdmission | Error> {
+    const sessionStartSource = input.sessionStartSource
+      ?? (input.sessionStartScheduleKind
+        ? {
+            scheduleKind: input.sessionStartScheduleKind,
+            scheduledTaskId: input.sessionStartScheduledTaskId,
+            scheduledTaskRunId: input.sessionStartScheduledTaskRunId,
           }
-          const modelInfo = await getCurrentModelInfo({
+        : undefined)
+    const sessionResult = await this.ensureSession({
+      agent: input.agent,
+      createIfMissing: !input.noReply,
+      permissions: input.permissions,
+      injectionGuardPatterns: input.injectionGuardPatterns,
+      sessionStartScheduleKind: sessionStartSource?.scheduleKind,
+      sessionStartScheduledTaskId: sessionStartSource?.scheduledTaskId,
+    })
+    if (sessionResult instanceof Error) return sessionResult
+
+    const { session, getClient, createdNewSession } = sessionResult
+    if (input.agent) {
+      await setSessionAgent(session.id, input.agent)
+      await clearSessionModel(session.id)
+    }
+    await ensureSessionPreferencesSnapshot({
+      sessionId: session.id,
+      channelId: this.channelId,
+      appId: input.appId,
+      getClient,
+      directory: this.sdkDirectory,
+      agentOverride: input.agent,
+      modelOverride: input.model,
+      force: createdNewSession,
+    })
+    const agentResult = await resolveValidatedAgentPreference({
+      agent: input.agent,
+      sessionId: session.id,
+      channelId: this.channelId,
+      getClient,
+      directory: this.sdkDirectory,
+    }).catch((cause) => new OpenCodeSdkError({ operation: 'resolveAgent', cause }))
+    if (agentResult instanceof Error) return agentResult
+    const agent = agentResult.agentPreference || 'build'
+    const [modelResult, preferredVariant] = await Promise.all([
+      input.model
+        ? validateModelId({ model: input.model, getClient, directory: this.sdkDirectory })
+        : getCurrentModelInfo({
             sessionId: session.id,
-            channelId,
-            appId: resolvedAppId,
-            agentPreference: resolvedAgent,
+            channelId: this.channelId,
+            appId: input.appId,
+            agentPreference: agent,
             getClient,
             directory: this.sdkDirectory,
-          })
-          if (modelInfo.type === 'none') {
-            return undefined
-          }
-          return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-        })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
-        getVariantCascade({
-          sessionId: session.id,
-          channelId,
-          appId: resolvedAppId,
-        }),
-      ])
-      if (modelResult instanceof Error) {
-        await cleanupOnError(`Failed to resolve model: ${modelResult.message}`)
-        return
-      }
-      const modelField = modelResult
-      if (!modelField) {
-        await cleanupOnError(
-          'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
-        )
-        return
-      }
-
-      // Resolve thinking variant
-      const thinkingValue = await (async (): Promise<string | undefined> => {
-        if (!preferredVariant) {
-          return undefined
-        }
-        const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
-          .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-        if (providersResponse instanceof Error || !providersResponse.data) {
-          return undefined
-        }
-        const availableValues = getThinkingValuesForModel({
-          providers: providersResponse.data.all,
-          providerId: modelField.providerID,
-          modelId: modelField.modelID,
-        })
-        if (availableValues.length === 0) {
-          return undefined
-        }
-        return matchThinkingValue({
-          requestedValue: preferredVariant,
-          availableValues,
-        }) || undefined
-      })()
-
-      const variantField = thinkingValue
-        ? { variant: thinkingValue }
-        : {}
-
-      await this.sendNewSessionModelInfo({
-        createdNewSession,
-        model: modelField,
-        agent: resolvedAgent,
-      })
-
-      // ── Build prompt parts ──────────────────────────────────
-      const images = input.images || []
-      const promptWithImagePaths = (() => {
-        if (images.length === 0) {
-          return input.prompt
-        }
-        const imageList = images
-          .map((img) => {
-            return `- ${img.sourceUrl || img.filename}`
-          })
-          .join('\n')
-        return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
-      })()
-
-      // ── Worktree + channel topic for per-turn prompt context ──
-      const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
-      const worktree: WorktreeInfo | undefined =
-        worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
-          ? {
-              worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
-              branch: worktreeInfoForPrompt.workspace_name,
-              mainRepoDirectory: worktreeInfoForPrompt.project_directory,
-            }
-          : undefined
-
-      const channelTopic = await (async () => {
-        if (this.thread.parent?.type === ChannelType.GuildText) {
-          return this.thread.parent.topic?.trim() || undefined
-        }
-        if (!channelId) {
-          return undefined
-        }
-        const fetched = await this.thread.guild.channels.fetch(channelId)
-          .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
-        if (fetched instanceof Error || !fetched) {
-          return undefined
-        }
-        if (fetched.type !== ChannelType.GuildText) {
-          return undefined
-        }
-        return fetched.topic?.trim() || undefined
-      })()
-      const worktreeChanged = this.consumeWorktreePromptChange(worktree)
-      const syntheticContext = getOpencodePromptContext({
+          }).then((modelInfo) => {
+            if (modelInfo.type === 'none') return undefined
+            return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
+          }).catch((cause) => new OpenCodeSdkError({
+            operation: 'resolveModelPreference',
+            cause,
+          })),
+      getVariantCascade({
         sessionId: session.id,
-        threadId: this.thread.id,
+        channelId: this.channelId,
+        appId: input.appId,
+      }),
+    ])
+    if (modelResult instanceof Error) return modelResult
+    if (!modelResult) {
+      return new Error(
+        'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
+      )
+    }
+    const modelsResponse = await getClient().model.list({
+      location: { directory: this.sdkDirectory },
+    }).catch((cause) => new OpenCodeSdkError({ operation: 'model.list', cause }))
+    const models = modelsResponse instanceof Error ? [] : modelsResponse.data
+    const variantRequest = input.variant || preferredVariant
+    const variant = variantRequest
+      ? matchThinkingValue({
+          requestedValue: variantRequest,
+          availableValues: getThinkingValuesForModel({
+            providers: thinkingProvidersFromListedModels({ models: [...models] }),
+            providerId: modelResult.providerID,
+            modelId: modelResult.modelID,
+          }),
+        }) || undefined
+      : undefined
+    if (input.variant && variant) {
+      await setSessionModel({
+        sessionId: session.id,
+        modelId: `${modelResult.providerID}/${modelResult.modelID}`,
+        variant,
+      })
+    }
+    const listedModel = models.find((candidate) => {
+      return candidate.providerID === modelResult.providerID
+        && candidate.modelID === modelResult.modelID
+    })
+    this.modelContextLimit = listedModel?.limit?.context
+      || getFallbackContextLimit({ providerID: modelResult.providerID })
+    this.modelContextLimitKey = `${modelResult.providerID}/${modelResult.modelID}`
+    const worktreeInfo = await getThreadWorktreeOrWorkspace(this.thread.id)
+    const worktree: WorktreeInfo | undefined =
+      worktreeInfo?.status === 'ready' && worktreeInfo.workspace_directory
+        ? {
+            worktreeDirectory: worktreeInfo.workspace_directory,
+            branch: worktreeInfo.workspace_name,
+            mainRepoDirectory: worktreeInfo.project_directory,
+          }
+        : undefined
+    const channelTopic = await (async () => {
+      if (this.thread.parent?.type === ChannelType.GuildText) {
+        return this.thread.parent.topic?.trim() || undefined
+      }
+      if (!this.channelId) return undefined
+      const fetched = await this.thread.guild.channels.fetch(this.channelId)
+        .catch((cause) => new DiscordOperationError({ operation: 'fetchChannel', cause }))
+      if (fetched instanceof Error || !fetched || fetched.type !== ChannelType.GuildText) {
+        return undefined
+      }
+      return fetched.topic?.trim() || undefined
+    })()
+    const instructionsResult = await this.persistSessionSystemInstructions({
+      client: getClient(),
+      sessionId: session.id,
+      agents: agentResult.agents,
+      channelTopic,
+    })
+    if (instructionsResult instanceof Error) return instructionsResult
+    releaseCurrentThreadIngress()
+    await this.sendNewSessionModelInfo({
+      createdNewSession,
+      model: modelResult,
+      agent,
+    })
+    return buildPreparedAdmissionValue({
+      client: getClient(),
+      sessionId: session.id,
+      prompt: input.prompt,
+      syntheticContext: getOpencodePromptContext({
         username: input.username,
         userId: input.userId,
         sourceMessageId: input.sourceMessageId,
@@ -3638,88 +2886,128 @@ export class ThreadSessionRuntime {
         threadName: this.thread.name || undefined,
         repliedMessage: input.repliedMessage,
         worktree,
-        currentAgent: resolvedAgent,
-        worktreeChanged,
-      })
-      const parts = [
-        { type: 'text' as const, text: promptWithImagePaths },
-        { type: 'text' as const, text: syntheticContext, synthetic: true },
-        ...images,
-      ]
-
-      const request = {
-        sessionID: session.id,
-        directory: this.sdkDirectory,
-        parts,
-        system: getOpencodeSystemMessage({
-          sessionId: session.id,
-          channelId,
-          guildId: this.thread.guildId,
-          threadId: this.thread.id,
-          channelTopic,
-          agents: availableAgents,
-          username: this.state?.sessionUsername || input.username,
-          userId: this.state?.sessionUserId || input.userId,
-          parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-          scheduledTask: await this.resolveScheduledTaskContext(session.id),
-        }),
-        ...(resolvedAgent ? { agent: resolvedAgent } : {}),
-        ...(modelField ? { model: modelField } : {}),
-        ...variantField,
-        ...(input.noReply ? { noReply: true } : {}),
-      }
-      await waitForGlobalEventListener()
-      const promptResult = await getClient().session.promptAsync(request)
-        .catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
-      if (promptResult instanceof Error || promptResult.error) {
-        const errorMessage = promptResult instanceof Error
-          ? promptResult.message
-          : extractSdkErrorMessage(promptResult.error)
-        const errObj = promptResult instanceof Error
-          ? promptResult
-          : new Error(errorMessage)
-        void notifyError(errObj, 'promptAsync failed in submitViaOpencodeQueue')
-        await cleanupOnError(`✗ OpenCode API error: ${errorMessage}`)
-        return
-      }
-
-      if (input.sessionStartSource?.scheduledTaskRunId) {
-        await startScheduledTaskRunSession({
-          runId: input.sessionStartSource.scheduledTaskRunId,
-          sessionId: session.id,
-          projectDirectory: this.sdkDirectory,
-        })
-      }
-
-      logger.log(
-        `[INGRESS] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
-      )
-
-      if (!input.noReply) {
-        trackTurnStarted({
-          inputKind: input.command ? 'command' : 'prompt',
-          ingressMode: 'direct',
-          source: resolveTurnSource(input),
-          agent: resolvedAgent,
-        })
-      }
-
-      // noReply messages don't trigger the agent loop, so don't mark as busy
-      if (!input.noReply) {
-        this.markQueueDispatchBusy(session.id)
-      }
+        currentAgent: agent,
+        worktreeChanged: this.consumeWorktreePromptChange(worktree),
+      }),
+      images: input.images || [],
+      agent,
+      model: modelResult,
+      variant,
+      delivery,
+      inputKind: input.command ? 'command' : 'prompt',
+      source: resolveTurnSource(input),
+      ingressMode,
+      command: input.command,
+      noReply: input.noReply,
+      scheduledTaskRunId: sessionStartSource?.scheduledTaskRunId,
+      admissionId: input.queueId ? `msg_kimaki_${input.queueId}` : undefined,
     })
-
-    if (skippedBySessionGuard) {
-      return { queued: false }
-    }
-    return { queued: false }
   }
 
-  /**
-   * Enqueue in kimaki's local per-thread queue.
-   * Used for explicit queue workflows (/queue, queueMessage=true).
-   */
+  private async submitPreparedAdmission(
+    admission: PreparedAdmission,
+  ): Promise<Error | null> {
+    await waitForGlobalEventListener()
+    const selectionResult = await this.applyNativeSessionSelection({
+      client: admission.client,
+      sessionId: admission.sessionId,
+      agent: admission.agent,
+      model: admission.model,
+      variant: admission.variant,
+    })
+    if (selectionResult instanceof Error) return selectionResult
+    const wasBusy = this.isBusy()
+    if (!admission.noReply && !wasBusy) {
+      this.markQueueDispatchBusy(admission.sessionId)
+    }
+    const result = await this.submitNativeAdmission({
+      client: admission.client,
+      sessionId: admission.sessionId,
+      text: admission.text,
+      images: admission.images,
+      delivery: admission.delivery,
+      noReply: admission.noReply,
+      admissionId: admission.admissionId,
+    })
+    if (result instanceof Error) {
+      if (!admission.noReply) this.markQueueDispatchIdle(admission.sessionId)
+      return result
+    }
+    if (!admission.noReply && admission.delivery === 'steer' && wasBusy) {
+      // Busy v2 steer needs a continue interrupt to yield the current step.
+      const interruptResult = await admission.client.session.interrupt({
+        sessionID: admission.sessionId,
+        continue: true,
+      }).catch((cause) => new OpenCodeSdkError({ operation: 'session.interrupt', cause }))
+      if (interruptResult instanceof Error) {
+        logger.warn(
+          `[INGRESS] session.interrupt continue failed sessionId=${admission.sessionId} message=${interruptResult.message}`,
+        )
+      }
+    }
+    if (admission.scheduledTaskRunId) {
+      await startScheduledTaskRunSession({
+        runId: admission.scheduledTaskRunId,
+        sessionId: admission.sessionId,
+        projectDirectory: this.sdkDirectory,
+      })
+    }
+    if (!admission.noReply) {
+      trackTurnStarted({
+        inputKind: admission.inputKind,
+        ingressMode: admission.ingressMode,
+        source: admission.source,
+        agent: admission.agent,
+      })
+    }
+    return null
+  }
+
+  private async submitViaOpencodeQueue(input: IngressInput): Promise<EnqueueResult> {
+    await this.supersedePendingSleep(input)
+    if (this.abortInFlight) await this.abortInFlight
+    let accepted = false
+    await this.dispatchAction(async () => {
+      if (input.expectedSessionId && this.state?.sessionId !== input.expectedSessionId) {
+        logger.log(
+          `[ENQUEUE] Skipping stale session.prompt enqueue for thread ${this.threadId}: expected session ${input.expectedSessionId}, current session ${this.state?.sessionId || 'none'}`,
+        )
+        return
+      }
+      if (input.noReply) {
+        const existingSessionId = this.state?.sessionId || await getThreadSession(this.thread.id)
+        if (!existingSessionId) {
+          logger.log(
+            `[INGRESS] Skipping noReply message for thread ${this.threadId}: no existing session`,
+          )
+          return
+        }
+      }
+      const admission = await this.prepareAdmission({
+        input,
+        delivery: input.mode === 'local-queue' ? 'queue' : 'steer',
+        ingressMode: 'direct',
+      })
+      if (admission instanceof Error) {
+        await this.handleAdmissionError(admission)
+        await this.tryDrainQueue({ showIndicator: true })
+        return
+      }
+      const result = await this.submitPreparedAdmission(admission)
+      if (result instanceof Error) {
+        void notifyError(result, 'Direct OpenCode admission failed')
+        await this.handleAdmissionError(result)
+        await this.tryDrainQueue({ showIndicator: true })
+        return
+      }
+      logger.log(
+        `[INGRESS] session.prompt accepted sessionId=${admission.sessionId} threadId=${this.threadId}`,
+      )
+      accepted = true
+    })
+    return { queued: false, accepted }
+  }
+
   /**
    * A new turn supersedes a pending sleep.
    *
@@ -3762,6 +3050,7 @@ export class ThreadSessionRuntime {
       repliedMessage: input.repliedMessage,
       sessionStartScheduleKind: input.sessionStartSource?.scheduleKind,
       sessionStartScheduledTaskId: input.sessionStartSource?.scheduledTaskId,
+      sessionStartScheduledTaskRunId: input.sessionStartSource?.scheduledTaskRunId,
       analyticsSource: resolveTurnSource(input),
     }
 
@@ -3785,11 +3074,15 @@ export class ThreadSessionRuntime {
 
       // Determine if the message is genuinely waiting in queue
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
-      const position = stateAfterEnqueue?.queueItems.length ?? 0
+      const position = stateAfterEnqueue?.queueItems.filter((item) => {
+        return item.queueId !== this.dispatchingQueueId
+      }).length ?? 0
       const willDrainNow = stateAfterEnqueue
         ? (
           stateAfterEnqueue.queueItems.length > 0
           && !this.isBusy()
+          && !this.hasPendingQuestionUi()
+          && (pendingPermissions.get(this.thread.id)?.size ?? 0) === 0
         )
         : false
       result = !willDrainNow && position > 0
@@ -3797,8 +3090,12 @@ export class ThreadSessionRuntime {
         : { queued: false, queueId }
 
       if (this.hasPendingQuestionUi()) {
+        const pending = [...pendingQuestionContexts.values()].find((context) => {
+          return context.thread.id === this.thread.id
+        })
         this.maybeHandoffQueuedItemForPendingQuestion({
           sessionId: stateAfterEnqueue?.sessionId || this.state?.sessionId,
+          requestId: pending?.requestId,
           reason: 'queue-added-during-question',
         })
       }
@@ -3944,7 +3241,7 @@ export class ThreadSessionRuntime {
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.
         // noReply messages always go through the opencode path so the flag
-        // reaches promptAsync; local queue doesn't support noReply.
+        // reaches session.prompt; local queue doesn't support noReply.
         const enqueueResult = resolvedInput.noReply
           ? await this.submitViaOpencodeQueue({
               ...resolvedInput,
@@ -3963,10 +3260,7 @@ export class ThreadSessionRuntime {
     return resultPromise
   }
 
-  /**
-   * Abort the currently active run. Does NOT kill the listener.
-   * Calls session.abort best-effort and lets event-stream idle settle the run.
-   */
+  /** Abort the active run without stopping the event listener. */
   private async abortSessionViaApi({
     abortId,
     reason,
@@ -3988,10 +3282,9 @@ export class ThreadSessionRuntime {
     logger.log(
       `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} start`,
     )
-    const abortResult = await client.session.abort({
+    const abortResult = await client.session.interrupt({
       sessionID: sessionId,
-      directory: this.sdkDirectory,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.abort', cause: e }))
+    }).catch((e) => new OpenCodeSdkError({ operation: 'session.interrupt', cause: e }))
     if (!(abortResult instanceof Error)) {
       logger.log(
         `[ABORT API] id=${abortId} reason=${reason} sessionId=${sessionId} success durationMs=${Date.now() - startedAt}`,
@@ -4029,15 +3322,48 @@ export class ThreadSessionRuntime {
     )
 
     this.stopTyping()
-    this.deferredQuestionShow.clear()
 
     // The aborted run owns the question request, so the dropdown dies with it.
     // Questions have no TTL, so this is the only thing that clears them here.
+    const pendingFormIds = new Set(
+      this.discordProjection.pendingForms.map((form) => form.formId),
+    )
+    for (const context of pendingQuestionContexts.values()) {
+      if (context.thread.id === this.thread.id) pendingFormIds.add(context.requestId)
+    }
+    for (const formId of pendingFormIds) {
+      void this.executeDiscordActions([{
+        type: 'settle-form',
+        sessionId: sessionId || '',
+        formId,
+      }])
+    }
     void cancelPendingQuestion(this.threadId)
 
     const apiAbortPromise = sessionId
       ? this.abortSessionViaApi({ abortId, reason, sessionId })
       : undefined
+    const abortInFlight = sessionId && apiAbortPromise
+      ? apiAbortPromise.then(async () => {
+        if (!this.isBusy()) return
+        await this.waitForEvent({
+          predicate: (event) => isSessionSettledEvent({ event, sessionId }),
+          sinceTimestamp: getLatestExecutionStartedTimestamp({
+            events: this.eventBuffer,
+            sessionId,
+          }) ?? Date.now(),
+          timeoutMs: 2_000,
+        })
+      })
+      : apiAbortPromise
+    this.abortInFlight = abortInFlight ?? null
+    if (abortInFlight) {
+      void abortInFlight.finally(() => {
+        if (this.abortInFlight === abortInFlight) {
+          this.abortInFlight = null
+        }
+      })
+    }
 
     logger.log(
       `[ABORT] id=${abortId} reason=${reason} threadId=${this.threadId} apiAbort=${Boolean(sessionId)} ${this.formatRunStateForLog()}`,
@@ -4058,10 +3384,12 @@ export class ThreadSessionRuntime {
     if (outcome.apiAbortPromise) {
       void outcome.apiAbortPromise
     }
-    // Enqueued synchronously, so it runs before the abort's session.idle can drain the queue.
+    // Enqueued synchronously, so the queue is cleared before the interrupt terminal can drain it.
     let cleared: threadState.QueuedMessage[] = []
     await this.dispatchAction(async () => {
       cleared = await this.clearQueueNow()
+      await this.flushCurrentTurnParts({ mode: 'interactive', repulseTyping: false })
+      await this.executeDiscordActions([{ type: 'discard-open-text' }])
     })
     return cleared
   }
@@ -4096,10 +3424,7 @@ export class ThreadSessionRuntime {
       return
     }
     await this.waitForEvent({
-      predicate: (event) => {
-        return event.type === 'session.idle'
-          && (event.properties as { sessionID?: string }).sessionID === sessionId
-      },
+      predicate: (event) => isSessionSettledEvent({ event, sessionId }),
       sinceTimestamp: waitSinceTimestamp,
       timeoutMs,
     })
@@ -4298,19 +3623,14 @@ export class ThreadSessionRuntime {
       )
       return 'unavailable'
     }
-    const statusResponse = await getClient().session.status({
-      directory: this.sdkDirectory,
-    }).catch((error) => {
+    const activeSessions = await getClient().session.active().catch((error: unknown) => {
       logger.warn(
         `[QUEUE] Failed to read session status while restoring queue for ${this.threadId}: ${error instanceof Error ? error.message : String(error)}`,
       )
       return undefined
     })
-    if (!statusResponse || statusResponse.error) {
-      return 'unavailable'
-    }
-    const sessionStatus = statusResponse.data?.[sessionId]
-    if (!sessionStatus || sessionStatus.type === 'idle') {
+    if (!activeSessions) return 'unavailable'
+    if (!activeSessions[sessionId]) {
       this.markQueueDispatchIdle(sessionId)
       return 'idle'
     }
@@ -4326,11 +3646,12 @@ export class ThreadSessionRuntime {
       const persistResult = await deleteThreadQueueItem(item.queueId!).catch((error) => {
         return new Error('Failed to delete persisted queue item', { cause: error })
       })
+      // Drop it from memory anyway so it is not re-sent. Restart replay of a prompt is a no-op:
+      // OpenCode keeps the first `msg_kimaki_<queueId>` admission.
       if (persistResult instanceof Error) {
         logger.error(
           `[QUEUE] Failed to persist accept of ${item.queueId}: ${persistResult.message}`,
         )
-        return
       }
       threadState.removeQueueItemById(this.threadId, item.queueId!)
     })
@@ -4355,11 +3676,15 @@ export class ThreadSessionRuntime {
     if (thread.queueItems.length === 0) {
       return
     }
-    // Interactive UI (action buttons, questions, permissions) does NOT block
-    // queue drain. The isSessionBusy check is sufficient: questions and
-    // permissions keep the OpenCode session busy, so drain is naturally
-    // blocked. Action buttons are fire-and-forget (session already idle),
-    // so queued messages should dispatch immediately.
+    // v2 forms/permissions can leave the session idle while Discord UI is
+    // still pending. Do not drain the local queue until the user answers or
+    // the UI is dismissed. Action buttons stay fire-and-forget.
+    if (this.hasPendingQuestionUi()) {
+      return
+    }
+    if ((pendingPermissions.get(this.thread.id)?.size ?? 0) > 0) {
+      return
+    }
 
     const sessionBusy = thread.sessionId
       ? isSessionBusy({ events: this.eventBuffer, sessionId: thread.sessionId })
@@ -4392,21 +3717,13 @@ export class ThreadSessionRuntime {
       }
     }
 
-    // Start dispatch (detached — does not block the action queue).
-    // The prompt call is long-running. Events continue to flow through
-    // the action queue while the SDK call is in-flight. Event-derived busy
-    // gating prevents concurrent local-queue dispatches. Mark busy now to
-    // close the tiny window before the first session.status busy arrives.
+    // Start dispatch detached so native events can continue through the action queue.
     const dispatchSessionId = thread.sessionId
-    if (dispatchSessionId) {
-      this.markQueueDispatchBusy(dispatchSessionId)
-    }
+    if (dispatchSessionId) this.markQueueDispatchBusy(dispatchSessionId)
     let accepted = false
-    void this.dispatchPrompt(next).then(async (ok) => {
-      accepted = ok
-      if (ok) {
-        await this.acknowledgeAcceptedQueueItem(next)
-      }
+    void this.dispatchPrompt(next).then(async (wasAccepted) => {
+      accepted = wasAccepted
+      if (wasAccepted) await this.acknowledgeAcceptedQueueItem(next)
     }).catch(async (err) => {
       logger.error('[DISPATCH] Prompt dispatch failed:', err)
       void notifyError(err, 'Runtime prompt dispatch failed')
@@ -4430,483 +3747,105 @@ export class ThreadSessionRuntime {
   // session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
-    this.lastDisplayedContextPercentage = 0
-    this.lastRateLimitDisplayTime = 0
-    this.lastSentPartKind = undefined
-
-    // ── Ensure session ────────────────────────────────────────
-    const sessionResult = await this.ensureSession({
-      prompt: input.prompt,
-      agent: input.agent,
-      permissions: input.permissions,
-      injectionGuardPatterns: input.injectionGuardPatterns,
-      sessionStartScheduleKind: input.sessionStartScheduleKind,
-      sessionStartScheduledTaskId: input.sessionStartScheduledTaskId,
+    const admission = await this.prepareAdmission({
+      input,
+      delivery: 'queue',
+      ingressMode: 'local_queue',
     })
-    if (sessionResult instanceof Error) {
-      this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `✗ ${sessionResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
-      // Show indicator: this dispatch failed, so the next queued message
-      // has been waiting — the user needs to see which one is starting.
+    if (admission instanceof Error) {
+      const sessionId = this.state?.sessionId
+      if (sessionId) this.markQueueDispatchIdle(sessionId)
+      await this.handleAdmissionError(admission)
       return false
     }
-    const { session, getClient, createdNewSession } = sessionResult
-
-    const updatePermissionsResult = await this.updateExistingSessionPermissions({
-      client: getClient(),
-      sessionId: session.id,
-      createdNewSession,
-      permissions: input.permissions,
+    // /abort or a remove may have dropped the item while admission was prepared.
+    const stillQueued = threadState.getThreadState(this.threadId)?.queueItems.some((item) => {
+      return input.queueId ? item.queueId === input.queueId : item === input
     })
-    if (updatePermissionsResult instanceof Error) {
-      this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to update session permissions: ${updatePermissionsResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
+    if (!stillQueued) {
+      this.markQueueDispatchIdle(admission.sessionId)
       return false
     }
-
-    // ── Resolve model + agent preferences ─────────────────────
-    const channelId = this.channelId
-    const resolvedAppId = input.appId
-
-    // Explicit agent prompts (for example /plan-agent <prompt>) must update
-    // the session preference before dispatch. Otherwise the model can resolve
-    // from the requested agent while OpenCode keeps running the old agent.
-    if (input.agent) {
-      await setSessionAgent(session.id, input.agent)
-      await clearSessionModel(session.id)
-    }
-
-    if (input.model) {
-      const validatedModel = await validateModelId({
-        model: input.model,
-        getClient,
-        directory: this.sdkDirectory,
-      })
-      if (validatedModel instanceof Error) {
-        this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `Failed to resolve model: ${validatedModel.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
-        )
+    if (!admission.command) {
+      const result = await this.submitPreparedAdmission(admission)
+      if (result instanceof Error) {
+        void notifyError(result, 'Local queue OpenCode admission failed')
+        await this.handleAdmissionError(result)
         return false
       }
+      return true
     }
+    return this.submitPreparedCommand(admission)
+  }
 
-    await ensureSessionPreferencesSnapshot({
-      sessionId: session.id,
-      channelId,
-      appId: resolvedAppId,
-      getClient,
-      directory: this.sdkDirectory,
-      agentOverride: input.agent,
-      modelOverride: input.model,
-      force: createdNewSession,
+  private async submitPreparedCommand(admission: PreparedAdmission): Promise<boolean> {
+    const command = admission.command
+    if (!command) return false
+    const settleDispatch = () => this.markQueueDispatchIdle(admission.sessionId)
+    const selectionResult = await this.applyNativeSessionSelection({
+      client: admission.client,
+      sessionId: admission.sessionId,
+      agent: admission.agent,
+      model: admission.model,
+      variant: admission.variant,
     })
-
-    const earlyAgentResult = await resolveValidatedAgentPreference({
-      agent: input.agent,
-      sessionId: session.id,
-      channelId,
-      getClient,
-      directory: this.sdkDirectory,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'resolveAgent', cause: e }))
-    if (earlyAgentResult instanceof Error) {
-      this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to resolve agent: ${earlyAgentResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
+    if (selectionResult instanceof Error) {
+      settleDispatch()
+      await this.handleAdmissionError(selectionResult)
       return false
     }
-    const earlyAgentPreference = earlyAgentResult.agentPreference
-    const earlyAvailableAgents = earlyAgentResult.agents
-
-    await this.persistIngressVariant({
-      sessionId: session.id,
-      channelId,
-      appId: resolvedAppId,
-      agentPreference: earlyAgentPreference,
-      getClient,
-      variant: input.variant,
-    })
-
-    const [earlyModelResult, preferredVariant] = await Promise.all([
-      (async () => {
-        if (input.model) {
-          return validateModelId({
-            model: input.model,
-            getClient,
-            directory: this.sdkDirectory,
-          })
-        }
-        const modelInfo = await getCurrentModelInfo({
-          sessionId: session.id,
-          channelId,
-          appId: resolvedAppId,
-          agentPreference: earlyAgentPreference,
-          getClient,
-          directory: this.sdkDirectory,
-        })
-        if (modelInfo.type === 'none') {
-          return undefined
-        }
-        return { providerID: modelInfo.providerID, modelID: modelInfo.modelID }
-      })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
-      getVariantCascade({
-        sessionId: session.id,
-        channelId,
-        appId: resolvedAppId,
-      }),
-    ])
-    if (earlyModelResult instanceof Error) {
-      this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        `Failed to resolve model: ${earlyModelResult.message}`,
-        { flags: NOTIFY_MESSAGE_FLAGS },
-      )
-      return false
-    }
-    const earlyModelParam = earlyModelResult
-    if (!earlyModelParam) {
-      this.stopTyping()
-      await sendThreadMessage(
-        this.thread,
-        'No AI provider connected. Configure a provider in OpenCode with `/connect` command.',
-      )
-      return false
-    }
-
-    // Resolve thinking variant
-    const earlyThinkingValue = await (async (): Promise<string | undefined> => {
-      if (!preferredVariant) {
-        return undefined
-      }
-      const providersResponse = await getClient().provider.list({ directory: this.sdkDirectory })
-        .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-      if (providersResponse instanceof Error || !providersResponse.data) {
-        return undefined
-      }
-      const availableValues = getThinkingValuesForModel({
-        providers: providersResponse.data.all,
-        providerId: earlyModelParam.providerID,
-        modelId: earlyModelParam.modelID,
-      })
-      if (availableValues.length === 0) {
-        return undefined
-      }
-      return matchThinkingValue({
-        requestedValue: preferredVariant,
-        availableValues,
-      }) || undefined
-    })()
-
-    await this.ensureModelContextLimit({
-      providerID: earlyModelParam.providerID,
-      modelID: earlyModelParam.modelID,
-    })
-
-    await this.sendNewSessionModelInfo({
-      createdNewSession,
-      model: earlyModelParam,
-      agent: earlyAgentPreference,
-    })
-
-    // ── Build prompt parts ────────────────────────────────────
-    const images = input.images || []
-    const promptWithImagePaths = (() => {
-      if (images.length === 0) {
-        return input.prompt
-      }
-      const imageList = images
-        .map((img) => {
-          return `- ${img.sourceUrl || img.filename}`
-        })
-        .join('\n')
-      return `${input.prompt}\n\n**The following images are already included in this message as inline content (do not use Read tool on these):**\n${imageList}`
-    })()
-
-    // ── Worktree info for per-turn prompt context ─────────────
-    const worktreeInfoForPrompt = await getThreadWorktreeOrWorkspace(this.thread.id)
-    const worktree: WorktreeInfo | undefined =
-      worktreeInfoForPrompt?.status === 'ready' && worktreeInfoForPrompt.workspace_directory
-        ? {
-            worktreeDirectory: worktreeInfoForPrompt.workspace_directory,
-            branch: worktreeInfoForPrompt.workspace_name,
-            mainRepoDirectory: worktreeInfoForPrompt.project_directory,
-          }
-        : undefined
-
-    const channelTopic = await (async () => {
-      if (this.thread.parent?.type === ChannelType.GuildText) {
-        return this.thread.parent.topic?.trim() || undefined
-      }
-      if (!channelId) {
-        return undefined
-      }
-      const fetched = await this.thread.guild.channels.fetch(channelId)
-        .catch((e) => new DiscordOperationError({ operation: 'fetchChannel', cause: e }))
-      if (fetched instanceof Error || !fetched) {
-        return undefined
-      }
-      if (fetched.type !== ChannelType.GuildText) {
-        return undefined
-      }
-      return fetched.topic?.trim() || undefined
-    })()
-    const worktreeChanged = this.consumeWorktreePromptChange(worktree)
-    const syntheticContext = getOpencodePromptContext({
-      sessionId: session.id,
-      threadId: this.thread.id,
-      username: input.username,
-      userId: input.userId,
-      sourceMessageId: input.sourceMessageId,
-      sourceThreadId: input.sourceThreadId || this.thread.id,
-      threadName: this.thread.name || undefined,
-      repliedMessage: input.repliedMessage,
-      worktree,
-      currentAgent: earlyAgentPreference,
-      worktreeChanged,
-    })
-    const parts = [
-      { type: 'text' as const, text: promptWithImagePaths },
-      { type: 'text' as const, text: syntheticContext, synthetic: true },
-      ...images,
-    ]
-
-    const variantField = earlyThinkingValue
-      ? { variant: earlyThinkingValue }
-      : {}
-
-    const parseOpenCodeErrorMessage = (err: unknown): string => {
-      if (err && typeof err === 'object') {
-        if (
-          'data' in err &&
-          err.data &&
-          typeof err.data === 'object' &&
-          'message' in err.data
-        ) {
-          return String(err.data.message)
-        }
-        if (
-          'errors' in err &&
-          Array.isArray(err.errors) &&
-          err.errors.length > 0
-        ) {
-          return JSON.stringify(err.errors)
-        }
-        if ('message' in err && typeof err.message === 'string') {
-          return err.message
-        }
-      }
-      return 'Unknown OpenCode API error'
-    }
-
-    if (input.command) {
-      const queuedCommand = input.command
-      const commandSignal = AbortSignal.timeout(30_000)
-      // session.command() only accepts FilePart in parts, not text parts.
-      // Append <discord-user /> tag to arguments so external sync can
-      // detect this message came from Discord (same tag as promptAsync).
-      const discordTag = getOpencodePromptContext({
-        sessionId: session.id,
-        threadId: this.thread.id,
-        username: input.username,
-        userId: input.userId,
-        sourceMessageId: input.sourceMessageId,
-        sourceThreadId: input.sourceThreadId || this.thread.id,
-        threadName: this.thread.name || undefined,
-        repliedMessage: input.repliedMessage,
-      })
-      // OpenCode's session.command API has no `system` field. Persist the
-      // kimaki system prompt so the context-awareness plugin can attach it
-      // on chat.message when the command user message is created.
-      // Fail the dispatch if persistence fails — otherwise the command runs
-      // without Discord context and silently restores the original bug.
-      const commandSystem = getOpencodeSystemMessage({
-        sessionId: session.id,
-        channelId,
-        guildId: this.thread.guildId,
-        threadId: this.thread.id,
-        channelTopic,
-        agents: earlyAvailableAgents,
-        username: this.state?.sessionUsername || input.username,
-        userId: this.state?.sessionUserId || input.userId,
-        parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-        scheduledTask: await this.resolveScheduledTaskContext(session.id),
-      })
-      const systemWriteResult = await writeSessionSystemPrompt({
-        sessionId: session.id,
-        system: commandSystem,
-        dataDir: getDataDir(),
-      }).catch((e) => {
-        return e instanceof Error
-          ? e
-          : new Error(String(e), { cause: e })
-      })
-      if (systemWriteResult instanceof Error) {
-        logger.error(
-          `[DISPATCH] Failed to persist system prompt for command session ${session.id}: ${systemWriteResult.message}`,
-        )
-        void notifyError(
-          systemWriteResult,
-          'Failed to persist system prompt before session.command',
-        )
-        this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `✗ Failed to prepare command system prompt: ${systemWriteResult.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
-        )
-        return false
-      }
-      const commandResponse = await getClient().session.command(
-        {
-          sessionID: session.id,
-
-          directory: this.sdkDirectory,
-          command: queuedCommand.name,
-          arguments: queuedCommand.arguments + (discordTag ? `\n${discordTag}` : ''),
-          agent: earlyAgentPreference,
-          model: `${earlyModelParam.providerID}/${earlyModelParam.modelID}`,
-          ...variantField,
-        },
-        { signal: commandSignal },
-      ).catch((e) => new OpenCodeSdkError({ operation: 'session.command', cause: e }))
-
-      if (commandResponse instanceof Error) {
-        const timeoutReason = commandSignal.reason
-        const timedOut =
-          commandSignal.aborted &&
-          timeoutReason instanceof Error &&
-          timeoutReason.name === 'TimeoutError'
-        if (timedOut) {
-          logger.warn(
-            `[DISPATCH] Command timed out after 30s sessionId=${session.id}`,
-          )
-          this.stopTyping()
-          await sendThreadMessage(
-            this.thread,
-            '✗ Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.',
-            { flags: NOTIFY_MESSAGE_FLAGS },
-          )
-          return false
-        }
-
-        const commandErrorForAbortCheck: unknown = commandResponse
-        if (isAbortError(commandErrorForAbortCheck)) {
-          logger.log(
-            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
-          )
-          this.stopTyping()
-          return true
-        }
-
-        logger.error(
-          `[DISPATCH] Command SDK call failed: ${commandResponse.message}`,
-        )
-        void notifyError(commandResponse, 'Failed to send command to OpenCode')
-        this.stopTyping()
-        await sendThreadMessage(
-          this.thread,
-          `✗ Unexpected bot Error: ${commandResponse.message}`,
-          { flags: NOTIFY_MESSAGE_FLAGS },
-        )
-        return false
-      }
-
-      if (commandResponse.error) {
-        const errorMessage = parseOpenCodeErrorMessage(commandResponse.error)
-        if (errorMessage.includes('aborted')) {
-          logger.log(
-            `[DISPATCH] Command aborted (expected) sessionId=${session.id}`,
-          )
-          this.stopTyping()
-          return true
-        }
-        const apiError = new Error(`OpenCode API error: ${errorMessage}`)
-        logger.error(`[DISPATCH] ${apiError.message}`)
-        void notifyError(apiError, 'OpenCode API error during command')
-        this.stopTyping()
-        await sendThreadMessage(this.thread, `✗ ${apiError.message}`, {
-          flags: NOTIFY_MESSAGE_FLAGS,
-        })
-        return false
-      }
-
-      logger.log(`[DISPATCH] Successfully ran command for session ${session.id}`)
+    const signal = AbortSignal.timeout(30_000)
+    const result = await admission.client.session.command({
+      sessionID: admission.sessionId,
+      command: command.name,
+      text: command.arguments + (admission.text ? `\n${admission.text}` : ''),
+    }, { signal }).then(() => null).catch((cause) => ({
+      error: new OpenCodeSdkError({ operation: 'session.command', cause }),
+      message: extractSdkErrorMessage(cause),
+    }))
+    if (result === null) {
       trackTurnStarted({
         inputKind: 'command',
-        ingressMode: 'local_queue',
-        source: resolveTurnSource(input),
-        agent: earlyAgentPreference,
+        ingressMode: admission.ingressMode,
+        source: admission.source,
+        agent: admission.agent,
       })
       return true
     }
-
-    await waitForGlobalEventListener()
-    const promptResponse = await getClient().session.promptAsync({
-      sessionID: session.id,
-      directory: this.sdkDirectory,
-      parts,
-      system: getOpencodeSystemMessage({
-        sessionId: session.id,
-        channelId,
-        guildId: this.thread.guildId,
-        threadId: this.thread.id,
-        channelTopic,
-        agents: earlyAvailableAgents,
-        username: this.state?.sessionUsername || input.username,
-        userId: this.state?.sessionUserId || input.userId,
-        parentSessionId: this.state?.parentSessionId || input.parentSessionId,
-        scheduledTask: await this.resolveScheduledTaskContext(session.id),
-      }),
-      model: earlyModelParam,
-      agent: earlyAgentPreference,
-      ...variantField,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.promptAsync', cause: e }))
-
-    if (promptResponse instanceof Error || promptResponse.error) {
-      const errorMessage = (() => {
-        if (promptResponse instanceof Error) return promptResponse.message
-        return parseOpenCodeErrorMessage(promptResponse.error)
-      })()
-      const errorObject = promptResponse instanceof Error
-        ? promptResponse
-        : new Error(errorMessage)
-      logger.error(`[DISPATCH] Prompt API call failed: ${errorMessage}`)
-      void notifyError(errorObject, 'OpenCode API error during local queue prompt')
-      this.stopTyping()
-      await sendThreadMessage(this.thread, `✗ OpenCode API error: ${errorMessage}`, {
-        flags: NOTIFY_MESSAGE_FLAGS,
-      })
+    const response = result.error
+    if (signal.aborted) {
+      settleDispatch()
+      await this.handleAdmissionError(
+        new Error('Command timed out after 30 seconds. Try a shorter command or run it with /run-shell-command.'),
+      )
       return false
     }
-
-    logger.log(
-      `[DISPATCH] promptAsync accepted by opencode queue sessionId=${session.id} threadId=${this.threadId}`,
+    const wasAborted: boolean = isAbortError(response)
+    if (wasAborted) {
+      settleDispatch()
+      this.stopTyping()
+      return true
+    }
+    const causeMessage = result.message
+    // Native command errors have route-dependent shapes, so match normalized text.
+    if (causeMessage.includes('Command not found')) {
+      settleDispatch()
+      await this.handleAdmissionError(new Error(`Command not found: "${command.name}"`))
+      return false
+    }
+    settleDispatch()
+    void notifyError(response, 'Failed to send command to OpenCode')
+    await this.handleAdmissionError(
+      new Error(`Unexpected bot Error: ${causeMessage || response.message}`, { cause: response }),
     )
-    trackTurnStarted({
-      inputKind: 'prompt',
-      ingressMode: 'local_queue',
-      source: resolveTurnSource(input),
-      agent: earlyAgentPreference,
-    })
-    return true
+    return false
   }
 
   // ── Session Ensure ──────────────────────────────────────────
   // Creates or reuses the OpenCode session for this thread.
+
+  /** Session IDs with instructions already persisted by this runtime. */
+  private sessionSystemInstructionsWritten = new Set<string>()
 
   /** Cached per-session scheduled task info for the system message. */
   private scheduledTaskContextCache = new Map<
@@ -4954,47 +3893,65 @@ export class ThreadSessionRuntime {
     return context
   }
 
-  private async updateExistingSessionPermissions({
+  private async persistSessionSystemInstructions({
     client,
     sessionId,
-    createdNewSession,
-    permissions,
+    agents,
+    channelTopic,
   }: {
     client: OpencodeClient
     sessionId: string
-    createdNewSession: boolean
-    permissions?: string[]
+    agents: AgentInfo[]
+    channelTopic?: string
   }) {
-    if (createdNewSession) {
-      return null
-    }
-
-    const rules = parsePermissionRules(permissions ?? [])
-    if (rules.length === 0) {
-      return null
-    }
-
-    const updateResult = await client.session.update({
+    if (this.sessionSystemInstructionsWritten.has(sessionId)) return null
+    const topic = channelTopic ?? await (async () => {
+      if (this.thread.parent?.type === ChannelType.GuildText) {
+        return this.thread.parent.topic?.trim() || undefined
+      }
+      return undefined
+    })()
+    const value = getOpencodeSystemMessage({
+      sessionId,
+      channelId: this.channelId,
+      guildId: this.thread.guildId,
+      threadId: this.thread.id,
+      channelTopic: topic,
+      agents,
+      userId: this.state?.sessionUserId,
+      parentSessionId: this.state?.parentSessionId,
+      scheduledTask: await this.resolveScheduledTaskContext(sessionId),
+      dataDir: getDataDir(),
+      critiqueEnabled: store.getState().critiqueEnabled,
+    })
+    const result = await client.session.instructions.entry.put({
       sessionID: sessionId,
-      permission: rules,
-    }).catch((e) => new OpenCodeSdkError({ operation: 'session.update', cause: e }))
-    if (updateResult instanceof Error) return updateResult
-    if (updateResult.error) {
-      return new Error('OpenCode rejected permission update')
+      key: KIMAKI_INSTRUCTION_ENTRY_KEY,
+      value,
+    }).catch((cause) => new OpenCodeSdkError({
+      operation: 'session.instructions.entry.put',
+      cause,
+    }))
+    if (result instanceof Error) {
+      logger.warn(
+        `[SYSTEM INSTRUCTIONS] Failed to persist for session ${sessionId}: ${result.message}`,
+      )
+      return result
     }
+    this.sessionSystemInstructionsWritten.add(sessionId)
     return null
   }
 
   private async ensureSession({
-    prompt,
     agent,
+    createIfMissing = true,
     permissions,
     injectionGuardPatterns,
     sessionStartScheduleKind,
     sessionStartScheduledTaskId,
   }: {
-    prompt: string
     agent?: string
+    createIfMissing?: boolean
     /** Raw "tool:action" strings from --permission flag */
     permissions?: string[]
     injectionGuardPatterns?: string[]
@@ -5040,58 +3997,48 @@ export class ThreadSessionRuntime {
     if (sessionId) {
       const sessionResponse = await getClient().session.get({
         sessionID: sessionId,
-        directory: this.sdkDirectory,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.get', cause: e }))
       if (sessionResponse instanceof Error) {
         logger.warn(
           `[ENSURE SESSION] Failed to get existing session ${sessionId}: ${sessionResponse.message}`,
         )
-      } else if (sessionResponse.data) {
-        session = sessionResponse.data
       } else {
-        const sdkMessage = extractSdkErrorMessage(sessionResponse.error)
-        logger.warn(
-          `[ENSURE SESSION] session.get returned no data for ${sessionId}: ${sdkMessage}, response=${JSON.stringify(sessionResponse)}`,
-        )
+        session = sessionResponse
       }
     }
 
+    const sessionPermissions = [
+      ...buildSessionPermissions({ directory: this.sdkDirectory, originalRepoDirectory }),
+      ...parsePermissionRules(permissions ?? []),
+    ]
+    // Omitted permissions preserve existing/forked rules; explicit input replaces them.
+    if (session && permissions !== undefined) {
+      const result = await getClient().permission.rules({
+        sessionID: session.id,
+        permissions: sessionPermissions,
+      }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'permission.rules', cause }))
+      if (result instanceof Error) return result
+    }
+    if (!session && !createIfMissing) {
+      return new Error(`Existing session ${sessionId || 'unknown'} is unavailable`)
+    }
     if (!session) {
-      // Pass per-session external_directory permissions. By default this is a
-      // single allow-everything rule plus the worktree-origin deny rule.
-      // CLI --permission rules are appended after base rules so they win
-      // via opencode's findLast() evaluation.
-      const sessionPermissions = [
-        ...buildSessionPermissions({
-          directory: this.sdkDirectory,
-          originalRepoDirectory,
-        }),
-        ...parsePermissionRules(permissions ?? []),
-      ]
       // Omit title so OpenCode auto-generates a summary from the conversation
       const createResult = await getClient().session.create({
-        directory: this.sdkDirectory,
-        permission: sessionPermissions,
+        location: { directory: this.sdkDirectory },
+        permissions: sessionPermissions,
       }).catch((e) => new OpenCodeSdkError({ operation: 'session.create', cause: e }))
       if (createResult instanceof Error) {
+        const causeMessage = extractSdkErrorMessage(createResult.cause)
         logger.error(
-          `[ENSURE SESSION] session.create failed: ${createResult.message}`,
+          `[ENSURE SESSION] session.create failed: ${createResult.message} cause=${causeMessage}`,
         )
         return new Error(
-          `Failed to create session: ${createResult.message}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
+          `Failed to create session: ${createResult.message} ${causeMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
           { cause: createResult },
         )
       }
-      if (createResult.error || !createResult.data) {
-        const errorMessage = extractSdkErrorMessage(createResult.error)
-        logger.error(
-          `[ENSURE SESSION] session.create failed: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}, response=${JSON.stringify(createResult)}`,
-        )
-        return new Error(
-          `Failed to create session: ${errorMessage}, threadId=${this.thread.id}, directory=${this.sdkDirectory}`,
-        )
-      }
-      session = createResult.data
+      session = createResult
       // Insert DB row immediately so the external-sync poller sees
       // source='kimaki' before the next poll tick and skips this session.
       // The upsert at the end of ensureSession is kept for the reuse path.
@@ -5191,8 +4138,7 @@ export class ThreadSessionRuntime {
 
   /**
    * Emit the run footer: duration, model, context%, project info.
-   * Triggered directly from the terminal assistant message.updated event so the
-   * footer lands next to the assistant output instead of waiting for session.idle.
+   * Triggered by native execution completion so it follows assistant output.
    */
   private async emitFooter({
     completedAt,
@@ -5235,33 +4181,28 @@ export class ThreadSessionRuntime {
         }
         let tokensUsed = runInfo.tokensUsed
         // Fetch final token count from API
-        const [messagesResult, providersResult] = await Promise.all([
+        const [messagesResult, modelsResult] = await Promise.all([
           tokensUsed === 0
-            ? client.session.messages({
+            ? client.message.list({
                 sessionID: sessionId,
-                directory: this.sdkDirectory,
-              }).catch((e) => new OpenCodeSdkError({ operation: 'session.messages', cause: e }))
+                limit: 50,
+                order: 'desc',
+              }).catch((e) => new OpenCodeSdkError({ operation: 'message.list', cause: e }))
             : null,
-          client.provider.list({
-            directory: this.sdkDirectory,
-          }).catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e })),
+          client.model.list({
+            location: { directory: this.sdkDirectory },
+          }).catch((e) => new OpenCodeSdkError({ operation: 'model.list', cause: e })),
         ])
 
         if (messagesResult && !(messagesResult instanceof Error)) {
-          const messages = messagesResult.data || []
-          const lastAssistant = [...messages]
-            .reverse()
-            .find((m) => {
-              if (m.info.role !== 'assistant') {
-                return false
-              }
-              if (!m.info.tokens) {
-                return false
-              }
-              return getTokenTotal(m.info.tokens) > 0
-            })
-          if (lastAssistant && 'tokens' in lastAssistant.info) {
-            tokensUsed = getTokenTotal(lastAssistant.info.tokens)
+          const lastAssistant = messagesResult.data.find((message) => {
+            if (message.type !== 'assistant' || !message.tokens) {
+              return false
+            }
+            return getTokenTotal(message.tokens) > 0
+          })
+          if (lastAssistant && lastAssistant.type === 'assistant' && lastAssistant.tokens) {
+            tokensUsed = getTokenTotal(lastAssistant.tokens)
           }
         }
 
@@ -5271,16 +4212,15 @@ export class ThreadSessionRuntime {
             })
           : undefined
 
-        const providers = providersResult && !(providersResult instanceof Error)
-          ? providersResult.data?.all ?? []
+        const listedModels = modelsResult && !(modelsResult instanceof Error)
+          ? modelsResult.data
           : []
         let contextLimit = fallbackLimit
-        if (providers.length > 0) {
-          const provider = providers.find((p) => {
-            return p.id === runInfo.providerID
-          })
-          const model = provider?.models?.[runInfo.model || '']
-          contextLimit = model?.limit?.context || contextLimit
+        const listedModel = listedModels.find((candidate) => {
+          return candidate.providerID === runInfo.providerID && candidate.modelID === runInfo.model
+        })
+        if (listedModel?.limit?.context) {
+          contextLimit = listedModel.limit.context
         }
 
         if (contextLimit) {
@@ -5289,7 +4229,7 @@ export class ThreadSessionRuntime {
           )
           contextInfo = ` ⋅ ${percentage}%`
         }
-        return providers
+        return thinkingProvidersFromListedModels({ models: [...listedModels] })
       })().catch((e) => new OpenCodeSdkError({ operation: 'resolveModelPreference', cause: e })),
     ])
     const branchName =
@@ -5324,7 +4264,11 @@ export class ThreadSessionRuntime {
       : `${truncatedFolder} ⋅ `
     const hasQueuedMessage = this.getQueueLength() > 0
     const didUseSleepTool = sessionId
-      ? didLatestUserTurnUseSleepTool({ events: this.eventBuffer, sessionId })
+      ? didLatestExecutionUseTool({
+          events: this.eventBuffer,
+          sessionId,
+          toolName: 'kimaki_sleep',
+        })
       : false
     const shouldNotifyUser = !hasQueuedMessage && !didUseSleepTool
     const mentionUserId = store.getState().footerMentionsEnabled && shouldNotifyUser
@@ -5351,85 +4295,6 @@ export class ThreadSessionRuntime {
   private resetPerRunState(): void {
     this.modelContextLimit = undefined
     this.modelContextLimitKey = undefined
-    this.lastDisplayedContextPercentage = 0
-    this.lastRateLimitDisplayTime = 0
-    this.lastSentPartKind = undefined
-  }
-
-  private async maybeNotifyPromptCacheClear({
-    sessionId,
-    messageId,
-  }: {
-    sessionId: string
-    messageId: string
-  }): Promise<void> {
-    // Only the first reply after a user prompt can show a cold cache. Later steps re-read the turn's own writes.
-    const [firstAssistantId] = this.getAssistantMessageIdsForCurrentTurn({ sessionId })
-    if (firstAssistantId !== messageId) {
-      return
-    }
-    const cacheClear = getPromptCacheClear({
-      events: this.eventBuffer,
-      sessionId,
-      currentMessageId: messageId,
-    })
-    if (!cacheClear) {
-      return
-    }
-    const systemDiff = await this.getSystemPromptDiffForCacheClear({
-      sessionId,
-      previousMessageId: cacheClear.previousMessageId,
-      currentMessageId: cacheClear.currentMessageId,
-    })
-    const chunk = asSubtext(formatPromptCacheClearMessage(cacheClear, systemDiff))
-    const sendResult = await this.thread.send({ content: chunk, flags: SILENT_MESSAGE_FLAGS })
-      .catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
-    if (sendResult instanceof Error) {
-      discordLogger.error('Failed to send prompt cache notice:', sendResult)
-    }
-  }
-
-  private async getSystemPromptDiffForCacheClear({
-    sessionId,
-    previousMessageId,
-    currentMessageId,
-  }: {
-    sessionId: string
-    previousMessageId: string
-    currentMessageId: string
-  }): Promise<{ additions: number; deletions: number } | undefined> {
-    const previousParentId = this.getAssistantParentId({ sessionId, messageId: previousMessageId })
-    const currentParentId = this.getAssistantParentId({ sessionId, messageId: currentMessageId })
-    if (!previousParentId || !currentParentId) {
-      return undefined
-    }
-    const beforeText = this.userSystemByMessageId.get(previousParentId)
-    const afterText = this.userSystemByMessageId.get(currentParentId)
-    if (beforeText === undefined || afterText === undefined || beforeText === afterText) {
-      return undefined
-    }
-    return countSystemPromptDiffLines({ beforeText, afterText })
-  }
-
-  private getAssistantParentId({
-    sessionId,
-    messageId,
-  }: {
-    sessionId: string
-    messageId: string
-  }): string | undefined {
-    for (let i = this.eventBuffer.length - 1; i >= 0; i--) {
-      const event = this.eventBuffer[i]?.event
-      if (event?.type !== 'message.updated') {
-        continue
-      }
-      const info = event.properties.info
-      if (info.sessionID !== sessionId || info.role !== 'assistant' || info.id !== messageId) {
-        continue
-      }
-      return info.parentID
-    }
-    return undefined
   }
 
   // ── Retry Last User Prompt (for model-change flow) ──────────
@@ -5469,10 +4334,7 @@ export class ThreadSessionRuntime {
 
     if (needsIdleWait) {
       await this.waitForEvent({
-        predicate: (event) => {
-          return event.type === 'session.idle'
-            && (event.properties as { sessionID?: string }).sessionID === sessionId
-        },
+        predicate: (event) => isSessionSettledEvent({ event, sessionId }),
         sinceTimestamp: waitSinceTimestamp,
         timeoutMs: 2000,
       })
@@ -5501,7 +4363,6 @@ export class ThreadSessionRuntime {
       username: '',
       appId: this.appId,
       mode: 'opencode',
-      resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
       analyticsSource: 'retry',
     })
@@ -5535,7 +4396,6 @@ export class ThreadSessionRuntime {
       username: '',
       appId: this.appId,
       mode: 'opencode',
-      resetAssistantForNewRun: true,
       expectedSessionId: sessionId,
     })
     return true
@@ -5543,19 +4403,6 @@ export class ThreadSessionRuntime {
 }
 
 // ── Module-level helpers ──────────────────────────────────────────
-
-function buildPermissionDedupeKey({
-  permission,
-  directory,
-}: {
-  permission: PermissionRequest
-  directory: string
-}): string {
-  const normalizedPatterns = [...permission.patterns].sort((a, b) => {
-    return a.localeCompare(b)
-  })
-  return `${directory}::${permission.permission}::${normalizedPatterns.join('|')}`
-}
 
 function getFallbackContextLimit({
   providerID,
@@ -5566,43 +4413,4 @@ function getFallbackContextLimit({
     return DETERMINISTIC_CONTEXT_LIMIT
   }
   return undefined
-}
-
-/** Format a session error from event properties for display. */
-function formatSessionErrorFromProps(error?: {
-  name?: string
-  data?: {
-    message?: string
-    statusCode?: number
-    providerID?: string
-    isRetryable?: boolean
-    responseBody?: string
-  }
-}): string {
-  if (!error) {
-    return 'Unknown error'
-  }
-  const data = error.data
-  if (!data) {
-    return error.name || 'Unknown error'
-  }
-  const parts: string[] = []
-  if (data.message) {
-    parts.push(data.message)
-  }
-  if (data.statusCode) {
-    parts.push(`(${data.statusCode})`)
-  }
-  if (data.providerID) {
-    parts.push(`[${data.providerID}]`)
-  }
-  return parts.length > 0 ? parts.join(' ') : error.name || 'Unknown error'
-}
-
-function truncateSessionErrorMessage(message: string): string {
-  const maxLength = 400
-  if (message.length <= maxLength) {
-    return message
-  }
-  return `${message.slice(0, maxLength - 1)}…`
 }

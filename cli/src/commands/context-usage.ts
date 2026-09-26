@@ -6,6 +6,7 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
+import type { SessionMessageInfo } from '@opencode/client'
 import type { CommandContext } from './types.js'
 import { OpenCodeSdkError } from '../errors.js'
 import { getThreadSession } from '../database.js'
@@ -15,9 +16,56 @@ import {
   SILENT_MESSAGE_FLAGS,
 } from '../discord-utils.js'
 import { createLogger, LogPrefix } from '../logger.js'
+import { listAllMessages } from '../opencode-pagination.js'
+import { readV2AssistantToolPart } from '../message-formatting.js'
 
 
 const logger = createLogger(LogPrefix.SESSION)
+
+export function formatContextBreakdown({
+  messages,
+  lastAssistantId,
+  inputTokens,
+  systemChars,
+}: {
+  messages: SessionMessageInfo[]
+  lastAssistantId: string
+  inputTokens: number
+  // Kimaki-visible instructions. OpenCode base prompts are not exposed, so they land in other.
+  systemChars: number
+}): string | undefined {
+  if (inputTokens <= 0) return undefined
+  const lastIndex = messages.findIndex((message) => message.id === lastAssistantId)
+  if (lastIndex < 0) return undefined
+  const history = messages.slice(0, lastIndex)
+  const compactIndex = history.findLastIndex((message) => message.type === 'compaction')
+  const active = history.slice(compactIndex < 0 ? 0 : compactIndex + 1)
+  const toolChars = new Map<string, number>()
+  for (const message of active) {
+    if (message.type !== 'assistant') continue
+    for (const part of message.content) {
+      if (part.type !== 'tool') continue
+      const { input, output, error } = readV2AssistantToolPart(part)
+      const chars = JSON.stringify(input).length + (error ?? output).length
+      toolChars.set(part.name, (toolChars.get(part.name) ?? 0) + chars)
+    }
+  }
+
+  const estimates = [
+    { name: 'system', tokens: Math.ceil(systemChars / 4) },
+    ...[...toolChars].map(([name, chars]) => ({ name: `tool ${name}`, tokens: Math.ceil(chars / 4) })),
+  ].sort((a, b) => b.tokens - a.tokens)
+  const estimated = estimates.reduce((total, entry) => total + entry.tokens, 0)
+  const scale = estimated > inputTokens ? inputTokens / estimated : 1
+  const visible = estimates.slice(0, 5).map((entry) => ({
+    name: entry.name,
+    tokens: Math.floor(entry.tokens * scale),
+  }))
+  const other = inputTokens - visible.reduce((total, entry) => total + entry.tokens, 0)
+  const format = ({ name, tokens }: { name: string; tokens: number }) =>
+    `${name} ${(tokens / inputTokens * 100).toFixed(1)}% (${tokens.toLocaleString('en-US')})`
+  return `**Estimated input mix:** ${[...visible.filter((entry) => entry.tokens > 0), { name: 'other', tokens: other }].map(format).join(' · ')} tokens (other includes messages and unexposed prompts)`
+}
 
 function getTokenTotal({
   input,
@@ -106,14 +154,16 @@ export async function handleContextUsageCommand({
   await command.deferReply({ flags: SILENT_MESSAGE_FLAGS })
 
   try {
-    const messagesResponse = await client.session.messages({
-      sessionID: sessionId,
-      directory: workingDirectory,
+    const messagesResult = await listAllMessages({
+      client,
+      sessionId,
+      order: 'asc',
     })
+    if (messagesResult instanceof Error) throw messagesResult
 
-    const messages = messagesResponse.data || []
+    const messages = messagesResult
     const assistantMessages = messages.filter(
-      (m) => m.info.role === 'assistant',
+      (m) => m.type === 'assistant',
     )
 
     if (assistantMessages.length === 0) {
@@ -124,50 +174,49 @@ export async function handleContextUsageCommand({
     }
 
     const lastAssistant = [...assistantMessages].reverse().find((m) => {
-      if (m.info.role !== 'assistant') {
+      if (m.type !== 'assistant') {
         return false
       }
-      if (!m.info.tokens) {
+      if (!m.tokens) {
         return false
       }
-      return getTokenTotal(m.info.tokens) > 0
+      return getTokenTotal(m.tokens) > 0
     })
 
-    if (!lastAssistant || lastAssistant.info.role !== 'assistant') {
+    if (!lastAssistant || lastAssistant.type !== 'assistant') {
       await command.editReply({
         content: 'Token usage not available for this session yet',
       })
       return
     }
 
-    const { tokens, modelID, providerID } = lastAssistant.info
-    const totalTokens = getTokenTotal(tokens)
+    const { tokens, model } = lastAssistant
+    const modelID = model.id
+    const providerID = model.providerID
+    const totalTokens = tokens ? getTokenTotal(tokens) : 0
+    const inputTokens = tokens ? tokens.input + tokens.cache.read + tokens.cache.write : 0
 
-    // Sum cost across all assistant messages for accurate session total
-    // (AssistantMessage.cost is per-message, not cumulative)
     const totalCost = assistantMessages.reduce((sum, m) => {
-      if (m.info.role === 'assistant') {
-        return sum + (m.info.cost || 0)
+      if (m.type === 'assistant') {
+        return sum + (m.cost || 0)
       }
       return sum
     }, 0)
 
-    // Fetch model context limit from provider API
     let contextLimit: number | undefined
-    const providersResult = await client.provider.list({ directory: workingDirectory })
-      .catch((e) => new OpenCodeSdkError({ operation: 'provider.list', cause: e }))
-    if (providersResult instanceof Error) {
+    const modelsResult = await client.model.list({ location: { directory: workingDirectory } })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'model.list', cause: e }))
+    if (modelsResult instanceof Error) {
       logger.error(
         '[CONTEXT-USAGE] Failed to fetch provider info:',
-        providersResult,
+        modelsResult,
       )
     } else {
-      const provider = providersResult.data?.all?.find(
-        (p) => p.id === providerID,
-      )
-      const model = provider?.models?.[modelID]
-      if (model?.limit?.context) {
-        contextLimit = model.limit.context
+      const listed = modelsResult.data.find((candidate) => {
+        return candidate.providerID === providerID && candidate.modelID === modelID
+      })
+      if (listed?.limit?.context) {
+        contextLimit = listed.limit.context
       }
     }
 
@@ -187,6 +236,25 @@ export async function handleContextUsageCommand({
         `**Context usage:** ${formattedTokens} tokens (context limit unavailable)`,
       )
     }
+
+    const instructions = await client.session.instructions.entry
+      .list({ sessionID: sessionId })
+      .catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.instructions.entry.list', cause: e }))
+    if (instructions instanceof Error) {
+      logger.error('[CONTEXT-USAGE] Failed to list instructions:', instructions)
+    }
+    const systemChars = instructions instanceof Error
+      ? 0
+      : instructions.reduce((total, entry) => {
+          return total + (typeof entry.value === 'string' ? entry.value.length : JSON.stringify(entry.value).length)
+        }, 0)
+    const breakdown = formatContextBreakdown({
+      messages,
+      lastAssistantId: lastAssistant.id,
+      inputTokens,
+      systemChars,
+    })
+    if (breakdown) lines.push(breakdown)
 
     if (modelID) {
       lines.push(`**Model:** ${modelID}`)

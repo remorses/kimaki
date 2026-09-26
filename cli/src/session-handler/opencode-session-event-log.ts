@@ -4,10 +4,15 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import type { Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
-
 import { getDataDir } from '../config.js'
 import { FilesystemOperationError } from '../errors.js'
+
+type LooseEvent = {
+  type: string
+  data?: unknown
+  location?: unknown
+  properties?: unknown
+}
 
 let eventLogDirPromise: Promise<string> | null = null
 let eventLogWriteDisabled = false
@@ -16,62 +21,34 @@ export function isOpencodeSessionEventLogEnabled(): boolean {
   return process.env['KIMAKI_LOG_OPENCODE_SESSION_EVENTS'] === '1'
 }
 
-function sessionIdFromEventProperties(properties: OpenCodeEvent['properties']): string | undefined {
-  if (!properties || typeof properties !== 'object') {
-    return undefined
-  }
-  const sessionID = Reflect.get(properties, 'sessionID')
-  if (typeof sessionID === 'string') {
-    return sessionID
-  }
-  const info = Reflect.get(properties, 'info')
-  if (info && typeof info === 'object') {
-    const id = Reflect.get(info, 'id')
-    if (typeof id === 'string') {
-      return id
+export function getOpencodeEventSessionId(event: LooseEvent): string | undefined {
+  if ('data' in event && event.data && typeof event.data === 'object') {
+    const data = event.data as { sessionID?: unknown; form?: { sessionID?: unknown } }
+    if (typeof data.sessionID === 'string') {
+      return data.sessionID
     }
-    const infoSessionId = Reflect.get(info, 'sessionID')
-    if (typeof infoSessionId === 'string') {
-      return infoSessionId
+    if (data.form && typeof data.form === 'object' && typeof data.form.sessionID === 'string') {
+      return data.form.sessionID
     }
   }
-  const part = Reflect.get(properties, 'part')
-  if (part && typeof part === 'object') {
-    const partSessionId = Reflect.get(part, 'sessionID')
-    if (typeof partSessionId === 'string') {
-      return partSessionId
+  const properties = 'properties' in event ? event.properties : undefined
+  if (properties && typeof properties === 'object') {
+    if ('sessionID' in properties && typeof properties.sessionID === 'string') {
+      return properties.sessionID
+    }
+    if ('info' in properties && properties.info && typeof properties.info === 'object') {
+      const info = properties.info as { id?: unknown; sessionID?: unknown }
+      if (typeof info.sessionID === 'string') return info.sessionID
+      if (typeof info.id === 'string' && event.type.startsWith('session.')) {
+        return info.id
+      }
+    }
+    if ('part' in properties && properties.part && typeof properties.part === 'object') {
+      const part = properties.part as { sessionID?: unknown }
+      if (typeof part.sessionID === 'string') return part.sessionID
     }
   }
   return undefined
-}
-
-export function getOpencodeEventSessionId(event: OpenCodeEvent): string | undefined {
-  switch (event.type) {
-    case 'message.updated':
-      return event.properties.info.sessionID
-    case 'message.part.updated':
-      return event.properties.part.sessionID
-    case 'message.part.delta':
-    case 'message.part.removed':
-    case 'session.status':
-    case 'session.idle':
-    case 'session.diff':
-    case 'permission.asked':
-    case 'permission.replied':
-    case 'question.asked':
-    case 'question.replied':
-    case 'question.rejected':
-      return event.properties.sessionID
-    case 'session.error':
-      return event.properties.sessionID
-    case 'session.created':
-    case 'session.updated':
-    case 'session.deleted':
-      return event.properties.info.id
-    default:
-      // session.next.* and later SDK events put sessionID on properties.
-      return sessionIdFromEventProperties(event.properties)
-  }
 }
 
 function sanitizeSessionIdForFilename(sessionId: string): string {
@@ -90,40 +67,19 @@ async function resolveEventLogDirectory(): Promise<string> {
   return eventLogDirPromise
 }
 
-export type OpencodeEventLogEntry = {
-  timestamp: number
-  threadId: string
-  projectDirectory: string
-  event: OpenCodeEvent
-}
-
-export function buildOpencodeEventLogLine({
-  timestamp,
-  threadId,
-  projectDirectory,
-  event,
-}: {
-  timestamp: number
-  threadId: string
-  projectDirectory: string
-  event: OpenCodeEvent
-}): OpencodeEventLogEntry {
-  return {
-    timestamp,
-    threadId,
-    projectDirectory,
-    event,
-  }
+export function serializeOpencodeEventsJsonl(events: LooseEvent[]): string {
+  const lines = events.map((event) => JSON.stringify(event))
+  return `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`
 }
 
 export async function appendOpencodeSessionEventLog(
-  entry: Omit<OpencodeEventLogEntry, 'timestamp'>,
+  event: LooseEvent,
 ): Promise<Error | null> {
   if (!isOpencodeSessionEventLogEnabled() || eventLogWriteDisabled) {
     return null
   }
 
-  const sessionId = getOpencodeEventSessionId(entry.event)
+  const sessionId = getOpencodeEventSessionId(event)
   if (!sessionId) {
     return null
   }
@@ -138,15 +94,7 @@ export async function appendOpencodeSessionEventLog(
   const safeSessionId = sanitizeSessionIdForFilename(sessionId)
   const logFilePath = path.join(logDirResult, `${safeSessionId}.jsonl`)
 
-  const now = Date.now()
-  const line = `${JSON.stringify(
-    buildOpencodeEventLogLine({
-      timestamp: now,
-      threadId: entry.threadId,
-      projectDirectory: entry.projectDirectory,
-      event: entry.event,
-    }),
-  )}\n`
+  const line = serializeOpencodeEventsJsonl([event])
 
   const appendResult = await fs.promises.appendFile(logFilePath, line, 'utf8')
     .catch((e) => new FilesystemOperationError({ operation: 'appendEventLog', cause: e }))

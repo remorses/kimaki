@@ -13,6 +13,12 @@
 
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import type { RepliedMessageContext } from '../system-message.js'
+import {
+  isJsonRecord,
+  jsonString,
+  jsonStringArray,
+  parseJsonUnknown,
+} from '../utils.js'
 import { store } from '../store.js'
 
 // ── Shared types ─────────────────────────────────────────────────
@@ -38,9 +44,8 @@ export type QueuedMessage = {
   // When set, dispatches via session.command() instead of session.prompt().
   // Used by /queue-command and user-defined slash commands.
   command?: { name: string; arguments: string }
-  // First-dispatch-only overrides — used when creating a new session.
-  // Subsequent queue drains ignore these since the session already exists.
-  // Set by --agent/--model/--permission flags on kimaki send or slash commands.
+  // Per-item overrides set by --agent/--model/--permission flags on kimaki send
+  // or slash commands.
   agent?: string
   model?: string
   // Thinking-level variant from `/xxx-agent variant:`.
@@ -67,8 +72,122 @@ export type QueuedMessage = {
   // list can show which sessions were started by scheduled tasks.
   sessionStartScheduleKind?: 'at' | 'cron'
   sessionStartScheduledTaskId?: number
+  sessionStartScheduledTaskRunId?: number
   // Product analytics turn source (discord/cli/scheduled/retry).
   analyticsSource?: 'discord' | 'cli' | 'scheduled' | 'retry'
+}
+
+function parseQueuedCommand(value: unknown): { name: string; arguments: string } | undefined {
+  if (!isJsonRecord(value)) return undefined
+  const name = jsonString(value.name)
+  const args = jsonString(value.arguments)
+  if (!name || args === undefined) return undefined
+  return { name, arguments: args }
+}
+
+function parseQueuedImages(value: unknown): DiscordFileAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const images: DiscordFileAttachment[] = []
+  for (const item of value) {
+    if (!isJsonRecord(item) || item.type !== 'file') return undefined
+    const mime = jsonString(item.mime)
+    const filename = jsonString(item.filename)
+    const url = jsonString(item.url)
+    if (!mime || !filename || !url) return undefined
+    const image: DiscordFileAttachment = { type: 'file', mime, filename, url }
+    const sourceUrl = jsonString(item.sourceUrl)
+    if (sourceUrl) image.sourceUrl = sourceUrl
+    images.push(image)
+  }
+  return images
+}
+
+function parseRepliedMessage(value: unknown): RepliedMessageContext | undefined {
+  if (!isJsonRecord(value)) return undefined
+  const text = jsonString(value.text)
+  if (text === undefined) return undefined
+  const authorUsername = jsonString(value.authorUsername)
+  if (authorUsername) return { text, authorUsername }
+  return { text }
+}
+
+function parseAnalyticsSource(
+  value: unknown,
+): QueuedMessage['analyticsSource'] | undefined {
+  if (value === 'discord' || value === 'cli' || value === 'scheduled' || value === 'retry') {
+    return value
+  }
+  return undefined
+}
+
+function parseScheduleKind(value: unknown): 'at' | 'cron' | undefined {
+  if (value === 'at' || value === 'cron') return value
+  return undefined
+}
+
+export function parseQueuedMessagePayload({
+  queueId,
+  payloadJson,
+}: {
+  queueId: string
+  payloadJson: string
+}): QueuedMessage | Error {
+  const parsed = parseJsonUnknown(payloadJson)
+  if (parsed instanceof Error) {
+    return new Error('Failed to parse queued message payload', { cause: parsed })
+  }
+  if (!isJsonRecord(parsed)) {
+    return new Error('Queued message payload is not an object')
+  }
+  const prompt = jsonString(parsed.prompt)
+  if (prompt === undefined) {
+    return new Error('Queued message payload is missing prompt')
+  }
+  const userId = jsonString(parsed.userId)
+  if (userId === undefined) {
+    return new Error('Queued message payload is missing userId')
+  }
+  const username = jsonString(parsed.username)
+  if (username === undefined) {
+    return new Error('Queued message payload is missing username')
+  }
+
+  const queued: QueuedMessage = { queueId, prompt, userId, username }
+  const images = parseQueuedImages(parsed.images)
+  if (images) queued.images = images
+  const appId = jsonString(parsed.appId)
+  if (appId) queued.appId = appId
+  const command = parseQueuedCommand(parsed.command)
+  if (command) queued.command = command
+  const agent = jsonString(parsed.agent)
+  if (agent) queued.agent = agent
+  const model = jsonString(parsed.model)
+  if (model) queued.model = model
+  const variant = jsonString(parsed.variant)
+  if (variant) queued.variant = variant
+  const permissions = jsonStringArray(parsed.permissions)
+  if (permissions) queued.permissions = permissions
+  const injectionGuardPatterns = jsonStringArray(parsed.injectionGuardPatterns)
+  if (injectionGuardPatterns) queued.injectionGuardPatterns = injectionGuardPatterns
+  const parentSessionId = jsonString(parsed.parentSessionId)
+  if (parentSessionId) queued.parentSessionId = parentSessionId
+  const sourceMessageId = jsonString(parsed.sourceMessageId)
+  if (sourceMessageId) queued.sourceMessageId = sourceMessageId
+  const sourceThreadId = jsonString(parsed.sourceThreadId)
+  if (sourceThreadId) queued.sourceThreadId = sourceThreadId
+  const repliedMessage = parseRepliedMessage(parsed.repliedMessage)
+  if (repliedMessage) queued.repliedMessage = repliedMessage
+  const sessionStartScheduleKind = parseScheduleKind(parsed.sessionStartScheduleKind)
+  if (sessionStartScheduleKind) queued.sessionStartScheduleKind = sessionStartScheduleKind
+  if (typeof parsed.sessionStartScheduledTaskId === 'number') {
+    queued.sessionStartScheduledTaskId = parsed.sessionStartScheduledTaskId
+  }
+  if (typeof parsed.sessionStartScheduledTaskRunId === 'number') {
+    queued.sessionStartScheduledTaskRunId = parsed.sessionStartScheduledTaskRunId
+  }
+  const analyticsSource = parseAnalyticsSource(parsed.analyticsSource)
+  if (analyticsSource) queued.analyticsSource = analyticsSource
+  return queued
 }
 
 // ── Per-thread state (value inside the Map) ──────────────────────
@@ -123,12 +242,6 @@ export function initialThreadState(): ThreadRunState {
     queueItems: [],
     sentPartIds: new Set(),
   }
-}
-
-// ── Derived helpers (compute, never store) ───────────────────────
-
-export function hasQueue(t: ThreadRunState): boolean {
-  return t.queueItems.length > 0
 }
 
 // ── Pure transition helpers ──────────────────────────────────────

@@ -2,11 +2,86 @@
 // Converts SDK message parts (text, tools, reasoning) to Discord-friendly format,
 // handles file attachments, and provides tool summary generation.
 
-import type { Part, FilePartInput } from '@opencode-ai/sdk/v2'
-import type { Embed, Message, MessageSnapshot, Poll, TextChannel } from 'discord.js'
+import type { SessionMessageInfo, SessionStructuredError } from '@opencode/client'
+import { isJsonRecord, parseJsonUnknown } from './utils.js'
 
-// Extended FilePartInput with original Discord URL for reference in prompts
-export type DiscordFileAttachment = FilePartInput & {
+export type DiscordSessionPart =
+  | {
+      id: string
+      type: 'text'
+      sessionID: string
+      messageID: string
+      text: string
+      time?: { start?: number; end?: number }
+      ignored?: boolean
+    }
+  | {
+      id: string
+      type: 'reasoning'
+      sessionID: string
+      messageID: string
+      text: string
+      time?: { start?: number; end?: number }
+    }
+  | {
+      id: string
+      type: 'tool'
+      sessionID: string
+      messageID: string
+      tool: string
+      state: {
+        status: 'pending' | 'running' | 'completed' | 'error'
+        input?: Record<string, unknown>
+        raw?: string
+        output?: string
+        title?: string
+        error?: string
+        metadata?: Record<string, unknown>
+        time?: { start?: number; end?: number }
+      }
+    }
+import type { Message, TextChannel } from 'discord.js'
+
+export type SerializableEmbed = {
+  title?: string | null
+  description?: string | null
+  url?: string | null
+  author?: { name: string } | null
+  footer?: { text: string } | null
+  fields: Array<{ name: string; value: string; inline?: boolean }>
+}
+
+export type SerializablePoll = {
+  question: { text: string | null }
+  answers: Iterable<[unknown, { text: string | null }]>
+}
+
+export type SerializableMessageSnapshot = {
+  content?: string | null
+  embeds: SerializableEmbed[]
+}
+
+export type SerializableSnapshotCollection = {
+  size: number
+} & Iterable<[unknown, SerializableMessageSnapshot]>
+
+export type TextAttachmentMessage = {
+  attachments: {
+    values(): Iterable<{
+      id?: string
+      name: string
+      contentType: string | null
+      url: string
+      size: number
+    }>
+  }
+}
+
+export type DiscordFileAttachment = {
+  type: 'file'
+  mime: string
+  filename: string
+  url: string
   sourceUrl?: string
 }
 
@@ -18,10 +93,212 @@ import { processImage } from './image-utils.js'
 import { parsePatchFileCounts } from './patch-text-parser.js'
 import { getDataDir } from './config.js'
 
-// Generic message type compatible with both v1 and v2 SDK
-type GenericSessionMessage = {
-  info: { role: string; id?: string; parentID?: string }
-  parts: Part[]
+export type GenericSessionMessage = {
+  info: {
+    role: string
+    id?: string
+    parentID?: string
+    time?: { created: number }
+    error?: SessionStructuredError
+  }
+  parts: DiscordSessionPart[]
+}
+
+export function sessionMessagesAscending<T extends { time: { created: number } }>(
+  messages: readonly T[],
+): T[] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      return left.message.time.created - right.message.time.created
+        || left.index - right.index
+    })
+    .map(({ message }) => message)
+}
+
+export function discordTextPartId({
+  messageID,
+  ordinal,
+}: {
+  messageID: string
+  ordinal: number
+}) {
+  return `${messageID}:text:${ordinal}`
+}
+
+export function discordReasoningPartId({
+  messageID,
+  ordinal,
+}: {
+  messageID: string
+  ordinal: number
+}) {
+  return `${messageID}:reasoning:${ordinal}`
+}
+
+export function discordToolPartId({
+  messageID,
+  toolId,
+}: {
+  messageID: string
+  toolId: string
+}) {
+  return `${messageID}:tool:${toolId}`
+}
+
+const HIDDEN_READONLY_TOOLS = [
+  'read',
+  'glob',
+  'grep',
+  'describe-media',
+  'todoread',
+]
+
+export function isEssentialToolName(toolName: string): boolean {
+  return !HIDDEN_READONLY_TOOLS.some((name) => {
+    return toolName === name || toolName.endsWith(`_${name}`)
+  })
+}
+
+export function isShellToolName(toolName: string): boolean {
+  return toolName === 'shell' || toolName === 'bash'
+}
+
+export function isEssentialToolPart(part: DiscordSessionPart): boolean {
+  if (part.type !== 'tool' || !isEssentialToolName(part.tool)) return false
+  if (!isShellToolName(part.tool)) return true
+  return part.state.input?.hasSideEffect !== false
+}
+
+function parseToolInput(input: unknown): Record<string, unknown> {
+  if (typeof input === 'string') {
+    const parsed = parseJsonUnknown(input)
+    if (parsed instanceof Error || !isJsonRecord(parsed)) return {}
+    return parsed
+  }
+  if (isJsonRecord(input)) return input
+  return {}
+}
+
+export function sessionMessagesToGeneric(messages: SessionMessageInfo[]): GenericSessionMessage[] {
+  return sessionMessagesAscending(messages).map((message) => {
+    if (message.type === 'user') {
+      return {
+        info: { role: 'user', id: message.id, time: message.time },
+        parts: [{
+          id: message.id,
+          type: 'text',
+          sessionID: '',
+          messageID: message.id,
+          text: message.text,
+        }],
+      }
+    }
+    if (message.type === 'assistant') {
+      return {
+        info: {
+          role: 'assistant',
+          id: message.id,
+          time: message.time,
+          error: message.error,
+        },
+        parts: (() => {
+          const ordinals = { text: 0, reasoning: 0 }
+          return message.content.flatMap((part): DiscordSessionPart[] => {
+            if (part.type === 'tool') {
+              const { input, output, status, error } = readV2AssistantToolPart(part)
+              return [{
+                id: discordToolPartId({ messageID: message.id, toolId: part.id }),
+                type: 'tool',
+                sessionID: '',
+                messageID: message.id,
+                tool: part.name,
+                state: { status, input, output, error },
+              }]
+            }
+            if (part.type === 'reasoning') {
+              return [{
+                id: discordReasoningPartId({
+                  messageID: message.id,
+                  ordinal: ordinals.reasoning++,
+                }),
+                type: 'reasoning',
+                sessionID: '',
+                messageID: message.id,
+                text: part.text,
+              }]
+            }
+            if (part.type === 'text') {
+              return [{
+                id: discordTextPartId({
+                  messageID: message.id,
+                  ordinal: ordinals.text++,
+                }),
+                type: 'text',
+                sessionID: '',
+                messageID: message.id,
+                text: part.text,
+              }]
+            }
+            return []
+          })
+        })(),
+      }
+    }
+    return {
+      info: { role: message.type, id: message.id, time: message.time },
+      parts: [],
+    }
+  })
+}
+
+function formatToolError(error: unknown): string {
+  if (typeof error === 'string' && error) return error
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message
+  }
+  return 'Tool failed'
+}
+
+type V2AssistantToolPart = {
+  state: {
+    status: string
+    input?: unknown
+    content?: ReadonlyArray<{ type: string; text?: string }>
+    error?: unknown
+  }
+}
+
+/**
+ * Parse a native v2 assistant tool part into the fields both the Discord and
+ * share-markdown renderers need. Single source of truth for tool input/output
+ * extraction so the two converters don't duplicate the parsing logic.
+ */
+export function readV2AssistantToolPart(part: V2AssistantToolPart): {
+  input: Record<string, unknown>
+  output: string
+  status: 'completed' | 'error' | 'running'
+  error?: string
+} {
+  const status =
+    part.state.status === 'error'
+      ? 'error'
+      : part.state.status === 'completed'
+        ? 'completed'
+        : 'running'
+  const output =
+    status === 'completed' && Array.isArray(part.state.content)
+      ? part.state.content
+          .filter((item) => item.type === 'text')
+          .map((item) => item.text ?? '')
+          .join('\n')
+      : ''
+  return {
+    input: parseToolInput(part.state.input),
+    output,
+    status,
+    error: status === 'error' ? formatToolError(part.state.error) : undefined,
+  }
 }
 
 const logger = createLogger(LogPrefix.FORMATTING)
@@ -51,7 +328,7 @@ export function asSubtext(text: string): string {
  * Each embed becomes an <embed> XML block with title, author, description,
  * fields, footer, and URL when present.
  */
-export function serializeEmbeds(embeds: Embed[]): string {
+export function serializeEmbeds(embeds: SerializableEmbed[]): string {
   if (embeds.length === 0) return ''
   const parts: string[] = []
   for (const embed of embeds) {
@@ -85,7 +362,7 @@ export function serializeEmbeds(embeds: Embed[]): string {
  * Serialize a Discord poll into plain text so the AI model can read the
  * question and answer options.
  */
-export function serializePoll(poll: Poll | null): string {
+export function serializePoll(poll: SerializablePoll | null): string {
   if (!poll) return ''
   const lines: string[] = []
   if (poll.question.text) {
@@ -105,7 +382,7 @@ export function serializePoll(poll: Poll | null): string {
  * partial Message with content and embeds.
  */
 export function serializeMessageSnapshots(
-  snapshots: Message['messageSnapshots'],
+  snapshots: SerializableSnapshotCollection,
 ): string {
   if (snapshots.size === 0) return ''
   const parts: string[] = []
@@ -263,7 +540,7 @@ export function shouldQuoteIntermediateTextPart({
   if (!isNonEmptyTextPart(part) || isLastInTurn) return false
   const text = part.text ?? ''
   if (text.includes('<callout')) return false
-  if (text.trim().split('\n').length > 2) return false
+  if (text.trim().includes('\n')) return false
   if (!quotedTextFitsOneDiscordMessage(text)) return false
   if (
     nextToolName === 'question'
@@ -516,7 +793,7 @@ function localAttachmentPath(attachment: { id?: string; name: string; url: strin
   return path.join(getDataDir(), 'attachments', `${id}-${safeAttachmentBasename(attachment.name)}`)
 }
 
-export async function getTextAttachments(message: Message): Promise<string> {
+export async function getTextAttachments(message: TextAttachmentMessage): Promise<string> {
   const textAttachments = Array.from(message.attachments.values()).filter(
     (attachment) => isTextMimeType(attachment.contentType),
   )
@@ -668,7 +945,7 @@ export function formatBashToolTitle({
   return ''
 }
 
-export function getToolSummaryText(part: Part): string {
+export function getToolSummaryText(part: DiscordSessionPart): string {
   if (part.type !== 'tool') return ''
 
   if (part.tool === 'edit') {
@@ -719,7 +996,7 @@ export function getToolSummaryText(part: Part): string {
   }
 
   if (part.tool === 'read') {
-    const filePath = (part.state.input?.filePath as string) || ''
+    const filePath = (part.state.input?.path as string) || ''
     const fileName = filePath.split('/').pop() || ''
     return fileName ? `*${escapeInlineMarkdown(fileName)}*` : ''
   }
@@ -742,6 +1019,7 @@ export function getToolSummaryText(part: Part): string {
 
   if (
     part.tool === 'bash' ||
+    part.tool === 'shell' ||
     part.tool === 'todoread' ||
     part.tool === 'todowrite'
   ) {
@@ -799,7 +1077,7 @@ export function getToolSummaryText(part: Part): string {
   return `(${inputFields.join(', ')})`
 }
 
-export function formatTodoList(part: Part): string {
+export function formatTodoList(part: DiscordSessionPart): string {
   if (part.type !== 'tool' || part.tool !== 'todowrite') return ''
   const todos =
     (part.state.input?.todos as {
@@ -817,9 +1095,11 @@ export function formatTodoList(part: Part): string {
   return `${todoNumber}.  **${escapeInlineMarkdown(content)}**`
 }
 
-export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): string {
+export function formatTaskToolTitle(
+  part: Extract<DiscordSessionPart, { type: 'tool' }>,
+): string {
   // Running only. The child session can be created later when many tasks queue.
-  if (part.tool !== 'task' || part.state.status !== 'running') return ''
+  if ((part.tool !== 'task' && part.tool !== 'subagent') || part.state.status !== 'running') return ''
 
   const description = part.state.input?.description
   const stateTitle = part.state.title
@@ -830,23 +1110,23 @@ export function formatTaskToolTitle(part: Extract<Part, { type: 'tool' }>): stri
       : ''
   if (!title) return ''
 
-  const subagentType = part.state.input?.subagent_type
+  // v1 task used subagent_type; native v2 subagent uses agent.
+  const subagentType = part.state.input?.subagent_type ?? part.state.input?.agent
   const agent = typeof subagentType === 'string' ? subagentType : 'task'
   return asSubtext(`${TOOL_PREFIX}${escapeInlineMarkdown(agent)} **${escapeInlineMarkdown(title)}**`)
 }
 
-// Non-text parts (tools, thinking, files) render as Discord subtext so they look dimmer than text.
-export function formatPart(part: Part, prefix?: string): string {
+// Non-text parts (tools, thinking) render as Discord subtext so they look dimmer than text.
+export function formatPart(part: DiscordSessionPart, prefix?: string): string {
   const formatted = formatPartBody(part, prefix)
   if (!formatted || part.type === 'text') return formatted
   return asSubtext(formatted)
 }
 
-function formatPartBody(part: Part, prefix?: string): string {
+function formatPartBody(part: DiscordSessionPart, prefix?: string): string {
   const pfx = prefix ? `${prefix} ⋅ ` : ''
 
   if (part.type === 'text') {
-    if (part.synthetic === true) return ''
     const text = part.text?.trim()
     if (!text) return ''
     if (prefix) {
@@ -858,29 +1138,6 @@ function formatPartBody(part: Part, prefix?: string): string {
   if (part.type === 'reasoning') {
     if (!part.text?.trim()) return ''
     return `${THINKING_PREFIX}${pfx}thinking`
-  }
-
-  if (part.type === 'file') {
-    return prefix
-      ? `📄 ${pfx}${part.filename || 'File'}`
-      : `📄 ${part.filename || 'File'}`
-  }
-
-  if (
-    part.type === 'step-start' ||
-    part.type === 'step-finish' ||
-    part.type === 'patch' ||
-    part.type === 'compaction'
-  ) {
-    return ''
-  }
-
-  if (part.type === 'agent') {
-    return `${TOOL_PREFIX}${pfx}agent ${part.id}`
-  }
-
-  if (part.type === 'snapshot') {
-    return `${TOOL_PREFIX}${pfx}snapshot ${part.snapshot}`
   }
 
   if (part.type === 'tool') {
@@ -904,13 +1161,13 @@ function formatPartBody(part: Part, prefix?: string): string {
       return ''
     }
 
-    // Task tool display is handled in session-handler with proper label
-    if (part.tool === 'task') {
+    // Subagent tool display is handled in session-handler with proper label
+    if (part.tool === 'task' || part.tool === 'subagent') {
       return ''
     }
 
     if (part.state.status === 'pending') {
-      if (part.tool !== 'bash') {
+      if (part.tool !== 'bash' && part.tool !== 'shell') {
         return ''
       }
       const command = (part.state.input?.command as string) || ''
@@ -921,7 +1178,7 @@ function formatPartBody(part: Part, prefix?: string): string {
         description,
         summary,
       })
-      return `${TOOL_PREFIX}${pfx}bash${toolTitle}`
+      return `${TOOL_PREFIX}${pfx}${part.tool}${toolTitle}`
     }
 
     const summaryText = getToolSummaryText(part)
@@ -930,7 +1187,7 @@ function formatPartBody(part: Part, prefix?: string): string {
     let toolTitle = ''
     if (part.state.status === 'error') {
       toolTitle = part.state.error || 'error'
-    } else if (part.tool === 'bash') {
+    } else if (part.tool === 'bash' || part.tool === 'shell') {
       const command = (part.state.input?.command as string) || ''
       const description = (part.state.input?.description as string) || ''
       const summary = (part.state.input?.summary as string) || ''

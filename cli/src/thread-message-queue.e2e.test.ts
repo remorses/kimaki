@@ -112,11 +112,9 @@ function createDeterministicMatchers() {
         {
           type: 'tool-call',
           toolCallId: 'bash-create-file-call',
-          toolName: 'bash',
+          toolName: 'shell',
           input: JSON.stringify({
             command: 'mkdir -p tmp && printf "created" > tmp/bash-tool-executed.txt',
-            description: 'Create marker file for e2e test',
-            hasSideEffect: true,
           }),
         },
         {
@@ -248,7 +246,7 @@ function createDeterministicMatchers() {
     id: 'slow-busy-reply',
     priority: 115,
     when: {
-      latestUserTextIncludes: 'SLOW_BUSY_MARKER',
+      latestUserTextRegex: '^SLOW_BUSY_MARKER',
     },
     then: {
       parts: [
@@ -462,7 +460,7 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: cold-start-stream
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
@@ -610,6 +608,12 @@ e2eTest('thread message queue ordering', () => {
         userMessageIncludes: 'three',
         timeout: 4_000,
       })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'three',
+      })
 
       // 4. Verify the latest user message got a bot reply.
       const afterBotMessages = after.filter((m) => {
@@ -622,13 +626,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: one
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        > ok"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -714,9 +719,9 @@ e2eTest('thread message queue ordering', () => {
         > running create file
         > creating marker
 
-        -# ┣ bash _Create marker file for e2e test_
+        -# ┣ shell _mkdir -p tmp && printf "created" > tmp/bash-tool-e…_
 
-        > file created
+        file created
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(fs.existsSync(markerPath)).toBe(true)
@@ -843,14 +848,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: queue-slash-setup
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
-        -# Queued message (position 2)
-        > race-final
+        -# Queued message (position 1)
+        race-final
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: queued-from-slash
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
@@ -927,7 +932,7 @@ e2eTest('thread message queue ordering', () => {
 
       const serializedComponents = JSON.stringify(secondQueueAckMessage.components)
       const customIdMatch = serializedComponents.match(
-        /"custom_id"\s*:\s*"(html_action:[^"]+)"/,
+        /"custom_id"\s*:\s*"(queue_remove:[^"]+)"/,
       )
       if (!customIdMatch?.[1]) {
         throw new Error(
@@ -976,12 +981,12 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: clear-queue-setup
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
-        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2* <@200000000000000777>
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: race-final
-        Removed queued message (was position 1): Reply with exactly: removed-queued-message
+        -# Removed queued message: Reply with exactly: removed-queued-message
         -# Queued message (position 2)
-        > race-final
+        race-final
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: kept-queued-message"
       `)
@@ -1050,6 +1055,13 @@ e2eTest('thread message queue ordering', () => {
         userMessageIncludes: 'india',
         timeout: 4_000,
       })
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'india',
+        afterAuthorId: TEST_USER_ID,
+      })
 
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
@@ -1058,13 +1070,14 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: golf
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (queue-tester)
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
-        > ok"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')
@@ -1145,19 +1158,21 @@ e2eTest('thread message queue ordering', () => {
         })
         .join('\n')
 
-      const normalizedTextWithoutFooters = textWithoutFooters.replace(
-        [
-          '--- from: assistant (TestBot)',
-          'ok',
-          '--- from: user (queue-tester)',
-          'Reply with exactly: november',
-        ].join('\n'),
-        [
-          '--- from: assistant (TestBot)',
-          '--- from: user (queue-tester)',
-          'Reply with exactly: november',
-        ].join('\n'),
-      )
+      const normalizedTextWithoutFooters = textWithoutFooters
+        .replace(
+          [
+            '--- from: assistant (TestBot)',
+            'ok',
+            '--- from: user (queue-tester)',
+            'Reply with exactly: november',
+          ].join('\n'),
+          [
+            '--- from: assistant (TestBot)',
+            '--- from: user (queue-tester)',
+            'Reply with exactly: november',
+          ].join('\n'),
+        )
+        .replace(/\nok$/, '')
 
       expect(normalizedTextWithoutFooters).toMatchInlineSnapshot(`
         "--- from: user (queue-tester)
@@ -1169,7 +1184,6 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: lima
         Reply with exactly: mike
         --- from: assistant (TestBot)
-        > ok
         --- from: user (queue-tester)
         Reply with exactly: november
         --- from: assistant (TestBot)"
@@ -1277,10 +1291,10 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         -# Queued at position 1. Edit or delete your message to update the queue
         -# **queue-tester** edited queued message
-        > slow-busy-reply
+        slow-busy-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **queue-tester:** Reply with exactly: edited-queued
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
@@ -1385,7 +1399,7 @@ e2eTest('thread message queue ordering', () => {
         --- from: assistant (TestBot)
         -# Queued at position 1. Edit or delete your message to update the queue
         -# **queue-tester** removed message from queue
-        > slow-busy-reply
+        slow-busy-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },

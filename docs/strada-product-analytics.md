@@ -8,7 +8,7 @@ description: >
 
 # Strada product analytics for Kimaki
 
-Kimaki sends **anonymous install-level** product events to Strada (OpenTelemetry logs).
+Kimaki sends **anonymous install-level** product events to Strada (OTLP logs) with `@strada.sh/light`, which has no dependencies and installs no process handlers.
 No Discord IDs, paths, prompts, or secrets. Metrics count **active installs**, not people.
 
 **Source of truth for emitters:** `cli/src/analytics.ts`

@@ -4,7 +4,6 @@ import { z } from 'zod'
 import { note } from '@clack/prompts'
 import YAML from 'yaml'
 import * as errore from 'errore'
-import type { OpencodeClient, Event as OpenCodeEvent } from '@opencode-ai/sdk/v2'
 import { Events, ActivityType, type PresenceStatusData, type Guild, Routes } from 'discord.js'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -18,7 +17,6 @@ import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearc
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
 import { WORKTREE_PREFIX } from '../commands/merge-worktree.js'
 import type { ThreadStartMarker } from '../system-message.js'
-import { buildOpencodeEventLogLine } from '../session-handler/opencode-session-event-log.js'
 import { createDiscordRest } from '../discord-urls.js'
 import { archiveThread, uploadFilesToDiscord, stripMentions } from '../discord-utils.js'
 import { setDataDir, setProjectsDir, getDataDir, getProjectsDir } from '../config.js'
@@ -38,7 +36,6 @@ import {
   resolveDiscordUserOption,
   sendDiscordMessageWithOptionalAttachment,
 } from '../cli-runner.js'
-import { resolveUploadToDiscordSessionId } from '../bash-tool-schema-plugin.js'
 
 const cliLogger = createLogger(LogPrefix.CLI)
 const cli = goke()
@@ -51,9 +48,7 @@ cli
   .option('-s, --session <sessionId>', 'OpenCode session ID')
   .action(async (files: string[], options: { session?: string }) => {
     try {
-      const sessionId = resolveUploadToDiscordSessionId({
-        flagSessionId: options.session,
-      })
+      const sessionId = options.session
 
       if (!sessionId) {
         cliLogger.error('Session ID is required. Use --session <sessionId>')

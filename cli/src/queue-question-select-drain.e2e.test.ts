@@ -95,7 +95,7 @@ describe('queue drain after question select answer', () => {
       })
       const pending = await waitForPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 8_000,
+        timeoutMs: 4_000,
       })
       const questionMessage = questionMessages.find((message) => {
         return message.content.includes('How to proceed?')
@@ -121,7 +121,8 @@ describe('queue drain after question select answer', () => {
         discord: ctx.discord,
         threadId: thread.id,
         text: `» **question-select-tester:** ${firstQueuedPrompt}`,
-        timeout: 8_000,
+        timeout: 4_000,
+        clamp: false,
       })
 
       const { id: secondQueueInteractionId } = await th.user(TEST_USER_ID)
@@ -154,22 +155,25 @@ describe('queue drain after question select answer', () => {
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
+        timeout: 4_000,
         afterMessageIncludes: `» **question-select-tester:** ${firstQueuedPrompt}`,
         afterAuthorId: ctx.discord.botUserId,
+        clamp: false,
       })
       await waitForBotMessageContaining({
         discord: ctx.discord,
         threadId: thread.id,
         text: `» **question-select-tester:** ${secondQueuedPrompt}`,
-        timeout: 8_000,
+        timeout: 4_000,
+        clamp: false,
       })
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 8_000,
+        timeout: 4_000,
         afterMessageIncludes: `» **question-select-tester:** ${secondQueuedPrompt}`,
         afterAuthorId: ctx.discord.botUserId,
+        clamp: false,
       })
 
       const timeline = await th.text({ showInteractions: true })
@@ -188,10 +192,11 @@ describe('queue drain after question select answer', () => {
         -# Queued message (position 1)
         [user selects dropdown: 0]
         » **question-select-tester:** Alpha
-        > question-drain-first
+        > tool done
+        question-drain-first
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **question-select-tester:** Reply with exactly: post-question-second
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(timeline).toContain('How to proceed?')

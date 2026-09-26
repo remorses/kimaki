@@ -13,7 +13,11 @@ import {
 import { store, type DeterministicTranscriptionConfig } from './store.js'
 import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
-import type { Message, Part } from '@opencode-ai/sdk/v2'
+import {
+  sessionMessagesToGeneric,
+  type DiscordSessionPart,
+  type GenericSessionMessage,
+} from './message-formatting.js'
 
 const TEXT_CHANNEL_ID = '200000000000001007'
 
@@ -23,7 +27,7 @@ function setDeterministicTranscription(config: DeterministicTranscriptionConfig 
   })
 }
 
-type SessionMessage = { info: Message; parts: Part[] }
+type SessionMessage = GenericSessionMessage
 
 function getOpencodeClientForTest(projectDirectory: string) {
   const client = getOpencodeClient(projectDirectory)
@@ -33,7 +37,7 @@ function getOpencodeClientForTest(projectDirectory: string) {
   return client
 }
 
-function getTextFromParts(parts: Part[]): string[] {
+function getTextFromParts(parts: DiscordSessionPart[]): string[] {
   return parts.flatMap((part) => {
     if (part.type === 'text') {
       return [part.text]
@@ -99,11 +103,11 @@ async function waitForSessionMessages({
   const client = getOpencodeClientForTest(projectDirectory)
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
-    const response = await client.session.messages({
+    const response = await client.message.list({
       sessionID: sessionId,
-      directory: projectDirectory,
+      order: 'asc',
     })
-    const messages = response.data ?? []
+    const messages = sessionMessagesToGeneric(response.data)
     if (predicate(messages)) {
       return messages
     }
@@ -112,11 +116,10 @@ async function waitForSessionMessages({
     })
   }
 
-  const finalResponse = await client.session.messages({
+  const finalResponse = await client.message.list({
     sessionID: sessionId,
-    directory: projectDirectory,
   })
-  return finalResponse.data ?? []
+  return sessionMessagesToGeneric(finalResponse.data)
 }
 
 describe('queue advanced: question tool answer', () => {

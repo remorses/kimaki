@@ -2,24 +2,14 @@
 
 import { describe, expect, test } from 'vitest'
 import {
-  getIgnoredNoticeTextParts,
+  externalOpencodeSyncInternals,
   getRenderableUserTextParts,
   isExternalSyncRootSession,
-  isInternalOpenCodeUserMessage,
   isLatestUserTurnFromDiscord,
-  shouldSkipExternalAssistantMessage,
   type SessionMessageLike,
 } from './external-opencode-sync.js'
 
-function textMessage({
-  text,
-  ignored,
-  synthetic,
-}: {
-  text: string
-  ignored?: boolean
-  synthetic?: boolean
-}): SessionMessageLike {
+function textMessage(text: string): SessionMessageLike {
   return {
     info: { role: 'user' },
     parts: [
@@ -29,8 +19,6 @@ function textMessage({
         messageID: 'message-1',
         type: 'text',
         text,
-        ignored,
-        synthetic,
       },
     ],
   }
@@ -48,201 +36,62 @@ describe('external OpenCode user-message filtering', () => {
   })
 
   test('keeps normal external user text renderable', () => {
-    const message = textMessage({ text: 'Run the tests' })
+    const message = textMessage('Run the tests')
 
     expect(getRenderableUserTextParts({ message })).toEqual([
       { id: 'part-1', text: 'Run the tests' },
     ])
   })
 
-  test('skips ignored plugin notices from user mirroring', () => {
-    const message = textMessage({
-      text: 'Subrouter: xai/grok-4.6 was rate limited.',
-      ignored: true,
-    })
+  test('extracts native v2 user text without Discord context XML', () => {
+    const message = textMessage(
+      'What failed?\n<discord-user name="Tommy" thread-id="thread-1" />',
+    )
 
-    expect(getRenderableUserTextParts({ message })).toEqual([])
-  })
-
-  test('collects ignored plugin notices as bot text', () => {
-    const message = textMessage({
-      text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-      ignored: true,
-    })
-
-    expect(getIgnoredNoticeTextParts({ message })).toEqual([
-      {
-        id: 'part-1',
-        text: 'Subrouter: Using openai/gpt-5.6-sol because xai/grok-4.6 is rate limited.',
-      },
+    expect(getRenderableUserTextParts({ message })).toEqual([
+      { id: 'part-1', text: 'What failed?' },
     ])
+    expect(isLatestUserTurnFromDiscord({ messages: [message] })).toBe(true)
   })
 
-  test('does not collect synthetic or normal user text as ignored notices', () => {
-    expect(getIgnoredNoticeTextParts({
-      message: textMessage({ text: 'Run the tests' }),
-    })).toEqual([])
-    expect(getIgnoredNoticeTextParts({
-      message: textMessage({
-        text: '<discord-user name="Tommy" />',
-        synthetic: true,
+  test('finds the latest Discord turn when v2 returns newest messages first', () => {
+    const oldDiscordMessage: SessionMessageLike = {
+      info: { role: 'user', time: { created: 10 } },
+      parts: [
+        {
+          id: 'discord-origin',
+          sessionID: 'session-1',
+          messageID: 'message-1',
+          type: 'text',
+          text: 'old Discord turn\n<discord-user name="Tommy" />',
+        },
+      ],
+    }
+    const latestExternalMessage: SessionMessageLike = {
+      ...textMessage('latest external turn'),
+      info: { role: 'user', time: { created: 20 } },
+    }
+
+    expect(
+      isLatestUserTurnFromDiscord({
+        messages: [latestExternalMessage, oldDiscordMessage],
       }),
-    })).toEqual([])
+    ).toBe(false)
   })
+})
 
-  test('skips synthetic context parts', () => {
-    const message = textMessage({
-      text: '<discord-user name="Tommy" />',
-      synthetic: true,
-    })
-
-    expect(getRenderableUserTextParts({ message })).toEqual([])
-  })
-
-  test('does not treat an ignored notice as an external takeover', () => {
-    const discordMessage: SessionMessageLike = {
-      info: { role: 'user' },
-      parts: [
-        {
-          id: 'part-2',
-          sessionID: 'session-1',
-          messageID: 'message-2',
-          type: 'text',
-          text: '<discord-user name="Tommy" />',
-          synthetic: true,
-        },
-        {
-          id: 'part-3',
-          sessionID: 'session-1',
-          messageID: 'message-2',
-          type: 'text',
-          text: 'What failed?',
-        },
-      ],
-    }
-    const notice = textMessage({
-      text: 'Subrouter: xai/grok-4.6 was rate limited.',
-      ignored: true,
-    })
+describe('external OpenCode session cutoff', () => {
+  test('keeps only sessions updated after the directory sync start', () => {
+    const sessions = [
+      { id: 'recent', title: 'Recent', time: { created: 100, updated: 301 } },
+      { id: 'old', title: 'Old', time: { created: 100, updated: 299 } },
+      { id: 'boundary', title: 'Boundary', time: { created: 100, updated: 300 } },
+    ]
 
     expect(
-      isLatestUserTurnFromDiscord({ messages: [discordMessage, notice] }),
-    ).toBe(true)
-  })
-
-  test('skips compaction user messages when deciding Discord ownership', () => {
-    const discordMessage: SessionMessageLike = {
-      info: { role: 'user' },
-      parts: [
-        {
-          id: 'part-2',
-          sessionID: 'session-1',
-          messageID: 'message-2',
-          type: 'text',
-          text: '<discord-user name="Tommy" />',
-          synthetic: true,
-        },
-        {
-          id: 'part-3',
-          sessionID: 'session-1',
-          messageID: 'message-2',
-          type: 'text',
-          text: 'Fix the tabs',
-        },
-      ],
-    }
-    const compactionUser: SessionMessageLike = {
-      info: { role: 'user' },
-      parts: [
-        {
-          id: 'part-4',
-          sessionID: 'session-1',
-          messageID: 'message-4',
-          type: 'compaction',
-          auto: true,
-        },
-      ],
-    }
-
-    expect(isInternalOpenCodeUserMessage({ message: compactionUser })).toBe(true)
-    expect(
-      isLatestUserTurnFromDiscord({ messages: [discordMessage, compactionUser] }),
-    ).toBe(true)
-  })
-
-  test('skips compaction continue users when deciding Discord ownership', () => {
-    const discordMessage: SessionMessageLike = {
-      info: { role: 'user' },
-      parts: [
-        {
-          id: 'part-2',
-          sessionID: 'session-1',
-          messageID: 'message-2',
-          type: 'text',
-          text: '<discord-user name="Tommy" />',
-          synthetic: true,
-        },
-        {
-          id: 'part-3',
-          sessionID: 'session-1',
-          messageID: 'message-2',
-          type: 'text',
-          text: 'Fix the tabs',
-        },
-      ],
-    }
-    const continueUser: SessionMessageLike = {
-      info: { role: 'user' },
-      parts: [
-        {
-          id: 'part-5',
-          sessionID: 'session-1',
-          messageID: 'message-5',
-          type: 'text',
-          text: 'Continue if you have next steps',
-          synthetic: true,
-          metadata: { compaction_continue: true },
-        },
-      ],
-    }
-
-    expect(isInternalOpenCodeUserMessage({ message: continueUser })).toBe(true)
-    expect(
-      isLatestUserTurnFromDiscord({ messages: [discordMessage, continueUser] }),
-    ).toBe(true)
-  })
-
-  test('skips compaction summary assistants from external mirroring', () => {
-    expect(shouldSkipExternalAssistantMessage({
-      message: {
-        info: { role: 'assistant', summary: true },
-        parts: [
-          {
-            id: 'part-6',
-            sessionID: 'session-1',
-            messageID: 'message-6',
-            type: 'text',
-            text: 'internal compaction summary must not reach Discord',
-          },
-        ],
-      },
-    })).toBe(true)
-  })
-
-  test('does not skip a user-facing assistant just because the agent is named compaction', () => {
-    expect(shouldSkipExternalAssistantMessage({
-      message: {
-        info: { role: 'assistant', agent: 'compaction' },
-        parts: [
-          {
-            id: 'part-7',
-            sessionID: 'session-1',
-            messageID: 'message-7',
-            type: 'text',
-            text: 'user-facing reply',
-          },
-        ],
-      },
-    })).toBe(false)
+      externalOpencodeSyncInternals
+        .selectSessionsForSync({ sessions, startMs: 300 })
+        .map((session) => session.id),
+    ).toEqual(['recent', 'boundary'])
   })
 })

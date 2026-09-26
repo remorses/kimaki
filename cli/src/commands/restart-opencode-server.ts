@@ -12,7 +12,6 @@ import {
   type ThreadChannel,
   type TextChannel,
 } from 'discord.js'
-import type { Command as OpencodeCommand } from '@opencode-ai/sdk/v2'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory, restartOpencodeServer } from '../opencode.js'
 import {
@@ -24,7 +23,7 @@ import {
   disposeRuntimesForDirectory,
   restorePersistedLocalQueues,
 } from '../session-handler/thread-session-runtime.js'
-import { registerCommands, type AgentInfo } from '../discord-command-registration.js'
+import { registerCommands, type AgentInfo, type OpencodeCommand } from '../discord-command-registration.js'
 
 const logger = createLogger(LogPrefix.OPENCODE)
 
@@ -138,16 +137,16 @@ export async function handleRestartOpencodeServerCommand({
       const getClient = opencodeResult
       const [cmds, ags] = await Promise.all([
         getClient()
-          .command.list({ directory: projectDirectory })
+          .command.list({ location: { directory: projectDirectory } })
           .then((r) => r.data || [])
-          .catch((e) => {
+          .catch((e: unknown) => {
             logger.warn('[RESTART] Failed to load user commands:', e instanceof Error ? e.stack : String(e))
             return [] as OpencodeCommand[]
           }),
         getClient()
-          .app.agents({ directory: projectDirectory })
+          .agent.list({ location: { directory: projectDirectory } })
           .then((r) => r.data || [])
-          .catch((e) => {
+          .catch((e: unknown) => {
             logger.warn('[RESTART] Failed to load agents:', e instanceof Error ? e.stack : String(e))
             return [] as AgentInfo[]
           }),

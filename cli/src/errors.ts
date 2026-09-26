@@ -24,12 +24,6 @@ export class ServerNotReadyError extends errore.createTaggedError({
     'OpenCode client for directory "$directory" is not available because the shared server is not ready',
 }) {}
 
-export class OpencodeIncompatibleVersionError extends errore.createTaggedError({
-  name: 'OpencodeIncompatibleVersionError',
-  message:
-    'Kimaki is not compatible with OpenCode version $version. Install an OpenCode 1.x release.',
-}) {}
-
 export class ApiKeyMissingError extends errore.createTaggedError({
   name: 'ApiKeyMissingError',
   message: '$service API key is required',
@@ -225,7 +219,6 @@ export type OpenCodeErrors =
   | DirectoryNotAccessibleError
   | ServerStartError
   | ServerNotReadyError
-  | OpencodeIncompatibleVersionError
 
 export type SessionErrors =
   | SessionNotFoundError

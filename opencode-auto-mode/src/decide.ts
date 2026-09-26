@@ -27,7 +27,7 @@ const WRITE_TOOLS = new Set(['edit', 'write', 'apply_patch'])
 
 export type ToolCall = {
   tool: string
-  args: Record<string, unknown>
+  args: object
   cwd: string
 }
 
@@ -35,10 +35,6 @@ export type Decision =
   | { kind: 'skip' }
   | { kind: 'deny'; reason: string }
   | { kind: 'classify' }
-
-function asString(value: unknown) {
-  return typeof value === 'string' ? value : undefined
-}
 
 function realpathOrResolve(filePath: string) {
   try {
@@ -74,7 +70,14 @@ export function decide(input: ToolCall): Decision {
   if (SKIP_TOOLS.has(input.tool)) return { kind: 'skip' }
 
   if (WRITE_TOOLS.has(input.tool)) {
-    const filePath = asString(input.args.filePath) ?? asString(input.args.path)
+    const filePathArgument = Reflect.get(input.args, 'filePath')
+    const pathArgument = Reflect.get(input.args, 'path')
+    const filePath =
+      typeof filePathArgument === 'string'
+        ? filePathArgument
+        : typeof pathArgument === 'string'
+          ? pathArgument
+          : undefined
     if (!filePath) return { kind: 'classify' }
     const denied = hardDenyWritePath(filePath, input.cwd)
     if (denied) return { kind: 'deny', reason: denied }
@@ -83,7 +86,8 @@ export function decide(input: ToolCall): Decision {
   }
 
   if (input.tool === 'bash' || input.tool === 'shell') {
-    const command = asString(input.args.command)
+    const commandArgument = Reflect.get(input.args, 'command')
+    const command = typeof commandArgument === 'string' ? commandArgument : undefined
     if (!command) return { kind: 'deny', reason: 'Missing bash command' }
     const analysis = analyzeBash(command)
     if (analysis.errors.length > 0) {

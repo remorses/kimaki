@@ -7,9 +7,9 @@ import {
   type ThreadChannel,
 } from 'discord.js'
 import fs from 'node:fs'
+import path from 'node:path'
 import type { CommandContext, AutocompleteContext } from './types.js'
 import {
-  getChannelDirectory,
   setThreadSession,
   setPartMessagesBatch,
   getAllThreadSessionIds,
@@ -19,13 +19,37 @@ import {
   sendThreadMessage,
   sendSessionPartBatches,
   resolveProjectDirectoryFromAutocomplete,
+  resolveWorkingDirectory,
   NOTIFY_MESSAGE_FLAGS,
 } from '../discord-utils.js'
-import { collectSessionChunks, batchChunksForDiscord } from '../message-formatting.js'
+import { collectSessionChunks, batchChunksForDiscord, sessionMessagesToGeneric } from '../message-formatting.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import * as errore from 'errore'
 
 const logger = createLogger(LogPrefix.RESUME)
+
+export function isSessionInWorkingDirectory({
+  sessionDirectory,
+  workingDirectory,
+}: {
+  sessionDirectory: string
+  workingDirectory: string
+}) {
+  return path.resolve(sessionDirectory) === path.resolve(workingDirectory)
+}
+
+export function getSessionDirectoryMismatchReply({
+  sessionDirectory,
+  workingDirectory,
+}: {
+  sessionDirectory: string
+  workingDirectory: string
+}) {
+  if (isSessionInWorkingDirectory({ sessionDirectory, workingDirectory })) {
+    return undefined
+  }
+  return `This session belongs to a different project or worktree: \`${sessionDirectory}\`. Run \`/resume\` in the channel for that directory.`
+}
 
 export async function handleResumeCommand({
   command,
@@ -55,15 +79,14 @@ export async function handleResumeCommand({
     return
   }
 
-  const channelConfig = await getChannelDirectory(channel.id)
-  const projectDirectory = channelConfig?.directory
-
-  if (!projectDirectory) {
+  const resolved = await resolveWorkingDirectory({ channel })
+  if (!resolved) {
     await command.editReply(
       'This channel is not configured with a project directory',
     )
     return
   }
+  const { projectDirectory, workingDirectory } = resolved
 
   if (!fs.existsSync(projectDirectory)) {
     await command.editReply(`Directory does not exist: ${projectDirectory}`)
@@ -79,14 +102,23 @@ export async function handleResumeCommand({
 
     const sessionResponse = await getClient().session.get({
       sessionID: sessionId,
-    })
+    }).catch(() => null)
 
-    if (!sessionResponse.data) {
+    if (!sessionResponse) {
       await command.editReply('Session not found')
       return
     }
 
-    const sessionTitle = sessionResponse.data.title
+    const directoryMismatchReply = getSessionDirectoryMismatchReply({
+      sessionDirectory: sessionResponse.location.directory,
+      workingDirectory,
+    })
+    if (directoryMismatchReply) {
+      await command.editReply(directoryMismatchReply)
+      return
+    }
+
+    const sessionTitle = sessionResponse.title ?? 'Untitled'
 
     const thread = await channel.threads.create({
       name: `Resume: ${sessionTitle}`.slice(0, 100),
@@ -103,8 +135,9 @@ export async function handleResumeCommand({
 
     logger.log(`[RESUME] Created thread ${thread.id} for session ${sessionId}`)
 
-    const messagesResponse = await getClient().session.messages({
+    const messagesResponse = await getClient().message.list({
       sessionID: sessionId,
+      order: 'asc',
     })
 
     if (!messagesResponse.data) {
@@ -119,12 +152,12 @@ export async function handleResumeCommand({
 
     await sendThreadMessage(
       thread,
-      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.data.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
+      `**Resumed session:** ${sessionTitle}\n**Created:** ${new Date(sessionResponse.time.created).toLocaleString()}\n\n*Loading ${messages.length} messages...*`,
     )
 
     try {
       const { chunks, skippedCount } = collectSessionChunks({
-        messages,
+        messages: sessionMessagesToGeneric(messages),
         limit: 30,
       })
 
@@ -191,7 +224,9 @@ export async function handleResumeAutocomplete({
       return
     }
 
-    const sessionsResponse = await getClient().session.list()
+    const sessionsResponse = await getClient().session.list({
+      directory: projectDirectory,
+    })
     if (!sessionsResponse.data) {
       await interaction.respond([])
       return
@@ -202,7 +237,7 @@ export async function handleResumeAutocomplete({
     const sessions = sessionsResponse.data
       .filter((session) => !existingSessionIds.has(session.id))
       .filter((session) =>
-        session.title.toLowerCase().includes(focusedValue.toLowerCase()),
+        (session.title ?? '').toLowerCase().includes(focusedValue.toLowerCase()),
       )
       .slice(0, 25)
       .map((session) => {
@@ -210,7 +245,7 @@ export async function handleResumeAutocomplete({
         const suffix = ` (${dateStr})`
         const maxTitleLength = 100 - suffix.length
 
-        let title = session.title
+        let title = session.title ?? 'Untitled'
         if (title.length > maxTitleLength) {
           title = title.slice(0, Math.max(0, maxTitleLength - 1)) + '…'
         }

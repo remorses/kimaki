@@ -7,16 +7,12 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import {
   ensureKimakiCommandShim,
-  getIncompatibleOpencodeVersionError,
   getSpawnCommandAndArgs,
-  INCOMPATIBLE_OPENCODE_MAJOR_VERSION,
-  isIncompatibleOpencodeMajor,
   parseOpencodeVersion,
   sanitizeShimExecArgv,
   selectResolvedCommand,
   splitCommandLookupOutput,
 } from './opencode-command.js'
-import { OpencodeIncompatibleVersionError } from './errors.js'
 
 describe('parseOpencodeVersion', () => {
   test('extracts major.minor.patch from opencode --version output', () => {
@@ -47,28 +43,17 @@ describe('parseOpencodeVersion', () => {
   })
 })
 
-describe('isIncompatibleOpencodeMajor', () => {
-  test('rejects the incompatible major and allows every other major', () => {
-    expect(INCOMPATIBLE_OPENCODE_MAJOR_VERSION).toBe(2)
-    expect(isIncompatibleOpencodeMajor({ major: 2 })).toBe(true)
-    expect(isIncompatibleOpencodeMajor({ major: 1 })).toBe(false)
-    expect(isIncompatibleOpencodeMajor({ major: 0 })).toBe(false)
-    expect(isIncompatibleOpencodeMajor({ major: 3 })).toBe(false)
-  })
-})
+describe('getRequiredOpencodeVersionError', () => {
+  test('requires OpenCode major 2', async () => {
+    const { getRequiredOpencodeVersionError } = await import('./opencode.js')
 
-describe('getIncompatibleOpencodeVersionError', () => {
-  test('returns a tagged error for OpenCode 2.x', () => {
-    const error = getIncompatibleOpencodeVersionError('2.0.0')
-    expect(error).toBeInstanceOf(OpencodeIncompatibleVersionError)
-    expect(error?.message).toMatchInlineSnapshot(
-      `"Kimaki is not compatible with OpenCode version 2.0.0. Install an OpenCode 1.x release."`,
+    expect(getRequiredOpencodeVersionError('2.0.2')).toBeNull()
+    expect(getRequiredOpencodeVersionError('1.1.65')?.message).toMatchInlineSnapshot(
+      `"Kimaki requires OpenCode 2.x, but found version 1.1.65."`,
     )
-  })
-
-  test('allows 1.x and unparseable output', () => {
-    expect(getIncompatibleOpencodeVersionError('1.4.0')).toBeNull()
-    expect(getIncompatibleOpencodeVersionError('opencode')).toBeNull()
+    expect(getRequiredOpencodeVersionError('opencode')?.message).toMatchInlineSnapshot(
+      `"Kimaki requires OpenCode 2.x, but could not read the installed version."`,
+    )
   })
 })
 
@@ -78,10 +63,7 @@ describe('splitCommandLookupOutput', () => {
       splitCommandLookupOutput(
         'C:\\Program Files\\nodejs\\opencode\r\nC:\\Program Files\\nodejs\\opencode.cmd\r\n',
       ),
-    ).toEqual([
-      'C:\\Program Files\\nodejs\\opencode',
-      'C:\\Program Files\\nodejs\\opencode.cmd',
-    ])
+    ).toEqual(['C:\\Program Files\\nodejs\\opencode', 'C:\\Program Files\\nodejs\\opencode.cmd'])
   })
 })
 
@@ -89,7 +71,8 @@ describe('selectResolvedCommand', () => {
   test('prefers npm cmd shims on windows', () => {
     expect(
       selectResolvedCommand({
-        output: 'C:\\Program Files\\nodejs\\opencode\r\nC:\\Program Files\\nodejs\\opencode.cmd\r\n',
+        output:
+          'C:\\Program Files\\nodejs\\opencode\r\nC:\\Program Files\\nodejs\\opencode.cmd\r\n',
         isWindows: true,
       }),
     ).toBe('C:\\Program Files\\nodejs\\opencode.cmd')
@@ -114,25 +97,17 @@ describe('buildOpencodeServeArgs', () => {
       '4096',
       '--hostname',
       '127.0.0.1',
-      '--print-logs',
-      '--log-level',
-      'WARN',
     ])
   })
 
   test('passes --hostname when set', async () => {
     const { buildOpencodeServeArgs } = await import('./opencode.js')
-    expect(
-      buildOpencodeServeArgs({ port: 4096, hostname: '0.0.0.0' }),
-    ).toEqual([
+    expect(buildOpencodeServeArgs({ port: 4096, hostname: '0.0.0.0' })).toEqual([
       'serve',
       '--port',
       '4096',
       '--hostname',
       '0.0.0.0',
-      '--print-logs',
-      '--log-level',
-      'WARN',
     ])
   })
 })
@@ -152,9 +127,7 @@ describe('resolveSubrouterPluginSpec', () => {
     const require = createRequire(import.meta.url)
     const packageJsonPath = require.resolve('@subrouter/opencode/package.json')
     const version = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version
-    expect(resolveSubrouterPluginSpec({ isDev: false })).toBe(
-      `@subrouter/opencode@${version}`,
-    )
+    expect(resolveSubrouterPluginSpec({ isDev: false })).toBe(`@subrouter/opencode@${version}`)
   })
 
   test('loads workspace source directly in development', async () => {
@@ -165,23 +138,67 @@ describe('resolveSubrouterPluginSpec', () => {
   })
 })
 
+describe('native Subrouter provider', () => {
+  test('builds an enabled v2 provider with routed models', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'subrouter-provider-'))
+    const previous = process.env.SUBROUTER_HOME
+    process.env.SUBROUTER_HOME = home
+    try {
+      const { buildSubrouterProviderConfig } = await import('./opencode.js')
+      const providers = await buildSubrouterProviderConfig()
+      expect(providers.subrouter).toMatchObject({
+        name: 'subrouter.org',
+        package: expect.stringMatching(/^aisdk:file:.*\/subrouter\/opencode\/dist\/provider\.js$/),
+        models: {
+          default: {
+            capabilities: { tools: true, input: expect.any(Array) },
+          },
+        },
+      })
+    } finally {
+      if (previous === undefined) delete process.env.SUBROUTER_HOME
+      else process.env.SUBROUTER_HOME = previous
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('publicOpencodeBindRequiresPassword', () => {
   test('allows loopback without a password', async () => {
     const { publicOpencodeBindRequiresPassword } = await import('./opencode.js')
     expect(publicOpencodeBindRequiresPassword({ hostname: null })).toBe(false)
-    expect(publicOpencodeBindRequiresPassword({ hostname: '127.0.0.1' })).toBe(
-      false,
-    )
-    expect(publicOpencodeBindRequiresPassword({ hostname: 'localhost' })).toBe(
-      false,
-    )
+    expect(publicOpencodeBindRequiresPassword({ hostname: '127.0.0.1' })).toBe(false)
+    expect(publicOpencodeBindRequiresPassword({ hostname: 'localhost' })).toBe(false)
   })
 
   test('requires a password for 0.0.0.0', async () => {
     const { publicOpencodeBindRequiresPassword } = await import('./opencode.js')
-    expect(publicOpencodeBindRequiresPassword({ hostname: '0.0.0.0' })).toBe(
-      true,
-    )
+    expect(publicOpencodeBindRequiresPassword({ hostname: '0.0.0.0' })).toBe(true)
+  })
+})
+
+describe('OpenCode server readiness', () => {
+  test('accepts only a successful authenticated response', async () => {
+    const { isOpencodeServerReadyResponse } = await import('./opencode.js')
+    expect(isOpencodeServerReadyResponse({ status: 200 })).toBe(true)
+    expect(isOpencodeServerReadyResponse({ status: 204 })).toBe(false)
+    expect(isOpencodeServerReadyResponse({ status: 401 })).toBe(false)
+    expect(isOpencodeServerReadyResponse({ status: 403 })).toBe(false)
+    expect(isOpencodeServerReadyResponse({ status: 404 })).toBe(false)
+  })
+})
+
+describe('OpenCode server discovery', () => {
+  test('requires both a valid port and password', async () => {
+    const { parseOpencodeServerDiscovery } = await import('./opencode.js')
+    expect(
+      parseOpencodeServerDiscovery(JSON.stringify({ port: 4096, password: 'server-secret' })),
+    ).toEqual({ port: 4096, password: 'server-secret' })
+    expect(parseOpencodeServerDiscovery(JSON.stringify({ port: 4096 }))).toBeNull()
+    expect(
+      parseOpencodeServerDiscovery(JSON.stringify({ port: 70_000, password: 'server-secret' })),
+    ).toBeNull()
+    expect(parseOpencodeServerDiscovery('not json')).toBeNull()
   })
 })
 
@@ -195,7 +212,15 @@ describe('getSpawnCommandAndArgs', () => {
       }),
     ).toEqual({
       command: 'cmd.exe',
-      args: ['/d', '/s', '/c', '"C:\\Program Files\\nodejs\\opencode.cmd"', 'serve', '--port', '4096'],
+      args: [
+        '/d',
+        '/s',
+        '/c',
+        '"C:\\Program Files\\nodejs\\opencode.cmd"',
+        'serve',
+        '--port',
+        '4096',
+      ],
       windowsVerbatimArguments: true,
     })
   })
@@ -224,18 +249,13 @@ describe('sanitizeShimExecArgv', () => {
         '--import',
         'file:///abs/tsx/loader.mjs',
       ]),
-    ).toEqual([
-      '--require',
-      '/abs/tsx/preflight.cjs',
-      '--import',
-      'file:///abs/tsx/loader.mjs',
-    ])
+    ).toEqual(['--require', '/abs/tsx/preflight.cjs', '--import', 'file:///abs/tsx/loader.mjs'])
   })
 
   test('strips --env-file value two-arg form and its value', () => {
-    expect(
-      sanitizeShimExecArgv(['--env-file', '.env', '--require', '/abs/preflight.cjs']),
-    ).toEqual(['--require', '/abs/preflight.cjs'])
+    expect(sanitizeShimExecArgv(['--env-file', '.env', '--require', '/abs/preflight.cjs'])).toEqual(
+      ['--require', '/abs/preflight.cjs'],
+    )
   })
 
   test('strips --env-file-if-exists in both forms', () => {
@@ -250,9 +270,10 @@ describe('sanitizeShimExecArgv', () => {
   })
 
   test('leaves unrelated flags untouched', () => {
-    expect(
-      sanitizeShimExecArgv(['--enable-source-maps', '--max-old-space-size=4096']),
-    ).toEqual(['--enable-source-maps', '--max-old-space-size=4096'])
+    expect(sanitizeShimExecArgv(['--enable-source-maps', '--max-old-space-size=4096'])).toEqual([
+      '--enable-source-maps',
+      '--max-old-space-size=4096',
+    ])
   })
 })
 

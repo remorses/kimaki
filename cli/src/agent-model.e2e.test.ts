@@ -24,7 +24,7 @@ import {
 import { ChannelType, Client, GatewayIntentBits, Partials, REST, Routes } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
-  buildDeterministicOpencodeConfig,
+  buildDeterministicOpencode2Config,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 import { setDataDir } from './config.js'
@@ -50,7 +50,7 @@ import { getDb } from './db.js'
 import * as orm from 'drizzle-orm'
 import * as schema from './schema.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import { getOpencodeClient, initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import {
   chooseLockPort,
   cleanupTestSessions,
@@ -104,9 +104,11 @@ function createDiscordJsClient({ restUrl }: { restUrl: string }) {
   })
 }
 
-const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
+  const COMMAND_SYSTEM_CHECK_NAME = 'sys-cmd-check'
 const COMMAND_SYSTEM_CHECK_TEMPLATE =
   'Reply with exactly: command-system-check'
+const CHAT_SYSTEM_CHECK_TEMPLATE =
+  'Reply with exactly: chat-system-check'
 
 function createDeterministicMatchers(): DeterministicMatcher[] {
   const systemContextMatcher: DeterministicMatcher = {
@@ -141,6 +143,34 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   // instruction (upload helper) so we know the real session system prompt was
   // injected — not just any string that happens to mention kimaki.dev.
   // Without the fix this never fires and the bot replies "ok" from the fallback.
+  const chatSystemMatcher: DeterministicMatcher = {
+    id: 'chat-system-check',
+    priority: 26,
+    when: {
+      lastMessageRole: 'user',
+      latestUserTextIncludes: CHAT_SYSTEM_CHECK_TEMPLATE,
+      promptTextIncludes: 'kimaki upload-to-discord --session',
+    },
+    then: {
+      parts: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: 'chat-system-reply' },
+        {
+          type: 'text-delta',
+          id: 'chat-system-reply',
+          delta: 'chat-system-ok',
+        },
+        { type: 'text-end', id: 'chat-system-reply' },
+        {
+          type: 'finish',
+          finishReason: 'stop',
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        },
+      ],
+      partDelaysMs: [0, 100, 0, 0, 0],
+    },
+  }
+
   const commandSystemMatcher: DeterministicMatcher = {
     id: 'command-system-check',
     priority: 25,
@@ -222,6 +252,7 @@ function createDeterministicMatchers(): DeterministicMatcher[] {
   }
 
   return [
+    chatSystemMatcher,
     commandSystemMatcher,
     systemContextMatcher,
     replyContextMatcher,
@@ -314,38 +345,52 @@ describe('agent model resolution', () => {
       )
       .toString()
 
-    // Build base config with default model
     const opencodeConfig = {
-      ...buildDeterministicOpencodeConfig({
+      ...buildDeterministicOpencode2Config({
         providerName: PROVIDER_NAME,
-        providerNpm,
+        providerPackage: `aisdk:${providerNpm}`,
         model: DEFAULT_MODEL,
-        smallModel: DEFAULT_MODEL,
+        extraModels: [AGENT_MODEL, PLAN_AGENT_MODEL, CHANNEL_MODEL],
         settings: {
           strict: false,
           matchers: createDeterministicMatchers(),
         },
       }),
-      // OpenCode command used to verify session.command still gets kimaki system
-      command: {
+      commands: {
         [COMMAND_SYSTEM_CHECK_NAME]: {
           description: 'Test command for kimaki system prompt injection',
           template: COMMAND_SYSTEM_CHECK_TEMPLATE,
         },
       },
+      agents: {
+        'test-agent': {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+          model: `${PROVIDER_NAME}/${AGENT_MODEL}`,
+        },
+        plan: {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+          model: `${PROVIDER_NAME}/${PLAN_AGENT_MODEL}`,
+        },
+        plain: {
+          mode: 'primary',
+          description: 'Test agent with custom model',
+        },
+      },
     }
 
-    // Add extra models to the provider so opencode accepts them
-    const providerConfig = opencodeConfig.provider[PROVIDER_NAME]
+    const providerConfig = opencodeConfig.providers[PROVIDER_NAME]
     if (!providerConfig) {
       throw new Error(`Missing deterministic provider config for ${PROVIDER_NAME}`)
     }
-    providerConfig.models[AGENT_MODEL] = { name: AGENT_MODEL }
-    providerConfig.models[PLAN_AGENT_MODEL] = { name: PLAN_AGENT_MODEL }
-    Object.assign(providerConfig.models[PLAN_AGENT_MODEL], {
-      variants: { high: {}, max: {} },
+    const planModel = providerConfig.models[PLAN_AGENT_MODEL]
+    if (!planModel) {
+      throw new Error(`Missing deterministic model ${PLAN_AGENT_MODEL}`)
+    }
+    Object.assign(planModel, {
+      variants: [{ id: 'high' }, { id: 'max' }],
     })
-    providerConfig.models[CHANNEL_MODEL] = { name: CHANNEL_MODEL }
 
     fs.writeFileSync(
       path.join(directories.projectDirectory, 'opencode.json'),
@@ -429,6 +474,38 @@ describe('agent model resolution', () => {
     if (warmup instanceof Error) {
       throw warmup
     }
+    const client = getOpencodeClient(directories.projectDirectory)
+    if (!client) {
+      throw new Error('OpenCode client missing after warmup')
+    }
+    const deadline = Date.now() + 5_000
+    let agents: Array<{ name: string; model?: { id?: string } }> = []
+    while (Date.now() < deadline) {
+      const agentsResponse = await client.agent.list({
+        location: { directory: directories.projectDirectory },
+      })
+      agents = agentsResponse.data ?? []
+      const testAgent = agents.find((agent) => agent.name.toLowerCase() === 'test-agent')
+      const planAgent = agents.find((agent) => agent.name.toLowerCase() === 'plan')
+      if (
+        testAgent?.model?.id === AGENT_MODEL
+        && planAgent?.model?.id === PLAN_AGENT_MODEL
+      ) {
+        break
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100)
+      })
+    }
+    const loaded = agents.map((agent) => {
+      return `${agent.name}:${agent.model?.id ?? 'none'}`
+    })
+    if (!loaded.some((entry) => entry.toLowerCase() === `test-agent:${AGENT_MODEL}`)) {
+      throw new Error(`test-agent model not loaded: ${loaded.join(', ')}`)
+    }
+    if (!loaded.some((entry) => entry.toLowerCase() === `plan:${PLAN_AGENT_MODEL}`)) {
+      throw new Error(`plan agent model not loaded: ${loaded.join(', ')}`)
+    }
   }, 20_000)
 
   afterAll(async () => {
@@ -506,7 +583,7 @@ describe('agent model resolution', () => {
         Reply with exactly: agent-model-check
         --- from: assistant (TestBot)
         -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
       expect(footerMessage).toBeDefined()
@@ -563,9 +640,36 @@ describe('agent model resolution', () => {
         Reply with exactly: system-context-check
         --- from: assistant (TestBot)
         -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
-        > system-context-ok
+        system-context-ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
+    },
+    15_000,
+  )
+
+  test(
+    'chat prompt path includes kimaki system prompt',
+    async () => {
+      await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: CHAT_SYSTEM_CHECK_TEMPLATE,
+      })
+
+      const thread = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => {
+          return t.name === CHAT_SYSTEM_CHECK_TEMPLATE
+        },
+      })
+
+      await waitForBotMessageContaining({
+        discord,
+        threadId: thread.id,
+        userId: TEST_USER_ID,
+        text: 'chat-system-ok',
+        timeout: 4_000,
+      })
+
+      expect(await discord.thread(thread.id).text()).toContain('chat-system-ok')
     },
     15_000,
   )
@@ -706,7 +810,7 @@ describe('agent model resolution', () => {
         Reply with exactly: channel-model-check
         --- from: assistant (TestBot)
         -# *using deterministic-provider/channel-model-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
       expect(footerMessage).toBeDefined()
@@ -760,7 +864,7 @@ describe('agent model resolution', () => {
         Reply with exactly: variant-check
         --- from: assistant (TestBot)
         -# *using deterministic-provider/channel-model-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*"
       `)
       expect(footer?.content).toContain(CHANNEL_MODEL)
@@ -846,7 +950,7 @@ describe('agent model resolution', () => {
         "--- from: assistant (TestBot)
         Reusing context from <#SOURCE_THREAD> to answer prompt...
         Reply with exactly: btw-model-check
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2*"
       `)
       expect(forkedSessionModel).toMatchInlineSnapshot(`
@@ -927,12 +1031,12 @@ describe('agent model resolution', () => {
         Reply with exactly: first-thread-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
         Reply with exactly: second-thread-msg
         --- from: assistant (TestBot)
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***"
       `)
 
@@ -995,7 +1099,7 @@ describe('agent model resolution', () => {
         "--- from: assistant (TestBot)
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-msg
         -# *using deterministic-provider/plan-model-v2 ⋅ plan*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
     },
@@ -1040,7 +1144,7 @@ describe('agent model resolution', () => {
         "--- from: assistant (TestBot)
         » **agent-model-tester** (plan): Reply with exactly: inline-plan-agent-variant-msg
         -# *using deterministic-provider/plan-model-v2 ⋅ plan*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
       expect(sessionId ? await getSessionModel(sessionId) : undefined).toMatchInlineSnapshot(`
@@ -1157,10 +1261,10 @@ describe('agent model resolution', () => {
         Reply with exactly: inline-existing-first-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         » **agent-model-tester** (plan): Reply with exactly: inline-existing-plan-msg
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
     },
@@ -1229,7 +1333,7 @@ describe('agent model resolution', () => {
         Reply with exactly: switch-in-thread-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
@@ -1237,7 +1341,7 @@ describe('agent model resolution', () => {
         --- from: user (agent-model-tester)
         Reply with exactly: after-switch-msg
         --- from: assistant (TestBot)
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
 
@@ -1303,7 +1407,7 @@ describe('agent model resolution', () => {
         Reply with exactly: race-switch-first-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         --- from: user (agent-model-tester)
         Reply with exactly: race-switch-follow-up
@@ -1311,7 +1415,7 @@ describe('agent model resolution', () => {
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
         The agent will change on the next message.
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
 
@@ -1366,7 +1470,7 @@ describe('agent model resolution', () => {
         Reply with exactly: race-channel-follow-up
         --- from: assistant (TestBot)
         -# *using deterministic-provider/plan-model-v2 ⋅ plan*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***"
       `)
 
@@ -1427,7 +1531,7 @@ describe('agent model resolution', () => {
         Reply with exactly: refresh-agent-model-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/plan-model-v2 ⋅ plan*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ plan-model-v2 ⋅ **plan***
         Using **plan** agent for this session
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
@@ -1480,7 +1584,7 @@ describe('agent model resolution', () => {
         Reply with exactly: channel-vs-agent-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/agent-model-v2 ⋅ test-agent*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ agent-model-v2 ⋅ **test-agent***
         Switched to **plan** agent for this session (was **test-agent**)
         Model: *deterministic-provider/plan-model-v2* (agent "plan")
@@ -1535,7 +1639,7 @@ describe('agent model resolution', () => {
         Reply with exactly: plain-agent-override-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/channel-model-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ channel-model-v2*
         Switched to **plain** agent for this session
         Model: *deterministic-provider/channel-model-v2* (channel override)

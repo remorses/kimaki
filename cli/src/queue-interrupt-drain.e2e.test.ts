@@ -108,10 +108,8 @@ e2eTest('queue + interrupt drain ordering', () => {
         client,
       })
 
-      const statusResponse = await client.session.status({
-        directory: ctx.directories.projectDirectory,
-      })
-      expect(statusResponse.data?.[sessionId]?.type).toBe('busy')
+      const statusResponse = await client.session.active()
+      expect(statusResponse[sessionId]?.type).toBe('running')
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: continue-after-archive',
@@ -137,7 +135,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: setup-archive-drain
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER archive queue drain
@@ -147,10 +145,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: user (interrupt-tester)
         Reply with exactly: continue-after-archive
         --- from: assistant (TestBot)
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: archived-queue-survives
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
     },
@@ -245,7 +243,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         Reply with exactly: setup-interrupt-drain
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (interrupt-tester)
         PLUGIN_TIMEOUT_SLEEP_MARKER
@@ -255,10 +253,10 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: user (interrupt-tester)
         Reply with exactly: interrupt-now
         --- from: assistant (TestBot)
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         » **interrupt-tester:** Reply with exactly: queued-behind-slow
-        > ok
+        ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
