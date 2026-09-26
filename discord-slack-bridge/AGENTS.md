@@ -203,3 +203,59 @@ Revalidation and revocation behavior:
 - This is intentional so revoking a client secret, banning a user, or removing
   team access in DB propagates after TTL without requiring explicit cache purge.
 - Do not increase TTLs aggressively; short TTL is part of the security model.
+
+## Reference implementation and Slack API docs
+
+Full bridge spec: `slop/discord-slack-bridge-spec.md`. Reference implementation:
+`opensrc/repos/github.com/vercel/chat/packages/adapter-slack/` (`opensrc vercel/chat`).
+It shows how to handle Slack events, post messages, manage threads, convert
+markdown, and handle Block Kit.
+
+**Core concepts:**
+- Slack API overview: https://api.slack.com/docs
+- Bot user tokens (xoxb): https://api.slack.com/authentication/token-types
+- Event subscriptions (webhook mode): https://api.slack.com/events
+- Block Kit overview: https://api.slack.com/block-kit
+- Block Kit reference (all block types): https://api.slack.com/reference/block-kit/blocks
+- Block Kit elements (buttons, selects, etc.): https://api.slack.com/reference/block-kit/block-elements
+- Block Kit composition objects (text, option, etc.): https://api.slack.com/reference/block-kit/composition-objects
+- Block Kit Builder (interactive playground): https://app.slack.com/block-kit-builder
+
+**Web API methods we use:**
+- chat.postMessage: https://api.slack.com/methods/chat.postMessage
+- chat.update: https://api.slack.com/methods/chat.update
+- chat.delete: https://api.slack.com/methods/chat.delete
+- conversations.history: https://api.slack.com/methods/conversations.history
+- conversations.replies: https://api.slack.com/methods/conversations.replies
+- conversations.info: https://api.slack.com/methods/conversations.info
+- conversations.list: https://api.slack.com/methods/conversations.list
+- conversations.create: https://api.slack.com/methods/conversations.create
+- reactions.add: https://api.slack.com/methods/reactions.add
+- reactions.remove: https://api.slack.com/methods/reactions.remove
+- users.info: https://api.slack.com/methods/users.info
+- users.list: https://api.slack.com/methods/users.list
+- auth.test: https://api.slack.com/methods/auth.test
+- views.open: https://api.slack.com/methods/views.open
+- views.update: https://api.slack.com/methods/views.update
+- files.getUploadURLExternal: https://api.slack.com/methods/files.getUploadURLExternal
+- files.completeUploadExternal: https://api.slack.com/methods/files.completeUploadExternal
+
+**Threading model:**
+- Slack threads use `thread_ts` (parent message timestamp), not separate IDs
+- Creating a thread = posting a reply with `thread_ts` set to parent `ts`
+- https://api.slack.com/messaging/managing#threading
+
+**Interactive components:**
+- Handling user interaction (block_actions, view_submission): https://api.slack.com/interactivity/handling
+- Slash commands: https://api.slack.com/interactivity/slash-commands
+- Modals (views): https://api.slack.com/surfaces/modals
+- Response URLs: https://api.slack.com/interactivity/handling#message_responses
+
+**npm packages:**
+- @slack/web-api: https://www.npmjs.com/package/@slack/web-api
+- types are in opensrc: `opensrc/repos/github.com/slackapi/node-slack-sdk/packages/web-api/src/types/`
+- do NOT use @slack/socket-mode or @slack/bolt; we use webhook mode only
+
+**Slack mrkdwn format:**
+- Slack uses `*bold*` (not `**bold**`), `~strike~` (not `~~strike~~`), `<url|text>` (not `[text](url)`)
+- Full reference: https://api.slack.com/reference/surfaces/formatting
