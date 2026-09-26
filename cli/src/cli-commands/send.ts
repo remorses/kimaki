@@ -63,7 +63,10 @@ cli
     '-d, --project <path>',
     'Project directory (alternative to --channel)',
   )
-  .option('-p, --prompt <prompt>', 'Message content')
+  .option(
+    '-p, --prompt <prompt>',
+    'Message content. With --thread/--session, end with ". queue" to wait for the current run instead of interrupting it, ". btw" to fork a side session now, or ". btw queue" to fork after the current run',
+  )
   .option(
     '-n, --name [name]',
     'Thread name (optional, defaults to prompt preview)',
@@ -120,7 +123,10 @@ cli
     '--allow-concurrency',
     'Allow concurrent sessions from the same scheduled task',
   )
-  .option('--thread <threadId>', 'Post prompt to an existing thread')
+  .option(
+    '--thread <threadId>',
+    'Post prompt to an existing thread. Interrupts a busy session unless the prompt ends with ". queue"',
+  )
   .option(
     '--session <sessionId>',
     'Post prompt to thread mapped to an existing session',

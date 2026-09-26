@@ -58,7 +58,7 @@ import {
   type ThreadStartMarker,
 } from './system-message.js'
 import YAML from 'yaml'
-import { resolveContentMentions } from './message-formatting.js'
+import { getFileAttachments, getTextAttachments, resolveContentMentions } from './message-formatting.js'
 import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
@@ -834,14 +834,23 @@ export async function startDiscordBot({
             worktreeInfo.workspace_directory
               ? worktreeInfo.workspace_directory
               : projectDirectory
+          // Long `kimaki send` prompts arrive as prompt.md, so the fork needs attachments too.
+          const [btwImages, btwTextAttachments] = await Promise.all([
+            getFileAttachments(message),
+            getTextAttachments(message),
+          ])
           const result = await forkSessionToBtwThread({
             sourceThread: thread,
             projectDirectory,
             sdkDirectory: btwSdkDir,
             prompt: suffix.prompt,
-            userId: message.author.id,
+            modelPrompt: [suffix.prompt, btwTextAttachments].filter(Boolean).join('\n\n'),
+            images: btwImages.length > 0 ? btwImages : undefined,
+            userId: cliInjectedUserId || message.author.id,
             username:
-              message.member?.displayName || message.author.displayName,
+              cliInjectedUsername ||
+              message.member?.displayName ||
+              message.author.displayName,
             appId: currentAppId,
           })
 

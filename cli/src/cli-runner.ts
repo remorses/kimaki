@@ -242,19 +242,18 @@ function wrapPromptAttachmentText(prompt: string): string {
 
 /**
  * Visible message content + prompt.md text for prompts over Discord's limit.
- * The bot reads the queue suffix only from message content, so the suffix
- * moves from the file to the visible message and the send still queues.
+ * The bot reads queue/btw suffixes only from message content, so the suffix
+ * moves from the file to the visible message and the send still queues or forks.
  */
 export function buildLongPromptMessage(prompt: string): {
   content: string
   fileText: string
 } {
-  const { prompt: stripped, forceQueue, forceBtw } = extractBtwQueueSuffix(prompt)
-  const fileText = forceBtw && !forceQueue ? prompt : stripped
+  const { prompt: fileText, forceQueue, forceBtw } = extractBtwQueueSuffix(prompt)
   const preview = fileText.slice(0, 100).replace(/\n/g, ' ')
   const summary = `Prompt attached as file (${fileText.length} chars)\n\n> ${preview}…`
-  const suffix = forceBtw ? 'btw queue' : 'queue'
-  return { content: forceQueue ? `${summary}\n\n${suffix}` : summary, fileText }
+  const suffix = [forceBtw && 'btw', forceQueue && 'queue'].filter(Boolean).join(' ')
+  return { content: suffix ? `${summary}\n\n${suffix}` : summary, fileText }
 }
 
 function promptAttachmentBlob(text: string) {

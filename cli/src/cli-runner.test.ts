@@ -1,10 +1,47 @@
 import { describe, expect, test } from 'vitest'
 import { REST } from 'discord.js'
 import {
+  buildLongPromptMessage,
   getOpenUrlCommand,
   isTransientNetworkError,
   resolveDiscordUserOption,
 } from './cli-runner.js'
+import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
+
+// Regression: a long `. btw` prompt lost its suffix and interrupted the source session.
+test('long prompts keep queue and btw suffixes in the visible message', () => {
+  const body = 'x'.repeat(2100)
+  expect(
+    ['queue', 'btw', 'btw queue', ''].map((suffix) => {
+      const { content, fileText } = buildLongPromptMessage(suffix ? `${body}. ${suffix}` : body)
+      const parsed = extractBtwQueueSuffix(content)
+      return { fileText: fileText === body, forceQueue: parsed.forceQueue, forceBtw: parsed.forceBtw }
+    }),
+  ).toMatchInlineSnapshot(`
+    [
+      {
+        "fileText": true,
+        "forceBtw": false,
+        "forceQueue": true,
+      },
+      {
+        "fileText": true,
+        "forceBtw": true,
+        "forceQueue": false,
+      },
+      {
+        "fileText": true,
+        "forceBtw": true,
+        "forceQueue": true,
+      },
+      {
+        "fileText": true,
+        "forceBtw": false,
+        "forceQueue": false,
+      },
+    ]
+  `)
+})
 
 test('raw Discord user ID does not invent a username', async () => {
   const user = await resolveDiscordUserOption({

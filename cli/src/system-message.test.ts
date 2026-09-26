@@ -559,6 +559,24 @@ describe('system-message', () => {
 
       Use this when you only have the OpenCode session ID and the session was created on this machine.
 
+      ### prompt suffixes: queue and btw
+
+      A plain message to a busy thread **interrupts** its current run. \`kimaki send\` has no queue flag. Instead, end the prompt with a suffix. Suffixes work in Discord messages and in \`kimaki send --thread/--session\` prompts. Put them after punctuation (\`.\`, \`!\`, \`?\`, \`,\`, \`;\`, \`:\`) or on their own last line. Case does not matter. Kimaki strips the suffix before sending the prompt.
+
+      - \`. queue\`: wait until the current run finishes, then send the prompt to the same session.
+      - \`. btw\`: fork the session now into a new \`btw:\` thread with this prompt. The source session keeps running.
+      - \`. btw queue\` (or \`. btw. queue\`): fork only after the current run finishes.
+
+      \`. btw\` needs an existing thread with a session. With \`kimaki send --channel\` it does not fork. The fork thread only shows in a user's sidebar if you pass \`--user\`.
+
+      \`\`\`bash
+      kimaki send --thread <thread_id> --prompt 'Run the tests after your current work. queue' --agent <current_agent>
+      kimaki send --thread <thread_id> --prompt 'What does this error mean? btw' --agent <current_agent>
+      kimaki send --thread <thread_id> --prompt 'Summarize what you changed. btw queue' --agent <current_agent>
+      \`\`\`
+
+      When sending a follow-up to a thread that may be busy, use \`. queue\` unless you mean to interrupt it.
+
       Use --notify-only to create a notification thread without starting an AI session:
 
       kimaki send --channel chan_123 --prompt 'User cancelled subscription' --notify-only --agent <current_agent> --user '<discord-user-id>'
