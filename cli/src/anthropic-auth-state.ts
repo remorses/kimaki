@@ -84,6 +84,19 @@ export function upsertAccount(store: AccountStore, auth: OAuthStored, now = Date
   return sharedUpsertAccount(store, { ...auth, ...identity }, now)
 }
 
+/** Replace rotated credentials for the matching account. Caller must hold withAuthStateLock. */
+export async function replaceAnthropicOAuth(previous: OAuthStored, refreshed: OAuthStored) {
+  const store = await loadAccountStore()
+  const index = store.accounts.findIndex(
+    (account) => account.refresh === previous.refresh || account.access === previous.access,
+  )
+  const account = store.accounts[index]
+  if (!account) return false
+  store.accounts[index] = { ...account, ...refreshed }
+  await saveAccountStore(store)
+  return true
+}
+
 // --- Remember new login ---
 
 export async function rememberAnthropicOAuth(
@@ -110,10 +123,7 @@ async function writeAnthropicAuthFile(auth: OAuthStored | undefined) {
   await writeJson(file, data)
 }
 
-export async function setAnthropicAuth(
-  auth: OAuthStored,
-  client: OpencodeClient,
-) {
+export async function setAnthropicAuth(auth: OAuthStored, client: OpencodeClient) {
   await writeAnthropicAuthFile(auth)
   await client.auth.set({ providerID: 'anthropic', auth })
 }
@@ -203,7 +213,11 @@ async function spliceAccountAndPromote({
     store.activeIndex = 0
     await saveAccountStore(store)
     await writeAnthropicAuthFile(undefined)
-    return { store, active: undefined as OAuthStored | undefined, activeLabel: undefined as string | undefined }
+    return {
+      store,
+      active: undefined as OAuthStored | undefined,
+      activeLabel: undefined as string | undefined,
+    }
   }
 
   if (store.activeIndex > index) {

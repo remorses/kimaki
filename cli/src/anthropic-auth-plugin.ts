@@ -33,19 +33,17 @@ import {
   loadAccountStore,
   rememberAnthropicOAuth,
   removeAccountByAuth,
+  replaceAnthropicOAuth,
   rotateAnthropicAccount,
-  saveAccountStore,
   setAnthropicAuth,
   isOAuthStored,
   shouldRotateAuth,
   type OAuthStored,
-  upsertAccount,
   withAuthStateLock,
 } from "./anthropic-auth-state.js";
 import {
   applyClaudeCodeRequestIdentity,
   extractAnthropicAccountIdentity,
-  type AnthropicAccountIdentity,
 } from "./anthropic-account-identity.js";
 // PKCE (Proof Key for Code Exchange) using Web Crypto API.
 // Reference: https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/utils/oauth/pkce.ts
@@ -953,25 +951,8 @@ async function getFreshOAuth(
 
           try {
             const refreshed = await refreshAnthropicToken(latest.refresh);
+            await replaceAnthropicOAuth(latest, refreshed);
             await setAnthropicAuth(refreshed, client);
-            const store = await loadAccountStore();
-            if (store.accounts.length > 0) {
-              const current = store.accounts.find(
-                (account) =>
-                  account.refresh === latest.refresh ||
-                  account.access === latest.access,
-              );
-              const identity: AnthropicAccountIdentity | undefined = current
-                ? {
-                    ...(current.email ? { email: current.email } : {}),
-                    ...(current.accountId
-                      ? { accountId: current.accountId }
-                      : {}),
-                  }
-                : undefined;
-              upsertAccount(store, { ...refreshed, ...identity });
-              await saveAccountStore(store);
-            }
             return refreshed;
           } catch (error) {
             if (!isPermanentOAuthRefreshFailure(error)) throw error;
@@ -1107,31 +1088,33 @@ const AnthropicAuthPlugin: Plugin = async ({ serverUrl, directory }) => {
             if (!freshAuth) return fetch(input, init);
 
             let response = await runRequest(freshAuth);
-            if (!response.ok) {
+            let currentAuth = freshAuth;
+            const attempted = new Set([freshAuth.refresh]);
+            const accountPoolSize = (await loadAccountStore()).accounts.length;
+            for (let attempt = 1; !response.ok && attempt < accountPoolSize; attempt += 1) {
               const bodyText = await response
                 .clone()
                 .text()
                 .catch(() => "");
-              if (shouldRotateAuth(response.status, bodyText)) {
-                const rotated = await rotateAnthropicAccount(freshAuth, client);
-                if (rotated) {
-                  // Show toast notification so Discord thread shows the rotation
-                  client.tui
-                    .showToast({
-                      message: appendToastSessionMarker({
-                        message: `Switching from account ${rotated.fromLabel} to account ${rotated.toLabel}`,
-                        sessionId,
-                      }),
-                      variant: "info",
-                    })
-                    .catch(() => {});
-                  const retryAuth = await getFreshOAuth(getAuth, client, {
+              if (!shouldRotateAuth(response.status, bodyText)) break;
+              const rotated = await rotateAnthropicAccount(currentAuth, client);
+              if (!rotated || attempted.has(rotated.auth.refresh)) break;
+              attempted.add(rotated.auth.refresh);
+              client.tui
+                .showToast({
+                  message: appendToastSessionMarker({
+                    message: `Switching from account ${rotated.fromLabel} to account ${rotated.toLabel}`,
                     sessionId,
-                  });
-                  if (retryAuth) {
-                    response = await runRequest(retryAuth);
-                  }
-                }
+                  }),
+                  variant: "info",
+                })
+                .catch(() => {});
+              const retryAuth = await getFreshOAuth(getAuth, client, {
+                sessionId,
+              });
+              if (retryAuth) {
+                currentAuth = retryAuth;
+                response = await runRequest(retryAuth);
               }
             }
 

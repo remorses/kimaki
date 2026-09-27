@@ -13,9 +13,11 @@ import {
   rememberAnthropicOAuth,
   removeAccount,
   removeAccountByAuth,
+  replaceAnthropicOAuth,
   rotateAnthropicAccount,
   saveAccountStore,
   shouldRotateAuth,
+  withAuthStateLock,
 } from './anthropic-auth-state.js'
 
 const firstAccount = {
@@ -84,6 +86,78 @@ describe('rememberAnthropicOAuth', () => {
       accountId: 'usr_123',
     })
     expect(accountLabel(store.accounts[0]!)).toBe('user@example.com')
+  })
+})
+
+describe('replaceAnthropicOAuth', () => {
+  test('replaces rotated tokens in place and preserves identity and active index', async () => {
+    await saveAccountStore({
+      version: 1,
+      activeIndex: 1,
+      accounts: [
+        { ...firstAccount, addedAt: 10, lastUsed: 11 },
+        {
+          ...secondAccount,
+          email: 'user@example.com',
+          accountId: 'usr_1',
+          addedAt: 20,
+          lastUsed: 21,
+        },
+      ],
+    })
+
+    expect(
+      await withAuthStateLock(() =>
+        replaceAnthropicOAuth(secondAccount, {
+          type: 'oauth',
+          refresh: 'refresh-rotated',
+          access: 'access-rotated',
+          expires: 30,
+        }),
+      ),
+    ).toBe(true)
+    const store = await loadAccountStore()
+    expect(store.activeIndex).toBe(1)
+    expect(store.accounts).toHaveLength(2)
+    expect(store.accounts[1]).toEqual({
+      type: 'oauth',
+      refresh: 'refresh-rotated',
+      access: 'access-rotated',
+      expires: 30,
+      email: 'user@example.com',
+      accountId: 'usr_1',
+      addedAt: 20,
+      lastUsed: 21,
+    })
+  })
+
+  test('returns false without adding an entry when prior credentials are missing', async () => {
+    await saveAccountStore({ version: 1, activeIndex: 0, accounts: [] })
+    expect(await withAuthStateLock(() => replaceAnthropicOAuth(firstAccount, secondAccount))).toBe(
+      false,
+    )
+    expect((await loadAccountStore()).accounts).toHaveLength(0)
+  })
+
+  test('replaces anonymous refresh credentials without changing pool length', async () => {
+    await saveAccountStore({
+      version: 1,
+      activeIndex: 0,
+      accounts: [{ ...firstAccount, addedAt: 1, lastUsed: 2 }],
+    })
+    await withAuthStateLock(() =>
+      replaceAnthropicOAuth(firstAccount, {
+        type: 'oauth',
+        refresh: 'refresh-new',
+        access: 'access-new',
+        expires: 3,
+      }),
+    )
+    const store = await loadAccountStore()
+    expect(store.accounts).toHaveLength(1)
+    expect(store.accounts[0]).toMatchObject({ refresh: 'refresh-new', access: 'access-new' })
+    expect(store.accounts[0]).not.toHaveProperty('email')
+    expect(store.accounts[0]).not.toHaveProperty('accountId')
   })
 })
 
