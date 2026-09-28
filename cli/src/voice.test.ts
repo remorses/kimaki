@@ -3,6 +3,7 @@
 
 import { describe, test, expect } from 'vitest'
 import fs from 'node:fs'
+import http from 'node:http'
 import path from 'node:path'
 import {
   transcribeAudio,
@@ -11,7 +12,6 @@ import {
   normalizeAudioMediaType,
   getOpenAIAudioConversionStrategy,
   buildTranscriptionTool,
-  createTranscriptionModel,
   parseOpenAIAudioChatResponse,
 } from './voice.js'
 import {
@@ -82,13 +82,6 @@ describe('openai audio chat response', () => {
         "transcription": "Fix the login bug",
       }
     `)
-  })
-})
-
-describe('transcription model selection', () => {
-  test('uses the current Gemini chat audio model', () => {
-    expect(createTranscriptionModel({ apiKey: 'test', provider: 'gemini' }).modelId)
-      .toMatchInlineSnapshot('"gemini-flash-latest"')
   })
 })
 
@@ -181,7 +174,6 @@ describe('extractTranscription', () => {
   test.each(['btw', 'new-session'])('extracts %s routing without queueing', (sessionAction) => {
     const result = extractTranscription([{
       type: 'tool-call',
-      toolCallId: 'routing',
       toolName: 'transcriptionResult',
       input: JSON.stringify({
         transcription: 'Explain the authentication flow',
@@ -201,7 +193,6 @@ describe('extractTranscription', () => {
   test('ignores unknown session routing', () => {
     const result = extractTranscription([{
       type: 'tool-call',
-      toolCallId: 'routing',
       toolName: 'transcriptionResult',
       input: JSON.stringify({ transcription: 'Keep working', sessionAction: 'invalid' }),
     }])
@@ -212,7 +203,6 @@ describe('extractTranscription', () => {
     const result = extractTranscription([
       {
         type: 'tool-call',
-        toolCallId: 'call_1',
         toolName: 'transcriptionResult',
         input: JSON.stringify({ transcription: 'hello world' }),
       },
@@ -231,7 +221,6 @@ describe('extractTranscription', () => {
     const result = extractTranscription([
       {
         type: 'tool-call',
-        toolCallId: 'call_1',
         toolName: 'transcriptionResult',
         input: JSON.stringify({
           transcription: 'Fix the login bug in auth.ts',
@@ -253,7 +242,6 @@ describe('extractTranscription', () => {
     const result = extractTranscription([
       {
         type: 'tool-call',
-        toolCallId: 'call_1',
         toolName: 'transcriptionResult',
         input: JSON.stringify({ transcription: 'regular message' }),
       },
@@ -289,7 +277,6 @@ describe('extractTranscription', () => {
     const result = extractTranscription([
       {
         type: 'tool-call',
-        toolCallId: 'call_1',
         toolName: 'transcriptionResult',
         input: JSON.stringify({ transcription: '   ' }),
       },
@@ -311,6 +298,115 @@ describe('extractTranscription', () => {
     expect((result as Error).message).toMatchInlineSnapshot(
       `"Transcription failed: Model did not produce a transcription"`,
     )
+  })
+})
+
+describe('transcription retries', () => {
+  // Real Gemini request code against a local server that replays failure
+  // shapes. Regression: a 200 body without `candidates` failed the voice
+  // message with an opaque "Invalid JSON response" and no retry.
+  test('retries invalid Gemini bodies but not client errors', async () => {
+    const responses: Array<{ status: number; body: unknown }> = [
+      { status: 200, body: { promptFeedback: {} } },
+      {
+        status: 200,
+        body: {
+          candidates: [{
+            content: {
+              role: 'model',
+              parts: [{ functionCall: { name: 'transcriptionResult', args: { transcription: 'Fix the login bug' } } }],
+            },
+            finishReason: 'STOP',
+          }],
+        },
+      },
+      { status: 400, body: { error: { code: 400, message: 'API key not valid', status: 'INVALID_ARGUMENT' } } },
+      { status: 500, body: { error: { code: 500, message: 'should not be reached' } } },
+    ]
+    let requestCount = 0
+    let firstRequest: { url?: string; apiKey?: string; body: string } | undefined
+    const server = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        firstRequest ??= { url: req.url, apiKey: String(req.headers['x-goog-api-key']), body }
+        const next = responses[requestCount++]!
+        res.writeHead(next.status, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(next.body))
+      })
+    })
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('server did not bind')
+    const baseUrl = `http://127.0.0.1:${address.port}/v1beta`
+    const audio = Buffer.from('fake audio bytes')
+
+    try {
+      const recovered = await transcribeAudio({ audio, apiKey: 'test', baseUrl, provider: 'gemini', mediaType: 'audio/ogg' })
+      expect({ recovered, requestCount }).toMatchInlineSnapshot(`
+        {
+          "recovered": {
+            "agent": undefined,
+            "queueMessage": false,
+            "sessionAction": undefined,
+            "transcription": "Fix the login bug",
+          },
+          "requestCount": 2,
+        }
+      `)
+
+      const sent = JSON.parse(firstRequest!.body)
+      expect({
+        url: firstRequest!.url,
+        apiKey: firstRequest!.apiKey,
+        audioPart: sent.contents[0].parts[1],
+        functionNames: sent.tools[0].functionDeclarations.map((d: { name: string }) => d.name),
+        toolConfig: sent.toolConfig,
+        generationConfig: sent.generationConfig,
+      }).toMatchInlineSnapshot(`
+        {
+          "apiKey": "test",
+          "audioPart": {
+            "inlineData": {
+              "data": "ZmFrZSBhdWRpbyBieXRlcw==",
+              "mimeType": "audio/ogg",
+            },
+          },
+          "functionNames": [
+            "transcriptionResult",
+          ],
+          "generationConfig": {
+            "maxOutputTokens": 2048,
+            "temperature": 0.3,
+            "thinkingConfig": {
+              "thinkingBudget": 1024,
+            },
+          },
+          "toolConfig": {
+            "functionCallingConfig": {
+              "allowedFunctionNames": [
+                "transcriptionResult",
+              ],
+              "mode": "ANY",
+            },
+          },
+          "url": "/v1beta/models/gemini-flash-latest:generateContent",
+        }
+      `)
+
+      const clientError = await transcribeAudio({ audio, apiKey: 'test', baseUrl, provider: 'gemini', mediaType: 'audio/ogg' })
+      expect({
+        message: clientError instanceof Error ? clientError.message : clientError,
+        requestCount,
+      }).toMatchInlineSnapshot(`
+        {
+          "message": "Transcription API returned HTTP 400: {"error":{"code":400,"message":"API key not valid","status":"INVALID_ARGUMENT"}}",
+          "requestCount": 3,
+        }
+      `)
+    } finally {
+      server.close()
+    }
   })
 })
 

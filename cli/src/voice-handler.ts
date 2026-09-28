@@ -700,6 +700,7 @@ export async function processVoiceAttachment({
       ApiKeyMissingError: (e) => e.message,
       InvalidAudioFormatError: (e) => e.message,
       TranscriptionError: (e) => e.message,
+      TranscriptionApiError: (e) => e.message,
       NoResponseContentError: (e) => e.message,
       NoToolResponseError: (e) => e.message,
       Error: (e) => e.message,

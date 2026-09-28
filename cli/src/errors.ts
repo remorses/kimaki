@@ -70,6 +70,11 @@ export class TranscriptionError extends errore.createTaggedError({
   message: 'Transcription failed: $reason',
 }) {}
 
+export class TranscriptionApiError extends errore.createTaggedError({
+  name: 'TranscriptionApiError',
+  message: 'Transcription API returned HTTP $status: $body',
+}) {}
+
 export class SpeechGenerationError extends errore.createTaggedError({
   name: 'SpeechGenerationError',
   message: 'Speech generation failed: $reason',
@@ -217,6 +222,7 @@ export type TranscriptionErrors =
   | ApiKeyMissingError
   | InvalidAudioFormatError
   | TranscriptionError
+  | TranscriptionApiError
   | EmptyTranscriptionError
   | NoResponseContentError
   | NoToolResponseError

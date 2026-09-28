@@ -1,24 +1,17 @@
-// Audio transcription service using AI SDK providers.
-// Both providers use LanguageModelV3 (chat model) with audio file parts + tool calling,
-// so we can pass full context (file tree, session info) for better word recognition.
-//   - OpenAI: plain fetch to the Chat Completions API. The AI SDK chat schema
-//     rejects message.audio, so we parse transcript and tool_calls ourselves.
-//     https://github.com/vercel/ai/issues/21289
-//   - Gemini: gemini-flash-latest natively accepts audio file parts in chat.
-// Calls model.doGenerate() directly without the `ai` npm package.
+// Audio transcription and TTS with plain fetch calls to OpenAI and Gemini.
+// Transcription sends the audio plus a forced tool call, so we can pass full
+// context (file tree, session info) for better word recognition and read
+// routing hints (queue, new session, agent) as structured arguments.
+//   - OpenAI: Chat Completions with gpt-audio input_audio parts.
+//     https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
+//   - Gemini: models.generateContent with inlineData audio parts.
+//     https://ai.google.dev/api/generate-content
+// No AI SDK: its Gemini response schema turned transient bad bodies into an
+// opaque "Invalid JSON response". Parsing the body ourselves keeps the details.
 // Uses errore for type-safe error handling.
 
-import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3FunctionTool,
-  LanguageModelV3Content,
-  LanguageModelV3ToolCall,
-  SpeechModelV3,
-} from '@ai-sdk/provider'
-import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { createOpenAI } from '@ai-sdk/openai'
 import { Readable } from 'node:stream'
+import * as errore from 'errore'
 import prism from 'prism-media'
 
 import { createLogger, LogPrefix } from './logger.js'
@@ -26,6 +19,7 @@ import {
   ApiKeyMissingError,
   InvalidAudioFormatError,
   TranscriptionError,
+  TranscriptionApiError,
   EmptyTranscriptionError,
   NoResponseContentError,
   NoToolResponseError,
@@ -35,12 +29,51 @@ import {
 
 const voiceLogger = createLogger(LogPrefix.VOICE)
 
+const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 const OPENAI_AUDIO_CHAT_MODEL = 'gpt-audio-1.5'
-// https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
-const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions'
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
+export const GEMINI_TRANSCRIPTION_MODEL = 'gemini-flash-latest'
+const TRANSCRIPTION_TOOL_NAME = 'transcriptionResult'
+
+export type TranscriptionTool = {
+  name: string
+  description: string
+  /** JSON Schema object. Both OpenAI and Gemini `parameters` accept this subset. */
+  inputSchema: Record<string, unknown>
+}
+
+// POST JSON and return the raw body. Non-2xx becomes TranscriptionApiError
+// so the retry logic can decide by status.
+async function postJson({
+  url,
+  headers,
+  body,
+}: {
+  url: string
+  headers: Record<string, string>
+  body: unknown
+}): Promise<TranscriptionError | TranscriptionApiError | string> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  }).catch((cause) => {
+    return new TranscriptionError({ reason: `API call failed: ${String(cause)}`, cause })
+  })
+  if (response instanceof Error) return response
+  const raw = await response.text().catch((cause) => {
+    return new TranscriptionError({ reason: `Reading response failed: ${String(cause)}`, cause })
+  })
+  if (raw instanceof Error) return raw
+  if (!response.ok) {
+    return new TranscriptionApiError({ status: response.status, body: raw.slice(0, 500) })
+  }
+  return raw
+}
 
 export async function requestOpenAIAudioTranscription({
   apiKey,
+  baseUrl = OPENAI_BASE_URL,
   prompt,
   audioBase64,
   mediaType,
@@ -48,20 +81,18 @@ export async function requestOpenAIAudioTranscription({
   tool,
 }: {
   apiKey: string
+  baseUrl?: string
   prompt: string
   audioBase64: string
   mediaType: string
   temperature: number
-  tool: LanguageModelV3FunctionTool
+  tool: TranscriptionTool
 }): Promise<TranscriptionLoopError | TranscriptionResult> {
   const audioFormat = mediaType.includes('wav') ? 'wav' : 'mp3'
-  const response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  const raw = await postJson({
+    url: `${baseUrl}/chat/completions`,
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: {
       model: OPENAI_AUDIO_CHAT_MODEL,
       temperature,
       max_completion_tokens: 2048,
@@ -77,7 +108,7 @@ export async function requestOpenAIAudioTranscription({
           },
         },
       ],
-      tool_choice: { type: 'function', function: { name: 'transcriptionResult' } },
+      tool_choice: { type: 'function', function: { name: TRANSCRIPTION_TOOL_NAME } },
       messages: [
         {
           role: 'user',
@@ -90,20 +121,164 @@ export async function requestOpenAIAudioTranscription({
           ],
         },
       ],
-    }),
-  }).catch(
-    (cause) =>
-      new TranscriptionError({
-        reason: `API call failed: ${String(cause)}`,
-        cause,
-      }),
-  )
-  if (response instanceof Error) return response
-  const raw = await response.text()
-  if (!response.ok) {
-    return new TranscriptionError({ reason: `API call failed: ${response.status} ${raw.slice(0, 300)}` })
-  }
+    },
+  })
+  if (raw instanceof Error) return raw
   return parseOpenAIAudioChatResponse(raw)
+}
+
+// Request shape: https://ai.google.dev/api/generate-content#request-body
+// Forced tool call: https://ai.google.dev/api/caching#FunctionCallingConfig (mode ANY)
+// Thinking budget: https://ai.google.dev/gemini-api/docs/thinking
+export async function requestGeminiAudioTranscription({
+  apiKey,
+  baseUrl = GEMINI_BASE_URL,
+  prompt,
+  audioBase64,
+  mediaType,
+  temperature,
+  tool,
+}: {
+  apiKey: string
+  baseUrl?: string
+  prompt: string
+  audioBase64: string
+  mediaType: string
+  temperature: number
+  tool: TranscriptionTool
+}): Promise<TranscriptionLoopError | TranscriptionResult> {
+  const raw = await postJson({
+    url: `${baseUrl}/models/${GEMINI_TRANSCRIPTION_MODEL}:generateContent`,
+    headers: { 'x-goog-api-key': apiKey },
+    body: {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType: mediaType, data: audioBase64 } },
+          ],
+        },
+      ],
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.inputSchema,
+            },
+          ],
+        },
+      ],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: 'ANY',
+          allowedFunctionNames: [TRANSCRIPTION_TOOL_NAME],
+        },
+      },
+      generationConfig: {
+        temperature,
+        maxOutputTokens: 2048,
+        thinkingConfig: { thinkingBudget: 1024 },
+      },
+    },
+  })
+  if (raw instanceof Error) return raw
+  return parseGeminiTranscriptionResponse(raw)
+}
+
+type GeminiPart = {
+  text?: string
+  thought?: boolean
+  functionCall?: { name?: string; args?: Record<string, unknown> }
+  inlineData?: { mimeType?: string; data?: string }
+}
+
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: { parts?: GeminiPart[] }
+    finishReason?: string
+  }>
+  promptFeedback?: { blockReason?: string }
+}
+
+function parseGeminiResponse(body: string): TranscriptionError | GeminiResponse {
+  return errore.try(
+    () => JSON.parse(body) as GeminiResponse,
+    (cause) => new TranscriptionError({ reason: `Invalid JSON response: ${body.slice(0, 300)}`, cause }),
+  )
+}
+
+// Response shape: https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse
+// No candidates means the prompt was rejected (see promptFeedback). A candidate
+// with no parts usually has a finishReason like MALFORMED_FUNCTION_CALL.
+export function parseGeminiTranscriptionResponse(
+  body: string,
+): TranscriptionLoopError | TranscriptionResult {
+  const parsed = parseGeminiResponse(body)
+  if (parsed instanceof Error) return parsed
+  const candidate = parsed.candidates?.[0]
+  if (!candidate) {
+    const blockReason = parsed.promptFeedback?.blockReason
+    return new TranscriptionError({
+      reason: blockReason
+        ? `Gemini blocked the prompt: ${blockReason}`
+        : `Gemini returned no candidates: ${body.slice(0, 300)}`,
+    })
+  }
+  const parts = candidate.content?.parts ?? []
+  const content: TranscriptionContent[] = parts.flatMap((part): TranscriptionContent[] => {
+    if (part.functionCall?.name) {
+      return [{
+        type: 'tool-call',
+        toolName: part.functionCall.name,
+        input: JSON.stringify(part.functionCall.args ?? {}),
+      }]
+    }
+    if (typeof part.text === 'string') {
+      return [{ type: part.thought ? 'reasoning' : 'text', text: part.text }]
+    }
+    return []
+  })
+  if (content.length === 0 && candidate.finishReason && candidate.finishReason !== 'STOP') {
+    return new TranscriptionError({ reason: `Gemini finished with ${candidate.finishReason}` })
+  }
+  return extractTranscription(content)
+}
+
+const MAX_TRANSCRIPTION_ATTEMPTS = 3
+const TRANSCRIPTION_RETRY_BASE_DELAY_MS = 500
+
+// Providers sometimes return transient garbage: a body with no candidates, a
+// malformed function call, or no tool call at all. Retry those, plus network
+// errors and HTTP 408/409/429/5xx. Never retry other 4xx (bad key, bad
+// request) or a valid empty transcription.
+export function isRetryableTranscriptionError(error: TranscriptionLoopError): boolean {
+  if (error instanceof EmptyTranscriptionError) return false
+  if (error instanceof TranscriptionApiError) {
+    const status = Number(error.status)
+    return status === 408 || status === 409 || status === 429 || status >= 500
+  }
+  return true
+}
+
+async function withTranscriptionRetries(
+  attempt: () => Promise<TranscriptionLoopError | TranscriptionResult>,
+): Promise<TranscriptionLoopError | TranscriptionResult> {
+  for (let attemptNumber = 1; ; attemptNumber++) {
+    const result = await attempt()
+    if (!(result instanceof Error)) return result
+    const canRetry =
+      attemptNumber < MAX_TRANSCRIPTION_ATTEMPTS && isRetryableTranscriptionError(result)
+    voiceLogger.warn(
+      `Transcription attempt ${attemptNumber}/${MAX_TRANSCRIPTION_ATTEMPTS} failed${canRetry ? ', retrying' : ''}: ${result.message}`,
+    )
+    if (!canRetry) return result
+    await new Promise((resolve) => {
+      setTimeout(resolve, TRANSCRIPTION_RETRY_BASE_DELAY_MS * attemptNumber)
+    })
+  }
 }
 
 // OpenAI input_audio supports only wav and mp3. Other formats (OGG Opus, etc)
@@ -324,6 +499,7 @@ function createWavHeader({
 type TranscriptionLoopError =
   | NoResponseContentError
   | TranscriptionError
+  | TranscriptionApiError
   | EmptyTranscriptionError
   | NoToolResponseError
 
@@ -335,7 +511,7 @@ export function buildTranscriptionTool({
 }: {
   agentNames?: string[]
   canForkSession?: boolean
-}): LanguageModelV3FunctionTool {
+}): TranscriptionTool {
   const properties: Record<string, Record<string, unknown>> = {
     transcription: {
       type: 'string',
@@ -366,8 +542,7 @@ export function buildTranscriptionTool({
   }
 
   return {
-    type: 'function',
-    name: 'transcriptionResult',
+    name: TRANSCRIPTION_TOOL_NAME,
     description:
       'MANDATORY: You MUST call this tool to complete the task. This is the ONLY way to return results - text responses are ignored. Call this with your transcription, even if imperfect. An imperfect transcription is better than none.',
     inputSchema: {
@@ -386,27 +561,30 @@ export type TranscriptionResult = {
   agent?: string
 }
 
+/** Provider-neutral response parts, normalized from OpenAI and Gemini bodies. */
+export type TranscriptionContent =
+  | { type: 'tool-call'; toolName: string; /** JSON string */ input: string }
+  | { type: 'text'; text: string }
+  | { type: 'reasoning'; text: string }
+
 /**
- * Extract transcription result from doGenerate content array.
+ * Extract the transcription from normalized response parts.
  * Looks for a tool-call named 'transcriptionResult', falls back to text content.
  * Returns transcription text, queue/session routing, and optional agent selection.
  */
 export function extractTranscription(
-  content: Array<LanguageModelV3Content>,
+  content: TranscriptionContent[],
 ): TranscriptionLoopError | TranscriptionResult {
-  const toolCall = content.find(
-    (c): c is LanguageModelV3ToolCall =>
-      c.type === 'tool-call' && c.toolName === 'transcriptionResult',
-  )
+  const toolCall = content.find((c) => {
+    return c.type === 'tool-call' && c.toolName === TRANSCRIPTION_TOOL_NAME
+  })
 
-  if (toolCall) {
-    // toolCall.input is a JSON string in LanguageModelV3
-    const args: Record<string, unknown> = (() => {
-      if (typeof toolCall.input === 'string') {
-        return JSON.parse(toolCall.input) as Record<string, unknown>
-      }
-      return {}
-    })()
+  if (toolCall?.type === 'tool-call') {
+    const args = errore.try(
+      () => JSON.parse(toolCall.input) as Record<string, unknown>,
+      (cause) => new TranscriptionError({ reason: 'Invalid tool call arguments', cause }),
+    )
+    if (args instanceof Error) return args
     const transcription = (typeof args.transcription === 'string' ? args.transcription : '').trim()
     const sessionAction = args.sessionAction === 'btw' || args.sessionAction === 'new-session'
       ? args.sessionAction
@@ -440,75 +618,6 @@ export function extractTranscription(
   })
 }
 
-async function runTranscriptionOnce({
-  model,
-  prompt,
-  audioBase64,
-  mediaType,
-  temperature,
-  agentNames,
-  canForkSession,
-  provider,
-}: {
-  model: LanguageModelV3
-  prompt: string
-  audioBase64: string
-  mediaType: string
-  temperature: number
-  agentNames?: string[]
-  canForkSession?: boolean
-  provider?: TranscriptionProvider
-}): Promise<TranscriptionLoopError | TranscriptionResult> {
-  const tool = buildTranscriptionTool({ agentNames, canForkSession })
-  const options: LanguageModelV3CallOptions = {
-    prompt: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          {
-            type: 'file',
-            data: audioBase64,
-            mediaType,
-          },
-        ],
-      },
-    ],
-    temperature,
-    maxOutputTokens: 2048,
-    tools: [tool],
-    toolChoice: { type: 'tool', toolName: 'transcriptionResult' },
-    providerOptions: {
-      ...(provider === 'openai'
-        ? {
-            openai: {
-              safetyIdentifier: 'kimaki:voice-transcription',
-              user: 'kimaki:voice-transcription',
-            },
-          }
-        : {}),
-      google: {
-        thinkingConfig: { thinkingBudget: 1024 },
-      },
-    },
-  }
-
-  // doGenerate returns PromiseLike, wrap in Promise.resolve for .catch compatibility
-  const response = await Promise.resolve(model.doGenerate(options))
-    .catch((e) =>
-      new TranscriptionError({
-        reason: `API call failed: ${String(e)}`,
-        cause: e,
-      }),
-    )
-
-  if (response instanceof TranscriptionError) {
-    return response
-  }
-
-  return extractTranscription(response.content)
-}
-
 type OpenAIAudioChatMessage = {
   content?: string | null
   audio?: { transcript?: string | null } | null
@@ -522,23 +631,21 @@ type OpenAIAudioChatMessage = {
 export function parseOpenAIAudioChatResponse(
   body: string,
 ): TranscriptionLoopError | TranscriptionResult {
-  let parsed: { choices?: Array<{ message?: OpenAIAudioChatMessage }> }
-  try {
-    parsed = JSON.parse(body) as { choices?: Array<{ message?: OpenAIAudioChatMessage }> }
-  } catch (cause) {
-    return new TranscriptionError({ reason: 'Invalid JSON response', cause })
-  }
+  const parsed = errore.try(
+    () => JSON.parse(body) as { choices?: Array<{ message?: OpenAIAudioChatMessage }> },
+    (cause) => new TranscriptionError({ reason: `Invalid JSON response: ${body.slice(0, 300)}`, cause }),
+  )
+  if (parsed instanceof Error) return parsed
   const message = parsed.choices?.[0]?.message
   if (!message) return new NoResponseContentError()
   const toolCall = message.tool_calls?.find((call) => {
-    return call.function?.name === 'transcriptionResult'
+    return call.function?.name === TRANSCRIPTION_TOOL_NAME
   })
   if (toolCall?.function?.arguments) {
     return extractTranscription([
       {
         type: 'tool-call',
-        toolCallId: toolCall.id || 'transcriptionResult',
-        toolName: 'transcriptionResult',
+        toolName: TRANSCRIPTION_TOOL_NAME,
         input: toolCall.function.arguments,
       },
     ])
@@ -555,27 +662,13 @@ export type TranscribeAudioErrors =
 
 export type TranscriptionProvider = 'openai' | 'gemini'
 
-/**
- * Create the Gemini chat model for transcription.
- * OpenAI does not use this. Its chat schema rejects message.audio.
- */
-export function createTranscriptionModel({
-  apiKey,
-}: {
-  apiKey: string
-  provider?: TranscriptionProvider
-}): LanguageModelV3 {
-  const google = createGoogleGenerativeAI({ apiKey })
-  return google('gemini-flash-latest')
-}
-
 export async function transcribeAudio({
   audio,
   prompt,
   language,
   temperature,
   apiKey: apiKeyParam,
-  model,
+  baseUrl,
   provider,
   mediaType: mediaTypeParam,
   currentSessionContext,
@@ -588,7 +681,8 @@ export async function transcribeAudio({
   language?: string
   temperature?: number
   apiKey?: string
-  model?: LanguageModelV3
+  /** Override the provider API base URL, e.g. a proxy. Defaults to the official endpoint. */
+  baseUrl?: string
   provider?: TranscriptionProvider
   /** MIME type of the audio data (e.g. 'audio/ogg'). Defaults to 'audio/mpeg'. */
   mediaType?: string
@@ -601,22 +695,12 @@ export async function transcribeAudio({
   const apiKey =
     apiKeyParam || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
 
-  if (!model && !apiKey) {
-    return Promise.resolve(new ApiKeyMissingError({ service: 'OpenAI or Gemini' }))
+  if (!apiKey) {
+    return new ApiKeyMissingError({ service: 'OpenAI or Gemini' })
   }
 
-  const resolvedProvider: TranscriptionProvider = (() => {
-    if (provider) {
-      return provider
-    }
-    if (apiKey) {
-      return apiKey.startsWith('sk-') ? 'openai' : 'gemini'
-    }
-    return 'gemini'
-  })()
-
-  const languageModel =
-    model || createTranscriptionModel({ apiKey: apiKey!, provider: resolvedProvider })
+  const resolvedProvider: TranscriptionProvider =
+    provider || (apiKey.startsWith('sk-') ? 'openai' : 'gemini')
 
   // Convert audio to Buffer for potential format conversion
   const audioBuffer: Buffer = (() => {
@@ -750,29 +834,23 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
     .filter((name) => { return name.length > 0 })
   const resolvedAgentNames = agentNames && agentNames.length > 0 ? agentNames : undefined
 
-  if (resolvedProvider === 'openai') {
-    return requestOpenAIAudioTranscription({
-      apiKey: apiKey!,
+  const tool = buildTranscriptionTool({
+    agentNames: resolvedAgentNames,
+    canForkSession,
+  })
+  const request = resolvedProvider === 'openai'
+    ? requestOpenAIAudioTranscription
+    : requestGeminiAudioTranscription
+  return withTranscriptionRetries(() => {
+    return request({
+      apiKey,
+      baseUrl,
       prompt: transcriptionPrompt,
       audioBase64: finalAudioBase64,
       mediaType,
       temperature: temperature ?? 0.3,
-      tool: buildTranscriptionTool({
-        agentNames: resolvedAgentNames,
-        canForkSession,
-      }),
+      tool,
     })
-  }
-
-  return runTranscriptionOnce({
-    model: languageModel,
-    prompt: transcriptionPrompt,
-    audioBase64: finalAudioBase64,
-    mediaType,
-    temperature: temperature ?? 0.3,
-    agentNames: resolvedAgentNames,
-    canForkSession,
-    provider: resolvedProvider,
   })
 }
 
@@ -781,9 +859,11 @@ Note: "critique" is a CLI tool for showing diffs in the browser.`
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Two provider paths:
-//   - OpenAI: SpeechModelV3 via .speech('gpt-4o-mini-tts') — clean dedicated API
-//   - Google: LanguageModelV3 with TTS model ID + responseModalities: ['AUDIO'],
-//     audio returned as LanguageModelV3File parts in response content
+//   - OpenAI: POST /audio/speech, returns mp3 bytes.
+//     https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create
+//   - Gemini: generateContent with responseModalities ['AUDIO'], returns base64
+//     PCM (audio/L16, 24kHz mono) in an inlineData part.
+//     https://ai.google.dev/gemini-api/docs/speech-generation
 
 export type SpeechProvider = 'openai' | 'gemini'
 
@@ -793,9 +873,8 @@ const DEFAULT_VOICES: Record<SpeechProvider, string> = {
   gemini: 'Kore',
 }
 
-/** Available OpenAI TTS models. gpt-4o-mini-tts supports instructions for style control. */
+/** gpt-4o-mini-tts supports instructions for style control. */
 const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts'
-/** Gemini TTS model ID. Uses language model interface with AUDIO response modality. */
 const GEMINI_TTS_MODEL = 'gemini-2.5-flash-preview-tts'
 
 export type SpeechResult = {
@@ -805,19 +884,34 @@ export type SpeechResult = {
   mediaType: string
 }
 
-/**
- * Create an OpenAI SpeechModelV3 for TTS.
- * Uses gpt-4o-mini-tts which supports instructions for voice style control.
- */
-function createOpenAISpeechModel({ apiKey }: { apiKey: string }): SpeechModelV3 {
-  const openai = createOpenAI({ apiKey })
-  return openai.speech(OPENAI_TTS_MODEL)
+async function fetchSpeech({
+  url,
+  headers,
+  body,
+  provider,
+}: {
+  url: string
+  headers: Record<string, string>
+  body: unknown
+  provider: string
+}): Promise<SpeechGenerationError | Response> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  }).catch((cause) => {
+    return new SpeechGenerationError({ reason: `${provider} TTS API call failed: ${String(cause)}`, cause })
+  })
+  if (response instanceof Error) return response
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '')
+    return new SpeechGenerationError({
+      reason: `${provider} TTS API returned HTTP ${response.status}: ${errorBody.slice(0, 500)}`,
+    })
+  }
+  return response
 }
 
-/**
- * Generate speech via OpenAI SpeechModelV3.
- * Returns mp3 audio by default.
- */
 async function generateSpeechOpenAI({
   text,
   voice,
@@ -831,43 +925,33 @@ async function generateSpeechOpenAI({
   instructions?: string
   speed?: number
 }): Promise<SpeechGenerationErrors | SpeechResult> {
-  const model = createOpenAISpeechModel({ apiKey })
-
-  const response = await Promise.resolve(
-    model.doGenerate({
-      text,
+  const response = await fetchSpeech({
+    url: `${OPENAI_BASE_URL}/audio/speech`,
+    headers: { Authorization: `Bearer ${apiKey}` },
+    provider: 'OpenAI',
+    body: {
+      model: OPENAI_TTS_MODEL,
+      input: text,
       voice: voice || DEFAULT_VOICES.openai,
-      outputFormat: 'mp3',
-      instructions,
-      speed,
-      providerOptions: {
-        openai: {
-          ...(instructions ? { instructions } : {}),
-          ...(speed ? { speed } : {}),
-        },
-      },
-    }),
-  ).catch(
-    (e) => new SpeechGenerationError({ reason: `OpenAI TTS API call failed: ${String(e)}`, cause: e }),
-  )
+      response_format: 'mp3',
+      ...(instructions ? { instructions } : {}),
+      ...(speed ? { speed } : {}),
+    },
+  })
   if (response instanceof Error) return response
 
-  const audioData = typeof response.audio === 'string'
-    ? Buffer.from(response.audio, 'base64')
-    : Buffer.from(response.audio)
-
+  const audioData = await response.arrayBuffer().then(
+    (buffer) => Buffer.from(buffer),
+    (cause) => new SpeechGenerationError({ reason: `Reading OpenAI TTS audio failed: ${String(cause)}`, cause }),
+  )
+  if (audioData instanceof Error) return audioData
   if (audioData.length === 0) {
     return new SpeechGenerationError({ reason: 'OpenAI TTS returned empty audio' })
   }
-
   return { audio: audioData, mediaType: 'audio/mp3' }
 }
 
-/**
- * Generate speech via Google Gemini TTS model.
- * Uses the language model interface with responseModalities: ['AUDIO'].
- * Returns PCM WAV audio at 24kHz.
- */
+// Request fields: https://ai.google.dev/api/generate-content#SpeechConfig
 async function generateSpeechGemini({
   text,
   voice,
@@ -877,65 +961,55 @@ async function generateSpeechGemini({
   voice?: string
   apiKey: string
 }): Promise<SpeechGenerationErrors | SpeechResult> {
-  const google = createGoogleGenerativeAI({ apiKey })
-  const model = google(GEMINI_TTS_MODEL)
-
-  const resolvedVoice = voice || DEFAULT_VOICES.gemini
-
-  const options: LanguageModelV3CallOptions = {
-    prompt: [
-      {
-        role: 'user',
-        content: [{ type: 'text', text }],
-      },
-    ],
-    providerOptions: {
-      google: {
+  const response = await fetchSpeech({
+    url: `${GEMINI_BASE_URL}/models/${GEMINI_TTS_MODEL}:generateContent`,
+    headers: { 'x-goog-api-key': apiKey },
+    provider: 'Gemini',
+    body: {
+      contents: [{ role: 'user', parts: [{ text }] }],
+      generationConfig: {
         responseModalities: ['AUDIO'],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: resolvedVoice,
-            },
+            prebuiltVoiceConfig: { voiceName: voice || DEFAULT_VOICES.gemini },
           },
         },
       },
     },
-  }
-
-  const response = await Promise.resolve(model.doGenerate(options)).catch(
-    (e) => new SpeechGenerationError({ reason: `Gemini TTS API call failed: ${String(e)}`, cause: e }),
-  )
+  })
   if (response instanceof Error) return response
 
-  // Gemini returns audio as LanguageModelV3File parts with inlineData
-  const filePart = response.content.find(
-    (c): c is Extract<typeof c, { type: 'file' }> => c.type === 'file',
-  )
-
-  if (!filePart) {
-    return new SpeechGenerationError({ reason: 'Gemini TTS returned no audio content' })
+  const raw = await response.text().catch((cause) => {
+    return new SpeechGenerationError({ reason: `Reading Gemini TTS response failed: ${String(cause)}`, cause })
+  })
+  if (raw instanceof Error) return raw
+  const parsed = parseGeminiResponse(raw)
+  if (parsed instanceof Error) {
+    return new SpeechGenerationError({ reason: parsed.message, cause: parsed })
+  }
+  const inlineData = parsed.candidates?.[0]?.content?.parts?.find((part) => {
+    return part.inlineData?.data
+  })?.inlineData
+  if (!inlineData?.data) {
+    return new SpeechGenerationError({
+      reason: `Gemini TTS returned no audio content: ${raw.slice(0, 300)}`,
+    })
   }
 
-  const audioData = typeof filePart.data === 'string'
-    ? Buffer.from(filePart.data, 'base64')
-    : Buffer.from(filePart.data)
-
+  const audioData = Buffer.from(inlineData.data, 'base64')
   if (audioData.length === 0) {
     return new SpeechGenerationError({ reason: 'Gemini TTS returned empty audio' })
   }
 
-  // Gemini TTS returns raw PCM at 24kHz mono 16-bit LE; wrap it in a WAV header
-  // so Discord and other players can handle it directly.
-  const mediaType = filePart.mediaType || 'audio/wav'
-  const needsWavHeader = mediaType === 'audio/L16' ||
-    mediaType === 'audio/pcm' ||
-    mediaType.startsWith('audio/l16')
-
+  // Gemini TTS returns raw PCM (e.g. "audio/L16;codec=pcm;rate=24000"). Wrap it
+  // in a WAV header so Discord and other players can handle it directly.
+  const mediaType = (inlineData.mimeType || 'audio/wav').toLowerCase()
+  const needsWavHeader = mediaType.startsWith('audio/l16') || mediaType.startsWith('audio/pcm')
   if (needsWavHeader) {
+    const rate = Number(/rate=(\d+)/.exec(mediaType)?.[1] ?? 24000)
     const wavHeader = createWavHeader({
       dataLength: audioData.length,
-      sampleRate: 24000,
+      sampleRate: rate,
       numChannels: 1,
       bitsPerSample: 16,
     })
@@ -947,7 +1021,7 @@ async function generateSpeechGemini({
 
 /**
  * Generate speech audio from text using OpenAI or Google TTS.
- * Calls the provider's TTS API directly via AI SDK without the `ai` npm package.
+ * Calls the provider's TTS API directly with fetch.
  *
  * Provider auto-detection: sk-* prefix → OpenAI, otherwise → Gemini.
  * OpenAI returns mp3, Gemini returns WAV (24kHz mono).
