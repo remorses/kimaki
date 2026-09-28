@@ -139,6 +139,7 @@ import {
   ChannelType,
   Client,
   Events,
+  RESTEvents,
   GatewayIntentBits,
   Partials,
   ThreadAutoArchiveDuration,
@@ -458,6 +459,13 @@ export async function startDiscordBot({
 
   discordClient.on(Events.Error, (error) => {
     discordLogger.error('[GATEWAY] Client error:', formatErrorWithStack(error))
+  })
+
+  // discord.js silently waits out 429s, so log them to explain slow REST calls.
+  discordClient.rest.on(RESTEvents.RateLimited, (info) => {
+    discordLogger.warn(
+      `[REST] Rate limited ${info.method} ${info.route} retryAfter=${info.retryAfter}ms scope=${info.scope} global=${info.global} sublimitTimeout=${info.sublimitTimeout}ms`,
+    )
   })
 
   discordClient.on(Events.ShardError, (error, shardId) => {
@@ -834,6 +842,15 @@ export async function startDiscordBot({
             worktreeInfo.workspace_directory
               ? worktreeInfo.workspace_directory
               : projectDirectory
+          // Ack right away: fork + thread creation can take seconds. Runs in
+          // parallel with the fork and is edited with the result at the end.
+          const ackPromise = message.reply({
+            content: asSubtext('Forking session to answer this side question...'),
+            flags: SILENT_MESSAGE_FLAGS,
+          }).catch((error: unknown) => {
+            discordLogger.warn('Could not send btw ack:', error)
+            return undefined
+          })
           // Long `kimaki send` prompts arrive as prompt.md, so the fork needs attachments too.
           const [btwImages, btwTextAttachments] = await Promise.all([
             getFileAttachments(message),
@@ -854,18 +871,19 @@ export async function startDiscordBot({
             appId: currentAppId,
           })
 
-          if (result instanceof Error) {
-            await message.reply({
-              content: result.message,
-              flags: SILENT_MESSAGE_FLAGS,
+          const resultContent = result instanceof Error
+            ? result.message
+            : `Session forked! Continue in ${result.thread.toString()}`
+          const ack = await ackPromise
+          const edited = ack
+            ? await ack.edit({ content: resultContent }).catch((error: unknown) => {
+              discordLogger.warn('Could not edit btw ack:', error)
+              return undefined
             })
-            return
+            : undefined
+          if (!edited) {
+            await message.reply({ content: resultContent, flags: SILENT_MESSAGE_FLAGS })
           }
-
-          await message.reply({
-            content: `Session forked! Continue in ${result.thread.toString()}`,
-            flags: SILENT_MESSAGE_FLAGS,
-          })
           return
         }
 

@@ -33,6 +33,13 @@ import { extractQueueSuffix } from '../message-formatting.js'
 
 const logger = createLogger(LogPrefix.FORK)
 
+// Resolves to [value, elapsed ms] so each btw setup step can be logged.
+async function timed<T>(promise: Promise<T>): Promise<[T, number]> {
+  const start = Date.now()
+  const value = await promise
+  return [value, Date.now() - start]
+}
+
 export async function forkSessionToBtwThread({
   sourceThread,
   projectDirectory,
@@ -57,6 +64,7 @@ export async function forkSessionToBtwThread({
   agent?: string
   images?: DiscordFileAttachment[]
 }): Promise<{ thread: ThreadChannel; forkedSessionId: string } | Error> {
+  const startedAt = Date.now()
   // Parallelize: session lookup + opencode init + parent channel resolve are independent
   const [sessionId, getClientResult, textChannel] = await Promise.all([
     getThreadSession(sourceThread.id),
@@ -78,16 +86,17 @@ export async function forkSessionToBtwThread({
 
   // Fork and thread creation are independent round trips, so run them together.
   // If either side fails, remove whichever side succeeded.
+  const initMs = Date.now() - startedAt
   const [forkSettled, threadSettled] = await Promise.allSettled([
-    getClientResult().session.fork({ sessionID: sessionId, directory: sdkDirectory }),
-    textChannel.threads.create({
+    timed(getClientResult().session.fork({ sessionID: sessionId, directory: sdkDirectory })),
+    timed(textChannel.threads.create({
       name: `btw: ${prompt}`.slice(0, 100),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `btw fork from session ${sessionId}`,
-    }),
+    })),
   ])
-  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value.data : undefined
-  const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value : undefined
+  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value[0].data : undefined
+  const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value[0] : undefined
   const cleanup = async () => {
     await Promise.all([
       createdThread?.delete('btw fork setup failed').catch((error) => {
@@ -102,7 +111,7 @@ export async function forkSessionToBtwThread({
   }
   if (!forkedSession) {
     await cleanup()
-    const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkSettled.value.error
+    const cause = forkSettled.status === 'rejected' ? forkSettled.reason : forkSettled.value[0].error
     return new OpenCodeSdkError({ operation: 'session.fork', cause })
   }
   if (!createdThread) {
@@ -112,12 +121,15 @@ export async function forkSessionToBtwThread({
     })
   }
   const thread = createdThread
+  const forkMs = forkSettled.status === 'fulfilled' ? forkSettled.value[1] : -1
+  const threadMs = threadSettled.status === 'fulfilled' ? threadSettled.value[1] : -1
   const channelId = sourceThread.parentId || sourceThread.id
   const sourceThreadLink = `<#${sourceThread.id}>`
 
   // The fork must run with the source agent, model and pinned system prompt,
   // so its request prefix is byte-identical and hits the source prompt cache.
   // `false` (source not pinned yet) is the only fallback; I/O errors fail setup.
+  const copyStartedAt = Date.now()
   const [, copiedSystem, history] = await Promise.all([
     copySessionPreferences({
       sourceSessionId: sessionId,
@@ -144,6 +156,8 @@ export async function forkSessionToBtwThread({
     })
   }
 
+  const copyMs = Date.now() - copyStartedAt
+  const routeStartedAt = Date.now()
   await Promise.all([
     // DB mapping must complete before dispatch so the thread is routable
     (async () => {
@@ -173,8 +187,12 @@ export async function forkSessionToBtwThread({
     ),
   ])
 
+  const routeMs = Date.now() - routeStartedAt
   logger.log(
     `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId}), system prompt ${copiedSystem ? 'reused' : 'regenerated'}`,
+  )
+  logger.log(
+    `[BTW TIMING] ${forkedSession.id} init=${initMs}ms fork=${forkMs}ms threadCreate=${threadMs}ms copyPrefs=${copyMs}ms route=${routeMs}ms total=${Date.now() - startedAt}ms`,
   )
 
   // Parent context stays in the user prompt only. Do NOT pass parentSessionId
@@ -220,7 +238,9 @@ export async function forkSessionToBtwThread({
     username,
     appId,
     mode: 'opencode',
-  }).catch(async (error) => {
+  }).then(() => {
+    logger.log(`[BTW TIMING] ${forkedSession.id} promptAccepted=${Date.now() - startedAt}ms`)
+  }, async (error) => {
     logger.error('Fork dispatch failed:', error)
     await sendThreadMessage(thread, 'Could not send the request to OpenCode. Send your request again in this thread.')
   })

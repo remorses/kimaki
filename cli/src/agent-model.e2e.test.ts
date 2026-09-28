@@ -839,6 +839,15 @@ describe('agent model resolution', () => {
         ? await getSessionModel(forkedSessionId)
         : undefined
 
+      // The immediate btw ack is edited in place with the fork link.
+      const sourceThreadText = (await discord.thread(sourceThread.id).text())
+        .replace(`<#${forkedThread.id}>`, '<#FORK_THREAD>')
+      expect(sourceThreadText.split('\n').slice(-3).join('\n')).toMatchInlineSnapshot(`
+        "Reply with exactly: btw-model-check. btw
+        --- from: assistant (TestBot)
+        Session forked! Continue in <#FORK_THREAD>"
+      `)
+
       const forkedThreadText = (await discord.thread(forkedThread.id).text())
         .replace(`<#${sourceThread.id}>`, '<#SOURCE_THREAD>')
 
