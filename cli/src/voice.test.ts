@@ -13,6 +13,8 @@ import {
   getOpenAIAudioConversionStrategy,
   buildTranscriptionTool,
   parseOpenAIAudioChatResponse,
+  parseGeminiTranscriptionResponse,
+  isRetryableTranscriptionError,
 } from './voice.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -298,6 +300,58 @@ describe('extractTranscription', () => {
     expect((result as Error).message).toMatchInlineSnapshot(
       `"Transcription failed: Model did not produce a transcription"`,
     )
+  })
+})
+
+describe('provider response edge cases', () => {
+  // Each body must become an error value (never a throw, never a partial
+  // transcription). Safety blocks must not be retried.
+  test('classifies malformed, cut-off, and blocked responses', () => {
+    const toolCall = { functionCall: { name: 'transcriptionResult', args: { transcription: 'Fix the' } } }
+    const gemini = {
+      nullBody: 'null',
+      arrayBody: '[]',
+      maxTokens: JSON.stringify({ candidates: [{ content: { parts: [toolCall] }, finishReason: 'MAX_TOKENS' }] }),
+      malformedCall: JSON.stringify({ candidates: [{ content: {}, finishReason: 'MALFORMED_FUNCTION_CALL' }] }),
+      promptBlocked: JSON.stringify({ promptFeedback: { blockReason: 'PROHIBITED_CONTENT' } }),
+      safety: JSON.stringify({ candidates: [{ finishReason: 'SAFETY' }] }),
+      partsNotArray: JSON.stringify({ candidates: [{ content: { parts: 'x' }, finishReason: 'STOP' }] }),
+    }
+    const openai = {
+      nullBody: 'null',
+      length: JSON.stringify({ choices: [{ finish_reason: 'length', message: { tool_calls: [{ function: { name: 'transcriptionResult', arguments: '{"transcription":"Fix' } }] } }] }),
+      contentFilter: JSON.stringify({ choices: [{ finish_reason: 'content_filter', message: { content: null } }] }),
+      toolCallsNotArray: JSON.stringify({ choices: [{ message: { tool_calls: 'x', content: 'plain text' } }] }),
+    }
+    const describeResult = (result: ReturnType<typeof parseGeminiTranscriptionResponse>) => {
+      if (!(result instanceof Error)) return result
+      return `${result.name}: ${result.message} (retry: ${isRetryableTranscriptionError(result)})`
+    }
+    expect({
+      gemini: Object.fromEntries(Object.entries(gemini).map(([k, body]) => [k, describeResult(parseGeminiTranscriptionResponse(body))])),
+      openai: Object.fromEntries(Object.entries(openai).map(([k, body]) => [k, describeResult(parseOpenAIAudioChatResponse(body))])),
+    }).toMatchInlineSnapshot(`
+      {
+        "gemini": {
+          "arrayBody": "TranscriptionError: Transcription failed: Response is not a JSON object: [] (retry: true)",
+          "malformedCall": "TranscriptionError: Transcription failed: Gemini finished with MALFORMED_FUNCTION_CALL (retry: true)",
+          "maxTokens": "TranscriptionError: Transcription failed: Gemini finished with MAX_TOKENS (retry: true)",
+          "nullBody": "TranscriptionError: Transcription failed: Response is not a JSON object: null (retry: true)",
+          "partsNotArray": "NoResponseContentError: No response content from model (retry: true)",
+          "promptBlocked": "TranscriptionBlockedError: Transcription blocked by the provider content filter (PROHIBITED_CONTENT) (retry: false)",
+          "safety": "TranscriptionBlockedError: Transcription blocked by the provider content filter (SAFETY) (retry: false)",
+        },
+        "openai": {
+          "contentFilter": "TranscriptionBlockedError: Transcription blocked by the provider content filter (content_filter) (retry: false)",
+          "length": "TranscriptionError: Transcription failed: OpenAI hit the output token limit (retry: true)",
+          "nullBody": "TranscriptionError: Transcription failed: Response is not a JSON object: null (retry: true)",
+          "toolCallsNotArray": {
+            "queueMessage": false,
+            "transcription": "plain text",
+          },
+        },
+      }
+    `)
   })
 })
 

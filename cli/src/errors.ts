@@ -75,6 +75,11 @@ export class TranscriptionApiError extends errore.createTaggedError({
   message: 'Transcription API returned HTTP $status: $body',
 }) {}
 
+export class TranscriptionBlockedError extends errore.createTaggedError({
+  name: 'TranscriptionBlockedError',
+  message: 'Transcription blocked by the provider content filter ($reason)',
+}) {}
+
 export class SpeechGenerationError extends errore.createTaggedError({
   name: 'SpeechGenerationError',
   message: 'Speech generation failed: $reason',
@@ -107,11 +112,6 @@ export class EmptyTranscriptionError extends errore.createTaggedError({
 export class NoResponseContentError extends errore.createTaggedError({
   name: 'NoResponseContentError',
   message: 'No response content from model',
-}) {}
-
-export class NoToolResponseError extends errore.createTaggedError({
-  name: 'NoToolResponseError',
-  message: 'No valid tool responses',
 }) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -223,9 +223,9 @@ export type TranscriptionErrors =
   | InvalidAudioFormatError
   | TranscriptionError
   | TranscriptionApiError
+  | TranscriptionBlockedError
   | EmptyTranscriptionError
   | NoResponseContentError
-  | NoToolResponseError
 
 export type OpenCodeErrors =
   | DirectoryNotAccessibleError

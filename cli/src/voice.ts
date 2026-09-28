@@ -22,7 +22,7 @@ import {
   TranscriptionApiError,
   EmptyTranscriptionError,
   NoResponseContentError,
-  NoToolResponseError,
+  TranscriptionBlockedError,
   SpeechGenerationError,
   type SpeechGenerationErrors,
 } from './errors.js'
@@ -195,40 +195,77 @@ type GeminiPart = {
   inlineData?: { mimeType?: string; data?: string }
 }
 
+type GeminiCandidate = {
+  content?: { parts?: unknown }
+  finishReason?: string
+}
+
 type GeminiResponse = {
-  candidates?: Array<{
-    content?: { parts?: GeminiPart[] }
-    finishReason?: string
-  }>
+  candidates?: unknown
   promptFeedback?: { blockReason?: string }
 }
 
-function parseGeminiResponse(body: string): TranscriptionError | GeminiResponse {
-  return errore.try(
-    () => JSON.parse(body) as GeminiResponse,
-    (cause) => new TranscriptionError({ reason: `Invalid JSON response: ${body.slice(0, 300)}`, cause }),
-  )
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+// Valid JSON can still be `null` or an array. Only accept a top-level object
+// so field reads never throw outside the retry loop.
+function parseJsonObject(body: string): TranscriptionError | Record<string, unknown> {
+  // Wrap in an object so `unknown` does not swallow the error type in the union.
+  const parsed = errore.try(
+    () => ({ value: JSON.parse(body) as unknown }),
+    (cause) => new TranscriptionError({ reason: `Invalid JSON response: ${body.slice(0, 300)}`, cause }),
+  )
+  if (parsed instanceof Error) return parsed
+  if (!isRecord(parsed.value)) {
+    return new TranscriptionError({ reason: `Response is not a JSON object: ${body.slice(0, 300)}` })
+  }
+  return parsed.value
+}
+
+function getGeminiParts(candidate: GeminiCandidate | undefined): GeminiPart[] {
+  const parts = candidate?.content?.parts
+  if (!Array.isArray(parts)) return []
+  return parts.filter(isRecord)
+}
+
+// Finish reasons that mean the provider refused the content. Retrying the same
+// audio and prompt returns the same refusal.
+// https://ai.google.dev/api/generate-content#FinishReason
+const GEMINI_BLOCKED_FINISH_REASONS = new Set([
+  'SAFETY',
+  'RECITATION',
+  'BLOCKLIST',
+  'PROHIBITED_CONTENT',
+  'SPII',
+  'LANGUAGE',
+])
+
 // Response shape: https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse
-// No candidates means the prompt was rejected (see promptFeedback). A candidate
-// with no parts usually has a finishReason like MALFORMED_FUNCTION_CALL.
+// No candidates means the prompt was rejected (see promptFeedback). Any finish
+// reason other than STOP (MAX_TOKENS, MALFORMED_FUNCTION_CALL, ...) means the
+// tool call may be cut off, so it is never used as a transcription.
 export function parseGeminiTranscriptionResponse(
   body: string,
 ): TranscriptionLoopError | TranscriptionResult {
-  const parsed = parseGeminiResponse(body)
+  const parsed: TranscriptionError | GeminiResponse = parseJsonObject(body)
   if (parsed instanceof Error) return parsed
-  const candidate = parsed.candidates?.[0]
+  const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : []
+  const candidate: GeminiCandidate | undefined = candidates.find(isRecord)
   if (!candidate) {
     const blockReason = parsed.promptFeedback?.blockReason
-    return new TranscriptionError({
-      reason: blockReason
-        ? `Gemini blocked the prompt: ${blockReason}`
-        : `Gemini returned no candidates: ${body.slice(0, 300)}`,
-    })
+    if (blockReason) return new TranscriptionBlockedError({ reason: blockReason })
+    return new TranscriptionError({ reason: `Gemini returned no candidates: ${body.slice(0, 300)}` })
   }
-  const parts = candidate.content?.parts ?? []
-  const content: TranscriptionContent[] = parts.flatMap((part): TranscriptionContent[] => {
+  const finishReason = candidate.finishReason
+  if (finishReason && GEMINI_BLOCKED_FINISH_REASONS.has(finishReason)) {
+    return new TranscriptionBlockedError({ reason: finishReason })
+  }
+  if (finishReason && finishReason !== 'STOP' && finishReason !== 'FINISH_REASON_UNSPECIFIED') {
+    return new TranscriptionError({ reason: `Gemini finished with ${finishReason}` })
+  }
+  const content = getGeminiParts(candidate).flatMap((part): TranscriptionContent[] => {
     if (part.functionCall?.name) {
       return [{
         type: 'tool-call',
@@ -241,9 +278,6 @@ export function parseGeminiTranscriptionResponse(
     }
     return []
   })
-  if (content.length === 0 && candidate.finishReason && candidate.finishReason !== 'STOP') {
-    return new TranscriptionError({ reason: `Gemini finished with ${candidate.finishReason}` })
-  }
   return extractTranscription(content)
 }
 
@@ -251,11 +285,12 @@ const MAX_TRANSCRIPTION_ATTEMPTS = 3
 const TRANSCRIPTION_RETRY_BASE_DELAY_MS = 500
 
 // Providers sometimes return transient garbage: a body with no candidates, a
-// malformed function call, or no tool call at all. Retry those, plus network
-// errors and HTTP 408/409/429/5xx. Never retry other 4xx (bad key, bad
-// request) or a valid empty transcription.
+// malformed or cut-off function call, or no tool call at all. Retry those, plus
+// network errors and HTTP 408/409/429/5xx. Never retry other 4xx (bad key, bad
+// request), safety blocks, or a valid empty transcription.
 export function isRetryableTranscriptionError(error: TranscriptionLoopError): boolean {
   if (error instanceof EmptyTranscriptionError) return false
+  if (error instanceof TranscriptionBlockedError) return false
   if (error instanceof TranscriptionApiError) {
     const status = Number(error.status)
     return status === 408 || status === 409 || status === 429 || status >= 500
@@ -500,8 +535,8 @@ type TranscriptionLoopError =
   | NoResponseContentError
   | TranscriptionError
   | TranscriptionApiError
+  | TranscriptionBlockedError
   | EmptyTranscriptionError
-  | NoToolResponseError
 
 // Build the transcription tool schema dynamically so the agent field can
 // use an enum constrained to the actual available agent names.
@@ -621,32 +656,43 @@ export function extractTranscription(
 type OpenAIAudioChatMessage = {
   content?: string | null
   audio?: { transcript?: string | null } | null
-  tool_calls?: Array<{
-    id?: string
-    function?: { name?: string; arguments?: string }
-  }> | null
+  tool_calls?: unknown
+}
+
+type OpenAIAudioChatChoice = {
+  message?: OpenAIAudioChatMessage
+  finish_reason?: string
 }
 
 // Response shape: https://developers.openai.com/api/docs/guides/audio-chat-completions
+// finish_reason "length" means the tool call is cut off; "content_filter" is a
+// refusal that retrying will not change.
 export function parseOpenAIAudioChatResponse(
   body: string,
 ): TranscriptionLoopError | TranscriptionResult {
-  const parsed = errore.try(
-    () => JSON.parse(body) as { choices?: Array<{ message?: OpenAIAudioChatMessage }> },
-    (cause) => new TranscriptionError({ reason: `Invalid JSON response: ${body.slice(0, 300)}`, cause }),
-  )
+  const parsed = parseJsonObject(body)
   if (parsed instanceof Error) return parsed
-  const message = parsed.choices?.[0]?.message
+  const choices = Array.isArray(parsed.choices) ? parsed.choices : []
+  const choice: OpenAIAudioChatChoice | undefined = choices.find(isRecord)
+  if (choice?.finish_reason === 'content_filter') {
+    return new TranscriptionBlockedError({ reason: 'content_filter' })
+  }
+  if (choice?.finish_reason === 'length') {
+    return new TranscriptionError({ reason: 'OpenAI hit the output token limit' })
+  }
+  const message = isRecord(choice?.message) ? choice.message : undefined
   if (!message) return new NoResponseContentError()
-  const toolCall = message.tool_calls?.find((call) => {
-    return call.function?.name === TRANSCRIPTION_TOOL_NAME
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls.filter(isRecord) : []
+  const toolCall = toolCalls.find((call) => {
+    return isRecord(call.function) && call.function.name === TRANSCRIPTION_TOOL_NAME
   })
-  if (toolCall?.function?.arguments) {
+  const toolArguments = isRecord(toolCall?.function) ? toolCall.function.arguments : undefined
+  if (typeof toolArguments === 'string' && toolArguments) {
     return extractTranscription([
       {
         type: 'tool-call',
         toolName: TRANSCRIPTION_TOOL_NAME,
-        input: toolCall.function.arguments,
+        input: toolArguments,
       },
     ])
   }
@@ -983,11 +1029,12 @@ async function generateSpeechGemini({
     return new SpeechGenerationError({ reason: `Reading Gemini TTS response failed: ${String(cause)}`, cause })
   })
   if (raw instanceof Error) return raw
-  const parsed = parseGeminiResponse(raw)
+  const parsed: TranscriptionError | GeminiResponse = parseJsonObject(raw)
   if (parsed instanceof Error) {
     return new SpeechGenerationError({ reason: parsed.message, cause: parsed })
   }
-  const inlineData = parsed.candidates?.[0]?.content?.parts?.find((part) => {
+  const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : []
+  const inlineData = getGeminiParts(candidates.find(isRecord)).find((part) => {
     return part.inlineData?.data
   })?.inlineData
   if (!inlineData?.data) {
