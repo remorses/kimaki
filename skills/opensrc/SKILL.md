@@ -1,12 +1,28 @@
 ---
 name: opensrc
-description: Fetch dependency source code to give AI agents deeper implementation context. Use when the agent needs to understand how a library works internally, read source code for a package, fetch implementation details for a dependency, or explore how an npm/PyPI/crates.io package is built. Triggers include "fetch source for", "read the source of", "how does X work internally", "get the implementation of", "opensrc path", or any task requiring access to dependency source code beyond types and docs.
+description: Fetch dependency source code to give AI agents deeper implementation context. Use when the agent needs to understand how a library works internally, read source code for a package or GitHub repo, fetch implementation details for a dependency, or explore how an npm/PyPI/crates.io package is built. Triggers include "fetch source for", "read the source of", "read this GitHub repo", "how does X work internally", "get the implementation of", "opensrc path", or any task requiring access to dependency source code beyond types and docs. ALWAYS load this skill before running any `opensrc` command. opensrc caches forever with no TTL, so a cached clone can be weeks or months old. ALWAYS reclone any cached source older than 2 days before reading it (see the freshness check in this skill). Reading a stale clone gives wrong answers about current code.
 allowed-tools: Bash(opensrc:*)
 ---
 
 # Source Code Fetching with opensrc
 
 Fetches dependency source code so agents can read implementations, not just types. Clones repositories at the correct version tag and caches them globally at `~/.opensrc/`.
+
+## Required: fresh clone first
+
+**Never read a cached clone older than 2 days.** opensrc has no TTL. A plain `opensrc path` can return a clone that is months old, and you will describe code that no longer exists. Always get the path with this check, never with a bare `opensrc path`:
+
+```bash
+SPEC=owner/repo   # or zod, pypi:requests, crates:serde, owner/repo#main
+SRC=$(opensrc path "$SPEC")
+if find "$SRC" -maxdepth 0 -mtime +2 | grep -q .; then
+  opensrc remove "$SPEC"
+  SRC=$(opensrc path "$SPEC")
+fi
+echo "$SRC"
+```
+
+When you report findings from a repo, say which version or date you read (for example the `version` in `package.json` or the fetch date), so the user can see if it is current.
 
 ## Core Pattern
 
@@ -16,7 +32,7 @@ cat $(opensrc path zod)/src/types.ts
 find $(opensrc path zod) -name "*.test.ts"
 ```
 
-`opensrc path <pkg>` prints the absolute path to cached source. If not cached, it fetches automatically. Progress goes to stderr, path to stdout, so `$(opensrc path ...)` works in subshells.
+`opensrc path <pkg>` prints the absolute path to cached source. If not cached, it fetches automatically. Progress goes to stderr, path to stdout, so `$(opensrc path ...)` works in subshells. The one-liners above are for sources you already refreshed with the freshness check in this session.
 
 ## Fetching Source Code
 
@@ -69,18 +85,9 @@ opensrc clean --repos            # all repos, keep packages
 
 ### Reclone if older than 2 days
 
-Always refresh a clone that is **more than 2 days old** before you read it. This matters for unpinned / branch refs (`owner/repo#main`). Pinned tags (`zod@3.22.0`) stay the same, but still follow this rule so you do not keep a deleted folder.
+This rule is mandatory (see "Required: fresh clone first" at the top). It matters most for unpinned / branch refs (`owner/repo`, `owner/repo#main`), which move every day. Pinned tags (`zod@3.22.0`) stay the same, but still follow this rule so you do not keep a deleted folder.
 
-**Detect age (easiest):** `find -mtime +2` prints the path only when the clone dir is older than 2 days.
-
-```bash
-SPEC=anomalyco/opencode
-SRC=$(opensrc path "$SPEC")
-if find "$SRC" -maxdepth 0 -mtime +2 | grep -q .; then
-  opensrc remove "$SPEC"
-  SRC=$(opensrc path "$SPEC")
-fi
-```
+`find -maxdepth 0 -mtime +2` prints the path only when the clone dir is older than 2 days.
 
 **Authoritative age:** `fetchedAt` in `opensrc list --json` (also `~/.opensrc/sources.json`). Compare that ISO time to now. `opensrc list` prints `Fetched: Mar 20, 2026` (date only).
 
