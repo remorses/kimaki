@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.31.0
+
+1. **Queue a side question until the current turn ends.** In a session thread, end a message with `btw queue`, or use `/queue` with a `btw` prompt, or end a `/btw` prompt with `. queue`. Kimaki waits for earlier queued prompts, then forks the **updated** session into a new thread. The side question never starts a turn in the source thread:
+
+   ```
+   Explain the error. btw queue
+   ```
+
+   Queued side questions support the normal queue controls: edit or delete the Discord message before it starts. A side question sent from a `btw:` thread can also queue another fork.
+
+2. **Forks reuse the source session's prompt cache.** `. btw`, `/btw` and `/fork` forks used to rebuild the system prompt with new IDs and run the default agent, so the provider processed the whole copied history again. On a 150k-token session the first reply took about 11 seconds and paid a full cache write. Now:
+
+   - The system prompt is **pinned per session**. Data that changes later (for example a `--parent-session` added after the first turn) goes into the per-turn context at the end of the user message.
+   - Same-directory forks (`/btw`, `/fork`) reuse the pinned system prompt of their source. `/new-worktree` forks run in another directory, so they cannot share the cache.
+   - A fork keeps the **agent** of its fork point, not only the model and variant.
+   - Cache misses are visible in `btw` threads: the first reply compares its cache reads with the copied history. Cache-miss notices also show how many minutes passed since the previous assistant message, to separate an expired cache from a changed prompt.
+
+   Changes to channel topic, agent list, or Kimaki prompt text now apply to new sessions only.
+
+3. **`. btw` answers at once.** Kimaki replies right away while it forks the session, then edits the same message with the thread link or the error:
+
+   ```
+   -# Forking session to answer this side question...
+   ```
+
+   The fork and the Discord thread are created at the same time and setup steps run in parallel. Discord REST rate limits and per-step `[BTW TIMING]` lines are logged to `kimaki.log`.
+
+4. **Estimated input mix in `/context-usage`.** A new line shows the share of visible system instructions, tool calls and results per tool, and other context:
+
+   ```
+   Estimated input mix: tool read 42.0% (21) · system 20.0% (10) · other 38.0% (19) tokens
+   ```
+
+   Percentages use the latest reported input including cached input. It is an estimate: OpenCode does not expose exact per-part token counts.
+
+5. **`queue` and `btw` suffixes work on every `kimaki send` path.** `kimaki send --channel` and messages with embeds, polls or forwards used to send the literal `queue` word to the model. Long prompts uploaded as `prompt.md` now keep the suffix working too. `/new-session` accepts the suffix, and `/queue` strips it. A `. btw` fork now gets the message's text and image attachments and adds the `--user` from `kimaki send` to the fork thread.
+
+   ```bash
+   kimaki send --thread 123456789 --prompt 'Run the tests again. queue'          # wait for current turn
+   kimaki send --thread 123456789 --prompt 'What does this error mean? btw'       # fork now
+   kimaki send --thread 123456789 --prompt 'Summarize what you changed. btw queue' # fork after the run
+   ```
+
+   `kimaki send --help` and the agent system prompt document the suffixes, so agents append `. queue` instead of interrupting a busy thread. Editing a queued message now also keeps its text attachments.
+
+6. **Queued prompts start with a silent reply** instead of reposting the whole prompt. Kimaki replies to the message that queued it (your message, or the `/queue` confirmation) with no ping:
+
+   ```
+   -# Executing queued prompt
+   ```
+
+7. **Shorter agent instructions.** Duplicated rules and repeated examples are removed. A typical thread session prompt drops from about 10.7k to 8.7k tokens, and every command form, flag, and safety rule stays. The archive and thread-reminder commands are now directly copyable. Agents are told to show found sessions as clickable Discord thread links. Existing sessions keep their pinned prompt; start a new session to use it.
+
+8. **Proactivity rules removed from the system prompt.** Agents are no longer told "Be proactive... Do NOT stop to ask for confirmation". Your own `AGENTS.md` or opencode instructions now decide how eager the agent is, which makes it easier to get root cause analysis before a fix. The `question` tool rules stay. Fixes [#230](https://github.com/remorses/kimaki/issues/230).
+
+9. **More reliable voice transcription.** Kimaki retries up to 3 times on transient Gemini or OpenAI failures: responses with no candidates or a bad finish reason like `MALFORMED_FUNCTION_CALL`, cut-off responses, network errors, and HTTP 408, 409, 429 and 5xx. Invalid API keys and content filter blocks fail at once. Errors now show the HTTP status, the block or finish reason, and the start of the body. Transcription and `kimaki tts` call the REST APIs with `fetch`, so the `@ai-sdk/*` dependencies are removed. Gemini TTS audio gets the correct WAV header for `audio/L16;codec=pcm;rate=24000`.
+
+10. **Lighter install.** Anonymous analytics use the zero-dependency `@strada.sh/sdk`, which removes about 12 MB of OpenTelemetry dependencies. The SDK no longer installs its own `uncaughtException` handler that could exit the bot before Kimaki's crash handler finished.
+
+11. **Fixed short final replies that stayed quoted.** One-line progress updates stay quoted while the run is active, then the final reply goes back to full width. Multi-line replies are full width from the start.
+
+12. **Fixed wrong `task-1` prefixes on subagent tool calls** when a child session starts before its task metadata arrives. Tool lines now show the agent name and the correct task number.
+
 ## 0.30.1
 
 1. **`/abort` now also clears the thread `/queue`**, like `/clear-queue` does. Before, queued messages survived an abort: they were sent right after it, or restored from SQLite and sent after a Kimaki restart. Now abort removes them from memory and from the database, and the reply says how many were dropped:
