@@ -5447,6 +5447,11 @@ export class ThreadSessionRuntime {
     messageId: string
   }): Promise<void> {
     // Only the first reply after a user prompt can show a cold cache. Later steps re-read the turn's own writes.
+    // TODO: send this before step 1 tools finish. Tokens arrive only with step-finish, after tools in v1 and v2.
+    // OpenCode v2 publishes `session.step.streamed` at stream end (before tools settle) but without tokens, and
+    // packages/ai drops Anthropic `message_start` usage (onMessageStart returns NO_EVENTS). Needs upstream:
+    // add tokens to Step.Streamed, or emit a usage event on message_start for a notice right after the prompt.
+    // https://github.com/anomalyco/opencode/blob/v2/packages/schema/src/session-event.ts
     const [firstAssistantId] = this.getAssistantMessageIdsForCurrentTurn({ sessionId })
     if (firstAssistantId !== messageId) {
       return
