@@ -485,15 +485,19 @@ describeIf('gateway-proxy e2e', () => {
         content: '!echo proxy-shell-test',
       })
 
-      // The bot replies with a loading message then edits it with the result.
-      // The predicate waits for the edited version containing "exited with".
+      // The bot replies with a running message then edits it with the result.
+      // The predicate waits for the edited version with the exit footer.
       const reply = await discord.thread(firstThreadId).waitForMessage({
         predicate: (m) =>
           !existingIds.has(m.id) &&
           m.author.id === discord.botUserId &&
-          m.content.includes('exited with'),
+          m.content.includes('-# exit '),
       })
-      expect(await discord.thread(firstThreadId).text()).toMatchInlineSnapshot(`
+      const text = (await discord.thread(firstThreadId).text()).replace(
+        /-# exit (\d+) ⋅ [\d.]+m?s/g,
+        '-# exit $1 ⋅ Ns',
+      )
+      expect(text).toMatchInlineSnapshot(`
         "--- from: user (proxy-tester)
         hello from gateway proxy test
         --- from: assistant (TestBot)
@@ -508,10 +512,10 @@ describeIf('gateway-proxy e2e', () => {
         --- from: user (proxy-tester)
         !echo proxy-shell-test
         --- from: assistant (TestBot)
-        \`echo proxy-shell-test\` exited with 0
         \`\`\`
         proxy-shell-test
-        \`\`\`"
+        \`\`\`
+        -# exit 0 ⋅ Ns"
       `)
       expect(reply.content).toContain('proxy-shell-test')
     },

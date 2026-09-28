@@ -9,16 +9,30 @@ Prefix any Discord message with **`!`** to run it as a shell command in the proj
 ## Using the `!` prefix
 
 ```diagram
-  "!git status" ──▶ strips "!" ──▶ runs in dir ──▶ output in code block
+  "!git status" ──▶ strips "!" ──▶ runs in dir ──▶ output streams into one message
 ```
 
-Type a message starting with `!`. Kimaki strips the `!`, runs the rest as a shell command, posts a `Running ...` placeholder, then edits it with the result:
+Type a message starting with `!`. Kimaki strips the `!` and runs the rest as a shell command:
 
 ```
-!ls -la
+!pnpm test
 ```
 
-The reply shows the command, its exit code, and the output in a code block (truncated if very long).
+The reply **streams** while the command runs. Kimaki edits the same message about once per second, so you see progress live:
+
+````
+```
+ ✓ src/utils.test.ts (12 tests)
+ ✓ src/cli.test.ts (8 tests)
+```
+-# exit 0 ⋅ 4.2s
+````
+
+- **stdout and stderr** are interleaved in the order the command prints them.
+- The last line is a small subtext footer: `running...` while it runs, then the **exit code** and duration.
+- Colors are stripped. Progress bars that redraw with `\r` show only their latest state.
+- When output grows past one Discord message, it continues in new messages (up to 5). Past that, the last message shows the **tail** of the output with a count of hidden lines.
+- Commands are killed after 10 minutes.
 
 ## Where it runs
 

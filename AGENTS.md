@@ -216,6 +216,23 @@ typing comes from `POST /channels/{id}/typing` / `sendTyping()`. one pulse only 
 - do not remove the typing interval to fix stuck typing. fix lifecycle bugs by clearing both the active interval and any scheduled restart timeout when a session ends, aborts, or pauses for permission/question prompts.
 - guard delayed typing restarts (for example after `step-finish`) with session closed/aborted checks so they cannot restart typing after cleanup.
 
+## discord rate limits
+
+docs: https://docs.discord.com/developers/topics/rate-limits. Discord says never hardcode limits; discord.js reads the `X-RateLimit-*` headers and queues requests on 429. still design streaming UIs around these observed numbers so the queue does not lag behind:
+
+| scope | limit (observed) | notes |
+| --- | --- | --- |
+| global | 50 requests/s per bot | interaction endpoints do not count |
+| send message (`POST /channels/{id}/messages`) | ~5 per 5s per channel | bucket keyed by channel id |
+| edit message (`PATCH /channels/{id}/messages/{id}`) | ~5 per 5s per channel | shares the channel budget with sends in practice |
+| thread rename (`PATCH /channels/{id}` name) | 2 per 10 min per thread | see MEMORY.md |
+| invalid requests (401/403/429) | 10,000 per 10 min per IP | exceeding it causes a temporary Cloudflare ban |
+| interaction token | valid 15 min | `editReply`/`followUp` fail after that |
+
+- for live output (for example `!` shell commands in `cli/src/commands/run-command.ts`), edit one message in place and throttle edits to at most ~1 per second. start a new message only when content passes 2000 chars.
+- throttle, do not debounce: a debounce that resets on every chunk never fires while output is continuous.
+- serialize edits of the same message and keep at most one pending sync that reads the latest state when it starts.
+
 ## discord object shapes
 
 never use typescript assertions/casts on discord interaction objects to force a cached shape (for example `as GuildMember`). many discord values arrive as either hydrated cached classes or raw api payloads depending on cache/event path.

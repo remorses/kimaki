@@ -96,7 +96,7 @@ import {
   reserveThreadIngress,
   runInThreadIngressSlot,
 } from './session-handler/thread-session-runtime.js'
-import { runShellCommand } from './commands/run-command.js'
+import { runShellCommandForMessage } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
@@ -818,14 +818,11 @@ export async function startDiscordBot({
               worktreeInfo.workspace_directory
                 ? worktreeInfo.workspace_directory
                 : projectDirectory
-            const loadingReply = await message.reply({
-              content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
-            })
-            const result = await runShellCommand({
+            await runShellCommandForMessage({
+              message,
               command: shellCmd,
               directory: shellDir,
             })
-            await loadingReply.edit({ content: result })
             return
           }
         }
@@ -1090,14 +1087,11 @@ export async function startDiscordBot({
           const shellCmd = message.content.slice(1).trim()
           if (shellCmd) {
             threadIngressSlot?.release()
-            const loadingReply = await message.reply({
-              content: `Running \`${shellCmd.slice(0, 1900)}\`...`,
-            })
-            const result = await runShellCommand({
+            await runShellCommandForMessage({
+              message,
               command: shellCmd,
               directory: projectDirectory,
             })
-            await loadingReply.edit({ content: result })
             return
           }
         }
