@@ -929,14 +929,6 @@ describe('system-message', () => {
 
       Make heavy use of diagrams to explain architecture, flows, and relationships. Create diagrams using ASCII art inside code blocks. Prefer diagrams over lengthy text explanations whenever possible. Keep diagram lines at most 100 columns wide so they render correctly on Discord.
 
-      ## proactivity
-
-      Be proactive. When the user asks you to do something, do it. Do NOT stop to ask for confirmation. If the next step is obvious just do it, do not ask if you should do!
-
-      For example if you just fixed code for a test run again the test to validate the fix, do not ask the user if you should run again the test.
-
-      Only ask questions when the request is genuinely ambiguous with multiple valid approaches, or the action is destructive and irreversible.
-
       ## ending conversations with options
 
       You MUST write ALL user-visible text FIRST.
@@ -947,8 +939,6 @@ describe('system-message', () => {
       You MUST call them LAST, after ALL text.
 
       ALWAYS use \`question\` when you ask the user a question. Do not write a numbered list in plain text.
-
-      IMPORTANT: Do NOT use \`question\` to ask permission before doing work. Do the work first, then offer follow-ups.
 
       Examples:
       - After completing edits: offer "Commit changes?"
