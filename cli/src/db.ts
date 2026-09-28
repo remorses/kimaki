@@ -45,7 +45,7 @@ export function getDb(): Promise<KimakiDb> {
   if (initPromise) {
     return initPromise
   }
-  initPromise = initializeDb()
+  initPromise = initializeDb().finally(() => { initPromise = null })
   return initPromise
 }
 
