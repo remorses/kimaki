@@ -1859,7 +1859,27 @@ export class ThreadSessionRuntime {
       logger.warn('[RECONNECT] Failed to reconcile forms:', formsResult)
       return
     }
-    // session.form.list returns only pending forms.
+    // session.form.list returns only pending forms. A form Kimaki still shows
+    // but OpenCode no longer lists was settled while SSE was disconnected.
+    const listedFormIds = new Set(formsResult.map((form) => form.id))
+    const shownFormIds = new Set(
+      this.discordProjection.pendingForms.map((form) => form.formId),
+    )
+    for (const context of pendingQuestionContexts.values()) {
+      if (context.thread.id === this.thread.id && context.sessionId === sessionId) {
+        shownFormIds.add(context.requestId)
+      }
+    }
+    for (const formId of shownFormIds) {
+      if (listedFormIds.has(formId)) continue
+      const settledEvent: Extract<V2Event, { type: 'form.cancelled' }> = {
+        id: `reconnect-form-settled:${formId}`,
+        created: Date.now(),
+        type: 'form.cancelled',
+        data: { sessionID: sessionId, id: formId },
+      }
+      await this.handleEvent(settledEvent)
+    }
     for (const form of formsResult) {
       const fields = form.fields.flatMap((field): Array<Extract<
         V2Event,
@@ -4561,30 +4581,6 @@ export class ThreadSessionRuntime {
       return false
     }
 
-    return true
-  }
-
-  /**
-   * Resume an idle session by sending `text` as a new user turn.
-   *
-   * Used when a question is answered after its run was aborted elsewhere:
-   * the original run is dead, so question.reply is a no-op. We instead feed
-   * the answer back as a fresh prompt so opencode continues from history.
-   */
-  async resumeWithText({ text }: { text: string }): Promise<boolean> {
-    const sessionId = this.state?.sessionId
-    if (!sessionId || this.disposed) {
-      logger.log(`[RESUME] No session for thread ${this.threadId}`)
-      return false
-    }
-    await this.enqueueIncoming({
-      prompt: text,
-      userId: '',
-      username: '',
-      appId: this.appId,
-      mode: 'opencode',
-      expectedSessionId: sessionId,
-    })
     return true
   }
 }

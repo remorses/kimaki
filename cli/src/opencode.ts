@@ -1420,12 +1420,6 @@ export async function initializeOpencodeForDirectory(
 
   const client = opencodeServerManager.getClient({ directory })
   if (!client) return new ServerNotReadyError({ directory })
-  const activation = await awaitOpencodePluginActivation({ client, directory })
-  if (activation instanceof Error) {
-    opencodeLogger.warn(
-      `OpenCode plugins did not finish activating for ${directory}: ${activation.message}`,
-    )
-  }
 
   return () => {
     const currentClient = opencodeServerManager.getClient({ directory })

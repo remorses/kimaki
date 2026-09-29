@@ -19,7 +19,7 @@ The planned admission, projection, pagination, lifecycle, subagent, and runtime-
 implemented in the working tree. `thread-session-runtime.ts` is 1,364 lines smaller than the
 baseline and live plus captured events now use the same projection path.
 
-Native `session.log()` replay remains limited by OpenCode 2.0.2. The core supports durable event
+Native `session.log()` replay remains limited by OpenCode 2.0.19. The core supports durable event
 persistence, but `opencode serve` does not expose the option through its CLI or project config.
 The subagent E2E therefore executes a real child session, captures native events from Kimaki's raw
 event log, and replays them. Remove this limitation note when the native server exposes event

@@ -15,7 +15,6 @@ import { getOpencodeClient } from '../opencode.js'
 import { DiscordOperationError, OpenCodeSdkError } from '../errors.js'
 import { createLogger, LogPrefix } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
-import { getRuntime } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger(LogPrefix.ASK_QUESTION)
 
@@ -349,42 +348,6 @@ export async function handleAskQuestionSelectMenu(
   }
 }
 
-/**
- * Format collected answers as a plain-text summary the model can read when
- * the run is resumed after an abort (e.g. `"Which option?"="Alpha"`).
- *
- * Known limitation: if the user had queued items via /queue during the pending
- * question AND aborted the run from another opencode client, the first queued
- * item may have already been handed off to opencode and can lose its ordering
- * on resume. That rare combination needs a queue-handoff redesign; the common
- * (no-queue) abort case is handled correctly.
- */
-function formatQuestionAnswersText(context: PendingQuestionContext): string {
-  const parts = context.questions.map((q, i) => {
-    const answer = (context.answers[i] || []).join(', ') || 'Unanswered'
-    return `"${q.question}"="${answer}"`
-  })
-  return `Answers to your previous questions: ${parts.join(', ')}`
-}
-
-/** Resume the session by feeding the answers back as a new user prompt. */
-async function resumeSessionWithAnswers(
-  context: PendingQuestionContext,
-): Promise<boolean> {
-  const runtime = getRuntime(context.thread.id)
-  const resumed = await runtime?.resumeWithText({
-    text: formatQuestionAnswersText(context),
-  })
-  if (!resumed) {
-    await sendThreadMessage(
-      context.thread,
-      '✗ Failed to submit answers: session is no longer active',
-    )
-    return false
-  }
-  return true
-}
-
 function formAnswerFromSelectedLabels({
   questions,
   answers,
@@ -412,18 +375,11 @@ function formatFormReplyError(error: unknown): string {
 }
 
 /**
- * Submit all collected answers back to the OpenCode session.
+ * Submit all collected answers to the pending OpenCode form.
  *
- * The decision is based on whether the session still has a live run:
- *
- * - Busy: a live run is parked on the form. Reply so it continues.
- * - Idle: the run was aborted (from this or another opencode client). Replying
- *   would resolve a dead run and the session would never continue, so resume it
- *   with the answers as a fresh prompt instead.
- *
- * Note: a pending form can stay after abort but orphaned (no run awaiting
- * it), so a reply would succeed yet the session would still not continue. The
- * session busy state, derived from the event stream, is the accurate signal.
+ * Interrupts cancel the form upstream and emit form.cancelled, which expires
+ * the dropdown. So a failed reply is a real error: keep the context so the
+ * user can retry, never resend the answers as a new prompt.
  */
 async function submitQuestionAnswers(
   context: PendingQuestionContext,
@@ -437,15 +393,6 @@ async function submitQuestionAnswers(
     return false
   }
 
-  const runtime = getRuntime(context.thread.id)
-
-  if (runtime && !runtime.isBusy()) {
-    logger.log(
-      `Session ${context.sessionId} idle; resuming with answers for question ${context.requestId}`,
-    )
-    return await resumeSessionWithAnswers(context)
-  }
-
   const answers = context.questions.map((_, i) => {
     return context.answers[i] || []
   })
@@ -456,17 +403,19 @@ async function submitQuestionAnswers(
       questions: context.questions,
       answers,
     }),
-  }).catch((error: unknown) => error)
-  if (replyResult !== undefined && replyResult !== null) {
-    const message = formatFormReplyError(replyResult)
+  }).catch((cause: Error) => new OpenCodeSdkError({ operation: 'session.form.reply', cause }))
+  if (replyResult instanceof Error) {
+    const message = formatFormReplyError(replyResult.cause)
     if (message.includes('already settled')) {
       logger.log(`Form ${context.requestId} already settled`)
       return true
     }
-    logger.log(
-      `Reply failed for question ${context.requestId}; resuming session ${context.sessionId} with answers`,
+    logger.error(`Failed to answer question ${context.requestId}:`, replyResult)
+    await sendThreadMessage(
+      context.thread,
+      `✗ Failed to submit answers: ${message}. Send a message to retry.`,
     )
-    return await resumeSessionWithAnswers(context)
+    return false
   }
 
   logger.log(
