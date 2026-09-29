@@ -363,7 +363,7 @@ cli
   .action(async (file, options, { console, process }) => {
     try {
       const cwd = process.cwd
-      const loaded = loadFileEditEvents({ dataDir: getDataDir() })
+      const loaded = await loadFileEditEvents({ dataDir: getDataDir() })
       if (loaded instanceof Error) {
         console.error(loaded.message)
         process.exit(EXIT_NO_RESTART)

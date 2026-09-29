@@ -123,12 +123,11 @@ function nodeErrorCode(error: Error) {
   return typeof code === 'string' ? code : ''
 }
 
-export function loadFileEditEvents({ dataDir }: { dataDir: string }) {
+export async function loadFileEditEvents({ dataDir }: { dataDir: string }) {
   const logPath = path.join(dataDir, FILE_EDIT_EVENTS_FILENAME)
-  const raw = errore.try(
-    () => fs.readFileSync(logPath, 'utf8'),
-    (cause) => new FilesystemOperationError({ operation: 'read file edit log', cause }),
-  )
+  const raw = await fs.promises
+    .readFile(logPath, 'utf8')
+    .catch((cause) => new FilesystemOperationError({ operation: 'read file edit log', cause }))
   if (raw instanceof Error) {
     if (nodeErrorCode(raw) === 'ENOENT') return []
     return raw
@@ -154,34 +153,67 @@ function collapseFileEditEvents(events: FileEditEvent[]) {
   })
 }
 
-function compactFileEditLog({
+async function compactFileEditLog({
   dataDir,
   maxEvents,
 }: {
   dataDir: string
   maxEvents: number
 }) {
-  const loaded = loadFileEditEvents({ dataDir })
+  const loaded = await loadFileEditEvents({ dataDir })
   if (loaded instanceof Error) return loaded
   const collapsed = collapseFileEditEvents(loaded)
   const kept = collapsed.length > maxEvents ? collapsed.slice(-maxEvents) : collapsed
   const logPath = path.join(dataDir, FILE_EDIT_EVENTS_FILENAME)
   const tempPath = `${logPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
   const body = kept.map((event) => `${JSON.stringify(event)}\n`).join('')
-  const written = errore.try(
-    () => {
-      fs.writeFileSync(tempPath, body)
-      fs.renameSync(tempPath, logPath)
-    },
-    (cause) => new FilesystemOperationError({ operation: 'compact file edit log', cause }),
-  )
+  const written = await fs.promises
+    .writeFile(tempPath, body)
+    .then(() => fs.promises.rename(tempPath, logPath))
+    .catch((cause) => new FilesystemOperationError({ operation: 'compact file edit log', cause }))
   if (written instanceof Error) {
-    fs.rmSync(tempPath, { force: true })
+    await fs.promises.rm(tempPath, { force: true }).catch(() => undefined)
     return written
   }
 }
 
-export function appendFileEditEvents({
+// Serializes appends and compactions inside one process. Plugin instances for
+// different directories share this module and write the same log file.
+let pendingWrite: Promise<unknown> = Promise.resolve()
+
+function enqueueWrite<T>(task: () => Promise<T>) {
+  const next = pendingWrite.then(task)
+  pendingWrite = next.catch(() => undefined)
+  return next
+}
+
+async function appendAndMaybeCompact({
+  dataDir,
+  events,
+  maxEvents,
+  compactAfterBytes,
+}: {
+  dataDir: string
+  events: FileEditEvent[]
+  maxEvents: number
+  compactAfterBytes: number
+}) {
+  const logPath = path.join(dataDir, FILE_EDIT_EVENTS_FILENAME)
+  const body = events.map((event) => `${JSON.stringify(event)}\n`).join('')
+  const appended = await fs.promises
+    .mkdir(dataDir, { recursive: true })
+    .then(() => fs.promises.appendFile(logPath, body))
+    .catch((cause) => new FilesystemOperationError({ operation: 'append file edit log', cause }))
+  if (appended instanceof Error) return appended
+  const stats = await fs.promises
+    .stat(logPath)
+    .catch((cause) => new FilesystemOperationError({ operation: 'stat file edit log', cause }))
+  if (stats instanceof Error) return stats
+  if (stats.size < compactAfterBytes) return
+  return compactFileEditLog({ dataDir, maxEvents })
+}
+
+export async function appendFileEditEvents({
   dataDir,
   events,
   maxEvents = DEFAULT_MAX_EVENTS,
@@ -193,25 +225,12 @@ export function appendFileEditEvents({
   compactAfterBytes?: number
 }) {
   if (events.length === 0) return
-  const logPath = path.join(dataDir, FILE_EDIT_EVENTS_FILENAME)
-  const prepared = errore.try(
-    () => {
-      fs.mkdirSync(dataDir, { recursive: true })
-      fs.appendFileSync(logPath, events.map((event) => `${JSON.stringify(event)}\n`).join(''))
-    },
-    (cause) => new FilesystemOperationError({ operation: 'append file edit log', cause }),
-  )
-  if (prepared instanceof Error) return prepared
-  const size = errore.try(
-    () => fs.statSync(logPath).size,
-    (cause) => new FilesystemOperationError({ operation: 'stat file edit log', cause }),
-  )
-  if (size instanceof Error) return size
-  if (size < compactAfterBytes) return
-  return compactFileEditLog({ dataDir, maxEvents })
+  return enqueueWrite(() => {
+    return appendAndMaybeCompact({ dataDir, events, maxEvents, compactAfterBytes })
+  })
 }
 
-function recordToolEdits({
+async function recordToolEdits({
   dataDir,
   directory,
   sessionId,
@@ -238,7 +257,7 @@ function recordToolEdits({
       tool: name,
     }
   })
-  const result = appendFileEditEvents({ dataDir, events })
+  const result = await appendFileEditEvents({ dataDir, events })
   if (result instanceof Error) {
     logger.warn('Failed to record file edit', result.message)
   }
@@ -257,7 +276,7 @@ export function createFileEditHooks({
       sessionID: string
       args: ToolArgs
     }) => {
-      recordToolEdits({
+      await recordToolEdits({
         dataDir,
         directory,
         sessionId: input.sessionID,
@@ -272,12 +291,5 @@ export const fileEditTrackerPlugin: Plugin = async ({ directory }) => {
   const dataDir = process.env.KIMAKI_DATA_DIR
   if (!dataDir) return {}
   setPluginLogFilePath(dataDir)
-  const created = errore.try(
-    () => fs.mkdirSync(dataDir, { recursive: true }),
-    (cause) => new FilesystemOperationError({ operation: 'create file edit log dir', cause }),
-  )
-  if (created instanceof Error) {
-    logger.warn('Failed to create file edit log dir', created.message)
-  }
   return createFileEditHooks({ dataDir, directory })
 }

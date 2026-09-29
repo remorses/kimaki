@@ -142,7 +142,7 @@ describe('editorsForFile', () => {
 })
 
 describe('file edit jsonl log', () => {
-  test('appends events and loads them back', () => {
+  test('appends events and loads them back', async () => {
     const dataDir = makeDataDir()
     const first: FileEditEvent[] = [
       event({ sessionId: 'ses_a', file: '/repo/a.ts', at: 1 }),
@@ -151,12 +151,12 @@ describe('file edit jsonl log', () => {
       event({ sessionId: 'ses_b', file: '/repo/b.ts', at: 2, tool: 'write' }),
     ]
 
-    const appended = appendFileEditEvents({ dataDir, events: first })
+    const appended = await appendFileEditEvents({ dataDir, events: first })
     if (appended instanceof Error) throw appended
-    const appendedAgain = appendFileEditEvents({ dataDir, events: second })
+    const appendedAgain = await appendFileEditEvents({ dataDir, events: second })
     if (appendedAgain instanceof Error) throw appendedAgain
 
-    const loaded = loadFileEditEvents({ dataDir })
+    const loaded = await loadFileEditEvents({ dataDir })
     if (loaded instanceof Error) throw loaded
     expect(loaded).toMatchInlineSnapshot(`
       [
@@ -178,14 +178,14 @@ describe('file edit jsonl log', () => {
     `)
   })
 
-  test('compacts to the newest events when the log is too large', () => {
+  test('compacts to the newest events when the log is too large', async () => {
     const dataDir = makeDataDir()
     const events: FileEditEvent[] = [
       event({ sessionId: 'ses_1', file: '/repo/a.ts', at: 1 }),
       event({ sessionId: 'ses_2', file: '/repo/b.ts', at: 2 }),
       event({ sessionId: 'ses_3', file: '/repo/c.ts', at: 3 }),
     ]
-    const appended = appendFileEditEvents({
+    const appended = await appendFileEditEvents({
       dataDir,
       events,
       maxEvents: 2,
@@ -193,7 +193,7 @@ describe('file edit jsonl log', () => {
     })
     if (appended instanceof Error) throw appended
 
-    const loaded = loadFileEditEvents({ dataDir })
+    const loaded = await loadFileEditEvents({ dataDir })
     if (loaded instanceof Error) throw loaded
     expect(loaded).toMatchInlineSnapshot(`
       [
@@ -215,14 +215,14 @@ describe('file edit jsonl log', () => {
     `)
   })
 
-  test('compacts repeated edits of the same session and file to one row', () => {
+  test('compacts repeated edits of the same session and file to one row', async () => {
     const dataDir = makeDataDir()
     const events: FileEditEvent[] = [
       event({ sessionId: 'ses_a', file: '/repo/a.ts', at: 1 }),
       event({ sessionId: 'ses_a', file: '/repo/a.ts', at: 2, tool: 'write' }),
       event({ sessionId: 'ses_a', file: '/repo/a.ts', at: 3 }),
     ]
-    const appended = appendFileEditEvents({
+    const appended = await appendFileEditEvents({
       dataDir,
       events,
       maxEvents: 10,
@@ -230,7 +230,7 @@ describe('file edit jsonl log', () => {
     })
     if (appended instanceof Error) throw appended
 
-    const loaded = loadFileEditEvents({ dataDir })
+    const loaded = await loadFileEditEvents({ dataDir })
     if (loaded instanceof Error) throw loaded
     expect(loaded).toMatchInlineSnapshot(`
       [
@@ -265,7 +265,7 @@ describe('fileEditTrackerPlugin', () => {
       sessionID: 'ses_x',
       args: {},
     })
-    const loaded = loadFileEditEvents({ dataDir })
+    const loaded = await loadFileEditEvents({ dataDir })
     if (loaded instanceof Error) throw loaded
     expect(loaded.map((entry) => {
       return { sessionId: entry.sessionId, file: entry.file, tool: entry.tool }
