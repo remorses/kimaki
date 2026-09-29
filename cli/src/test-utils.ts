@@ -473,6 +473,7 @@ export async function waitForFooterMessage({
   timeout,
   afterMessageIncludes,
   afterAuthorId,
+  afterMessageId,
   clamp = true,
 }: {
   discord: DigitalDiscord
@@ -480,6 +481,7 @@ export async function waitForFooterMessage({
   timeout: number
   afterMessageIncludes?: string
   afterAuthorId?: string
+  afterMessageId?: string
   clamp?: boolean
 }): Promise<APIMessage[]> {
   const effectiveTimeout = normalizeWaitTimeout(timeout, clamp)

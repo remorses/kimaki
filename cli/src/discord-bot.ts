@@ -951,7 +951,7 @@ export async function startDiscordBot({
           void cancelPendingFileUpload(thread.id)
           return false
         }
-        if (!hasVoiceAttachment) {
+        if (!hasVoiceAttachment && !suffix.forceQueue) {
           const consumedAsQuestionAnswer = await dismissSourceUi()
           if (consumedAsQuestionAnswer) return
         }

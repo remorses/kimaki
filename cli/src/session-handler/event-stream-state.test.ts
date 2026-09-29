@@ -581,6 +581,7 @@ describe('getPromptCacheClear', () => {
           "currentCacheRead": 0,
           "currentMessageId": "msg_2",
           "expectedCacheRead": 20000,
+          "minutesSincePreviousMessage": 0,
           "previousMessageId": "msg_1",
         }
       `)
@@ -633,7 +634,37 @@ describe('getPromptCacheClear', () => {
           "currentCacheRead": 0,
           "currentMessageId": "msg_4",
           "expectedCacheRead": 20000,
+          "minutesSincePreviousMessage": 0,
           "previousMessageId": "msg_1",
+        }
+      `)
+  })
+
+  // Regression: a btw fork has no earlier step in its own buffer. The copied
+  // source step, seeded as a local event, is the baseline for its first reply.
+  test('compares the first fork reply against the seeded source step', () => {
+    const baseline: EventBufferEntry = entry({
+      type: 'kimaki.fork.cache-baseline',
+      data: {
+        sessionID,
+        assistantMessageID: 'msg_source',
+        model: { providerID: 'anthropic', id: 'claude-opus' },
+        tokens: { input: 100, cache: { read: 30_000, write: 500 } },
+        completedAt: -5 * 60_000,
+      },
+    })
+    const events = [
+      baseline,
+      ...turn([cacheStep({ assistantMessageID: 'msg_fork', input: 31_000, read: 0, write: 31_000 })]),
+    ]
+    expect(getPromptCacheClear({ events, sessionId: sessionID, currentMessageId: 'msg_fork' }))
+      .toMatchInlineSnapshot(`
+        {
+          "currentCacheRead": 0,
+          "currentMessageId": "msg_fork",
+          "expectedCacheRead": 30500,
+          "minutesSincePreviousMessage": 5,
+          "previousMessageId": "msg_source",
         }
       `)
   })
@@ -644,7 +675,8 @@ describe('getPromptCacheClear', () => {
       currentCacheRead: 1_234,
       previousMessageId: 'msg_1',
       currentMessageId: 'msg_2',
-    })).toMatchInlineSnapshot(`"prompt cache missed (20k → 1.2k)"`)
+      minutesSincePreviousMessage: 7,
+    })).toMatchInlineSnapshot(`"prompt cache missed (20k → 1.2k) (7 mins passed)"`)
   })
 })
 

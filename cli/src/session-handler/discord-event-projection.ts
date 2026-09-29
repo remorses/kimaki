@@ -687,6 +687,10 @@ function promptCacheClearActions({
   sessionId: string
   messageId: string | undefined
 }): DiscordAction[] {
+  // TODO: send this before step 1 tools finish. Tokens arrive only with step end, after tools.
+  // `session.step.streamed` fires at stream end but has no tokens, and packages/ai drops Anthropic
+  // `message_start` usage. Needs upstream tokens on Step.Streamed or a usage event on message_start.
+  // https://github.com/anomalyco/opencode/blob/v2/packages/schema/src/session-event.ts
   if (!messageId) return []
   const clear = getPromptCacheClear({ events, sessionId, currentMessageId: messageId })
   if (!clear) return []

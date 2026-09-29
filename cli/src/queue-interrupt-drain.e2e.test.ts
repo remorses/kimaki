@@ -153,7 +153,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: archived-queue-survives
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -266,7 +266,7 @@ e2eTest('queue + interrupt drain ordering', () => {
         --- from: assistant (TestBot)
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **interrupt-tester:** Reply with exactly: queued-behind-slow
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

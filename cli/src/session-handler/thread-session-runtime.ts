@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { ChannelType, ComponentType, type Client, type ThreadChannel } from 'discord.js'
 import type {
   PermissionRequest,
+  SessionMessageAssistant,
   V2Event,
 } from '@opencode/client'
 import path from 'node:path'
@@ -45,7 +46,6 @@ import type {
 import {
   asDiscordQuote,
   asSubtext,
-  QUEUE_PREFIX,
   sessionPartContent,
   STATUS_PREFIX,
   WORKTREE_PREFIX,
@@ -686,8 +686,7 @@ export type IngressInput = {
   username: string
   sourceMessageId?: string
   sourceThreadId?: string
-  // Channel that holds the source message. Differs from the thread for the
-  // thread starter message, which lives in the parent channel.
+  // Differs from the thread for the thread starter, which lives in the parent channel.
   sourceChannelId?: string
   repliedMessage?: RepliedMessageContext
   images?: DiscordFileAttachment[]
@@ -1332,13 +1331,8 @@ export class ThreadSessionRuntime {
       return
     }
 
-    const timestamp = compactedEvent.type === 'kimaki.queue-dispatch.started'
-      || compactedEvent.type === 'kimaki.queue-dispatch.settled'
-      || compactedEvent.type === 'kimaki.question-queue-handoff.started'
-      || compactedEvent.type === 'kimaki.subagent.routing'
-      || compactedEvent.type === 'server.connected'
-      ? Date.now()
-      : compactedEvent.created
+    // Kimaki-local events and server.connected carry no created time.
+    const timestamp = 'created' in compactedEvent ? compactedEvent.created : Date.now()
     const eventIndex = this.nextEventIndex
     this.nextEventIndex += 1
     this.eventBuffer.push({
@@ -1360,6 +1354,30 @@ export class ThreadSessionRuntime {
       },
     })
     this.persistEventBufferDebounced.trigger()
+  }
+
+  seedForkPromptCacheBaseline({
+    sessionId,
+    message,
+  }: {
+    sessionId: string
+    message: SessionMessageAssistant
+  }): void {
+    if (sessionId !== this.state?.sessionId || this.eventBuffer.length > 0) return
+    if (!message.tokens || message.time.completed === undefined) return
+    this.appendEventToBuffer({
+      type: 'kimaki.fork.cache-baseline',
+      data: {
+        sessionID: sessionId,
+        assistantMessageID: message.id,
+        model: { providerID: message.model.providerID, id: message.model.id },
+        tokens: {
+          input: message.tokens.input,
+          cache: { read: message.tokens.cache.read, write: message.tokens.cache.write },
+        },
+        completedAt: message.time.completed,
+      },
+    })
   }
 
   // Native busy arrives after admission, so this marker closes the queue drain race.
@@ -2481,6 +2499,10 @@ export class ThreadSessionRuntime {
     if (this.getQueueLength() === 0) {
       return
     }
+    // Only a prompt can answer a pending question; a fork must wait for idle.
+    if (this.state?.queueItems[0]?.queuedAction === 'btw') {
+      return
+    }
     logger.log(
       `[QUESTION QUEUE HANDOFF] Queue has ${this.getQueueLength()} items, handing off first item (${reason})`,
     )
@@ -2512,7 +2534,7 @@ export class ThreadSessionRuntime {
     }
 
     const next = this.state?.queueItems[0]
-    if (!next) {
+    if (!next || next.queuedAction === 'btw') {
       return
     }
 
@@ -3100,14 +3122,20 @@ export class ThreadSessionRuntime {
 
     await this.dispatchAction(async () => {
       // Determine if the message will genuinely wait in queue
-      const position = (this.state?.queueItems.length ?? 0) + 1
-      result = this.isBusy()
+      const position = (this.state?.queueItems.filter((item) => {
+        return item.queueId !== this.dispatchingQueueId
+      }).length ?? 0) + 1
+      const willWait = this.isBusy()
+        || Boolean(this.dispatchingQueueId)
+        || this.hasPendingQuestionUi()
+        || (pendingPermissions.get(this.thread.id)?.size ?? 0) > 0
+      result = willWait
         ? { queued: true, position, queueId }
         : { queued: false, queueId }
 
       // Post the ack before the item is visible to any drain path.
       const queueAckMessageId = result.queued && input.onLocalQueued
-        ? await input.onLocalQueued({ queueId, position }).catch((error) => {
+        ? await input.onLocalQueued({ queueId, position }).catch((error: unknown) => {
           logger.error(`[QUEUE] Failed to post queue ack for ${queueId}:`, error)
           return undefined
         })
@@ -3131,20 +3159,6 @@ export class ThreadSessionRuntime {
       }
       threadState.enqueueItem(this.threadId, item)
       const stateAfterEnqueue = threadState.getThreadState(this.threadId)
-      const position = stateAfterEnqueue?.queueItems.filter((item) => {
-        return item.queueId !== this.dispatchingQueueId
-      }).length ?? 0
-      const willDrainNow = stateAfterEnqueue
-        ? (
-          stateAfterEnqueue.queueItems.length > 0
-          && !this.isBusy()
-          && !this.hasPendingQuestionUi()
-          && (pendingPermissions.get(this.thread.id)?.size ?? 0) === 0
-        )
-        : false
-      result = !willDrainNow && position > 0
-        ? { queued: true, position, queueId }
-        : { queued: false, queueId }
 
       if (this.hasPendingQuestionUi()) {
         const pending = [...pendingQuestionContexts.values()].find((context) => {
@@ -3745,7 +3759,7 @@ export class ThreadSessionRuntime {
       reply: replyTarget
         ? { messageReference: replyTarget, failIfNotExists: false }
         : undefined,
-    }).catch((e) => new DiscordOperationError({ operation: 'sendMessage', cause: e }))
+    }).catch((cause) => new DiscordOperationError({ operation: 'sendMessage', cause }))
     if (sendResult instanceof Error) {
       discordLogger.error('Failed to send queue drain indicator:', sendResult)
     }
@@ -3758,7 +3772,7 @@ export class ThreadSessionRuntime {
    * start dispatchPrompt (detached — does not block the action queue).
    * Called after enqueue, after run finishes, or after a blocker resolves.
    *
-   * @param showIndicator - When true, shows "» username: prompt" in Discord.
+   * @param showIndicator - When true, replies "Executing queued prompt" in Discord.
    *   Only set to true when draining after a previous run finishes or a
    *   blocker resolves — not on the immediate first dispatch from enqueueIncoming.
    */
@@ -3810,7 +3824,8 @@ export class ThreadSessionRuntime {
     }
 
     // Start dispatch detached so native events can continue through the action queue.
-    const dispatchSessionId = thread.sessionId
+    // A btw fork runs in another session, so the source session stays idle.
+    const dispatchSessionId = next.queuedAction === 'btw' ? undefined : thread.sessionId
     if (dispatchSessionId) this.markQueueDispatchBusy(dispatchSessionId)
     let accepted = false
     void this.dispatchPrompt(next).then(async (wasAccepted) => {
@@ -3886,6 +3901,28 @@ export class ThreadSessionRuntime {
   // session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
+    if (input.queuedAction === 'btw') {
+      const { forkSessionToBtwThread } = await import('../commands/btw.js')
+      const result = await forkSessionToBtwThread({
+        sourceThread: this.thread,
+        projectDirectory: this.projectDirectory,
+        sdkDirectory: this.sdkDirectory,
+        prompt: input.prompt,
+        userId: input.userId,
+        username: input.username,
+        appId: input.appId,
+        images: input.images,
+        agent: input.agent,
+      })
+      // Accepted either way: a failed fork must not block later queue items.
+      if (result instanceof Error) {
+        logger.error('[QUEUE] Could not fork queued btw:', result)
+        await sendThreadMessage(this.thread, `Could not fork queued btw: ${result.message}`)
+        return true
+      }
+      await sendThreadMessage(this.thread, `Session forked! Continue in ${result.thread.toString()}`)
+      return true
+    }
     const admission = await this.prepareAdmission({
       input,
       delivery: 'queue',

@@ -1171,8 +1171,7 @@ e2eTest('voice message handling', () => {
         -# Queued at position 1. Edit or delete your message to update the queue
         slow-response-done
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **voice-tester:** Voice message transcription from Discord user:
-        Queue this task for later
+        -# Executing queued prompt
         session-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

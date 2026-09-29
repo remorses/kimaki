@@ -12,6 +12,7 @@ import {
 import type { ThreadStartMarker } from './system-message.js'
 import { getThreadSession } from './database.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
+import { listAllMessages } from './opencode-pagination.js'
 import { buildLongPromptMessage } from './cli-runner.js'
 import {
   waitForBotMessageContaining,
@@ -220,20 +221,22 @@ e2eTest('queue delete message', () => {
       if (getClient instanceof Error) {
         throw getClient
       }
-      const messages = await getClient().session.messages({
-        sessionID: sessionId!,
-        directory: ctx.directories.projectDirectory,
+      const messages = await listAllMessages({
+        client: getClient(),
+        sessionId: sessionId!,
+        order: 'asc',
+        type: 'user',
       })
-      const userPrompts = (messages.data || []).flatMap((m) => {
-        if (m.info.role !== 'user') return []
-        return m.parts.flatMap((part) => {
-          if (part.type !== 'text' || part.synthetic) return []
-          return [
-            part.text
-              .replace(/(filler line\n)+/g, '<filler>\n')
-              .replace(/<attachment [^>]*>/g, '<attachment prompt.md>'),
-          ]
-        })
+      if (messages instanceof Error) throw messages
+      const userPrompts = messages.flatMap((m) => {
+        if (m.type !== 'user') return []
+        return [
+          m.text
+            // Per-turn Discord context is appended after the prompt.
+            .replace(/\n<(discord-user|system-reminder)[\s\S]*$/, '')
+            .replace(/(filler line\n)+/g, '<filler>\n')
+            .replace(/<attachment [^>]*>/g, '<attachment prompt.md>'),
+        ]
       })
       expect(userPrompts).toMatchInlineSnapshot(`
         [

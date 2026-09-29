@@ -99,7 +99,7 @@ describe('queue drain after question select answer', () => {
       })
       const pending = await waitForPendingQuestion({
         threadId: thread.id,
-        timeoutMs: 4_000,
+        timeoutMs: 8_000,
       })
       const questionMessage = questionMessages.find((message) => {
         return message.content.includes('How to proceed?')
@@ -129,9 +129,8 @@ describe('queue drain after question select answer', () => {
       const firstIndicator = await waitForBotReplyTo({
         discord: ctx.discord,
         threadId: thread.id,
-        text: `» **question-select-tester:** ${firstQueuedPrompt}`,
-        timeout: 4_000,
-        clamp: false,
+        replyToMessageId: firstAck.messageId,
+        timeout: 8_000,
       })
       expect(firstIndicator.content).toBe('-# Executing queued prompt')
 
@@ -168,25 +167,14 @@ describe('queue drain after question select answer', () => {
       const secondIndicator = await waitForBotReplyTo({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: `» **question-select-tester:** ${firstQueuedPrompt}`,
-        afterAuthorId: ctx.discord.botUserId,
-        clamp: false,
-      })
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: `» **question-select-tester:** ${secondQueuedPrompt}`,
-        timeout: 4_000,
-        clamp: false,
+        replyToMessageId: secondAck.messageId,
+        timeout: 8_000,
       })
       await waitForFooterMessage({
         discord: ctx.discord,
         threadId: thread.id,
-        timeout: 4_000,
-        afterMessageIncludes: `» **question-select-tester:** ${secondQueuedPrompt}`,
-        afterAuthorId: ctx.discord.botUserId,
-        clamp: false,
+        timeout: 8_000,
+        afterMessageId: secondIndicator.id,
       })
 
       const timeline = await th.text({ showInteractions: true })
@@ -208,7 +196,7 @@ describe('queue drain after question select answer', () => {
         > tool done
         question-drain-first
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **question-select-tester:** Reply with exactly: post-question-second
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)

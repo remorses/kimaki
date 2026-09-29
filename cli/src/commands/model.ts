@@ -41,7 +41,6 @@ import {
   registerHtmlAction,
 } from '../html-actions.js'
 import { createLogger, LogPrefix } from '../logger.js'
-import { OpenCodeSdkError } from '../errors.js'
 import * as errore from 'errore'
 import { buildPaginatedOptions, parsePaginationValue } from './paginated-select.js'
 
