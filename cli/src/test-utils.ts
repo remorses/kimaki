@@ -100,14 +100,9 @@ export async function warmUpOpencodeServer({ directory }: { directory: string })
   const getClient = await initializeOpencodeForDirectory(directory)
   if (getClient instanceof Error) throw getClient
   const client = getClient()
-  const session = await client.session.create({ directory, title: 'e2e warmup' })
-  if (!session.data) throw new Error('Could not create warmup session', { cause: session.error })
-  await client.session.prompt({
-    sessionID: session.data.id,
-    directory,
-    parts: [{ type: 'text', text: 'Reply with exactly: warmup' }],
-  })
-  await client.session.delete({ sessionID: session.data.id, directory })
+  const session = await client.session.create({ title: 'e2e warmup' })
+  await client.session.prompt({ sessionID: session.id, text: 'Reply with exactly: warmup' })
+  await client.session.remove({ sessionID: session.id })
 }
 
 // LESSON: the deterministic provider answers instantly, but the FIRST turn

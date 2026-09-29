@@ -7,6 +7,7 @@ import {
   orderNativeRecoveryEvents,
 } from './thread-session-runtime.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
+import { parseQueuedMessagePayload } from './thread-runtime-state.js'
 import {
   applyDiscordProjectionActions,
   createDiscordProjectionState,
@@ -20,6 +21,15 @@ import {
 } from './event-stream-state.js'
 
 let eventSequence = 0
+
+test('persisted queued actions survive a restart', () => {
+  const actions = ['btw', 'shell', 'context'] as const
+  const restored = actions.map((queuedAction) => parseQueuedMessagePayload({
+    queueId: 'queue-1',
+    payloadJson: JSON.stringify({ prompt: '!echo hi', userId: 'user-1', username: 'Tommy', queuedAction }),
+  }))
+  expect(restored.map((item) => item instanceof Error ? 'error' : item.queuedAction)).toEqual(actions)
+})
 
 describe('prompt admission preparation', () => {
   test('direct and local queue paths preserve the complete prepared value', () => {

@@ -1120,10 +1120,7 @@ export function setupQueueAdvancedSuite({
       discordClient: ctx.botClient,
     })
 
-    const warmup = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: ctx.directories.projectDirectory })
   }, 60_000)
 
   afterAll(async () => {

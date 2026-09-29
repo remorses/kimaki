@@ -2499,8 +2499,8 @@ export class ThreadSessionRuntime {
     if (this.getQueueLength() === 0) {
       return
     }
-    // Only a prompt can answer a pending question; a fork must wait for idle.
-    if (this.state?.queueItems[0]?.queuedAction === 'btw') {
+    // Only a prompt can answer a pending question; actions wait for idle.
+    if (this.state?.queueItems[0]?.queuedAction) {
       return
     }
     logger.log(
@@ -2534,7 +2534,7 @@ export class ThreadSessionRuntime {
     }
 
     const next = this.state?.queueItems[0]
-    if (!next || next.queuedAction === 'btw') {
+    if (!next || next.queuedAction) {
       return
     }
 
@@ -3315,8 +3315,7 @@ export class ThreadSessionRuntime {
         // Route with the resolved mode through normal paths.
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.
-        // noReply messages always go through the opencode path so the flag
-        // reaches session.prompt; local queue doesn't support noReply.
+        // Context-only messages wait for idle before being sent without a reply.
         const enqueueResult = resolvedInput.noReply
           ? await this.enqueueContextOnly(resolvedInput)
           : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
@@ -3756,8 +3755,6 @@ export class ThreadSessionRuntime {
     })
   }
 
-  // Silent reply to the message that queued the item. Discord replies must
-  // reference a message in the same channel.
   /** The "Queued" ack, or the source message when it lives in this thread. */
   private getQueueItemReplyTarget(item: QueuedMessage): string | undefined {
     return item.queueAckMessageId
@@ -3847,8 +3844,8 @@ export class ThreadSessionRuntime {
     }
 
     // Start dispatch detached so native events can continue through the action queue.
-    // A btw fork runs in another session, so the source session stays idle.
-    const dispatchSessionId = next.queuedAction === 'btw' ? undefined : thread.sessionId
+    // Actions do not start a model turn in the source session.
+    const dispatchSessionId = next.queuedAction ? undefined : thread.sessionId
     if (dispatchSessionId) this.markQueueDispatchBusy(dispatchSessionId)
     let accepted = false
     void this.dispatchPrompt(next).then(async (wasAccepted) => {
@@ -3924,31 +3921,11 @@ export class ThreadSessionRuntime {
   // session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
-    if (input.queuedAction === 'btw') {
-      // A started fork cannot be cancelled, so it leaves the queue before setup.
-      // Remove buttons then report it as already dispatched instead of removed.
+    if (input.queuedAction) {
+      // A started action cannot be cancelled, so claim it before execution.
       const claimed = await this.claimQueueItem(input)
-      // Handled either way: /abort or a remove already dropped it, drain continues.
       if (!claimed) return true
-      const { forkSessionToBtwThread } = await import('../commands/btw.js')
-      const result = await forkSessionToBtwThread({
-        sourceThread: this.thread,
-        projectDirectory: this.projectDirectory,
-        sdkDirectory: this.sdkDirectory,
-        prompt: input.prompt,
-        userId: input.userId,
-        username: input.username,
-        appId: input.appId,
-        images: input.images,
-        agent: input.agent,
-      })
-      // Accepted either way: a failed fork must not block later queue items.
-      if (result instanceof Error) {
-        logger.error('[QUEUE] Could not fork queued btw:', result)
-        await sendThreadMessage(this.thread, `Could not fork queued btw: ${result.message}`)
-        return true
-      }
-      await sendThreadMessage(this.thread, `Session forked! Continue in ${result.thread.toString()}`)
+      await this.runQueuedAction({ item: input, action: input.queuedAction })
       return true
     }
     const admission = await this.prepareAdmission({

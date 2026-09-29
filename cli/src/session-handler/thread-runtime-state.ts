@@ -161,7 +161,9 @@ export function parseQueuedMessagePayload({
   }
 
   const queued: QueuedMessage = { queueId, prompt, userId, username }
-  if (parsed.queuedAction === 'btw') queued.queuedAction = 'btw'
+  if (parsed.queuedAction === 'btw' || parsed.queuedAction === 'shell' || parsed.queuedAction === 'context') {
+    queued.queuedAction = parsed.queuedAction
+  }
   const images = parseQueuedImages(parsed.images)
   if (images) queued.images = images
   const appId = jsonString(parsed.appId)

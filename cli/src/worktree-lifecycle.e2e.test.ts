@@ -47,6 +47,7 @@ import {
   cleanupTestSessions,
   waitForBotMessageContaining,
   waitForFooterMessage,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 import { execAsync } from './worktrees.js'
 
@@ -641,12 +642,9 @@ describe('worktree lifecycle', () => {
         timeout: 10_000,
       })
 
-      await waitForBotMessageContaining({
+      await waitForFooterMessage({
         discord,
         threadId: worktreeThread.id,
-        userId: TEST_USER_ID,
-        text: '⋅ deterministic-v2',
-        afterUserMessageIncludes: 'channel-worktree-msg',
         timeout: 4_000,
         afterMessageIncludes: 'channel-worktree-msg',
         afterAuthorId: TEST_USER_ID,
