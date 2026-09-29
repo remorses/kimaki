@@ -39,9 +39,10 @@ export function parseShellCommand(text: string): string | null {
 
 /**
  * What a queued item does when the queue reaches it. Plain prompts have no
- * action. `shell` runs a `!cmd`, `btw` forks the session.
+ * action. `shell` runs a `!cmd`, `btw` forks the session, `context` adds a
+ * noReply message once the session is idle.
  */
-export type QueuedAction = 'btw' | 'shell'
+export type QueuedAction = 'btw' | 'shell' | 'context'
 
 export function getQueuedAction({
   prompt,

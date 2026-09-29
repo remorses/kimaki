@@ -3740,12 +3740,30 @@ export class ThreadSessionRuntime {
    * let a stale wake land after the user took the conversation back.
    */
   private async supersedePendingSleep(input: IngressInput): Promise<void> {
-    if (input.isSleepWake) return
+    // Context-only messages (noReply) are not turns, so the sleep stays.
+    if (input.isSleepWake || input.noReply) return
     await cancelSessionSleepForThread({ threadId: this.threadId }).catch(
       (error) => {
         logger.error('[SLEEP] failed to cancel pending sleep:', error)
       },
     )
+  }
+
+  /**
+   * Context-only (noReply) messages wait in the local queue until the session
+   * is idle. OpenCode's loop only stops once the last assistant message answers
+   * the last user message, so a noReply message sent mid-turn still gets a reply
+   * when that turn ends. Never reported as queued: there is no user-visible ack.
+   */
+  private async enqueueContextOnly(input: IngressInput): Promise<EnqueueResult> {
+    await this.enqueueViaLocalQueue({
+      ...input,
+      mode: 'local-queue',
+      command: undefined,
+      queuedAction: 'context',
+      onLocalQueued: undefined,
+    })
+    return { queued: false }
   }
 
   private async enqueueViaLocalQueue(input: IngressInput): Promise<EnqueueResult> {
@@ -3853,6 +3871,9 @@ export class ThreadSessionRuntime {
     // opencode's session.command API instead of being sent to the model as
     // plain text. Covers Discord chat messages, /new-session, /queue, CLI
     // `kimaki send --prompt`, and scheduled tasks — all funnel through here.
+    if (input.noReply) {
+      return this.enqueueContextOnly(input)
+    }
     input = maybeConvertLeadingCommand(input)
     if (input.mode === 'local-queue') {
       return this.enqueueViaLocalQueue(input)
@@ -3959,14 +3980,8 @@ export class ThreadSessionRuntime {
         // Route with the resolved mode through normal paths.
         // Await the enqueue so session state (ensureSession, setThreadSession)
         // is persisted before the next message's preprocessing reads it.
-        // noReply messages always go through the opencode path so the flag
-        // reaches promptAsync; local queue doesn't support noReply.
         const enqueueResult = resolvedInput.noReply
-          ? await this.submitViaOpencodeQueue({
-              ...resolvedInput,
-              mode: 'opencode',
-              command: undefined,
-            })
+          ? await this.enqueueContextOnly(resolvedInput)
           : (resolvedInput.mode === 'local-queue' || resolvedInput.command)
             ? await this.enqueueViaLocalQueue(resolvedInput)
             : await this.submitViaOpencodeQueue(resolvedInput)
@@ -4435,10 +4450,11 @@ export class ThreadSessionRuntime {
     // Show queued message indicator only for messages that actually waited
     // behind a running request — not for the first immediate dispatch.
     // A queued `!cmd` replies with its streamed output, which is the indicator.
+    // Context-only items are invisible in Discord.
     // Not awaited: the ~1s Discord send left OpenCode idle between runs, which
     // `session list --active` read as done. discord.js sends same-channel
     // messages in order, so the indicator still lands before the reply.
-    if (showIndicator && next.queuedAction !== 'shell') {
+    if (showIndicator && next.queuedAction !== 'shell' && next.queuedAction !== 'context') {
       void this.sendQueueDrainIndicator(next)
     }
 
@@ -4485,6 +4501,10 @@ export class ThreadSessionRuntime {
     item: QueuedMessage
     action: QueuedAction
   }): Promise<void> {
+    if (action === 'context') {
+      await this.submitViaOpencodeQueue({ ...input, mode: 'opencode', noReply: true })
+      return
+    }
     if (action === 'shell') {
       const command = parseShellCommand(input.prompt)
       if (!command) return
