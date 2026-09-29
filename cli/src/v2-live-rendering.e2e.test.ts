@@ -107,7 +107,7 @@ test('shows tools before completion, sends one tool line, and renames from nativ
   const sessionID = await getThreadSession(thread.id)
   const client = getOpencodeClient(ctx.directories.projectDirectory)
   if (!sessionID || !client) throw new Error('Missing OpenCode session')
-  await client.session.rename({ sessionID, title: 'Native renamed title' })
+  await client.session.update({ sessionID, title: 'Native renamed title' })
   await expect.poll(async () => {
     const updated = await ctx.botClient.channels.fetch(thread.id, { force: true })
     return updated?.isThread() ? updated.name : undefined

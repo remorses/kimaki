@@ -208,7 +208,6 @@ export async function handleForkSubagentSelectMenu(
   }
   const forkResponse = await getClient().session.fork({
     sessionID: selectedSessionId,
-    boundary: { type: 'through' },
   }).catch(() => null)
   if (!forkResponse) {
     await interaction.editReply('Failed to fork session')

@@ -285,7 +285,7 @@ test('tool turn emits session.tool.called and session.tool.success', async () =>
           await client.permission.reply({
             sessionID: session.id,
             requestID: event.data.id,
-            reply: 'once',
+            decision: 'once',
           })
         }
       }

@@ -384,8 +384,8 @@ function fakeGetClient(options?: {
 }) {
   let failed = false
   return () => ({
-    plugin: {
-      awaitActivation: async () => {},
+    integration: {
+      list: async () => ({ data: [] }),
     },
     model: {
       list: async () => {
@@ -452,8 +452,8 @@ describe('listModels', () => {
   test('does not cache an empty connected model list', async () => {
     const calls = { count: 0 }
     const getClient = (() => ({
-      plugin: {
-        awaitActivation: async () => {},
+      integration: {
+        list: async () => ({ data: [] }),
       },
       model: {
         list: async () => {
@@ -526,8 +526,8 @@ describe('listModels', () => {
       }>
     }>()
     const getClient = (() => ({
-      plugin: {
-        awaitActivation: async () => {},
+      integration: {
+        list: async () => ({ data: [] }),
       },
       model: {
         list: () => {

@@ -1,6 +1,6 @@
-// E2e test: a question answered after its run was aborted elsewhere must not be
-// lost. The original run is dead, so question.reply is a no-op; kimaki resumes
-// the session by sending the answers back as a fresh prompt.
+// E2e test: an interrupt from another OpenCode client expires the Discord
+// dropdown. Since OpenCode 2.0.19 the interrupt cancels the pending question
+// form and emits form.cancelled, so a later answer must not resume the run.
 
 import { describe, test, expect } from 'vitest'
 import {
@@ -11,11 +11,10 @@ import { waitForBotMessageContaining } from './test-utils.js'
 import { pendingQuestionContexts } from './commands/ask-question.js'
 import { getOpencodeClient } from './opencode.js'
 import { getThreadSession } from './database.js'
-import { getRuntime } from './session-handler/thread-session-runtime.js'
 
 const TEXT_CHANNEL_ID = '200000000000001032'
 
-describe('question answered after external abort resumes session', () => {
+describe('question after external abort', () => {
   const ctx = setupQueueAdvancedSuite({
     channelId: TEXT_CHANNEL_ID,
     channelName: 'qa-question-abort-resume',
@@ -24,7 +23,7 @@ describe('question answered after external abort resumes session', () => {
   })
 
   test(
-    'answering a dropdown after opencode abort resumes with the answers',
+    'external opencode interrupt expires the dropdown',
     async () => {
       const marker = 'QUESTION_ABORT_RESUME_MARKER'
       await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
@@ -62,9 +61,7 @@ describe('question answered after external abort resumes session', () => {
       }
       const contextHash = pendingEntry[0]
 
-      // Abort directly through opencode (simulating a different opencode client),
-      // so kimaki's dropdown context stays live but the question is gone in
-      // opencode. kimaki's own abort would clear the dropdown instead.
+      // Interrupt through opencode directly, like a different opencode client.
       const sessionId = await getThreadSession(thread.id)
       if (!sessionId) {
         throw new Error('Expected session id')
@@ -77,22 +74,14 @@ describe('question answered after external abort resumes session', () => {
         sessionID: sessionId,
       })
 
-      // Wait until kimaki sees the session go idle (mirrors a user answering
-      // after they aborted in another opencode).
-      const runtime = getRuntime(thread.id)
-      if (!runtime) {
-        throw new Error('Expected runtime')
-      }
-      const idleStart = Date.now()
-      while (runtime.isBusy() && Date.now() - idleStart < 8_000) {
+      const expireStart = Date.now()
+      while (pendingQuestionContexts.has(contextHash) && Date.now() - expireStart < 4_000) {
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 50)
         })
       }
-      expect(runtime.isBusy()).toBe(false)
+      expect(pendingQuestionContexts.has(contextHash)).toBe(false)
 
-      // Answer the dropdown. reply fails (question no longer pending), so kimaki
-      // resumes the session with the answers as a new prompt.
       const interaction = await th.user(TEST_USER_ID).selectMenu({
         messageId: questionMsg.id,
         customId: `ask_question:${contextHash}:0`,
@@ -103,17 +92,16 @@ describe('question answered after external abort resumes session', () => {
         timeout: 8_000,
       })
 
-      await waitForBotMessageContaining({
-        discord: ctx.discord,
-        threadId: thread.id,
-        text: 'resumed-after-abort',
-        timeout: 12_000,
-      })
-
-      const timeline = await th.text({ showInteractions: true })
-      expect(timeline).toContain('How to proceed?')
-      expect(timeline).toContain('» **question-resume-tester:** Alpha')
-      expect(timeline).toContain('resumed-after-abort')
+      expect(await th.text({ showInteractions: true })).toMatchInlineSnapshot(`
+        "--- from: user (question-resume-tester)
+        QUESTION_ABORT_RESUME_MARKER
+        --- from: assistant (TestBot)
+        -# *using deterministic-provider/deterministic-v2*
+        **Select action**
+        How to proceed?
+        [user selects dropdown: 0]
+        This question has expired. Please ask the AI again."
+      `)
     },
     25_000,
   )

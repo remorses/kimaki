@@ -275,7 +275,7 @@ export async function archiveThread({
         const newTitle = currentTitle.startsWith('📁')
           ? currentTitle
           : `📁 ${currentTitle}`.trim()
-        await client.session.rename({
+        await client.session.update({
           sessionID: sessionId,
           title: newTitle,
         })

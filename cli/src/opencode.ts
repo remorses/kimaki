@@ -1420,9 +1420,7 @@ export async function initializeOpencodeForDirectory(
 
   const client = opencodeServerManager.getClient({ directory })
   if (!client) return new ServerNotReadyError({ directory })
-  const activation = await client.plugin
-    .awaitActivation({ location: { directory } })
-    .catch((e) => new OpenCodeSdkError({ operation: 'plugin.awaitActivation', cause: e }))
+  const activation = await awaitOpencodePluginActivation({ client, directory })
   if (activation instanceof Error) {
     opencodeLogger.warn(
       `OpenCode plugins did not finish activating for ${directory}: ${activation.message}`,
@@ -1434,6 +1432,42 @@ export async function initializeOpencodeForDirectory(
     if (!currentClient) throw new ServerNotReadyError({ directory })
     return currentClient
   }
+}
+
+/**
+ * Wait until plugins for a location are active. Config providers load through
+ * plugins, so model.list and model.default miss them before activation.
+ */
+export async function awaitOpencodePluginActivation({
+  client,
+  directory,
+}: {
+  client: OpencodeClient
+  directory?: string
+}): Promise<void | OpenCodeSdkError> {
+  // TODO: use a public activation barrier if OpenCode adds one. 2.0.19 removed
+  // plugin.awaitActivation; integration.list is the only public read that still
+  // awaits activation. See "Resolved during audit" in V2_HTTP_API_AUDIT.md at
+  // https://github.com/anomalyco/opencode/tree/v2
+  const result = await client.integration
+    .list(directory ? { location: { directory } } : undefined)
+    .catch((cause: unknown) => new OpenCodeSdkError({ operation: 'integration.list', cause }))
+  if (result instanceof Error) return result
+}
+
+/** OpenCode project ID for a directory. Worktree APIs are keyed by it. */
+export async function getOpencodeProjectId({
+  client,
+  directory,
+}: {
+  client: OpencodeClient
+  directory: string
+}): Promise<string | OpenCodeSdkError> {
+  const location = await client.location
+    .get({ location: { directory } })
+    .catch((cause: unknown) => new OpenCodeSdkError({ operation: 'location.get', cause }))
+  if (location instanceof Error) return location
+  return location.project.id
 }
 
 /**

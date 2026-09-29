@@ -15,6 +15,7 @@ import {
 } from '@subrouter/cli'
 import { InvalidModelError, OpenCodeSdkError } from '../errors.js'
 import {
+  awaitOpencodePluginActivation,
   initializeOpencodeForDirectory,
   subscribeOpencodeServerLifecycle,
 } from '../opencode.js'
@@ -258,10 +259,7 @@ export async function listModels({
 
   const promise = (async () => {
     const location = directory ? { location: { directory } } : undefined
-    // model.list can return an empty snapshot before plugins settle.
-    const activation = await getClient()
-      .plugin.awaitActivation(location)
-      .catch((e) => new OpenCodeSdkError({ operation: 'plugin.awaitActivation', cause: e }))
+    const activation = await awaitOpencodePluginActivation({ client: getClient(), directory })
     if (activation instanceof Error) return activation
     const modelsResponse = await getClient()
       .model.list(location)

@@ -116,8 +116,8 @@ export async function handleAddProjectAutocomplete({
         return searchText.includes(focusedValue.toLowerCase())
       })
       .sort((a, b) => {
-        const aTime = a.time.initialized || a.time.created
-        const bTime = b.time.initialized || b.time.created
+        const aTime = a.time.created
+        const bTime = b.time.created
         return bTime - aTime
       })
       .slice(0, 25)

@@ -536,7 +536,7 @@ function cleanupPendingUiForThread(threadId: string): void {
               return client.permission.reply({
                 sessionID: ctx.permission.sessionID,
                 requestID: requestId,
-                reply: 'reject',
+                decision: 'reject',
               })
             }),
           ).catch(() => {})
@@ -1831,8 +1831,8 @@ export class ThreadSessionRuntime {
 
     const [sessionIdsResult, formsResult] = await Promise.all([
       this.listNativeSessionTree({ client, mainSessionId: sessionId }),
-      client.form.list({ sessionID: sessionId }).catch((cause) => {
-        return new OpenCodeSdkError({ operation: 'form.list.reconcile', cause })
+      client.session.form.list({ sessionID: sessionId }).catch((cause: unknown) => {
+        return new OpenCodeSdkError({ operation: 'session.form.list.reconcile', cause })
       }),
     ])
 
@@ -1859,65 +1859,45 @@ export class ThreadSessionRuntime {
       logger.warn('[RECONNECT] Failed to reconcile forms:', formsResult)
       return
     }
+    // session.form.list returns only pending forms.
     for (const form of formsResult) {
-      const stateResult = await client.form.state({
-        sessionID: sessionId,
-        formID: form.id,
-      }).catch((cause) => new OpenCodeSdkError({
-        operation: 'form.state.reconcile',
-        cause,
-      }))
-      if (stateResult instanceof Error) {
-        logger.warn(`[RECONNECT] Failed to read form ${form.id} state:`, stateResult)
-        continue
-      }
-      if (stateResult.status === 'pending') {
-        const fields = form.fields.flatMap((field): Array<Extract<
-          V2Event,
-          { type: 'form.created' }
-        >['data']['form']['fields'][number]> => {
-          if (field.type === 'string') return [{
-            key: field.key,
-            type: 'string' as const,
-            title: field.title,
-            description: field.description,
-            options: field.options,
-          }]
-          if (field.type === 'multiselect') return [{
-            key: field.key,
-            type: 'multiselect' as const,
-            title: field.title,
-            description: field.description,
-            options: field.options,
-          }]
-          return []
-        })
-        const [firstField, ...remainingFields] = fields
-        if (!firstField) continue
-        const formEvent: Extract<V2Event, { type: 'form.created' }> = {
-          id: `reconnect-form-created:${form.id}`,
-          created: Date.now(),
-          type: 'form.created',
-          data: {
-            form: {
-              id: form.id,
-              sessionID: form.sessionID,
-              title: form.title,
-              metadata: form.metadata,
-              fields: [firstField, ...remainingFields],
-            },
-          },
-        }
-        await this.handleEvent(formEvent)
-        continue
-      }
-      const settledEvent: Extract<V2Event, { type: 'form.cancelled' }> = {
-        id: `reconnect-form-settled:${form.id}`,
+      const fields = form.fields.flatMap((field): Array<Extract<
+        V2Event,
+        { type: 'form.created' }
+      >['data']['form']['fields'][number]> => {
+        if (field.type === 'string') return [{
+          key: field.key,
+          type: 'string' as const,
+          title: field.title,
+          description: field.description,
+          options: field.options,
+        }]
+        if (field.type === 'multiselect') return [{
+          key: field.key,
+          type: 'multiselect' as const,
+          title: field.title,
+          description: field.description,
+          options: field.options,
+        }]
+        return []
+      })
+      const [firstField, ...remainingFields] = fields
+      if (!firstField) continue
+      const formEvent: Extract<V2Event, { type: 'form.created' }> = {
+        id: `reconnect-form-created:${form.id}`,
         created: Date.now(),
-        type: 'form.cancelled',
-        data: { sessionID: sessionId, id: form.id },
+        type: 'form.created',
+        data: {
+          form: {
+            id: form.id,
+            sessionID: form.sessionID,
+            title: form.title,
+            metadata: form.metadata,
+            fields: [firstField, ...remainingFields],
+          },
+        },
       }
-      await this.handleEvent(settledEvent)
+      await this.handleEvent(formEvent)
     }
   }
 
@@ -2978,14 +2958,14 @@ export class ThreadSessionRuntime {
       return result
     }
     if (!admission.noReply && admission.delivery === 'steer' && wasBusy) {
-      // Busy v2 steer needs a continue interrupt to yield the current step.
+      // Busy v2 steer needs a resume interrupt to yield the current step.
       const interruptResult = await admission.client.session.interrupt({
         sessionID: admission.sessionId,
-        continue: true,
+        resume: true,
       }).catch((cause) => new OpenCodeSdkError({ operation: 'session.interrupt', cause }))
       if (interruptResult instanceof Error) {
         logger.warn(
-          `[INGRESS] session.interrupt continue failed sessionId=${admission.sessionId} message=${interruptResult.message}`,
+          `[INGRESS] session.interrupt resume failed sessionId=${admission.sessionId} message=${interruptResult.message}`,
         )
       }
     }
@@ -3978,7 +3958,7 @@ export class ThreadSessionRuntime {
     const signal = AbortSignal.timeout(30_000)
     const result = await admission.client.session.command({
       sessionID: admission.sessionId,
-      command: command.name,
+      name: command.name,
       text: command.arguments + (admission.text ? `\n${admission.text}` : ''),
     }, { signal }).then(() => null).catch((cause) => ({
       error: new OpenCodeSdkError({ operation: 'session.command', cause }),
@@ -4220,10 +4200,10 @@ export class ThreadSessionRuntime {
     ]
     // Omitted permissions preserve existing/forked rules; explicit input replaces them.
     if (session && permissions !== undefined) {
-      const result = await getClient().permission.rules({
+      const result = await getClient().session.update({
         sessionID: session.id,
         permissions: sessionPermissions,
-      }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'permission.rules', cause }))
+      }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'session.update', cause }))
       if (result instanceof Error) return result
     }
     if (!session && !createIfMissing) {

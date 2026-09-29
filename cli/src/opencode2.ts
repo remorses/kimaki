@@ -7,7 +7,7 @@
 // separate from opencode.ts so tests can spawn a throwaway server without the
 // bot's config surface.
 //
-// Verified v2 facts (@opencode/cli 2.0.2):
+// Verified v2 facts (@opencode/cli 2.0.19):
 // - binary names are `opencode` and `opencode2`, shipped by @opencode/cli as
 //   bin/opencode.exe (the .exe name is kept on every platform; postinstall
 //   swaps in the native binary). Spawn the real binary, NOT
@@ -18,7 +18,7 @@
 // - auth is Basic `opencode:<password>`. We always generate the password and
 //   pass it via env OPENCODE_PASSWORD so stdout never needs parsing (the
 //   "server password ..." line is only printed when no env password is set).
-// - every /api route requires auth, including /api/health. Readiness probe:
+// - every /api route requires auth, including /api/info. Readiness probe:
 //   GET /api/session/active with Basic auth (cheap, 200 = ready).
 
 import { spawn, type ChildProcess } from 'node:child_process'

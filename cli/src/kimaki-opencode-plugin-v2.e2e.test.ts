@@ -20,6 +20,7 @@ import {
   type Opencode2Server,
   type OpenCodeClient,
 } from './opencode2.js'
+import { awaitOpencodePluginActivation } from './opencode.js'
 
 const pluginDirectory = path.join(import.meta.dirname, '../dist/kimaki-opencode-plugin')
 
@@ -217,9 +218,8 @@ beforeAll(async () => {
     }
   })()
 
-  await client.plugin.awaitActivation({
-    location: { directory: tempDir },
-  })
+  const activation = await awaitOpencodePluginActivation({ client, directory: tempDir })
+  if (activation instanceof Error) throw activation
 }, 120_000)
 
 afterAll(async () => {

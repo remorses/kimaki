@@ -139,7 +139,7 @@ async function replyPendingPermissions(sessionId: string): Promise<void> {
     await client.permission.reply({
       sessionID: sessionId,
       requestID: event.data.id,
-      reply: 'once',
+      decision: 'once',
     }).catch(() => undefined)
   }
 }

@@ -46,6 +46,7 @@ import {
 import { getOrCreateRuntime } from '../session-handler/thread-session-runtime.js'
 import {
   buildSessionPermissions,
+  getOpencodeProjectId,
   initializeOpencodeForDirectory,
 } from '../opencode.js'
 import { WORKTREE_PREFIX } from './merge-worktree.js'
@@ -231,6 +232,8 @@ export async function tryWorkspaceCreate({
   if (getClient instanceof Error) return getClient
 
   const client = getClient()
+  const projectID = await getOpencodeProjectId({ client, directory: projectDirectory })
+  if (projectID instanceof Error) return projectID
   const managedDirectory = getManagedWorktreeDirectory({
     directory: projectDirectory,
     name: worktreeName,
@@ -244,7 +247,7 @@ export async function tryWorkspaceCreate({
 
   const cleanupFailedWorkspace = async (worktreeDirectory: string) => {
     const removeResponse = await client.worktree.remove({
-      location: { directory: projectDirectory },
+      projectID,
       directory: worktreeDirectory,
       force: true,
     }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'worktree.remove', cause: e }))
@@ -262,7 +265,7 @@ export async function tryWorkspaceCreate({
   }
 
   const response = await client.worktree.create({
-    location: { directory: projectDirectory },
+    projectID,
     name: path.basename(managedDirectory),
     branch: worktreeName,
     from: projectDirectory,
@@ -759,7 +762,6 @@ async function handleWorktreeInThread({
       }
       const forkResponse = await getClient().session.fork({
         sessionID: sourceSessionId,
-        boundary: { type: 'through' },
       }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'session.fork', cause: e }))
       if (forkResponse instanceof Error) {
         logger.error('[NEW-WORKTREE] Failed to fork session into worktree:', forkResponse)
@@ -804,13 +806,13 @@ async function handleWorktreeInThread({
         return
       }
 
-      const permissionResponse = await getClient().permission.rules({
+      const permissionResponse = await getClient().session.update({
         sessionID: forkedSession.id,
         permissions: [
           ...(forkedSession.permissions ?? []),
           ...buildSessionPermissions({ directory, originalRepoDirectory: projectDirectory }),
         ],
-      }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'permission.rules', cause }))
+      }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'session.update', cause }))
       if (permissionResponse instanceof Error) {
         const error = permissionResponse
         logger.error('[NEW-WORKTREE] Failed to update forked session permissions:', error)

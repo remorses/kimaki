@@ -57,15 +57,15 @@
     "unbash": "^4.0.11"
   },
   "devDependencies": {
-    "@opencode/client": "2.0.2",
-    "@opencode/plugin": "2.0.2",
+    "@opencode/client": "2.0.19",
+    "@opencode/plugin": "2.0.19",
     "@types/node": "^24.3.0",
     "opencode-deterministic-provider": "workspace:^",
     "rimraf": "^6.0.1",
     "string-dedent": "^3.0.2"
   },
   "peerDependencies": {
-    "@opencode/client": "2.0.2",
-    "@opencode/plugin": "2.0.2"
+    "@opencode/client": "2.0.19",
+    "@opencode/plugin": "2.0.19"
   }
 }

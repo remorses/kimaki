@@ -163,6 +163,7 @@ function stepStarted(sessionID: string, created: number): V2Event {
       assistantMessageID: 'msg_assistant',
       agent: 'build',
       model: { providerID: 'openai', id: 'gpt-5.3-codex' },
+      started: 0,
     },
   }
 }

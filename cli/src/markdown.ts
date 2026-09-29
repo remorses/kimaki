@@ -270,7 +270,11 @@ export class ShareMarkdown {
         cause: messagesResult,
       })
     }
-    const messages = sessionMessagesAscending(messagesResult).map(toGenericSessionMessage)
+    // Only user and assistant messages have renderable content. Others, like
+    // the idle marker added in OpenCode 2.0.19, would add empty sections.
+    const messages = sessionMessagesAscending(messagesResult)
+      .filter((message) => message.type === 'user' || message.type === 'assistant')
+      .map(toGenericSessionMessage)
 
     // If lastAssistantOnly, filter to only the last assistant message
     const lastAssistant = lastAssistantOnly

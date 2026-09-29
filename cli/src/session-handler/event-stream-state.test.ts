@@ -82,6 +82,7 @@ function stepStarted({
       assistantMessageID,
       agent,
       model: { providerID: 'openai', id: 'gpt-5.3-codex' },
+      started: 0,
     },
   }
 }

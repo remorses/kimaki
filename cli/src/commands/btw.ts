@@ -91,7 +91,6 @@ export async function forkSessionToBtwThread({
   const [forkSettled, threadSettled] = await Promise.allSettled([
     timed(getClientResult().session.fork({
       sessionID: sessionId,
-      boundary: { type: 'through' },
     })),
     timed(textChannel.threads.create({
       name: `btw: ${prompt}`.slice(0, 100),

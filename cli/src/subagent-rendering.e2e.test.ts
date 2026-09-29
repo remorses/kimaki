@@ -583,8 +583,7 @@ test('routes one native child tool and replays captured durable event shapes', a
       },
       {
         "content": "native-child-tool-ok
-
-    Command exited with code 0.",
+    ",
         "metadata": undefined,
         "session": "child",
         "type": "session.tool.success",

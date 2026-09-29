@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { setDataDir } from './config.js'
 import { tryWorkspaceCreate } from './commands/new-worktree.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import { getOpencodeProjectId, initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
 import { chooseLockPort } from './test-utils.js'
 import { execAsync, getManagedWorktreeDirectory } from './worktrees.js'
 
@@ -91,8 +91,10 @@ test('creates a workspace from the exact requested clone and commit', async () =
   await requestedClient.config.get({ location: { directory: requestedClone } })
   await otherClient.config.get({ location: { directory: otherClone } })
 
+  const requestedProjectID = await getOpencodeProjectId({ client: requestedClient, directory: requestedClone })
+  if (requestedProjectID instanceof Error) throw requestedProjectID
   const workspace = await requestedClient.worktree.create({
-    location: { directory: requestedClone },
+    projectID: requestedProjectID,
     name: WORKTREE_BRANCH,
     from: requestedClone,
   })
@@ -132,7 +134,7 @@ test('creates a workspace from the exact requested clone and commit', async () =
       `)
   } finally {
     await requestedClient.worktree.remove({
-      location: { directory: requestedClone },
+      projectID: requestedProjectID,
       directory: workspace.directory,
       force: true,
     })
@@ -174,8 +176,11 @@ test('creates and returns the requested attached branch', async () => {
   } finally {
     const clientResult = await initializeOpencodeForDirectory(requestedClone)
     if (clientResult instanceof Error) throw clientResult
-    await clientResult().worktree.remove({
-      location: { directory: requestedClone },
+    const client = clientResult()
+    const projectID = await getOpencodeProjectId({ client, directory: requestedClone })
+    if (projectID instanceof Error) throw projectID
+    await client.worktree.remove({
+      projectID,
       directory: result.directory,
       force: true,
     })
@@ -198,9 +203,9 @@ test('removes workspace state when identity validation rejects creation', async 
   const clientResult = await initializeOpencodeForDirectory(requestedClone)
   if (clientResult instanceof Error) throw clientResult
   const client = clientResult()
-  const listResponse = await client.worktree.list({
-    location: { directory: requestedClone },
-  })
+  const projectID = await getOpencodeProjectId({ client, directory: requestedClone })
+  if (projectID instanceof Error) throw projectID
+  const listResponse = await client.worktree.list({ projectID })
   const rejectedWorkspaces = listResponse.filter((workspace) => {
     return workspace.directory.includes(REJECTED_WORKTREE_BRANCH)
   })
@@ -240,7 +245,7 @@ test('removes workspace state when identity validation rejects creation', async 
     await Promise.all(
       rejectedWorkspaces.map((workspace) => {
         return client.worktree.remove({
-          location: { directory: requestedClone },
+          projectID,
           directory: workspace.directory,
           force: true,
         })

@@ -144,11 +144,11 @@ async function freePort() {
 
 async function waitForHealth(port: number) {
   for (let attempt = 0; attempt < 60; attempt++) {
-    const ok = await fetch(`http://127.0.0.1:${port}/api/health`, {
+    const ok = await fetch(`http://127.0.0.1:${port}/api/info`, {
       headers: { authorization: AUTHORIZATION },
       signal: AbortSignal.timeout(1000),
     })
-      .then((response) => response.status < 500)
+      .then((response) => response.ok)
       .catch(() => false)
     if (ok) return
     await new Promise((resolve) => setTimeout(resolve, 500))

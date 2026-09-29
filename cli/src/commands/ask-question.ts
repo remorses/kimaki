@@ -449,7 +449,7 @@ async function submitQuestionAnswers(
   const answers = context.questions.map((_, i) => {
     return context.answers[i] || []
   })
-  const replyResult = await client.form.reply({
+  const replyResult = await client.session.form.reply({
     sessionID: context.sessionId,
     formID: context.requestId,
     answer: formAnswerFromSelectedLabels({
@@ -564,11 +564,11 @@ export async function cancelPendingQuestion(
       return 'reply-failed'
     }
 
-    const cancelResult = await client.form.cancel({
+    const cancelResult = await client.session.form.cancel({
       sessionID: context.sessionId,
       formID: context.requestId,
     }).catch((cause) => new OpenCodeSdkError({
-      operation: 'form.cancel',
+      operation: 'session.form.cancel',
       cause,
     }))
     if (cancelResult instanceof Error) {
@@ -619,7 +619,7 @@ export async function cancelPendingQuestion(
   const answers = Array.from({ length: context.totalQuestions }, (_, index) => {
     return answersByQuestion[index] || []
   })
-  const replyResult = await client.form.reply({
+  const replyResult = await client.session.form.reply({
     sessionID: context.sessionId,
     formID: context.requestId,
     answer: formAnswerFromSelectedLabels({

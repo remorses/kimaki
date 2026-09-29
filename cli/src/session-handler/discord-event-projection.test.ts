@@ -98,6 +98,7 @@ test('projects large output, action buttons, held flush, and duplicate replay', 
       data: {
         sessionID: 'ses_main', assistantMessageID: 'msg_large', agent: 'build',
         model: { providerID: 'openai', id: 'gpt-test' },
+        started: 0,
       },
     }),
     event<Extract<V2Event, { type: 'session.tool.input.started' }>>({
@@ -684,6 +685,7 @@ describe('Discord event projection parts', () => {
         data: {
           sessionID: 'ses_child', assistantMessageID: 'msg_child', agent: 'explore',
           model: { providerID: 'openai', id: 'gpt-test' },
+          started: 0,
         },
       }),
       event<Extract<V2Event, { type: 'session.tool.input.started' }>>({
@@ -747,6 +749,7 @@ describe('Discord event projection terminals and forms', () => {
         data: {
           sessionID: 'ses_main', assistantMessageID: 'msg_1', agent: 'build',
           model: { providerID: 'openai', id: 'gpt-test' },
+          started: 0,
         },
       }),
       event<Extract<V2Event, { type: 'session.text.ended' }>>({
@@ -1134,6 +1137,7 @@ test('keeps distinct live labels for parallel children before parent success', (
       data: {
         sessionID: 'ses_child_1', assistantMessageID: 'msg_child_1', agent: 'explore',
         model: { providerID: 'openai', id: 'gpt-test' },
+        started: 0,
       },
     }),
     event<Extract<V2Event, { type: 'session.tool.input.started' }>>({
@@ -1152,6 +1156,7 @@ test('keeps distinct live labels for parallel children before parent success', (
       data: {
         sessionID: 'ses_child_2', assistantMessageID: 'msg_child_2', agent: 'explore',
         model: { providerID: 'openai', id: 'gpt-test' },
+        started: 0,
       },
     }),
     event<Extract<V2Event, { type: 'session.tool.input.started' }>>({
@@ -1204,6 +1209,7 @@ test('stores child tools after session.created and routes them once when progres
     data: {
       sessionID: 'ses_child_1', assistantMessageID: 'msg_child_1', agent: 'explore',
       model: { providerID: 'openai', id: 'gpt-test' },
+      started: 0,
     },
   })
   const childToolStarted = event<Extract<V2Event, { type: 'session.tool.input.started' }>>({

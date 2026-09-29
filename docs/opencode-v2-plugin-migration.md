@@ -1,15 +1,15 @@
 ---
-title: OpenCode 2.0.2 Kimaki plugin integration
+title: OpenCode 2.0.19 Kimaki plugin integration
 description: >
-  How the built Kimaki plugin extends the stable OpenCode 2.0.2 server used by
+  How the built Kimaki plugin extends the stable OpenCode 2.0.19 server used by
   the existing CLI and Discord runtime.
 ---
 
-# OpenCode 2.0.2 Kimaki plugin integration
+# OpenCode 2.0.19 Kimaki plugin integration
 
 Kimaki uses a built OpenCode plugin **inside the existing `cli/` package**. The plugin extends one shared OpenCode server; it does not replace the Discord bot, create a second CLI package, or define a future cutover.
 
-The stable dependency set is `@opencode/client@2.0.2`, `@opencode/plugin@2.0.2`, and `@opencode/cli@2.0.2`. The installed CLI maps its `opencode` and `opencode2` aliases to the same native **`bin/opencode.exe`** file.
+The stable dependency set is `@opencode/client@2.0.19`, `@opencode/plugin@2.0.19`, and `@opencode/cli@2.0.19`. The installed CLI maps its `opencode` and `opencode2` aliases to the same native **`bin/opencode.exe`** file.
 
 ## Runtime shape
 
@@ -122,7 +122,7 @@ The context hook adds request-specific material after this entry. It does not re
 
 The implementation is covered at several levels:
 
-- Server tests start the native OpenCode 2.0.2 executable and verify authenticated session APIs.
+- Server tests start the native OpenCode 2.0.19 executable and verify authenticated session APIs.
 - Plugin loading tests build and load the plugin directory.
 - Inbox tests cover steer, queue, cancellation, delivery, and interruption.
 - Deterministic provider tests verify native text, tool, and execution events.

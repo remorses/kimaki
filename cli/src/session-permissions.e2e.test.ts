@@ -114,10 +114,10 @@ test('blocks original-checkout writes by absolute and relative path but allows w
   expect(fs.readFileSync(path.join(worktree, 'allowed.txt'), 'utf8')).toBe('worktree content')
   expect(JSON.stringify(messages)).toContain('Permission denied: external_directory')
 
-  const fork = await client.session.fork({ sessionID: session.id, boundary: { type: 'through' } })
+  const fork = await client.session.fork({ sessionID: session.id })
   sessions.unshift(fork.id)
   expect(fork.permissions).toEqual(permissions)
-  await client.permission.rules({ sessionID: session.id, permissions: [] })
+  await client.session.update({ sessionID: session.id, permissions: [] })
   expect((await client.session.get({ sessionID: session.id })).permissions).toEqual([])
   expect((await client.session.get({ sessionID: fork.id })).permissions).toEqual(permissions)
 }, 15_000)
@@ -135,9 +135,9 @@ test('saved approval satisfies ask but cannot override session deny', async () =
     save: ['one'],
   })
   expect(asked.effect).toBe('ask')
-  await client.permission.reply({ sessionID: session.id, requestID: asked.id, reply: 'always' })
+  await client.permission.reply({ sessionID: session.id, requestID: asked.id, decision: 'always' })
   expect((await client.permission.create({ sessionID: session.id, action: 'permission-probe', resources: ['one'] })).effect).toBe('allow')
-  await client.permission.rules({
+  await client.session.update({
     sessionID: session.id,
     permissions: [{ action: 'permission-probe', resource: '*', effect: 'deny' }],
   })

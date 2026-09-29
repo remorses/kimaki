@@ -211,7 +211,7 @@ cli
         for (const session of sessions) {
           const isBusy = Boolean(statuses[session.id])
           const pendingForms = isBusy
-            ? await client.form.list({ sessionID: session.id }).catch(() => [])
+            ? await client.session.form.list({ sessionID: session.id }).catch(() => [])
             : []
           const hasPendingForm = Array.isArray(pendingForms) && pendingForms.length > 0
           gathered.push({
@@ -1135,12 +1135,12 @@ cli
       }
 
       const updateResult = await serverResult()
-        .session.rename({
+        .session.update({
           sessionID: sessionId,
           title: trimmedTitle,
         })
         .catch((e: unknown) =>
-          new OpenCodeSdkError({ operation: 'session.rename', cause: e }),
+          new OpenCodeSdkError({ operation: 'session.update', cause: e }),
         )
       if (updateResult instanceof Error) {
         cliLogger.error(updateResult.message)

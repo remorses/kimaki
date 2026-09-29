@@ -90,7 +90,7 @@ export async function waitForSessionComplete({
     // waiting. Guard on busy: an orphaned form left after an abort
     // (session idle) must fall through to the normal idle/completion checks.
     if (isBusy) {
-      const pendingForms = await getClient().form
+      const pendingForms = await getClient().session.form
         .list({ sessionID: sessionId })
         .catch(() => [])
       if (Array.isArray(pendingForms) && pendingForms.length > 0) {

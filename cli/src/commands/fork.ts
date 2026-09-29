@@ -285,7 +285,7 @@ export async function handleForkSelectMenu(
   try {
     const forkResponse = await getClient().session.fork({
       sessionID: sessionId,
-      boundary: { type: 'before', messageID: selectedMessageId },
+      before: selectedMessageId,
     }).catch((error: unknown) => new Error('Failed to fork session', { cause: error }))
 
     if (forkResponse instanceof Error) {

@@ -1,20 +1,20 @@
 ---
-title: OpenCode 2.0.2 in-place migration
+title: OpenCode 2.0.19 in-place migration
 description: >
-  The stable OpenCode 2.0.2 architecture used by Kimaki, including native
+  The stable OpenCode 2.0.19 architecture used by Kimaki, including native
   inbox, execution, forms, instructions, event folding, reconciliation, and
   the checks required to complete a v1 integration migration.
 ---
 
-# OpenCode 2.0.2 in-place migration
+# OpenCode 2.0.19 in-place migration
 
-Kimaki now runs the stable OpenCode **2.0.2** stack in `cli/`. The Discord bot remains the host process, but its session runtime, server manager, and built plugin use the native v2 protocol.
+Kimaki now runs the stable OpenCode **2.0.19** stack in `cli/`. The Discord bot remains the host process, but its session runtime, server manager, and built plugin use the native v2 protocol.
 
 The pinned packages are:
 
-- `@opencode/client@2.0.2`
-- `@opencode/plugin@2.0.2`
-- `@opencode/cli@2.0.2`
+- `@opencode/client@2.0.19`
+- `@opencode/plugin@2.0.19`
+- `@opencode/cli@2.0.19`
 
 The installed `@opencode/cli` package maps both command aliases, `opencode` and `opencode2`, to the same native file: **`bin/opencode.exe`**. Kimaki resolves and spawns that file directly so process signals reach the server instead of a shell wrapper.
 
@@ -62,14 +62,36 @@ Session migration is not a one-to-one method rename:
 | `promptAsync({ noReply: true })` for a user message | `session.prompt({ sessionID, text, resume: false })` |
 | Synthetic model context without a reply | `session.synthetic({ sessionID, text, resume: false })` |
 | `promptAsync({ system })` | `session.instructions.entry.put({ sessionID, key, value })` |
-| `session.abort(...)` | `session.interrupt({ sessionID, continue? })` |
-| `session.update({ permission })` | `permission.rules({ sessionID, permissions })` |
-| Question request APIs and events | Session forms and `form.*` events |
+| `session.abort(...)` | `session.interrupt({ sessionID, resume? })` |
+| `session.update({ permission })` | `session.update({ sessionID, permissions })` |
+| Question request APIs and events | `session.form.*` APIs and `form.*` events |
 | `message.part.*` snapshots | `session.text.*`, `session.reasoning.*`, and `session.tool.*` facts |
 
 `session.prompt` returns the accepted inbox item, not the assistant response. Observe `session.execution.*` and content events, or read projected messages, to determine the final result. Event subscriptions are lazy `AsyncIterable` streams and do not reconnect automatically.
 
 The most useful upstream migration records are the [client migration tracker](https://github.com/anomalyco/opencode/issues/34359), the [removed internal API checklist](https://github.com/anomalyco/opencode/blob/5d351406a1ed0ac93975dfcff55b7764f159375a/packages/app/V1_API_MIGRATION.md), and the [Promise-first embedded SDK design](https://github.com/anomalyco/opencode/pull/44746). The internal checklist explicitly calls `@opencode-ai/sdk/v2` a legacy client despite its package export name.
+
+## Upgrading from 2.0.2 to 2.0.19
+
+OpenCode publishes no v2 release notes. The API changes are listed in `V2_HTTP_API_AUDIT.md` on the [v2 branch](https://github.com/anomalyco/opencode/tree/v2). Kimaki needed these changes:
+
+| 2.0.2 | 2.0.19 |
+|---|---|
+| `plugin.awaitActivation` | removed; prompt, command, and shell handlers wait server-side |
+| `permission.rules({ sessionID, permissions })` | `session.update({ sessionID, permissions })` |
+| `permission.reply({ reply })` | `permission.reply({ decision })` |
+| `session.rename({ sessionID, title })` | `session.update({ sessionID, title })` |
+| `session.fork({ boundary: { type: 'through' } })` | `session.fork({ sessionID })` |
+| `session.fork({ boundary: { type: 'before', messageID } })` | `session.fork({ sessionID, before: messageID })` |
+| `session.interrupt({ continue })` | `session.interrupt({ resume })` |
+| `session.command({ command })` | `session.command({ name })` |
+| `form.list/reply/cancel({ sessionID, ... })` | `session.form.list/reply/cancel(...)`; `form.state` removed |
+| `worktree.*({ location })` | `worktree.*({ projectID })`, from `location.get().project.id` |
+| `project.time.initialized` | removed |
+| `GET /api/health` | `GET /api/info` |
+| `session.step.started` event | now carries `data.started` |
+
+`session.form.list` returns only pending forms. `model.list` does not wait for plugin activation, so an early read can miss plugin providers.
 
 ## Architecture
 
@@ -136,7 +158,7 @@ Native inbox delivery replaces the old abort-and-replay mechanism:
 - `delivery: "steer"` admits work for the next safe step boundary.
 - `delivery: "queue"` leaves work queued until the current execution drains.
 - `resume: false` admits an item without waking execution.
-- `session.inbox.list`, `cancel`, `steer`, and `queue` manage pending work.
+- `session.inbox.list`, `cancel`, and `update` (with `delivery`) manage pending work.
 
 `session_inbox` contains pending work only. Delivery removes the inbox row in the same transaction that creates the visible user message. Kimaki tracks `inboxID` from enqueue to delivery so queued Discord messages can show at the correct time.
 
@@ -153,7 +175,7 @@ Execution lifecycle is separate from inbox admission:
 
 The native question tool creates a form with `metadata.kind = "question"`. Kimaki handles `form.created`, renders Discord controls, and replies through the form API. After an SSE reconnect, it lists forms and restores only pending questions.
 
-Permission requests use `permission.asked` and `permission.replied`. A reply uses the ask event's `data.id` as `requestID`; valid replies are `once`, `always`, and `reject`.
+Permission requests use `permission.asked` and `permission.replied`. `permission.reply` takes the ask event's `data.id` as `requestID` and a `decision` of `once`, `always`, or `reject`.
 
 ### Instruction entries
 
@@ -204,10 +226,10 @@ The server uses Basic authentication with user `opencode` and `OPENCODE_PASSWORD
 | Create a session | `session.create({ location, permissions })` |
 | Admit a user prompt | `session.prompt({ sessionID, text, files?, delivery? })` |
 | Admit synthetic context | `session.synthetic({ sessionID, text, delivery, resume })` |
-| Interrupt execution | `session.interrupt({ sessionID, continue? })` |
+| Interrupt execution | `session.interrupt({ sessionID, resume? })` |
 | Persist Kimaki instructions | `session.instructions.entry.put({ sessionID, key, value })` |
 | Change agent or model | `session.switchAgent(...)` / `session.switchModel(...)` |
-| Answer a question | form reply API with `sessionID` and `formID` |
+| Answer a question | `session.form.reply({ sessionID, formID, answer })` |
 
 Location belongs in `session.create`. Later session calls use `sessionID`; the server resolves the stored location. Location-scoped non-session routes use the directory header or location query supported by the client.
 
@@ -228,7 +250,7 @@ All user, queued, voice, command, and synthetic inputs must share one native sub
 
 Do not maintain separate direct and local-queue prompt builders. Parallel builders drift. Typical failures are queued images disappearing, one path omitting instructions, or one path ignoring model-switch errors.
 
-Agent and model selection is session-wide in OpenCode 2.0.2. A failed `switchAgent` or `switchModel` must stop submission with a visible error. Do not continue with the previous model. Until selection can be bound to an inbox item, serialize selection and admission for each session.
+Agent and model selection is session-wide in OpenCode 2.0.19. A failed `switchAgent` or `switchModel` must stop submission with a visible error. Do not continue with the previous model. Until selection can be bound to an inbox item, serialize selection and admission for each session.
 
 ### Native events only
 

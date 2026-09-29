@@ -31,7 +31,7 @@ import {
 import crypto from 'node:crypto'
 import { OpenCodeSdkError } from '../errors.js'
 import { resolveTextChannel, resolveWorkingDirectory } from '../discord-utils.js'
-import { initializeOpencodeForDirectory } from '../opencode.js'
+import { getOpencodeProjectId, initializeOpencodeForDirectory } from '../opencode.js'
 import {
   deleteWorktree,
   extractGitExecOutput,
@@ -691,8 +691,11 @@ async function deleteManagedWorktree({
   const getClient = await initializeOpencodeForDirectory(projectDirectory)
   if (getClient instanceof Error) return getClient
 
-  const response = await getClient().worktree.remove({
-    location: { directory: projectDirectory },
+  const client = getClient()
+  const projectID = await getOpencodeProjectId({ client, directory: projectDirectory })
+  if (projectID instanceof Error) return projectID
+  const response = await client.worktree.remove({
+    projectID,
     directory: worktreeDirectory,
     force: false,
   }).catch((e: unknown) => new OpenCodeSdkError({ operation: 'worktree.remove', cause: e }))

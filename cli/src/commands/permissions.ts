@@ -164,7 +164,7 @@ export async function showPermissionButtons({
           return client.permission.reply({
             sessionID: ctx.permission.sessionID,
             requestID: requestId,
-            reply: 'reject',
+            decision: 'reject',
             message: timeoutFeedback,
           })
         }),
@@ -293,7 +293,7 @@ export async function cancelPendingPermission(threadId: string): Promise<boolean
         return client.permission.reply({
           sessionID: pendingContext.permission.sessionID,
           requestID: requestId,
-          reply: 'reject',
+          decision: 'reject',
         })
       }),
     ).then(() => {
@@ -368,7 +368,7 @@ export async function handlePermissionButton(
         return permClient.permission.reply({
           sessionID: context.permission.sessionID,
           requestID: requestId,
-          reply: response,
+          decision: response,
         })
       }),
     )
