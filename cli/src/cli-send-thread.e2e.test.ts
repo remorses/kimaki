@@ -50,6 +50,7 @@ import {
   initTestGitRepo,
   waitForBotMessageContaining,
   waitForFooterMessage,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 import YAML from 'yaml'
 import type { ThreadStartMarker } from './system-message.js'
@@ -266,12 +267,7 @@ describe('kimaki send --channel thread creation', () => {
     })
 
     // Pre-warm the opencode server
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: directories.projectDirectory })
   }, 20_000)
 
   afterAll(async () => {
@@ -302,7 +298,7 @@ describe('kimaki send --channel thread creation', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      fs.rmSync(directories.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
   }, 5_000)
 

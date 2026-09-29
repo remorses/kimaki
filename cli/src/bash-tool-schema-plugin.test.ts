@@ -74,11 +74,12 @@ describe('upload-to-discord session targeting', () => {
     expect(
       resolveUploadToDiscordSessionId({
         flagSessionId: 'ses_parent',
+        envSessionId: undefined,
       }),
     ).toBe('ses_parent')
   })
 
   test('returns undefined when neither live session nor flag is set', () => {
-    expect(resolveUploadToDiscordSessionId({})).toBeUndefined()
+    expect(resolveUploadToDiscordSessionId({ envSessionId: undefined })).toBeUndefined()
   })
 })

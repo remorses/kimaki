@@ -58,6 +58,7 @@ import {
   isFooterMessage,
   waitForBotMessageContaining,
   waitForFooterMessage,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 import { buildQuickAgentCommandDescription } from './commands/agent.js'
 import { buildQuickAgentSlashCommand } from './discord-command-registration.js'
@@ -423,12 +424,7 @@ describe('agent model resolution', () => {
     )
 
     // Pre-warm the opencode server so agent discovery happens
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: directories.projectDirectory })
   }, 20_000)
 
   afterAll(async () => {
@@ -459,7 +455,7 @@ describe('agent model resolution', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      fs.rmSync(directories.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
   }, 5_000)
 

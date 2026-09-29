@@ -90,6 +90,26 @@ import {
 
 const MAX_VITEST_WAIT_TIMEOUT_MS = 10_000
 
+/**
+ * Start the opencode server for `directory` and run one throwaway turn, so
+ * the first test turn does not pay the cold start (session create, agent
+ * discovery, provider and plugin load). Call it at the end of beforeAll,
+ * after the bot started. The session is deleted again.
+ */
+export async function warmUpOpencodeServer({ directory }: { directory: string }) {
+  const getClient = await initializeOpencodeForDirectory(directory)
+  if (getClient instanceof Error) throw getClient
+  const client = getClient()
+  const session = await client.session.create({ directory, title: 'e2e warmup' })
+  if (!session.data) throw new Error('Could not create warmup session', { cause: session.error })
+  await client.session.prompt({
+    sessionID: session.data.id,
+    directory,
+    parts: [{ type: 'text', text: 'Reply with exactly: warmup' }],
+  })
+  await client.session.delete({ sessionID: session.data.id, directory })
+}
+
 // LESSON: the deterministic provider answers instantly, but the FIRST turn
 // against a freshly booted opencode server still costs 2-4s: session create,
 // config + agent discovery, provider load, and the kimaki plugin loading.

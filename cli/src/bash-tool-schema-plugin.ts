@@ -26,11 +26,12 @@ export function injectKimakiSessionEnv({
 
 export function resolveUploadToDiscordSessionId({
   flagSessionId,
-  envSessionId = process.env[KIMAKI_SESSION_ID_ENV],
+  envSessionId,
 }: {
   flagSessionId?: string
-  envSessionId?: string
-} = {}) {
+  // Explicit, not a process.env default: tests run inside kimaki sessions.
+  envSessionId: string | undefined
+}) {
   if (envSessionId) return envSessionId
   return flagSessionId
 }

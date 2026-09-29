@@ -45,6 +45,7 @@ import {
   waitForBotMessageContaining,
   waitForBotReplyTo,
   waitForThreadState,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 
 import { getThreadState } from './session-handler/thread-runtime-state.js'
@@ -383,12 +384,7 @@ e2eTest('voice message handling', () => {
     })
 
     // Pre-warm the opencode server
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: directories.projectDirectory })
   }, 20_000)
 
   afterAll(async () => {
@@ -423,7 +419,7 @@ e2eTest('voice message handling', () => {
     delete process.env['KIMAKI_DB_URL']
     store.setState({ defaultVerbosity: previousDefaultVerbosity })
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      fs.rmSync(directories.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
   }, 5_000)
 

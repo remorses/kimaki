@@ -11,7 +11,7 @@ import {
   buildDeterministicOpencodeConfig,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
-import { initTestGitRepo } from './test-utils.js'
+import { initTestGitRepo, warmUpOpencodeServer } from './test-utils.js'
 import { setDataDir } from './config.js'
 import { store } from './store.js'
 import { startDiscordBot } from './discord-bot.js'
@@ -26,7 +26,7 @@ import {
   type VerbosityLevel,
 } from './database.js'
 import { startHranaServer, stopHranaServer } from './hrana-server.js'
-import { initializeOpencodeForDirectory, stopOpencodeServer } from './opencode.js'
+import { stopOpencodeServer } from './opencode.js'
 import {
   cleanupTestSessions,
 } from './test-utils.js'
@@ -1106,10 +1106,7 @@ export function setupQueueAdvancedSuite({
       discordClient: ctx.botClient,
     })
 
-    const warmup = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: ctx.directories.projectDirectory })
   }, 20_000)
 
   afterAll(async () => {
@@ -1145,9 +1142,11 @@ export function setupQueueAdvancedSuite({
       })
     }
     if (ctx.directories) {
-      fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true })
+      fs.rmSync(ctx.directories.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
-  }, 5_000)
+    // Teardown stops the opencode server, the bot and the twin; 5s is too
+    // tight when the whole suite runs in parallel.
+  }, 20_000)
 
   afterEach(async () => {
     const threadIds = [...store.getState().threads.keys()]

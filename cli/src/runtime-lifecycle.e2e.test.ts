@@ -49,7 +49,9 @@ import {
   initTestGitRepo,
   isFooterMessage,
   waitForBotMessageContaining,
+  waitForFooterMessage,
   waitForBotReplyAfterUserMessage,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 
 
@@ -238,12 +240,7 @@ describe('runtime lifecycle', () => {
     })
 
     // Pre-warm the opencode server
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: directories.projectDirectory })
   }, 20_000)
 
   afterAll(async () => {
@@ -268,7 +265,7 @@ describe('runtime lifecycle', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      fs.rmSync(directories.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
   }, 5_000)
 
@@ -494,19 +491,23 @@ describe('runtime lifecycle', () => {
         },
       })
 
-      await waitForBotMessageContaining({
+      // Wait for the real footer: the *using* banner also has the model id,
+      // and a context notice could only appear after the banner.
+      await waitForFooterMessage({
         discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'deterministic-v2',
         timeout: 6_000,
+        afterMessageIncludes: 'footer-high-usage',
+        afterAuthorId: TEST_USER_ID,
       })
 
       expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
         "--- from: user (lifecycle-tester)
         Reply with exactly: footer-high-usage
         --- from: assistant (TestBot)
-        -# *using deterministic-provider/deterministic-v2*"
+        -# *using deterministic-provider/deterministic-v2*
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       const threadText = await discord.thread(thread.id).text()

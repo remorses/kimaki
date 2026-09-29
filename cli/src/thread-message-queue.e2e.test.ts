@@ -47,6 +47,7 @@ import {
   waitForBotReplyTo,
   waitForThreadState,
   getMessageVisibleText,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 
 
@@ -380,12 +381,7 @@ e2eTest('thread message queue ordering', () => {
 
     // Pre-warm the opencode server so the first test doesn't include
     // server startup time (~3-4s) inside its 4s poll timeouts.
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: directories.projectDirectory })
   }, 60_000)
 
   afterAll(async () => {
@@ -419,7 +415,7 @@ e2eTest('thread message queue ordering', () => {
       store.setState({ defaultVerbosity: previousDefaultVerbosity })
     }
     if (directories) {
-      fs.rmSync(directories.dataDir, { recursive: true, force: true })
+      fs.rmSync(directories.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
   }, 20_000)
 
@@ -699,6 +695,17 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      // The last text part is quoted until the turn ends, then edited back to
+      // full width right before the footer. Snapshot after the footer so the
+      // result does not depend on that edit timing.
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'three',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       // 4. Verify the latest user message got a bot reply.
       const afterBotMessages = after.filter((m) => {
         return m.author.id === discord.botUserId
@@ -716,7 +723,8 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: two
         Reply with exactly: three
         --- from: assistant (TestBot)
-        ok"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userThreeIndex = after.findIndex((message) => {
         return (
@@ -1125,6 +1133,17 @@ e2eTest('thread message queue ordering', () => {
         timeout: 4_000,
       })
 
+      // The last text part is quoted until the turn ends, then edited back to
+      // full width right before the footer. Snapshot after the footer so the
+      // result does not depend on that edit timing.
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'india',
+        afterAuthorId: TEST_USER_ID,
+      })
+
       // C's user message appears before its bot response.
       // We assert on india's reply existence.
       expect(await th.text()).toMatchInlineSnapshot(`
@@ -1138,7 +1157,8 @@ e2eTest('thread message queue ordering', () => {
         Reply with exactly: hotel
         Reply with exactly: india
         --- from: assistant (TestBot)
-        > ok"
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       const userIndiaIndex = after.findIndex((m) => {
         return m.author.id === TEST_USER_ID && m.content.includes('india')

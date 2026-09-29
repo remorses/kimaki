@@ -45,6 +45,8 @@ import {
   chooseLockPort,
   cleanupTestSessions,
   waitForBotMessageContaining,
+  waitForFooterMessage,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 import { execAsync } from './worktrees.js'
 
@@ -67,6 +69,11 @@ function normalizeWorktreeLifecycleText(text: string): string {
     .replace(
       /opencode\/kimaki-rply-wth-exctly-snd-at-wt-[a-z0-9]+/g,
       'AUTO_WORKTREE_BRANCH',
+    )
+    // Footers truncate the random auto worktree folder and branch names.
+    .replace(
+      /-# \*rply-wth-exctly-snd-at-wt-[^ ]*… ⋅ opencode\/kimaki-rply-wth-exct[^ ]*… ⋅/g,
+      '-# *AUTO_WORKTREE_FOLDER ⋅ AUTO_WORKTREE_BRANCH ⋅',
     )
     .replaceAll(WORKTREE_SUFFIX, 'SUFFIX')
     .replace(/ses_[a-zA-Z0-9]+/g, 'ses_TEST')
@@ -281,12 +288,7 @@ describe('worktree lifecycle', () => {
     })
 
     // Pre-warm the opencode server
-    const warmup = await initializeOpencodeForDirectory(
-      directories.projectDirectory,
-    )
-    if (warmup instanceof Error) {
-      throw warmup
-    }
+    await warmUpOpencodeServer({ directory: directories.projectDirectory })
   }, 20_000)
 
   afterAll(async () => {
@@ -640,14 +642,14 @@ describe('worktree lifecycle', () => {
         timeout: 10_000,
       })
 
-      // Wait for footer to confirm session completion
-      await waitForBotMessageContaining({
+      // The *using ...deterministic-v2* banner also contains the model id, so
+      // match the real footer. It lands after the final text is unquoted.
+      await waitForFooterMessage({
         discord,
         threadId: worktreeThread.id,
-        userId: TEST_USER_ID,
-        text: 'deterministic-v2',
-        afterUserMessageIncludes: 'channel-worktree-msg',
         timeout: 4_000,
+        afterMessageIncludes: 'channel-worktree-msg',
+        afterAuthorId: TEST_USER_ID,
       })
 
       // 6. Verify the runtime is using the worktree directory
@@ -667,7 +669,8 @@ describe('worktree lifecycle', () => {
         Reply with exactly: channel-worktree-msg
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        ok"
+        ok
+        -# *CHANNEL_WORKTREE_NAME ⋅ opencode/kimaki-CHANNEL_WORKTREE_NAME ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       expect(worktreeText).toContain('Branch:')
       expect(worktreeText).toContain('ok')
@@ -768,6 +771,14 @@ describe('worktree lifecycle', () => {
         afterUserMessageIncludes: 'non-git-first',
         timeout: 4_000,
       })
+      // Finish the first turn, or the second message interrupts it.
+      await waitForFooterMessage({
+        discord,
+        threadId: thread.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'non-git-first',
+        afterAuthorId: TEST_USER_ID,
+      })
 
       await th.user(TEST_USER_ID).sendMessage({
         content: 'Reply with exactly: non-git-second',
@@ -782,14 +793,12 @@ describe('worktree lifecycle', () => {
         timeout: 4_000,
       })
 
-      // Wait for footer after second reply to stabilize the snapshot
-      await waitForBotMessageContaining({
+      await waitForFooterMessage({
         discord,
         threadId: thread.id,
-        userId: TEST_USER_ID,
-        text: 'deterministic-v2',
-        afterUserMessageIncludes: 'non-git-second',
         timeout: 4_000,
+        afterMessageIncludes: 'non-git-second',
+        afterAuthorId: TEST_USER_ID,
       })
 
       const text = await th.text()
@@ -798,7 +807,8 @@ describe('worktree lifecycle', () => {
         Reply with exactly: non-git-first
         --- from: assistant (TestBot)
         -# *using deterministic-provider/deterministic-v2*
-        > ok
+        ok
+        -# *non-git-project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
         --- from: user (worktree-tester)
         Reply with exactly: non-git-second
         --- from: assistant (TestBot)
@@ -867,6 +877,13 @@ describe('worktree lifecycle', () => {
         text: 'ok',
         timeout: 10_000,
       })
+      await waitForFooterMessage({
+        discord,
+        threadId: threadData.id,
+        timeout: 4_000,
+        afterMessageIncludes: 'ok',
+        afterAuthorId: discord.botUserId,
+      })
 
       // Snapshot the thread content
       const th = discord.thread(threadData.id)
@@ -881,7 +898,8 @@ describe('worktree lifecycle', () => {
         📁 \`/tmp/worktrees/WORKTREE_NAME\`
         🌿 Branch: \`AUTO_WORKTREE_BRANCH\`
         -# *using deterministic-provider/deterministic-v2*
-        ok"
+        ok
+        -# *AUTO_WORKTREE_FOLDER ⋅ AUTO_WORKTREE_BRANCH ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
 
       // Verify DB has worktree info

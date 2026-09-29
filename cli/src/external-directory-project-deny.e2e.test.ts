@@ -16,7 +16,7 @@ import {
   setupQueueAdvancedSuite,
   TEST_USER_ID,
 } from './queue-advanced-e2e-setup.js'
-import { waitForBotMessageContaining } from './test-utils.js'
+import { waitForBotMessageContaining, waitForFooterMessage } from './test-utils.js'
 
 const TEXT_CHANNEL_ID = '200000000000001023'
 
@@ -61,6 +61,14 @@ describe('external directory project deny', () => {
       text: 'external-directory-probe-denied',
       timeout: 8_000,
     })
+    // The final text is unquoted right before the footer; snapshot after it.
+    await waitForFooterMessage({
+      discord: ctx.discord,
+      threadId: thread.id,
+      timeout: 4_000,
+      afterMessageIncludes: 'external-directory-probe-denied',
+      afterAuthorId: ctx.discord.botUserId,
+    })
 
     const text = await th.text()
     expect(text).toMatchInlineSnapshot(`
@@ -72,7 +80,8 @@ describe('external directory project deny', () => {
 
       -# ┣ read *probe.txt*
 
-      external-directory-probe-denied"
+      external-directory-probe-denied
+      -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
     `)
 
     // A deny is silent: it must not fall back to asking the user.

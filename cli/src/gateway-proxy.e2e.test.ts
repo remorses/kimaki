@@ -41,6 +41,7 @@ import {
   initTestGitRepo,
   getMessageVisibleText,
   waitForFooterMessage,
+  warmUpOpencodeServer,
 } from './test-utils.js'
 import { stopOpencodeServer } from './opencode.js'
 import { createDiscordRest } from './discord-urls.js'
@@ -356,6 +357,7 @@ describeIf('gateway-proxy e2e', () => {
       appId: discord.botUserId,
       discordClient: botClient,
     })
+    await warmUpOpencodeServer({ directory: directories.projectDirectory })
   }, 120_000)
 
   afterAll(async () => {
