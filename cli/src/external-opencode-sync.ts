@@ -817,7 +817,7 @@ export function startExternalOpencodeSessionSync({
     return
   }
   if (!store.getState().syncEnabled) {
-    logger.log('[EXTERNAL_SYNC] Background sync disabled via --disable-sync')
+    logger.log('[EXTERNAL_SYNC] Background sync disabled. Pass --enable-sync to enable it')
     return
   }
   if (externalSyncInterval) {

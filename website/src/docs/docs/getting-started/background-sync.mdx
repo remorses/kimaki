@@ -18,7 +18,13 @@ Kimaki runs a background sync loop that mirrors **OpenCode sessions started outs
  └────────────────────────────┘             └────────────────────────────────────────────┘
 ```
 
-Sync is **enabled by default**, polls every 5 seconds, is lightweight when idle, and only syncs sessions created after the bot started.
+Sync is **off by default**. Enable it with a flag:
+
+```bash
+kimaki --enable-sync
+```
+
+It polls every 5 seconds and only syncs sessions created after the bot started. Each poll fetches the messages of recent sessions, so CPU use grows with the number of sessions.
 
 ## Use cases
 
@@ -42,10 +48,4 @@ The sync loop checks all registered project directories every 5 seconds. For eac
 
 ## Disabling sync
 
-If you don't need background sync, disable it with:
-
-```bash
-kimaki --disable-sync
-```
-
-Kimaki still works normally for Discord-originated sessions; only the external session mirroring is turned off.
+Start Kimaki without `--enable-sync`. Kimaki still works normally for Discord-originated sessions; only the external session mirroring is off.

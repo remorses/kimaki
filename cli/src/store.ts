@@ -148,9 +148,9 @@ export type KimakiState = {
   useWorktrees: boolean
 
   // Whether background sync of external OpenCode sessions is enabled.
-  // When true (default), sessions started from the OpenCode CLI or TUI
-  // are mirrored into Discord threads so they can be browsed, searched,
-  // and resumed from Discord. Set to false via --disable-sync CLI flag.
+  // When true, sessions started from the OpenCode CLI or TUI are mirrored
+  // into Discord threads. Off by default (polling every 5s is CPU heavy).
+  // Set to true via --enable-sync CLI flag.
   // Changes: set once at startup.
   // Read by: external-opencode-sync.ts startExternalOpencodeSessionSync().
   syncEnabled: boolean
@@ -215,7 +215,7 @@ export const store = createStore<KimakiState>(() => ({
   permissionTimeoutMs: 10 * 60 * 1000,
   useWorktrees: false,
   autoUpgradeEnabled: true,
-  syncEnabled: true,
+  syncEnabled: false,
   discordBaseUrl: 'https://discord.com',
   gatewayToken: null,
   registeredUserCommands: [],

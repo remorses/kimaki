@@ -96,8 +96,8 @@ cli
     'Permission prompt timeout in minutes before auto-rejecting (default: 10)',
   )
   .option(
-    '--disable-sync',
-    'Disable background sync of external OpenCode sessions into Discord',
+    '--enable-sync',
+    'Mirror OpenCode sessions started outside Discord (CLI, TUI) into Discord threads. Off by default',
   )
   .option(
     '--no-analytics',
@@ -163,7 +163,7 @@ cli
       allowAllUsers?: boolean
       restrictDirectories?: boolean
       permissionTimeoutMinutes?: string
-      disableSync?: boolean
+      enableSync?: boolean
       autoRestart?: boolean
       noAnalytics?: boolean
       noAutoUpgrade?: boolean
@@ -320,7 +320,7 @@ cli
           ...(options.restrictDirectories && { restrictExternalDirectories: true }),
           ...(permissionTimeoutMs !== undefined && { permissionTimeoutMs }),
           ...(options.noAutoUpgrade && { autoUpgradeEnabled: false }),
-          ...(options.disableSync && { syncEnabled: false }),
+          ...(options.enableSync && { syncEnabled: true }),
           ...(enabledSkills.length > 0 && { enabledSkills }),
           ...(disabledSkills.length > 0 && { disabledSkills }),
           ...(options.allowMention && { allowedMentions: options.allowMention }),
@@ -376,9 +376,9 @@ cli
             'Auto-upgrade disabled: kimaki will not check for updates on startup',
           )
         }
-        if (options.disableSync) {
+        if (options.enableSync) {
           cliLogger.log(
-            'Background sync disabled: external OpenCode sessions will not appear in Discord',
+            'Background sync enabled: external OpenCode sessions will appear in Discord',
           )
         }
         if (options.noAnalytics) {
