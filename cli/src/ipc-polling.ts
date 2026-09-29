@@ -13,7 +13,7 @@ import {
 } from './database.js'
 import { showFileUploadButton } from './commands/file-upload.js'
 import { queueActionButtonsRequest } from './commands/action-buttons.js'
-import { parseActionButtons } from './ipc-tools-plugin.js'
+import { parseActionButtons } from './action-button-options.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 import { isJsonRecord, jsonFiniteNumber, jsonString, parseJsonUnknown } from './utils.js'
@@ -26,28 +26,6 @@ class IpcDispatchError extends errore.createTaggedError({
   name: 'IpcDispatchError',
   message: 'IPC dispatch failed for request $requestId: $reason',
 }) {}
-
-// ── Button parsing ───────────────────────────────────────────────────────
-
-type ParsedButton = { label: string; color?: ActionButtonColor }
-
-function parseButtons(raw: unknown): ParsedButton[] {
-  if (!Array.isArray(raw)) return []
-  const results: ParsedButton[] = []
-  for (const value of raw) {
-    if (!isJsonRecord(value)) continue
-    const label = (jsonString(value.label) || '').trim().slice(0, 80)
-    if (!label) continue
-    const colorValue = jsonString(value.color)
-    const color: ActionButtonColor | undefined =
-      colorValue === 'white' || colorValue === 'blue' || colorValue === 'green' || colorValue === 'red'
-        ? colorValue
-        : undefined
-    results.push({ label, color })
-    if (results.length >= 3) break
-  }
-  return results
-}
 
 function parseFileUploadPayload(payloadJson: string) {
   const parsed = parseJsonUnknown(payloadJson)

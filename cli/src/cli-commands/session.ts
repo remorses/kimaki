@@ -190,8 +190,9 @@ cli
           }),
           client.session.active().catch(() => null),
         ])
+        // Skipping a failed project would make --active report "none" (exit 1) falsely.
         if (sessions instanceof Error) {
-          if (options.all) {
+          if (options.all && !options.active) {
             cliLogger.warn(`Skipping ${projectDirectory}: ${sessions.message}`)
             continue
           }
@@ -199,7 +200,7 @@ cli
           process.exit(EXIT_NO_RESTART)
         }
         if (!statuses) {
-          if (options.all) {
+          if (options.all && !options.active) {
             cliLogger.warn(`Skipping ${projectDirectory}: failed to list active sessions`)
             continue
           }

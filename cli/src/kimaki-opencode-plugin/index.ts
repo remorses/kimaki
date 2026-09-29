@@ -32,6 +32,11 @@ import type {
 } from '../task-schedule.js'
 import { ONBOARDING_TUTORIAL_INSTRUCTIONS, TUTORIAL_WELCOME_TEXT } from '../onboarding-tutorial.js'
 import { condenseMemoryMd } from '../condense-memory.js'
+import {
+  ACTION_BUTTON_COLORS,
+  ACTION_BUTTON_LABEL_MAX,
+  parseActionButtons,
+} from '../action-button-options.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -274,15 +279,19 @@ const SHELL_INPUT = Schema.Struct({
   }),
 })
 
-const MAX_FILES = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 }))
-const BUTTON_LABEL = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80))
-const BUTTON_COLOR = Schema.Literals(['white', 'blue', 'green', 'red'])
+// TODO: use Schema checks (isBetween, isMaxLength) in tool inputs once the host
+// runs plugin filters. The opencode binary decodes with its own effect copy, and
+// every plugin `.check()` then fails, even for valid values ("Cannot convert a
+// symbol to a number"). Limits are enforced in execute() instead.
+// https://github.com/anomalyco/opencode/blob/v2/packages/core/src/tool/runtime.ts
+const MAX_FILES_LIMIT = 10
 const ACTION_BUTTONS = Schema.Array(
   Schema.Struct({
-    label: BUTTON_LABEL,
-    color: Schema.optional(BUTTON_COLOR),
+    label: Schema.String,
+    command: Schema.optional(Schema.String),
+    color: Schema.optional(Schema.Literals(ACTION_BUTTON_COLORS)),
   }),
-).check(Schema.isMinLength(1), Schema.isMaxLength(3))
+)
 
 type InjectionGuardConfig = {
   model: string
@@ -696,13 +705,17 @@ export default Plugin.define({
           'The user sees a button, clicks it, and gets a file upload dialog. ' +
           'Returns the local file paths of downloaded files in the project directory. ' +
           'Use this when you need the user to provide files (images, documents, configs, etc.). ' +
-          'You MUST call kimaki_file_upload LAST, after ALL text. NEVER call it before your text.',
+          'You MUST call kimaki_file_upload LAST, after ALL text. NEVER call it before your text. ' +
+          `maxFiles is an integer from 1 to ${MAX_FILES_LIMIT} (default ${DEFAULT_FILE_UPLOAD_MAX_FILES}).`,
         input: Schema.Struct({
           prompt: Schema.String,
-          maxFiles: Schema.optional(MAX_FILES),
+          maxFiles: Schema.optional(Schema.Number),
         }),
         output: Schema.Struct({ text: Schema.String }),
         execute: async ({ prompt, maxFiles }, context) => {
+          if (maxFiles !== undefined && (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > MAX_FILES_LIMIT)) {
+            throw new Error(`maxFiles must be an integer from 1 to ${MAX_FILES_LIMIT}.`)
+          }
           const database = await loadDatabaseModule()
           const threadId = await database.getThreadIdBySessionId(context.sessionID)
           if (!threadId) {
@@ -755,14 +768,24 @@ export default Plugin.define({
           Show action buttons in the current Discord thread for quick confirmations.
           Use this when the user can respond by clicking one of up to 3 buttons.
           Prefer a single button whenever possible.
+          Each label is 1-${ACTION_BUTTON_LABEL_MAX} chars. Colors: ${ACTION_BUTTON_COLORS.join(', ')}.
           Default color is white (same visual style as permission deny button).
           If you need more than 3 options, use \`question\` instead.
           You MUST call kimaki_action_buttons LAST, after ALL text.
           NEVER call kimaki_action_buttons before your text.
 
+          A button with \`command\` is a shell command button. Clicking it runs
+          the command in the project directory right away and streams the
+          output to Discord, with no new model turn. You do not see the output
+          unless the user replies to it. Use it for fast feedback loops like
+          \`pnpm build\` or \`pnpm test\` instead of asking the user to prompt you.
+          The label is display text only: describe what the command does.
+          The command is shown above the buttons so the user sees what runs.
+
           Examples:
           - buttons: [{"label":"Yes, proceed"}]
           - buttons: [{"label":"Approve","color":"green"}]
+          - buttons: [{"label":"Build","command":"pnpm build"}]
           - buttons: [
               {"label":"Confirm","color":"blue"},
               {"label":"Cancel","color":"white"}
@@ -772,7 +795,10 @@ export default Plugin.define({
           buttons: ACTION_BUTTONS,
         }),
         output: Schema.Struct({ text: Schema.String }),
-        execute: async ({ buttons }, context) => {
+        execute: async (args, context) => {
+          // Also checks the whole button message fits in one Discord message.
+          const buttons = parseActionButtons(args.buttons)
+          if (buttons instanceof Error) throw buttons
           const database = await loadDatabaseModule()
           const threadId = await database.getThreadIdBySessionId(context.sessionID)
           if (!threadId) {

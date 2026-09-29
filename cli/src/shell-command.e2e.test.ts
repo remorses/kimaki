@@ -12,6 +12,7 @@ import {
 import { getThreadSession } from './database.js'
 import { pendingActionButtonContexts } from './commands/action-buttons.js'
 import { initializeOpencodeForDirectory } from './opencode.js'
+import { listAllMessages } from './opencode-pagination.js'
 import {
   waitForBotMessageContaining,
   waitForFooterMessage,
@@ -60,8 +61,7 @@ const shellButtonMatcher: DeterministicMatcher = {
   },
 }
 
-// `role: first text line`, plus the error name of aborted assistant messages.
-async function getSessionTimeline({
+async function listSessionMessages({
   threadId,
   directory,
 }: {
@@ -71,17 +71,31 @@ async function getSessionTimeline({
   const sessionId = await getThreadSession(threadId)
   const getClient = await initializeOpencodeForDirectory(directory)
   if (getClient instanceof Error) throw getClient
-  const messages = await getClient().session.messages({
-    sessionID: sessionId!,
-    directory,
-  })
-  return (messages.data || []).map((message) => {
-    const text = message.parts.flatMap((part) => {
-      if (part.type !== 'text' || part.synthetic) return []
-      return [part.text]
+  const messages = await listAllMessages({ client: getClient(), sessionId: sessionId!, order: 'asc' })
+  if (messages instanceof Error) throw messages
+  return messages
+}
+
+// `role: first text line`, plus the error type of failed assistant messages.
+async function getSessionTimeline({
+  threadId,
+  directory,
+}: {
+  threadId: string
+  directory: string
+}) {
+  const messages = await listSessionMessages({ threadId, directory })
+  return messages.flatMap((message) => {
+    if (message.type === 'user') {
+      // Per-turn Discord context is appended after the prompt.
+      return [`user: ${message.text.split('\n')[0]}`]
+    }
+    if (message.type !== 'assistant') return []
+    const text = message.content.flatMap((part) => {
+      return part.type === 'text' ? [part.text] : []
     }).join('\n')
-    const error = message.info.role === 'assistant' ? message.info.error?.name : undefined
-    return `${message.info.role}${error ? ` ${error}` : ''}: ${text.split('\n')[0]}`
+    const error = message.error ? ` ${message.error.type}` : ''
+    return [`assistant${error}: ${text.split('\n')[0]}`]
   })
 }
 
@@ -181,18 +195,19 @@ describe('shell commands', () => {
       })
 
       // The over-long label is rejected in the plugin execute() with an error.
-      const sessionId = await getThreadSession(thread.id)
-      const getClient = await initializeOpencodeForDirectory(ctx.directories.projectDirectory)
-      if (getClient instanceof Error) throw getClient
-      const messages = await getClient().session.messages({
-        sessionID: sessionId!,
+      const messages = await listSessionMessages({
+        threadId: thread.id,
         directory: ctx.directories.projectDirectory,
       })
-      const buttonToolStates = (messages.data || []).flatMap((message) => {
-        return message.parts.flatMap((part) => {
-          if (part.type !== 'tool' || part.tool !== 'kimaki_action_buttons') return []
-          if (part.state.status === 'error') return [`error: ${part.state.error}`]
-          if (part.state.status === 'completed') return [`completed: ${part.state.output}`]
+      const buttonToolStates = messages.flatMap((message) => {
+        if (message.type !== 'assistant') return []
+        return message.content.flatMap((part) => {
+          if (part.type !== 'tool' || part.name !== 'kimaki_action_buttons') return []
+          if (part.state.status === 'error') return [`error: ${part.state.error.message}`]
+          if (part.state.status === 'completed') {
+            const text = part.state.content.flatMap((item) => item.type === 'text' ? [item.text] : [])
+            return [`completed: ${text.join('')}`]
+          }
           return [part.state.status]
         })
       })

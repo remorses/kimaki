@@ -25,22 +25,17 @@ import { createLogger } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
 import { runShellCommandInChannel } from './run-command.js'
-import { formatActionButtonsContent } from '../ipc-tools-plugin.js'
+import {
+  formatActionButtonsContent,
+  type ActionButtonColor,
+  type ActionButtonOption,
+} from '../action-button-options.js'
 import {
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
 
 const logger = createLogger('ACT_BTN')
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
-
-export type ActionButtonColor = 'white' | 'blue' | 'green' | 'red'
-
-export type ActionButtonOption = {
-  label: string
-  /** Shell command run on click. label is display text only. */
-  command?: string
-  color?: ActionButtonColor
-}
 
 export type ActionButtonsRequest = {
   sessionId: string

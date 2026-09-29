@@ -84,10 +84,29 @@ function buildMatchers(): DeterministicMatcher[] {
       toolName: 'kimaki_action_buttons',
       input: { buttons: [{ label: 'Continue', color: 'purple' }] },
     },
+    {
+      id: 'invalid-command-button',
+      toolName: 'kimaki_action_buttons',
+      input: { buttons: [{ label: 'Build', command: '   ' }] },
+    },
+  ] as const
+  // Regression: host-side validation failed every value against plugin
+  // Schema checks, so valid calls were rejected too.
+  const validTools = [
+    {
+      id: 'valid-max-files',
+      toolName: 'kimaki_file_upload',
+      input: { prompt: 'Upload', maxFiles: 3 },
+    },
+    {
+      id: 'valid-command-button',
+      toolName: 'kimaki_action_buttons',
+      input: { buttons: [{ label: 'Build', command: 'pnpm build', color: 'green' }] },
+    },
   ] as const
   return [
     sleepMatcher,
-    ...invalidTools.map(
+    ...[...invalidTools, ...validTools].map(
       (item): DeterministicMatcher => ({
         id: item.id,
         priority: 20,
@@ -268,6 +287,7 @@ test.each([
   'invalid-maximum-button-count',
   'invalid-button-label',
   'invalid-button-color',
+  'invalid-command-button',
 ])('rejects invalid tool input: %s', async (marker) => {
   const session = await client.session.create({
     title: marker,
@@ -286,3 +306,27 @@ test.each([
     expect(failure.data.error.message).not.toContain('Unknown tool')
   }
 })
+
+// Outside a Kimaki thread the tools stop before IPC, so success proves input validation passed.
+test.each(['valid-max-files', 'valid-command-button'])(
+  'accepts valid tool input: %s',
+  async (marker) => {
+    const session = await client.session.create({
+      title: marker,
+      location: { directory: tempDir },
+    })
+    createdSessionIds.push(session.id)
+    await client.session.prompt({ sessionID: session.id, text: marker })
+    await waitFor(() => executionEnded(session.id), {
+      label: `valid tool execution end for ${session.id}`,
+    })
+    const settled = events.find((event) => {
+      return (event.type === 'session.tool.success' || event.type === 'session.tool.failed')
+        && event.data.sessionID === session.id
+    })
+    if (settled?.type === 'session.tool.failed') {
+      throw new Error(settled.data.error.message)
+    }
+    expect(settled?.type).toBe('session.tool.success')
+  },
+)
