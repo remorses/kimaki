@@ -652,6 +652,7 @@ Different from \`kimaki session archive\` which hides the thread.
 ## updating the session title
 
 Skip the first turn. OpenCode already auto-generates the title from the first message.
+Exception: a btw fork keeps the parent title, so rename it as its prompt asks.
 On later turns, if the scope or goal changed, run:
 
 kimaki session title 'Short title' --session ${sessionId}

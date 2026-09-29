@@ -206,6 +206,11 @@ export async function forkSessionToBtwThread({
     `Parent session: ${sessionId} (thread <#${sourceThread.id}>)`,
     `Do NOT send messages to the parent session unless the user explicitly asks you to.`,
     ``,
+    // Forks inherit the parent title, so OpenCode never auto-titles them.
+    `This fork still has the parent session title. Rename it to a short title (max ~6 words) for the side question:`,
+    `kimaki session title '<title>' --session ${forkedSession.id}`,
+    `No btw: prefix, Kimaki keeps it on the Discord thread.`,
+    ``,
     modelPrompt,
   ].join('\n')
 
