@@ -428,9 +428,11 @@ cli
 
 cli
   .command(
-    'session read <sessionId>',
+    'session read <id>',
     dedent`
       Read a session conversation as markdown (pipe to file to grep).
+
+      Accepts a session ID (\`ses_...\`) or a Discord thread ID.
 
       Thinking is omitted by default. Tool inputs are truncated. Use
       \`--thinking\` and \`--verbose\` for the full dump.
@@ -445,11 +447,19 @@ cli
   )
   .example('kimaki session read ses_xxx > ./tmp/session.md')
   .example('kimaki session read ses_xxx --thinking --verbose')
-  .action(async (sessionId, options) => {
+  .example('kimaki session read 1554429528670076959 > ./tmp/session.md')
+  .action(async (id, options) => {
     try {
       const projectDirectory = path.resolve(options.project || '.')
 
       await initDatabase()
+
+      // IDs not starting with ses are Discord thread IDs
+      const sessionId = id.startsWith('ses') ? id : await getThreadSession(id)
+      if (!sessionId) {
+        cliLogger.error(`No session found for thread ${id}`)
+        process.exit(EXIT_NO_RESTART)
+      }
 
       cliLogger.log('Connecting to OpenCode server...')
       const getClient = await initializeOpencodeForDirectory(projectDirectory)

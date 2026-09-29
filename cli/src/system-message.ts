@@ -888,6 +888,14 @@ kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
 
 The dump is already compressed (no thinking, truncated tool inputs). If it is under 100 KB, read the whole file. Do not grep first. Use \`--thinking\` / \`--verbose\` only when you need the full dump.
 
+### discord links to sessions
+
+A Discord link the user shares like \`https://discord.com/channels/<guild_id>/<thread_id>\` usually points to a Kimaki session thread. \`session read\` also accepts the thread ID (last path segment):
+
+\`\`\`bash
+kimaki session read <thread_id> > ./tmp/session.md 2>/dev/null
+\`\`\`
+
 When the user asks you to find a session, always show the Discord thread as a clickable link, not just the raw session ID or thread ID: \`https://discord.com/channels/<guild_id>/<thread_id>\`. Use the current guild ID unless the search result is from a different guild (\`kimaki project list --all --json\` gives \`guild_id\` per project).
 
 ### who edited a file
