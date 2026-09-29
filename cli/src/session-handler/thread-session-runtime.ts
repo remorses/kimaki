@@ -3696,6 +3696,29 @@ export class ThreadSessionRuntime {
     return 'busy'
   }
 
+  /** Remove an item that is about to start. False when it already left the queue. */
+  private async claimQueueItem(item: QueuedMessage): Promise<boolean> {
+    let claimed = false
+    await this.dispatchAction(async () => {
+      const queueId = item.queueId
+      if (!queueId) {
+        claimed = true
+        return
+      }
+      if (!this.state?.queueItems.some((queued) => queued.queueId === queueId)) return
+      const persistResult = await deleteThreadQueueItem(queueId).catch((error) => {
+        return new Error('Failed to delete persisted queue item', { cause: error })
+      })
+      // Drop it from memory anyway; a failed delete only risks a replay after restart.
+      if (persistResult instanceof Error) {
+        logger.error(`[QUEUE] Failed to persist claim of ${queueId}: ${persistResult.message}`)
+      }
+      threadState.removeQueueItemById(this.threadId, queueId)
+      claimed = true
+    })
+    return claimed
+  }
+
   private async acknowledgeAcceptedQueueItem(item: QueuedMessage): Promise<void> {
     if (!item.queueId) {
       return
@@ -3827,6 +3850,11 @@ export class ThreadSessionRuntime {
 
   private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
     if (input.queuedAction === 'btw') {
+      // A started fork cannot be cancelled, so it leaves the queue before setup.
+      // Remove buttons then report it as already dispatched instead of removed.
+      const claimed = await this.claimQueueItem(input)
+      // Handled either way: /abort or a remove already dropped it, drain continues.
+      if (!claimed) return true
       const { forkSessionToBtwThread } = await import('../commands/btw.js')
       const result = await forkSessionToBtwThread({
         sourceThread: this.thread,
