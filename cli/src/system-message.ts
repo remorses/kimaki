@@ -5,10 +5,11 @@
 // the same session prefix across turns.
 //
 // v2 session.prompt / session.command have no `system` field. The bot writes
-// this text once with session.instructions.entry.put({ key: 'kimaki' }).
+// this text once with session.instructions.entry.put({ key: 'kimaki' }). A
+// fork keeps the source entry, so it reuses the source prompt cache prefix.
+// Data that must change mid-session goes into the per-turn synthetic context.
 
 import { SESSION_SEARCH_DEFAULT_DAYS } from './session-search.js'
-import { FilesystemOperationError } from './errors.js'
 
 /** Stable marker present in every kimaki system prompt; used by tests and plugins. */
 export const KIMAKI_SYSTEM_PROMPT_MARKER = 'via kimaki.dev'
@@ -19,12 +20,24 @@ export const KIMAKI_INSTRUCTION_ENTRY_KEY = 'kimaki'
 export type KimakiSystemPromptContext = {
   sessionId: string
   channelId?: string
+  /** Discord server/guild ID for discord_list_users tool */
   guildId?: string
+  /** Discord thread ID (the thread this session runs in) */
   threadId?: string
   channelTopic?: string
   agents?: AgentInfo[]
   userId?: string
+  /**
+   * Parent OpenCode session from explicit `kimaki send --parent-session` only.
+   * Must stay undefined for /btw forks, /fork, task/subagent children, and
+   * normal threads so the shared system prompt cache is not busted by a
+   * per-parent block. Never auto-derive this from OpenCode parent session IDs.
+   */
   parentSessionId?: string
+  /**
+   * Set only when the session was started by a scheduled task. Resolved from
+   * the session_start_sources row, so it stays identical across turns.
+   */
   scheduledTask?: ScheduledTaskSystemContext
   dataDir?: string
   critiqueEnabled?: boolean
@@ -59,8 +72,7 @@ export function isSystemPromptForSession({
   return system.split('\n').includes(`${SESSION_ID_LINE_PREFIX}${sessionId}`)
 }
 
-function getCritiqueInstructions(sessionId: string) {
-  return `
+const KIMAKI_CRITIQUE_INSTRUCTIONS = `
 ## showing diffs
 
 The user cannot see tool output. Share diffs as critique web URLs, never raw \`git diff\` output:
@@ -276,9 +288,9 @@ export function getOpencodePromptContext({
 }: {
   sessionId?: string
   threadId?: string
-  /** Set only when the pinned instructions do not name this parent yet. */
+  /** Set only when the pinned system prompt does not name this parent yet. */
   parentSessionId?: string
-  /** Fork kept the source session's instructions, so their IDs are stale. */
+  /** Fork reuses the source session's system prompt, so its IDs are stale. */
   systemPromptFromSourceSession?: boolean
   username?: string
   userId?: string
@@ -789,9 +801,9 @@ kimaki send --cwd /path/to/other-repo-worktree --prompt 'Plan how to update this
 
 ## waiting for a session to finish
 
-\`--wait\` blocks until a session completes and prints its full conversation to stdout. Use it when you need another session's result before continuing: fixing a bug in another project first, running a task in a separate worktree, or chaining sessions where the next depends on the previous output. When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself via Bash and continue from the printed markdown. Do not tell the user to run it.
+\`--wait\` blocks until a session completes and prints its full conversation to stdout. Use it when you need another session's result before continuing: fixing a bug in another project first, running a task in a separate worktree, or chaining sessions where the next depends on the previous output. When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself with the shell tool and continue from the printed markdown. Do not tell the user to run it.
 
-IMPORTANT: for \`kimaki send --wait\`, \`kimaki session wait\`, or the active-session loop below, set the Bash tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). The default is 2 minutes and cuts long sessions off. If the timeout triggers anyway, read the output from disk with \`kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null\`.
+IMPORTANT: for \`kimaki send --wait\`, \`kimaki session wait\`, or the active-session loop below, set the shell tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). The default is 2 minutes and cuts long sessions off. If the timeout triggers anyway, read the output from disk with \`kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null\`.
 
 \`\`\`bash
 kimaki send --channel <channel_id> --prompt 'Fix the auth bug' --wait --agent <current_agent>
@@ -810,7 +822,7 @@ When pulling submodules and they jump to a new commit, commit that submodule poi
 `
     : ''
 }
-${critiqueEnabled ? getCritiqueInstructions(sessionId) : ''}
+${critiqueEnabled ? KIMAKI_CRITIQUE_INSTRUCTIONS : ''}
 ${KIMAKI_TUNNEL_INSTRUCTIONS}
 ## markdown formatting
 

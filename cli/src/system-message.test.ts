@@ -733,9 +733,9 @@ describe('system-message', () => {
 
       ## waiting for a session to finish
 
-      \`--wait\` blocks until a session completes and prints its full conversation to stdout. Use it when you need another session's result before continuing: fixing a bug in another project first, running a task in a separate worktree, or chaining sessions where the next depends on the previous output. When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself via Bash and continue from the printed markdown. Do not tell the user to run it.
+      \`--wait\` blocks until a session completes and prints its full conversation to stdout. Use it when you need another session's result before continuing: fixing a bug in another project first, running a task in a separate worktree, or chaining sessions where the next depends on the previous output. When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself with the shell tool and continue from the printed markdown. Do not tell the user to run it.
 
-      IMPORTANT: for \`kimaki send --wait\`, \`kimaki session wait\`, or the active-session loop below, set the Bash tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). The default is 2 minutes and cuts long sessions off. If the timeout triggers anyway, read the output from disk with \`kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null\`.
+      IMPORTANT: for \`kimaki send --wait\`, \`kimaki session wait\`, or the active-session loop below, set the shell tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). The default is 2 minutes and cuts long sessions off. If the timeout triggers anyway, read the output from disk with \`kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null\`.
 
       \`\`\`bash
       kimaki send --channel <channel_id> --prompt 'Fix the auth bug' --wait --agent <current_agent>

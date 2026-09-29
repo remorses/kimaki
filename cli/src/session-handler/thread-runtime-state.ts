@@ -160,6 +160,7 @@ export function parseQueuedMessagePayload({
   }
 
   const queued: QueuedMessage = { queueId, prompt, userId, username }
+  if (parsed.queuedAction === 'btw') queued.queuedAction = 'btw'
   const images = parseQueuedImages(parsed.images)
   if (images) queued.images = images
   const appId = jsonString(parsed.appId)
@@ -182,6 +183,10 @@ export function parseQueuedMessagePayload({
   if (sourceMessageId) queued.sourceMessageId = sourceMessageId
   const sourceThreadId = jsonString(parsed.sourceThreadId)
   if (sourceThreadId) queued.sourceThreadId = sourceThreadId
+  const sourceChannelId = jsonString(parsed.sourceChannelId)
+  if (sourceChannelId) queued.sourceChannelId = sourceChannelId
+  const queueAckMessageId = jsonString(parsed.queueAckMessageId)
+  if (queueAckMessageId) queued.queueAckMessageId = queueAckMessageId
   const repliedMessage = parseRepliedMessage(parsed.repliedMessage)
   if (repliedMessage) queued.repliedMessage = repliedMessage
   const sessionStartScheduleKind = parseScheduleKind(parsed.sessionStartScheduleKind)

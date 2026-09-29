@@ -2,7 +2,7 @@
 title: Debugging and profiling kimaki
 description: >
   Recipes for debugging the kimaki bot: the log file, OpenCode session event
-  JSONL (env vars, sqlite export, compacted buffer shape, jq queries), heap
+  JSONL (env vars, sqlite export, buffer shape, jq queries), heap
   snapshots, live CPU profiling, CPU profiling tests, and the
   ~/.kimaki/bin/kimaki command shim. Read when debugging session state, event
   ordering, memory, CPU, slow tests, or agents failing to run `kimaki` commands.
@@ -39,39 +39,28 @@ For live user-session debugging (without restarting with env vars), export the p
 kimaki session export-events-jsonl --session <session_id> --out ./tmp/session-events.jsonl
 ```
 
-Use this for session-state regressions (for example a footer appearing after abort). Copy the exported JSONL into `cli/src/session-handler/event-stream-fixtures/` and add or update `event-stream-state.test.ts` coverage for the pure derivation helpers.
+Use this for session-state regressions (for example a footer appearing after abort). Use the exported native events as fixture input for `event-stream-state.test.ts` or `discord-event-projection.test.ts` coverage of the pure derivation helpers.
 
-### compacted buffer shape
+### buffer and JSONL shape
 
-`ThreadSessionRuntime` keeps the last 1000 OpenCode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. The buffer stores a compacted event shape to avoid memory spikes. It strips or truncates these large fields:
+`ThreadSessionRuntime` keeps the last 1000 OpenCode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. Long string values are truncated before storage to avoid memory spikes, but the native OpenCode v2 event shape is preserved.
 
-- `message.updated` user events: strip `info.system`, `info.summary`, `info.tools`
-- `message.part.updated` text/reasoning/snapshot: truncate long text fields
-- `message.part.updated` `step-start.snapshot`: truncate
-- `message.part.updated` tool states: replace `state.input` with `{}`
-- `message.part.updated` completed tool output: truncate `state.output`
-- `message.part.updated` completed tool attachments: strip `state.attachments`
-- `message.part.updated` pending `state.raw` and error `state.error`: truncate
-
-Each JSONL line is intentionally minimal: `{ timestamp, threadId, projectDirectory, event }`.
+Each JSONL line is one raw OpenCode event. Do not wrap events with Kimaki metadata.
 
 ### jq recipes
 
 ```bash
 # list event type counts for one session file
-jq -r '.event.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
+jq -r '.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
 
-# show only session lifecycle events (status/idle/error)
-jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# show execution lifecycle events
+jq -r 'select(.type | startswith("session.execution.")) | [.created, .type, .data.sessionID, .data.executionID] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
-# filter by a specific event type (example: message.part.updated)
-jq -r 'select(.event.type=="message.part.updated")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
-
-# filter by event subtype (example: session.status idle)
-jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# filter by a specific event type
+jq -r 'select(.type=="session.tool.called")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
 # show timestamps + event types
-jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+jq -r '[.created, .type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 ```
 
 ## heap snapshots and memory debugging

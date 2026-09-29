@@ -35,6 +35,18 @@ export type KimakiLocalEvent =
         status?: string
       }
     }
+  | {
+      // Last completed assistant step copied into a fork. Lets the first fork
+      // reply compare its cache reads against the source context.
+      type: 'kimaki.fork.cache-baseline'
+      data: {
+        sessionID: string
+        assistantMessageID: string
+        model: { providerID: string; id: string }
+        tokens: { input: number; cache: { read: number; write: number } }
+        completedAt: number
+      }
+    }
 
 export type EventBufferEvent = V2Event | KimakiLocalEvent
 
@@ -49,6 +61,7 @@ const KIMAKI_LOCAL_EVENT_TYPES = new Set([
   'kimaki.queue-dispatch.settled',
   'kimaki.question-queue-handoff.started',
   'kimaki.subagent.routing',
+  'kimaki.fork.cache-baseline',
 ])
 
 function parseKimakiLocalEvent(value: Record<string, unknown>): KimakiLocalEvent | undefined {
@@ -69,6 +82,9 @@ function parseKimakiLocalEvent(value: Record<string, unknown>): KimakiLocalEvent
     }
     return { type: 'kimaki.question-queue-handoff.started', data: { sessionID } }
   }
+  if (type === 'kimaki.fork.cache-baseline') {
+    return parseForkCacheBaseline({ sessionID, data: value.data })
+  }
   const assistantMessageID = jsonString(value.data.assistantMessageID)
   const id = jsonString(value.data.id)
   const childSessionID = jsonString(value.data.childSessionID)
@@ -83,6 +99,39 @@ function parseKimakiLocalEvent(value: Record<string, unknown>): KimakiLocalEvent
   return {
     type: 'kimaki.subagent.routing',
     data: { sessionID, assistantMessageID, id, childSessionID },
+  }
+}
+
+function parseForkCacheBaseline({
+  sessionID,
+  data,
+}: {
+  sessionID: string
+  data: Record<string, unknown>
+}): KimakiLocalEvent | undefined {
+  const assistantMessageID = jsonString(data.assistantMessageID)
+  const completedAt = jsonFiniteNumber(data.completedAt)
+  const model = isJsonRecord(data.model) ? data.model : undefined
+  const providerID = jsonString(model?.providerID)
+  const modelID = jsonString(model?.id)
+  const tokens = isJsonRecord(data.tokens) ? data.tokens : undefined
+  const cache = isJsonRecord(tokens?.cache) ? tokens.cache : undefined
+  const input = jsonFiniteNumber(tokens?.input)
+  const read = jsonFiniteNumber(cache?.read)
+  const write = jsonFiniteNumber(cache?.write)
+  if (
+    !assistantMessageID || completedAt === undefined || !providerID || !modelID
+    || input === undefined || read === undefined || write === undefined
+  ) return undefined
+  return {
+    type: 'kimaki.fork.cache-baseline',
+    data: {
+      sessionID,
+      assistantMessageID,
+      model: { providerID, id: modelID },
+      tokens: { input, cache: { read, write } },
+      completedAt,
+    },
   }
 }
 
@@ -151,6 +200,7 @@ export function getEventBufferSessionId(event: EventBufferEvent): string | undef
     || event.type === 'kimaki.queue-dispatch.settled'
     || event.type === 'kimaki.question-queue-handoff.started'
     || event.type === 'kimaki.subagent.routing'
+    || event.type === 'kimaki.fork.cache-baseline'
   ) return event.data.sessionID
   return getOpencodeEventSessionId(event)
 }
@@ -439,9 +489,10 @@ export type PromptCacheClear = {
   currentCacheRead: number
   previousMessageId: string
   currentMessageId: string
+  minutesSincePreviousMessage: number
 }
 
-function getStepModelKey({
+function findStepStarted({
   events,
   sessionId,
   assistantMessageId,
@@ -451,16 +502,20 @@ function getStepModelKey({
   sessionId: string
   assistantMessageId: string
   upToIndex: number
-}): string | undefined {
+}): Extract<V2Event, { type: 'session.step.started' }> | undefined {
   for (let i = upToIndex; i >= 0; i--) {
     const event = events[i]?.event
     if (
       event?.type === 'session.step.started'
       && event.data.sessionID === sessionId
       && event.data.assistantMessageID === assistantMessageId
-    ) return `${event.data.model.providerID}/${event.data.model.id}`
+    ) return event
   }
   return undefined
+}
+
+function getStepModelKey(step: Extract<V2Event, { type: 'session.step.started' }> | undefined) {
+  return step ? `${step.data.model.providerID}/${step.data.model.id}` : undefined
 }
 
 // Same-model cache drop on the first step of the latest execution vs the last
@@ -486,13 +541,14 @@ export function getPromptCacheClear({
   })
   const current = events[currentIndex]?.event
   if (current?.type !== 'session.step.ended') return undefined
-  const currentModel = getStepModelKey({
+  const currentStart = findStepStarted({
     events,
     sessionId,
     assistantMessageId: currentMessageId,
     upToIndex: currentIndex,
   })
-  if (!currentModel) return undefined
+  const currentModel = getStepModelKey(currentStart)
+  if (!currentStart || !currentModel) return undefined
 
   const executionStartIndex = events.findLastIndex(({ event }, index) => {
     return index < currentIndex
@@ -522,16 +578,32 @@ export function getPromptCacheClear({
       insideUnsuccessfulExecution = false
       continue
     }
-    if (insideUnsuccessfulExecution || event.type !== 'session.step.ended') continue
-    if (event.data.finish === 'error') continue
-    const previousModel = getStepModelKey({
-      events,
-      sessionId,
-      assistantMessageId: event.data.assistantMessageID,
-      upToIndex: i,
-    })
-    if (previousModel !== currentModel) return undefined
-    const previous = event.data.tokens
+    if (insideUnsuccessfulExecution) continue
+    const previousStep = (() => {
+      if (event.type === 'kimaki.fork.cache-baseline') {
+        return {
+          model: `${event.data.model.providerID}/${event.data.model.id}`,
+          tokens: event.data.tokens,
+          assistantMessageID: event.data.assistantMessageID,
+          completedAt: event.data.completedAt,
+        }
+      }
+      if (event.type !== 'session.step.ended' || event.data.finish === 'error') return undefined
+      return {
+        model: getStepModelKey(findStepStarted({
+          events,
+          sessionId,
+          assistantMessageId: event.data.assistantMessageID,
+          upToIndex: i,
+        })),
+        tokens: event.data.tokens,
+        assistantMessageID: event.data.assistantMessageID,
+        completedAt: event.created,
+      }
+    })()
+    if (!previousStep) continue
+    if (previousStep.model !== currentModel) return undefined
+    const previous = previousStep.tokens
     const tokens = current.data.tokens
     // Anthropic reports a fresh cache as write only, so read alone misses the turn after a miss.
     const previousCached = previous.cache.read + previous.cache.write
@@ -543,8 +615,9 @@ export function getPromptCacheClear({
     return {
       expectedCacheRead,
       currentCacheRead: tokens.cache.read,
-      previousMessageId: event.data.assistantMessageID,
+      previousMessageId: previousStep.assistantMessageID,
       currentMessageId,
+      minutesSincePreviousMessage: Math.max(0, Math.round((currentStart.created - previousStep.completedAt) / 60_000)),
     }
   }
   return undefined
@@ -560,7 +633,7 @@ function formatCompactTokenCount(count: number): string {
 }
 
 export function formatPromptCacheClearMessage(clear: PromptCacheClear): string {
-  return `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)})`
+  return `prompt cache missed (${formatCompactTokenCount(clear.expectedCacheRead)} → ${formatCompactTokenCount(clear.currentCacheRead)}) (${clear.minutesSincePreviousMessage} mins passed)`
 }
 
 export function shouldShowRetryNotice({

@@ -26,6 +26,7 @@ import { createLogger, LogPrefix } from '../logger.js'
 import type { CommandContext } from './types.js'
 import { initializeOpencodeForDirectory } from '../opencode.js'
 import { copySessionPreferences } from './model.js'
+import { OpenCodeSdkError } from '../errors.js'
 import type { DiscordFileAttachment } from '../message-formatting.js'
 import { extractQueueSuffix } from '../message-formatting.js'
 
@@ -86,19 +87,20 @@ export async function forkSessionToBtwThread({
   // If either side fails, remove whichever side succeeded.
   // session.fork copies messages, agent, model and the kimaki instruction
   // entry, so the fork keeps the source prompt prefix and cache.
+  const initMs = Date.now() - startedAt
   const [forkSettled, threadSettled] = await Promise.allSettled([
-    getClientResult().session.fork({
+    timed(getClientResult().session.fork({
       sessionID: sessionId,
       boundary: { type: 'through' },
-    }),
-    textChannel.threads.create({
+    })),
+    timed(textChannel.threads.create({
       name: `btw: ${prompt}`.slice(0, 100),
       autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
       reason: `btw fork from session ${sessionId}`,
-    }),
+    })),
   ])
-  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value : undefined
-  const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value : undefined
+  const forkedSession = forkSettled.status === 'fulfilled' ? forkSettled.value[0] : undefined
+  const createdThread = threadSettled.status === 'fulfilled' ? threadSettled.value[0] : undefined
   if (!forkedSession || !createdThread) {
     await Promise.all([
       createdThread?.delete('btw fork setup failed').catch((error) => {
@@ -118,9 +120,19 @@ export async function forkSessionToBtwThread({
     })
   }
   const thread = createdThread
+  const forkMs = forkSettled.status === 'fulfilled' ? forkSettled.value[1] : -1
+  const threadMs = threadSettled.status === 'fulfilled' ? threadSettled.value[1] : -1
   const channelId = sourceThread.parentId || sourceThread.id
   const sourceThreadLink = `<#${sourceThread.id}>`
 
+  const setupStartedAt = Date.now()
+  // Copied history seeds the fork's prompt cache miss detection.
+  const historyPromise = getClientResult().message.list({
+    sessionID: forkedSession.id,
+    limit: 10,
+    order: 'desc',
+    type: 'assistant',
+  }).catch((cause: unknown) => new OpenCodeSdkError({ operation: 'message.list', cause }))
   await Promise.all([
     // Kimaki re-selects the agent from its DB on every turn. Copy the fork
     // point agent too, or the fork switches to the default agent.
@@ -160,13 +172,13 @@ export async function forkSessionToBtwThread({
       `Reusing context from ${sourceThreadLink} to answer prompt...\n${prompt}`,
     ),
   ])
+  const history = await historyPromise
 
-  const routeMs = Date.now() - routeStartedAt
   logger.log(
-    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId}), system prompt ${copiedSystem ? 'reused' : 'regenerated'}`,
+    `Created btw fork session ${forkedSession.id} in thread ${thread.id} from source thread ${sourceThread.id} (session ${sessionId})`,
   )
   logger.log(
-    `[BTW TIMING] ${forkedSession.id} init=${initMs}ms fork=${forkMs}ms threadCreate=${threadMs}ms copyPrefs=${copyMs}ms route=${routeMs}ms total=${Date.now() - startedAt}ms`,
+    `[BTW TIMING] ${forkedSession.id} init=${initMs}ms fork=${forkMs}ms threadCreate=${threadMs}ms setup=${Date.now() - setupStartedAt}ms total=${Date.now() - startedAt}ms`,
   )
 
   // Parent context stays in the user prompt only. Do NOT pass parentSessionId
@@ -192,6 +204,16 @@ export async function forkSessionToBtwThread({
     appId,
     sessionId: forkedSession.id,
   })
+  if (history instanceof Error) {
+    logger.warn('Could not load copied messages for btw cache diagnostics:', history)
+  } else {
+    const last = history.data.find((message) => {
+      return message.type === 'assistant' && message.time.completed !== undefined
+    })
+    if (last?.type === 'assistant') {
+      runtime.seedForkPromptCacheBaseline({ sessionId: forkedSession.id, message: last })
+    }
+  }
   // Not awaited: the caller confirms in the source thread right away while the
   // runtime resolves preferences and dispatches. Failures are reported in the fork.
   void runtime.enqueueIncoming({
@@ -204,7 +226,7 @@ export async function forkSessionToBtwThread({
     mode: 'opencode',
   }).then(() => {
     logger.log(`[BTW TIMING] ${forkedSession.id} promptAccepted=${Date.now() - startedAt}ms`)
-  }, async (error) => {
+  }, async (error: unknown) => {
     logger.error('Fork dispatch failed:', error)
     await sendThreadMessage(thread, 'Could not send the request to OpenCode. Send your request again in this thread.')
   })

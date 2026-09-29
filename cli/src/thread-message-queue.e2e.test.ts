@@ -554,7 +554,7 @@ e2eTest('thread message queue ordering', () => {
   )
 
   test('btw queue forks after the current turn and includes its answer', async () => {
-    const start = 'Reply with exactly: SLOW_BUSY_MARKER queued-fork-source'
+    const start = 'SLOW_BUSY_MARKER queued-fork-source'
     await discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({ content: start })
     const source = await discord.channel(TEXT_CHANNEL_ID).waitForThread({
       timeout: 4_000,
@@ -591,7 +591,7 @@ e2eTest('thread message queue ordering', () => {
     const sourceText = await th.text()
     expect(sourceText.replace(/<#[0-9]+>/g, '<#FORK_THREAD>')).toMatchInlineSnapshot(`
       "--- from: user (queue-tester)
-      Reply with exactly: SLOW_BUSY_MARKER queued-fork-source
+      SLOW_BUSY_MARKER queued-fork-source
       --- from: assistant (TestBot)
       -# *using deterministic-provider/deterministic-v2*
       slow-busy-reply
@@ -924,7 +924,7 @@ e2eTest('thread message queue ordering', () => {
         -# Queued message (position 1)
         race-final
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: queued-from-slash
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
@@ -978,8 +978,8 @@ e2eTest('thread message queue ordering', () => {
         messageId: secondQueueAck.messageId,
         timeout: 4_000,
       })
-      // The first /queue item is still in flight, so it holds position 1.
-      expect(secondQueueAckMessage.content).toContain('Queued message (position 2)')
+      // OpenCode accepted the first /queue item, so it no longer waits in the queue.
+      expect(secondQueueAckMessage.content).toContain('Queued message (position 1)')
 
       const { id: thirdQueueInteractionId } = await th.user(TEST_USER_ID).runSlashCommand({
         name: 'queue',
@@ -999,7 +999,7 @@ e2eTest('thread message queue ordering', () => {
         messageId: thirdQueueAck.messageId,
         timeout: 4_000,
       })
-      expect(thirdQueueAckMessage.content).toContain('Queued message (position 3)')
+      expect(thirdQueueAckMessage.content).toContain('Queued message (position 2)')
 
       const serializedComponents = JSON.stringify(secondQueueAckMessage.components)
       const customIdMatch = serializedComponents.match(
@@ -1052,12 +1052,14 @@ e2eTest('thread message queue ordering', () => {
         -# *using deterministic-provider/deterministic-v2*
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: race-final
         -# Removed queued message: Reply with exactly: removed-queued-message
+        » **queue-tester:** Reply with exactly: race-final
         -# Queued message (position 2)
         race-final
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: kept-queued-message"
+        -# Executing queued prompt
+        ok
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
       // The removed item never drained, so nothing replies to its ack.
       const finalMessages = await th.getMessages()
@@ -1365,7 +1367,7 @@ e2eTest('thread message queue ordering', () => {
         -# **queue-tester** edited queued message
         slow-busy-reply
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-        » **queue-tester:** Reply with exactly: edited-queued
+        -# Executing queued prompt
         ok
         -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
       `)
