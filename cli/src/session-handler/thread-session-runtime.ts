@@ -210,6 +210,7 @@ import { notifyError } from '../sentry.js'
 import { createDebouncedProcessFlush } from '../debounced-process-flush.js'
 import { cancelHtmlActionsForThread } from '../html-actions.js'
 import { createDebouncedTimeout } from '../debounce-timeout.js'
+import { parseShellCommand, type QueuedAction } from '../btw-prefix-detection.js'
 import { extractLeadingOpencodeCommand } from '../opencode-command-detection.js'
 
 const logger = createLogger(LogPrefix.SESSION)
@@ -700,7 +701,7 @@ export type EnqueueResult = {
  */
 export type PreprocessResult = {
   prompt: string
-  queuedAction?: 'btw'
+  queuedAction?: QueuedAction
   images?: DiscordFileAttachment[]
   repliedMessage?: RepliedMessageContext
   /** Resolved mode based on voice transcription result. */
@@ -713,7 +714,7 @@ export type PreprocessResult = {
 
 export type IngressInput = {
   prompt: string
-  queuedAction?: 'btw'
+  queuedAction?: QueuedAction
   userId: string
   username: string
   // Discord message ID and thread ID for the source message, embedded in
@@ -3232,8 +3233,8 @@ export class ThreadSessionRuntime {
       return
     }
 
-    // Only a prompt can answer a pending question; a fork must wait for idle.
-    if (this.state?.queueItems[0]?.queuedAction === 'btw') return
+    // Only a prompt can answer a pending question; a fork or `!cmd` waits for idle.
+    if (this.state?.queueItems[0]?.queuedAction) return
     const next = threadState.dequeueItem(this.threadId)
     if (!next) {
       return
@@ -4212,7 +4213,7 @@ export class ThreadSessionRuntime {
   }: {
     sourceMessageId: string
     newPrompt: string
-    queuedAction?: 'btw'
+    queuedAction?: QueuedAction
   }): Promise<{ found: boolean; removed: boolean }> {
     let result: { found: boolean; removed: boolean } = { found: false, removed: false }
     await this.dispatchAction(async () => {
@@ -4358,9 +4359,14 @@ export class ThreadSessionRuntime {
 
   // Silent reply to the message that queued the item. Discord replies must
   // reference a message in the same channel.
-  private async sendQueueDrainIndicator(item: QueuedMessage): Promise<void> {
-    const replyTarget = item.queueAckMessageId
+  /** The "Queued" ack, or the source message when it lives in this thread. */
+  private getQueueItemReplyTarget(item: QueuedMessage): string | undefined {
+    return item.queueAckMessageId
       ?? (item.sourceChannelId === this.threadId ? item.sourceMessageId : undefined)
+  }
+
+  private async sendQueueDrainIndicator(item: QueuedMessage): Promise<void> {
+    const replyTarget = this.getQueueItemReplyTarget(item)
     const content = (() => {
       if (replyTarget) {
         return asSubtext('Executing queued prompt')
@@ -4428,10 +4434,11 @@ export class ThreadSessionRuntime {
 
     // Show queued message indicator only for messages that actually waited
     // behind a running request — not for the first immediate dispatch.
+    // A queued `!cmd` replies with its streamed output, which is the indicator.
     // Not awaited: the ~1s Discord send left OpenCode idle between runs, which
     // `session list --active` read as done. discord.js sends same-channel
     // messages in order, so the indicator still lands before the reply.
-    if (showIndicator) {
+    if (showIndicator && next.queuedAction !== 'shell') {
       void this.sendQueueDrainIndicator(next)
     }
 
@@ -4441,7 +4448,7 @@ export class ThreadSessionRuntime {
     // gating prevents concurrent local-queue dispatches. Mark busy now to
     // close the tiny window before the first session.status busy arrives.
     const dispatchSessionId = thread.sessionId
-    if (dispatchSessionId && next.queuedAction !== 'btw') {
+    if (dispatchSessionId && !next.queuedAction) {
       this.markQueueDispatchBusy(dispatchSessionId)
     }
     let accepted = false
@@ -4467,31 +4474,57 @@ export class ThreadSessionRuntime {
     })
   }
 
+  /**
+   * Queue items that are not prompts. They run in queue order without a model
+   * turn, then the queue keeps draining.
+   */
+  private async runQueuedAction({
+    item: input,
+    action,
+  }: {
+    item: QueuedMessage
+    action: QueuedAction
+  }): Promise<void> {
+    if (action === 'shell') {
+      const command = parseShellCommand(input.prompt)
+      if (!command) return
+      const { runShellCommandInChannel } = await import('../commands/run-command.js')
+      await runShellCommandInChannel({
+        channel: this.thread,
+        replyToMessageId: this.getQueueItemReplyTarget(input),
+        command,
+        directory: this.sdkDirectory,
+      })
+      return
+    }
+    const { forkSessionToBtwThread } = await import('../commands/btw.js')
+    const result = await forkSessionToBtwThread({
+      sourceThread: this.thread,
+      projectDirectory: this.projectDirectory,
+      sdkDirectory: this.sdkDirectory,
+      prompt: input.prompt,
+      userId: input.userId,
+      username: input.username,
+      appId: input.appId,
+      images: input.images,
+      agent: input.agent,
+    })
+    if (result instanceof Error) {
+      logger.error('[QUEUE] Could not fork queued btw:', result)
+      await sendThreadMessage(this.thread, `Could not fork queued btw: ${result.message}`)
+      return
+    }
+    await sendThreadMessage(this.thread, `Session forked! Continue in ${result.thread.toString()}`)
+  }
+
   // ── Prompt Dispatch ─────────────────────────────────────────
   // Resolve session, build system message, send to OpenCode.
   // The listener is already running, so this only handles
   // session ensure + model/agent + SDK call + state.
 
   private async dispatchPrompt(input: QueuedMessage): Promise<boolean> {
-    if (input.queuedAction === 'btw') {
-      const { forkSessionToBtwThread } = await import('../commands/btw.js')
-      const result = await forkSessionToBtwThread({
-        sourceThread: this.thread,
-        projectDirectory: this.projectDirectory,
-        sdkDirectory: this.sdkDirectory,
-        prompt: input.prompt,
-        userId: input.userId,
-        username: input.username,
-        appId: input.appId,
-        images: input.images,
-        agent: input.agent,
-      })
-      if (result instanceof Error) {
-        logger.error('[QUEUE] Could not fork queued btw:', result)
-        await sendThreadMessage(this.thread, `Could not fork queued btw: ${result.message}`)
-        return true
-      }
-      await sendThreadMessage(this.thread, `Session forked! Continue in ${result.thread.toString()}`)
+    if (input.queuedAction) {
+      await this.runQueuedAction({ item: input, action: input.queuedAction })
       return true
     }
     this.lastDisplayedContextPercentage = 0

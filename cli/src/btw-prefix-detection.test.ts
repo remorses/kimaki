@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { extractBtwSuffix, extractBtwQueueSuffix } from './btw-prefix-detection.js'
+import { extractBtwSuffix, extractBtwQueueSuffix, getQueuedAction, parseShellCommand } from './btw-prefix-detection.js'
 
 describe('extractBtwSuffix', () => {
   test('matches after period', () => {
@@ -136,6 +136,45 @@ test('btw queue suffix keeps both actions in order', () => {
         "forceBtw": false,
         "forceQueue": true,
         "prompt": "Explain this",
+      },
+    ]
+  `)
+})
+
+test('queued action for shell commands, btw forks and plain prompts', () => {
+  expect([
+    '!pnpm build. queue',
+    '!pnpm test --run\nqueue',
+    '! . queue',
+    'Explain this. btw queue',
+    'Explain this. queue',
+  ].map((content) => {
+    const suffix = extractBtwQueueSuffix(content)
+    return {
+      command: parseShellCommand(suffix.prompt),
+      action: getQueuedAction({ prompt: suffix.prompt, forceBtw: suffix.forceBtw }),
+    }
+  })).toMatchInlineSnapshot(`
+    [
+      {
+        "action": "shell",
+        "command": "pnpm build",
+      },
+      {
+        "action": "shell",
+        "command": "pnpm test --run",
+      },
+      {
+        "action": undefined,
+        "command": null,
+      },
+      {
+        "action": "btw",
+        "command": null,
+      },
+      {
+        "action": undefined,
+        "command": null,
       },
     ]
   `)

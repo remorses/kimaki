@@ -272,4 +272,49 @@ describe('shell commands', () => {
     20_000,
   )
 
+  test(
+    '!cmd with the queue suffix runs after the running turn ends',
+    async () => {
+      await ctx.discord.channel(TEXT_CHANNEL_ID).user(TEST_USER_ID).sendMessage({
+        content: 'SLOW_BUSY_MARKER shell queue setup',
+      })
+      const thread = await ctx.discord.channel(TEXT_CHANNEL_ID).waitForThread({
+        timeout: 4_000,
+        predicate: (t) => t.name === 'SLOW_BUSY_MARKER shell queue setup',
+      })
+      const th = ctx.discord.thread(thread.id)
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: '*using ',
+        timeout: 4_000,
+      })
+
+      await th.user(TEST_USER_ID).sendMessage({ content: '!echo queued-shell. queue' })
+      await waitForBotMessageContaining({
+        discord: ctx.discord,
+        threadId: thread.id,
+        text: '-# exit 0',
+        timeout: 4_000,
+      })
+
+      expect(normalizeDurations(await th.text())).toMatchInlineSnapshot(`
+        "--- from: user (shell-tester)
+        SLOW_BUSY_MARKER shell queue setup
+        --- from: assistant (TestBot)
+        -# *using deterministic-provider/deterministic-v2*
+        --- from: user (shell-tester)
+        !echo queued-shell. queue
+        --- from: assistant (TestBot)
+        -# Queued at position 1. Edit or delete your message to update the queue
+        slow-busy-reply
+        -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+        \`\`\`
+        queued-shell
+        \`\`\`
+        -# exit 0 ⋅ Ns"
+      `)
+    },
+    20_000,
+  )
 })

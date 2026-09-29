@@ -1,4 +1,4 @@
-// /run-shell-command and the ! message prefix (e.g. "!ls -la").
+// /run-shell-command, the ! message prefix (e.g. "!ls -la") and ! action buttons.
 // Runs a shell command in the project directory and streams its output to
 // Discord while it runs. stdout and stderr are interleaved in arrival order.
 //
@@ -16,7 +16,6 @@ import * as errore from 'errore'
 import {
   ChannelType,
   MessageFlags,
-  type Message,
   type TextChannel,
   type ThreadChannel,
 } from 'discord.js'
@@ -45,6 +44,7 @@ const KILL_GRACE_MS = 5_000
 // In-memory output is bounded so `yes` or a noisy build cannot grow forever.
 const HEAD_BUFFER_CHARS = MAX_PAGES * MAX_MESSAGE_CHARS
 const TAIL_BUFFER_CHARS = 2 * MAX_MESSAGE_CHARS
+
 
 class ShellSpawnError extends errore.createTaggedError({
   name: 'ShellSpawnError',
@@ -313,17 +313,15 @@ function runStreamingShell({
   })
 }
 
-function formatExitFooter(result: ShellSpawnError | ShellExit): string {
-  if (result instanceof Error) {
-    const reason = result.cause instanceof Error ? result.cause.message : result.message
-    return asSubtext(`failed to start ⋅ ${reason.split('\n')[0]!.slice(0, 80)}`)
+function describeExit(exit: ShellSpawnError | ShellExit): string {
+  if (exit instanceof Error) {
+    const reason = exit.cause instanceof Error ? exit.cause.message : exit.message
+    return `failed to start ⋅ ${reason.split('\n')[0]!.slice(0, 80)}`
   }
-  const duration = formatDuration(result.durationMs)
-  if (result.timedOut) {
-    return asSubtext(`timed out after ${formatDuration(COMMAND_TIMEOUT_MS)} ⋅ killed`)
-  }
-  if (result.signal) return asSubtext(`killed by ${result.signal} ⋅ ${duration}`)
-  return asSubtext(`exit ${result.code ?? 1} ⋅ ${duration}`)
+  if (exit.timedOut) return `timed out after ${formatDuration(COMMAND_TIMEOUT_MS)} ⋅ killed`
+  const duration = formatDuration(exit.durationMs)
+  if (exit.signal) return `killed by ${exit.signal} ⋅ ${duration}`
+  return `exit ${exit.code ?? 1} ⋅ ${duration}`
 }
 
 // ── Discord streaming ──────────────────────────────────────────────────────
@@ -414,7 +412,7 @@ export async function streamShellCommand({
 
   logger.log(`[RUN-COMMAND] Running "${command}" in ${directory}`)
   void queueSync()
-  const result = await runStreamingShell({
+  const exit = await runStreamingShell({
     command,
     directory,
     onOutput: (chunk) => {
@@ -425,14 +423,14 @@ export async function streamShellCommand({
   clearTimeout(flushTimer)
   flushTimer = undefined
 
-  if (result instanceof Error) {
-    logger.error(`[RUN-COMMAND] ${result.message}:`, result.cause)
+  if (exit instanceof Error) {
+    logger.error(`[RUN-COMMAND] ${exit.message}:`, exit.cause)
   } else {
     logger.log(
-      `[RUN-COMMAND] "${command}" finished: code=${result.code} signal=${result.signal} timedOut=${result.timedOut}`,
+      `[RUN-COMMAND] "${command}" finished: code=${exit.code} signal=${exit.signal} timedOut=${exit.timedOut}`,
     )
   }
-  footer = formatExitFooter(result)
+  footer = asSubtext(describeExit(exit))
   const finalSync = await queueSync()
   if (!finalSync) return
   // Output messages could not be updated. Post the exit status on its own so
@@ -446,35 +444,6 @@ export async function streamShellCommand({
   if (fallback instanceof Error) {
     logger.warn(`[RUN-COMMAND] ${fallback.message}:`, fallback.cause)
   }
-}
-
-/** Run a `!command` message. Output replies to the message, overflow continues in the channel. */
-export async function runShellCommandForMessage({
-  message,
-  command,
-  directory,
-}: {
-  message: Message
-  command: string
-  directory: string
-}) {
-  const channel = message.channel
-  return streamShellCommand({
-    command,
-    directory,
-    sendPage: async ({ index, content }) => {
-      const options = {
-        content,
-        flags: SILENT_MESSAGE_FLAGS,
-        allowedMentions: { parse: [], repliedUser: false },
-      }
-      if (index === 0) return message.reply(options)
-      if (!channel.isSendable()) {
-        throw new Error('Channel is not sendable')
-      }
-      return channel.send(options)
-    },
-  })
 }
 
 /**

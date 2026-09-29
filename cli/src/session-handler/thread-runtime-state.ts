@@ -12,6 +12,7 @@
 // state field, ask if it can be derived from existing state instead.
 
 import type { DiscordFileAttachment } from '../message-formatting.js'
+import type { QueuedAction } from '../btw-prefix-detection.js'
 import type { RepliedMessageContext } from '../system-message.js'
 import { store } from '../store.js'
 
@@ -24,8 +25,8 @@ export type QueuedMessage = {
   // The text content to send to the OpenCode session (user message or
   // transcribed voice message). Always present.
   prompt: string
-  // A queued fork runs after earlier source turns, not as a source prompt.
-  queuedAction?: 'btw'
+  // Non-prompt work run in queue order: a btw fork or a `!cmd` shell command.
+  queuedAction?: QueuedAction
   // Discord user ID of the message author. Used for permission checks
   // and attribution in the session start source tracking.
   userId: string

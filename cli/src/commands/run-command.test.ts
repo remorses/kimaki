@@ -172,3 +172,4 @@ describe('streamShellCommand delivery failure', () => {
     `)
   })
 })
+

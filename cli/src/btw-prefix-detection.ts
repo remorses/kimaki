@@ -6,6 +6,8 @@
 // - punctuation + btw: ". btw", "! btw", ". btw.", "!btw."
 // - btw as its own final line: "text\nbtw"
 // Non-matches: "btw fix this" (start only), "hello btw" (no punctuation)
+//
+// Also parses the `!` shell prefix and picks the action a queued message runs.
 
 import { extractQueueSuffix } from './message-formatting.js'
 
@@ -27,4 +29,28 @@ export function extractBtwQueueSuffix(content: string) {
     : extractQueueSuffix(content)
   const btw = extractBtwSuffix(queued.prompt)
   return { prompt: btw.prompt, forceQueue: queued.forceQueue, forceBtw: btw.forceBtw }
+}
+
+/** `!pnpm build` → `pnpm build`. Null when the text is not a shell command. */
+export function parseShellCommand(text: string): string | null {
+  if (!text.startsWith('!')) return null
+  return text.slice(1).trim() || null
+}
+
+/**
+ * What a queued item does when the queue reaches it. Plain prompts have no
+ * action. `shell` runs a `!cmd`, `btw` forks the session.
+ */
+export type QueuedAction = 'btw' | 'shell'
+
+export function getQueuedAction({
+  prompt,
+  forceBtw,
+}: {
+  prompt: string
+  forceBtw: boolean
+}): QueuedAction | undefined {
+  if (parseShellCommand(prompt)) return 'shell'
+  if (forceBtw) return 'btw'
+  return undefined
 }

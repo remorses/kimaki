@@ -39,7 +39,7 @@ import {
 import { formatAutoWorktreeName, createWorktreeInBackground, worktreeCreatingMessage } from './commands/new-worktree.js'
 import { resolveSessionWorkingDirectory, git, isGitRepositoryRoot } from './worktrees.js'
 import { WORKTREE_PREFIX } from './commands/merge-worktree.js'
-import { asSubtext } from './message-formatting.js'
+import { asSubtext, extractQueueSuffix } from './message-formatting.js'
 import {
   escapeBackticksInCodeBlocks,
   splitMarkdownForDiscord,
@@ -59,7 +59,7 @@ import {
 } from './system-message.js'
 import YAML from 'yaml'
 import { getFileAttachments, getTextAttachments, resolveContentMentions } from './message-formatting.js'
-import { extractBtwQueueSuffix } from './btw-prefix-detection.js'
+import { extractBtwQueueSuffix, parseShellCommand } from './btw-prefix-detection.js'
 import { isVoiceAttachment } from './voice-attachment.js'
 import { forkSessionToBtwThread } from './commands/btw.js'
 import {
@@ -96,7 +96,7 @@ import {
   reserveThreadIngress,
   runInThreadIngressSlot,
 } from './session-handler/thread-session-runtime.js'
-import { runShellCommandForMessage } from './commands/run-command.js'
+import { runShellCommandInChannel } from './commands/run-command.js'
 import { registerInteractionHandler } from './interaction-handler.js'
 import { getDiscordRestApiUrl } from './discord-urls.js'
 import { markDiscordGatewayReady, stopHranaServer } from './hrana-server.js'
@@ -802,35 +802,36 @@ export async function startDiscordBot({
           return
         }
 
+        const suffix = extractBtwQueueSuffix(message.content || '')
+
         // ! prefix runs a shell command instead of starting/continuing a session.
+        // With the queue suffix it goes through the runtime queue instead and
+        // runs after the queued turns (see runQueuedAction).
         // Use worktree directory if available, so commands run in the worktree cwd.
         // Skip shell commands while worktree is pending — they'd run in the base dir.
+        const shellCmd = parseShellCommand(message.content || '')
         if (
-          message.content?.startsWith('!') &&
+          shellCmd &&
+          !suffix.forceQueue &&
           projectDirectory &&
           worktreeInfo?.status !== 'pending'
         ) {
-          const shellCmd = message.content.slice(1).trim()
-          if (shellCmd) {
-            threadIngressSlot?.release()
-            const shellDir =
-              worktreeInfo?.status === 'ready' &&
-              worktreeInfo.workspace_directory
+          threadIngressSlot?.release()
+          await runShellCommandInChannel({
+            channel: thread,
+            replyToMessageId: message.id,
+            command: shellCmd,
+            directory:
+              worktreeInfo?.status === 'ready' && worktreeInfo.workspace_directory
                 ? worktreeInfo.workspace_directory
-                : projectDirectory
-            await runShellCommandForMessage({
-              message,
-              command: shellCmd,
-              directory: shellDir,
-            })
-            return
-          }
+                : projectDirectory,
+          })
+          return
         }
 
         // `. btw` suffix mirrors /btw for fast side-question forks.
         // Works like queue: just the word "btw" at the end after punctuation
         // or newline. The whole message (minus the suffix) becomes the fork prompt.
-        const suffix = extractBtwQueueSuffix(message.content || '')
         if (suffix.forceBtw && !suffix.forceQueue && projectDirectory
           && worktreeInfo?.status !== 'pending' && !isLeadingMentionToOtherUser) {
           threadIngressSlot?.release()
@@ -1082,18 +1083,19 @@ export async function startDiscordBot({
           return
         }
 
-        // ! prefix runs a shell command instead of starting a session
-        if (message.content?.startsWith('!')) {
-          const shellCmd = message.content.slice(1).trim()
-          if (shellCmd) {
-            threadIngressSlot?.release()
-            await runShellCommandForMessage({
-              message,
-              command: shellCmd,
-              directory: projectDirectory,
-            })
-            return
-          }
+        // ! prefix runs a shell command instead of starting a session. A new
+        // channel message has nothing to queue behind, so the queue suffix
+        // only gets stripped.
+        const channelShellCmd = parseShellCommand(extractQueueSuffix(message.content || '').prompt)
+        if (channelShellCmd) {
+          threadIngressSlot?.release()
+          await runShellCommandInChannel({
+            channel,
+            replyToMessageId: message.id,
+            command: channelShellCmd,
+            directory: projectDirectory,
+          })
+          return
         }
 
         const hasVoice = message.attachments.some((attachment) => {
