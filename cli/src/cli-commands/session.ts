@@ -122,7 +122,7 @@ cli
     'Project directory to list sessions for (defaults to cwd)',
   )
   .option('--all', 'List sessions across every locally registered project')
-  .option('--active', 'Only list active sessions; exits 1 when none remain')
+  .option('--active', 'Only list active sessions; exits 1 when none remain, 64 on errors')
   .option('--exclude <sessionId>', 'Exclude one session ID from the results')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
@@ -170,7 +170,8 @@ cli
         cliLogger.log(`Connecting to OpenCode server for ${projectDirectory}...`)
         const getClient = await initializeOpencodeForDirectory(projectDirectory)
         if (getClient instanceof Error) {
-          if (options.all) {
+          // Skipping would make --active report "none" falsely.
+          if (options.all && !options.active) {
             cliLogger.warn(
               `Skipping ${projectDirectory}: failed to connect to OpenCode: ${getClient.message}`,
             )
@@ -183,21 +184,43 @@ cli
         const client = getClient()
         const [sessionsResponse, statusResponse, questionsResponse] = await Promise.all([
           client.session.list(),
-          client.session.status({ directory: projectDirectory }).catch(() => null),
+          client.session.status({ directory: projectDirectory }),
           client.question.list({ directory: projectDirectory }).catch(() => null),
         ])
+        // The SDK returns errors instead of throwing. An empty status map
+        // would mark every session idle, so fail with exit 64, never 1.
+        if (sessionsResponse.error || statusResponse.error) {
+          cliLogger.error(
+            'OpenCode request failed:',
+            JSON.stringify(sessionsResponse.error || statusResponse.error),
+          )
+          process.exit(EXIT_NO_RESTART)
+        }
 
-        const statuses = statusResponse?.data || {}
-        const sessionsWithPendingQuestion = new Set(
-          (questionsResponse?.data || []).map((request) => request.sessionID),
+        const statuses = statusResponse.data || {}
+        // OpenCode keeps a question in question.list after its tool call is
+        // aborted (the part ends in `error`). Only a still-running question
+        // tool means the session is waiting for the user.
+        const liveQuestionSessionIds = await Promise.all(
+          (questionsResponse?.data || []).map(async ({ sessionID, tool }) => {
+            if (statuses[sessionID]?.type !== 'busy') return null
+            if (!tool) return sessionID
+            const message = await client.session.message({
+              sessionID,
+              messageID: tool.messageID,
+              directory: projectDirectory,
+            })
+            const part = message.data?.parts.find((p) => {
+              return p.type === 'tool' && p.callID === tool.callID
+            })
+            return part?.type === 'tool' && part.state.status === 'running' ? sessionID : null
+          }),
         )
+        const sessionsWithPendingQuestion = new Set(liveQuestionSessionIds)
 
         for (const session of sessionsResponse.data || []) {
           const status = statuses[session.id]
           const isBusy = Boolean(status && status.type !== 'idle')
-          // Only relabel to showing-question when the session is actually busy.
-          // An orphaned question left in the list after an abort (session idle)
-          // must not hide or relabel an otherwise-idle session.
           gathered.push({
             session,
             projectDirectory,

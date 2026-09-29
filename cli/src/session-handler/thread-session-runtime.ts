@@ -4428,8 +4428,11 @@ export class ThreadSessionRuntime {
 
     // Show queued message indicator only for messages that actually waited
     // behind a running request — not for the first immediate dispatch.
+    // Not awaited: the ~1s Discord send left OpenCode idle between runs, which
+    // `session list --active` read as done. discord.js sends same-channel
+    // messages in order, so the indicator still lands before the reply.
     if (showIndicator) {
-      await this.sendQueueDrainIndicator(next)
+      void this.sendQueueDrainIndicator(next)
     }
 
     // Start dispatch (detached — does not block the action queue).

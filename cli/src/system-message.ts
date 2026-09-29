@@ -948,10 +948,10 @@ kimaki send --thread <thread_id> --prompt 'Run the tests' --wait --agent <curren
 kimaki session wait <session_id>
 
 # wait until every other in-progress session in this project finishes
-while kimaki session list --active --exclude ${sessionId}; do sleep 5; done
+until kimaki session list --active --exclude ${sessionId}; [ $? -eq 1 ]; do sleep 5; done
 \`\`\`
 
-\`session list --active\` exits 0 while it finds active sessions and 1 when none remain. Exclude the current session so the loop does not wait for itself. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
+\`session list --active\` exits 0 while it finds active sessions, 1 when none remain, and 64 on errors. The loop stops only on 1, so an error never looks like "no active sessions". Exclude the current session so the loop does not wait for itself. Sessions can start again after the loop ends, so run the check again right before each commit. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
 
 ## submodules
 
