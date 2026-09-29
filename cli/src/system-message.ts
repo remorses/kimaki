@@ -1030,6 +1030,8 @@ NEVER call \`question\` before your text. Discord will hide the message.
 The same rule applies to \`kimaki_action_buttons\`, \`kimaki_file_upload\`, and \`kimaki_sleep\`.
 You MUST call them LAST, after ALL text.
 
+Never call \`kimaki_action_buttons\` or \`question\` in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
+
 ALWAYS use \`question\` when you ask the user a question. Do not write a numbered list in plain text.
 
 Examples:
