@@ -34,6 +34,10 @@ The reply **streams** while the command runs. Kimaki edits the same message abou
 - When output grows past one Discord message, it continues in new messages (up to 5). Past that, the last message shows the **tail** of the output with a count of hidden lines.
 - Commands are killed after 10 minutes.
 
+## Shell command buttons
+
+The agent can show **action buttons** that run a shell command, for example a **Build** button that runs `pnpm build`. The message above the buttons shows each command, so you see what runs before you click. Clicking one runs the command at once, the same as sending `!pnpm build` yourself. There is no model turn between the click and the output, so the feedback loop is fast.
+
 ## Where it runs
 
 - **In a thread** with a [worktree](../features/worktrees) that is ready, the command runs in the **worktree directory**.

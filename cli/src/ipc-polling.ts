@@ -13,7 +13,7 @@ import {
 } from './database.js'
 import { showFileUploadButton } from './commands/file-upload.js'
 import { queueActionButtonsRequest } from './commands/action-buttons.js'
-import type { ActionButtonColor } from './commands/action-buttons.js'
+import { parseActionButtons } from './ipc-tools-plugin.js'
 import { createLogger, LogPrefix } from './logger.js'
 import { notifyError } from './sentry.js'
 
@@ -25,37 +25,6 @@ class IpcDispatchError extends errore.createTaggedError({
   name: 'IpcDispatchError',
   message: 'IPC dispatch failed for request $requestId: $reason',
 }) {}
-
-// ── Button parsing ───────────────────────────────────────────────────────
-
-const VALID_COLORS = new Set<ActionButtonColor>([
-  'white',
-  'blue',
-  'green',
-  'red',
-])
-
-type ParsedButton = { label: string; color?: ActionButtonColor }
-
-function parseButtons(raw: unknown): ParsedButton[] {
-  if (!Array.isArray(raw)) return []
-  const results: ParsedButton[] = []
-  for (const value of raw) {
-    if (!value || typeof value !== 'object') continue
-    const label = (typeof value.label === 'string' ? value.label : '')
-      .trim()
-      .slice(0, 80)
-    if (!label) continue
-    const color =
-      typeof value.color === 'string' &&
-      VALID_COLORS.has(value.color as ActionButtonColor)
-        ? (value.color as ActionButtonColor)
-        : undefined
-    results.push({ label, color })
-    if (results.length >= 3) break
-  }
-  return results
-}
 
 // ── Request dispatch ─────────────────────────────────────────────────────
 
@@ -179,11 +148,12 @@ async function dispatchRequest({
         return parsed
       }
 
-      const buttons = parseButtons(parsed.buttons)
-      if (buttons.length === 0) {
+      // Checked again here: the row may come from an older plugin process.
+      const buttons = parseActionButtons(parsed.buttons)
+      if (buttons instanceof Error) {
         await completeIpcRequest({
           id: req.id,
-          response: JSON.stringify({ error: 'No valid buttons' }),
+          response: JSON.stringify({ error: buttons.message }),
         })
         return
       }

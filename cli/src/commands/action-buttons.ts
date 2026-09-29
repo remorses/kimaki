@@ -1,6 +1,9 @@
 // Action button tool handler - Shows Discord buttons for quick model actions.
 // Used by the kimaki_action_buttons tool to render up to 3 buttons and route
-// button clicks back into the session as a new user message.
+// button clicks back into the session as a new user message. Buttons with a
+// `command` run that shell command instead, same as a `!cmd` Discord message.
+// The command lives only in memory (pendingActionButtonContexts), never in the
+// custom_id, which Discord caps at 100 chars.
 
 import {
   ActionRowBuilder,
@@ -21,6 +24,8 @@ import {
 import { createLogger } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
+import { runShellCommandInChannel } from './run-command.js'
+import { formatActionButtonsContent } from '../ipc-tools-plugin.js'
 import {
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
@@ -32,6 +37,8 @@ export type ActionButtonColor = 'white' | 'blue' | 'green' | 'red'
 
 export type ActionButtonOption = {
   label: string
+  /** Shell command run on click. label is display text only. */
+  command?: string
   color?: ActionButtonColor
 }
 
@@ -196,20 +203,10 @@ export async function showActionButtons({
   /** Suppress notification when queue has pending items */
   silent?: boolean
 }): Promise<void> {
-  const safeButtons = buttons
-    .slice(0, 3)
-    .map((button) => {
-      return {
-        label: button.label.trim().slice(0, 80),
-        color: button.color,
-      }
-    })
-    .filter((button) => {
-      return button.label.length > 0
-    })
-
-  if (safeButtons.length === 0) {
-    throw new Error('No valid buttons to display')
+  // Buttons are validated by parseActionButtons() before they get here.
+  // Never truncate: a cut command could run a different command.
+  if (buttons.length === 0) {
+    throw new Error('No buttons to display')
   }
 
   const contextHash = crypto.randomBytes(8).toString('hex')
@@ -226,7 +223,7 @@ export async function showActionButtons({
     sessionId,
     directory,
     thread,
-    buttons: safeButtons,
+    buttons,
     contextHash,
     resolved: false,
     timer,
@@ -235,7 +232,7 @@ export async function showActionButtons({
   pendingActionButtonContexts.set(contextHash, context)
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    ...safeButtons.map((button, index) => {
+    ...buttons.map((button, index) => {
       return new ButtonBuilder()
         .setCustomId(`action_button:${contextHash}:${index}`)
         .setLabel(button.label)
@@ -245,14 +242,15 @@ export async function showActionButtons({
 
   try {
     const message = await thread.send({
-      content: '**Action Required**',
+      content: formatActionButtonsContent(buttons),
       components: [row],
+      allowedMentions: { parse: [] },
       flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     })
 
     context.messageId = message.id
     logger.log(
-      `Showed ${safeButtons.length} action button(s) for session ${sessionId}`,
+      `Showed ${buttons.length} action button(s) for session ${sessionId}`,
     )
   } catch (error) {
     clearTimeout(timer)
@@ -330,10 +328,26 @@ export async function handleActionButton(
   const username = interaction.user.globalName || interaction.user.username
   const prompt = `User clicked: ${button.label}`
 
-  await sendThreadMessage(
+  const clickMessage = await sendThreadMessage(
     thread,
     `${QUEUE_PREFIX}**${username}:** ${button.label}`,
   )
+
+  // Command buttons run right away, like a `!cmd` message.
+  if (button.command) {
+    const resolved = await resolveWorkingDirectory({ channel: thread })
+    if (!resolved) {
+      await sendThreadMessage(thread, 'Could not resolve project directory for this thread.')
+      return
+    }
+    await runShellCommandInChannel({
+      channel: thread,
+      replyToMessageId: clickMessage.id,
+      command: button.command,
+      directory: resolved.workingDirectory,
+    })
+    return
+  }
 
   try {
     await sendClickedActionToModel({

@@ -11,8 +11,13 @@
 
 import type { Plugin } from '@opencode-ai/plugin'
 import type { ToolContext, ToolResult } from '@opencode-ai/plugin/tool'
+import * as errore from 'errore'
 import dedent from 'string-dedent'
 import { z } from 'zod'
+import type {
+  ActionButtonColor,
+  ActionButtonOption,
+} from './commands/action-buttons.js'
 import { setDataDir } from './config.js'
 import { createPluginLogger, setPluginLogFilePath } from './plugin-logger.js'
 import { initSentry } from './sentry.js'
@@ -44,6 +49,83 @@ const logger = createPluginLogger('OPENCODE')
 const FILE_UPLOAD_TIMEOUT_MS = 6 * 60 * 1000
 const DEFAULT_FILE_UPLOAD_MAX_FILES = 5
 const ACTION_BUTTON_TIMEOUT_MS = 30 * 1000
+// Discord button label limit.
+const ACTION_BUTTON_LABEL_MAX = 80
+// Discord message content limit. The button message shows every command.
+const DISCORD_MESSAGE_MAX = 2000
+const ACTION_BUTTON_COLORS = ['white', 'blue', 'green', 'red'] as const
+
+export class ActionButtonsValidationError extends errore.createTaggedError({
+  name: 'ActionButtonsValidationError',
+}) {}
+
+function escapeDiscordMarkdown(text: string): string {
+  return text.replace(/[\\*_~`|[\]()<>@#]/g, '\\$&')
+}
+
+/**
+ * Content of the button message. Shows each command before the click, so
+ * the user sees what will run. Lives here so validation can check its length.
+ */
+export function formatActionButtonsContent(buttons: ActionButtonOption[]): string {
+  const commandLines = buttons.flatMap((button) => {
+    if (button.command === undefined) return []
+    // A ``` inside the command would close the code block early.
+    const command = button.command.replaceAll('```', '`\u200b``')
+    return [`**${escapeDiscordMarkdown(button.label)}** runs:\n\`\`\`sh\n${command}\n\`\`\``]
+  })
+  return ['**Action Required**', ...commandLines].join('\n')
+}
+
+/**
+ * Validate raw kimaki_action_buttons args. Used by the plugin execute() and
+ * again by the bot when it reads the IPC row. Never truncates.
+ */
+export function parseActionButtons(
+  raw: unknown,
+): ActionButtonsValidationError | ActionButtonOption[] {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 3) {
+    return new ActionButtonsValidationError({
+      message: 'buttons must be an array of 1-3 buttons.',
+    })
+  }
+  const buttons: ActionButtonOption[] = []
+  for (const [index, value] of raw.entries()) {
+    const name = `button ${index + 1}`
+    if (!value || typeof value !== 'object') {
+      return new ActionButtonsValidationError({ message: `${name} must be an object.` })
+    }
+    const { label: rawLabel, command: rawCommand, color } = value as Record<string, unknown>
+    const label = typeof rawLabel === 'string' ? rawLabel.trim() : ''
+    if (!label) {
+      return new ActionButtonsValidationError({ message: `${name} needs a non-empty label.` })
+    }
+    if (label.length > ACTION_BUTTON_LABEL_MAX) {
+      return new ActionButtonsValidationError({
+        message: `${name} label is ${label.length} chars, max ${ACTION_BUTTON_LABEL_MAX}. Use a short label and put any shell command in "command".`,
+      })
+    }
+    // Never trim the command: trailing whitespace can matter to the shell.
+    if (rawCommand !== undefined && (typeof rawCommand !== 'string' || !rawCommand.trim())) {
+      return new ActionButtonsValidationError({ message: `${name} command must be a non-empty string.` })
+    }
+    const command = typeof rawCommand === 'string' ? rawCommand : undefined
+    const validColor: ActionButtonColor | undefined = ACTION_BUTTON_COLORS.find((c) => c === color)
+    if (color !== undefined && !validColor) {
+      return new ActionButtonsValidationError({
+        message: `${name} color must be one of ${ACTION_BUTTON_COLORS.join(', ')}.`,
+      })
+    }
+    buttons.push({ label, command, color: validColor })
+  }
+  const contentLength = formatActionButtonsContent(buttons).length
+  if (contentLength > DISCORD_MESSAGE_MAX) {
+    return new ActionButtonsValidationError({
+      message: `button message with all commands is ${contentLength} chars, max ${DISCORD_MESSAGE_MAX}. Write long commands to a script file and use a command like "sh /tmp/script.sh".`,
+    })
+  }
+  return buttons
+}
 
 async function loadDatabaseModule() {
   // The plugin-loading e2e test boots OpenCode directly without the bot-side
@@ -149,9 +231,18 @@ const ipcToolsPlugin: any = async () => {
           You MUST call kimaki_action_buttons LAST, after ALL text.
           NEVER call kimaki_action_buttons before your text.
 
+          A button with \`command\` is a shell command button. Clicking it runs
+          the command in the project directory right away and streams the
+          output to Discord, with no new model turn. You do not see the output
+          unless the user replies to it. Use it for fast feedback loops like
+          \`pnpm build\` or \`pnpm test\` instead of asking the user to prompt you.
+          The label is display text only: describe what the command does.
+          The command is shown above the buttons so the user sees what runs.
+
           Examples:
           - buttons: [{"label":"Yes, proceed"}]
           - buttons: [{"label":"Approve","color":"green"}]
+          - buttons: [{"label":"Build","command":"pnpm build"}]
           - buttons: [
               {"label":"Confirm","color":"blue"},
               {"label":"Cancel","color":"white"}
@@ -164,10 +255,15 @@ const ipcToolsPlugin: any = async () => {
                 label: z
                   .string()
                   .min(1)
-                  .max(80)
-                  .describe('Button label shown to the user (1-80 chars)'),
+                  .max(ACTION_BUTTON_LABEL_MAX)
+                  .describe(`Button label shown to the user (1-${ACTION_BUTTON_LABEL_MAX} chars). Display text only, never a command.`),
+                command: z
+                  .string()
+                  .min(1)
+                  .optional()
+                  .describe('Optional shell command run on click. All commands and labels must fit in one 2000-char Discord message; put long commands in a script file.'),
                 color: z
-                  .enum(['white', 'blue', 'green', 'red'])
+                  .enum(ACTION_BUTTON_COLORS)
                   .optional()
                   .describe(
                     'Optional button color. white is default and preferred for most confirmations.',
@@ -180,7 +276,12 @@ const ipcToolsPlugin: any = async () => {
               'Array of 1-3 action buttons. Prefer one button whenever possible.',
             ),
         },
-        async execute({ buttons }, context) {
+        async execute(args, context) {
+          // OpenCode does not decode plugin tool args against the zod schema
+          // (registry.ts fromPlugin skips Tool.wrap), so validate here.
+          const buttons = parseActionButtons(args.buttons)
+          if (buttons instanceof Error) throw buttons
+
           const { getThreadIdBySessionId, createIpcRequest, getIpcRequestById } = await loadDatabaseModule()
           const threadId = await getThreadIdBySessionId(context.sessionID)
 

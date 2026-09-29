@@ -477,6 +477,38 @@ export async function runShellCommandForMessage({
   })
 }
 
+/**
+ * Run a shell command posted in Discord: `!cmd` messages, action buttons
+ * with a `command` and queued `!cmd. queue` messages. Output replies to
+ * `replyToMessageId`, overflow continues in the channel.
+ */
+export async function runShellCommandInChannel({
+  channel,
+  replyToMessageId,
+  command,
+  directory,
+}: {
+  channel: TextChannel | ThreadChannel
+  replyToMessageId?: string
+  command: string
+  directory: string
+}): Promise<void> {
+  await streamShellCommand({
+    command,
+    directory,
+    sendPage: async ({ index, content }) => {
+      return channel.send({
+        content,
+        flags: SILENT_MESSAGE_FLAGS,
+        allowedMentions: { parse: [], repliedUser: false },
+        reply: index === 0 && replyToMessageId
+          ? { messageReference: replyToMessageId, failIfNotExists: false }
+          : undefined,
+      })
+    },
+  })
+}
+
 export async function handleRunCommand({
   command,
 }: CommandContext): Promise<void> {
