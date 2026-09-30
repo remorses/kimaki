@@ -14,7 +14,7 @@ import type { Actions } from './actions.ts'
 import { createLogger } from './logger.ts'
 import type { BotStore } from './store.ts'
 import type { Effect, ThreadView } from './thread-reducer.ts'
-import { button, buttonRow, settleUi, showUi, textOnly, type UiMessage } from './ui-prompts.ts'
+import { button, buttonRow, textOnly, type UiMessage } from './effects.ts'
 
 const logger = createLogger('PERMISSION')
 
@@ -78,10 +78,10 @@ function showRequest({ view, request }: { view: ThreadView; request: PermissionR
     resources: request.resources,
     label: request.label,
   }
-  const shown = showUi({ ui: view.ui, key: uiKey(request.id), messages: [requestMessage({ requestID: request.id, request: pending })] })
+  const message = requestMessage({ requestID: request.id, request: pending })
   return {
-    view: { ...view, ui: shown.ui, permissions: { ...view.permissions, [request.id]: pending } },
-    effects: shown.effects,
+    view: { ...view, permissions: { ...view.permissions, [request.id]: pending } },
+    effects: [{ type: 'show', key: uiKey(request.id), messages: [message], replyTo: null }],
   }
 }
 
@@ -89,8 +89,8 @@ function settleRequest({ view, requestID, status }: { view: ThreadView; requestI
   const request = view.permissions[requestID]
   if (!request) return { view, effects: [] }
   const { [requestID]: _settled, ...permissions } = view.permissions
-  const settled = settleUi({ ui: view.ui, key: uiKey(requestID), final: [textOnly(`${describe(request)}\n${status}`)] })
-  return { view: { ...view, permissions, ui: settled.ui }, effects: settled.effects }
+  const final = [textOnly(`${describe(request)}\n${status}`)]
+  return { view: { ...view, permissions }, effects: [{ type: 'settle', key: uiKey(requestID), final }] }
 }
 
 export function reducePermissions({

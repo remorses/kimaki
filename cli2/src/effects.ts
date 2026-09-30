@@ -3,21 +3,69 @@
 // one typing interval per thread refreshes the indicator every 7s. Never
 // awaited by the event loop.
 //
+// Interactive prompts: `show` remembers the posted message IDs under its key,
+// `settle` edits those messages and forgets the key. A settle for a key this
+// process never showed (posted before a restart) does nothing.
+//
 // When Discord is slower than the event stream, effects pile up in the
 // queue; consecutive bot lines are then merged into one message (≤ 2000
 // chars) so a burst of tool lines does not hit the 5 msg / 5s channel limit.
 
-import type { Client, MessageCreateOptions, SendableChannels } from 'discord.js'
+import {
+  ButtonStyle,
+  ComponentType,
+  type APIActionRowComponent,
+  type APIButtonComponentWithCustomId,
+  type APIComponentInMessageActionRow,
+  type Client,
+  type MessageCreateOptions,
+  type SendableChannels,
+} from 'discord.js'
 
 import { createLogger } from './logger.ts'
 import { segmentPayloads, type DiscordPayload } from './markdown/components.ts'
 import { DISCORD_TEXT_LIMIT, renderMarkdown } from './markdown/render-markdown.ts'
-import type { Effect, KimakiEvent } from './thread-reducer.ts'
-import type { UiMessage } from './ui-prompts.ts'
+import type { Effect } from './thread-reducer.ts'
 
 const logger = createLogger('EFFECTS')
 
 const TYPING_REFRESH_MS = 7_000
+
+// --- Interactive prompts (queue acks, question dropdowns, permission buttons).
+// Reducers name each prompt with a key and never see message IDs.
+
+export type UiMessage = {
+  content: string
+  components: ReadonlyArray<APIActionRowComponent<APIComponentInMessageActionRow>>
+}
+
+export type UiEffect =
+  // Posts the messages in order; the first replies to `replyTo` when set.
+  | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null }
+  // Edits each posted message of `key` (by index; the last `final` covers the rest).
+  | { type: 'settle'; key: string; final: readonly UiMessage[] }
+
+export function textOnly(content: string): UiMessage {
+  return { content, components: [] }
+}
+
+export function button({
+  customId,
+  label,
+  style = ButtonStyle.Secondary,
+}: {
+  customId: string
+  label: string
+  style?: ButtonStyle.Primary | ButtonStyle.Secondary | ButtonStyle.Success | ButtonStyle.Danger
+}): APIButtonComponentWithCustomId {
+  return { type: ComponentType.Button, custom_id: customId, label, style }
+}
+
+export function buttonRow(
+  buttons: readonly APIButtonComponentWithCustomId[],
+): APIActionRowComponent<APIComponentInMessageActionRow> {
+  return { type: ComponentType.ActionRow, components: [...buttons] }
+}
 
 type ThreadWorker = {
   queue: Effect[]
@@ -43,15 +91,11 @@ function markdownMessages({ text, blankLineBefore }: { text: string; blankLineBe
   return segmentPayloads([{ kind: 'text', markdown: `\n${first.markdown}` }, ...rest])
 }
 
-export function createEffectsRunner({
-  discord,
-  onRendered,
-}: {
-  discord: Client
-  // Feeds the IDs of posted interactive messages back into the reducer.
-  onRendered: (threadId: string, event: KimakiEvent) => void
-}) {
+export function createEffectsRunner({ discord }: { discord: Client }) {
   const workers = new Map<string, ThreadWorker>()
+  // Prompt key -> IDs of its posted messages, until settled. The only
+  // Discord facts kept in memory (spec 6.3 #4).
+  const prompts = new Map<string, readonly string[]>()
   // After stop(): no more sends or typing, even from effects already queued.
   const lifecycle = { closed: false }
 
@@ -115,9 +159,16 @@ export function createEffectsRunner({
       await pulseTyping(threadId)
       return
     }
-    if (effect.type === 'edit') {
+    if (effect.type === 'settle') {
+      const ids = prompts.get(effect.key)
+      prompts.delete(effect.key)
+      if (!ids || ids.length === 0) return
       const channel = await sendableChannel(threadId)
-      if (channel && !lifecycle.closed) await edit({ channel, messageId: effect.messageId, message: effect.message })
+      if (!channel || lifecycle.closed) return
+      for (const [index, messageId] of ids.entries()) {
+        const message = effect.final[index] ?? effect.final[effect.final.length - 1]
+        if (message) await edit({ channel, messageId, message })
+      }
       return
     }
     if (effect.type === 'show') {
@@ -134,7 +185,7 @@ export function createEffectsRunner({
         })
         if (id) ids.push(id)
       }
-      if (!lifecycle.closed) onRendered(threadId, { type: 'kimaki.rendered', key: effect.key, messageIds: ids })
+      prompts.set(effect.key, ids)
     }
     const payloads =
       effect.type === 'send' ? [{ content: effect.text }] : effect.type === 'markdown' ? markdownMessages(effect) : []

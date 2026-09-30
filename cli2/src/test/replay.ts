@@ -6,7 +6,7 @@ import path from 'node:path'
 import type { V2Event } from '@opencode/client'
 
 import { emptyView, reduce, type Effect, type Prefs, type ThreadEvent, type ThreadView } from '../thread-reducer.ts'
-import type { UiMessage } from '../ui-prompts.ts'
+import type { UiMessage } from '../effects.ts'
 import { ButtonStyle, ComponentType } from 'discord.js'
 
 const FIXTURES_DIR = path.join(import.meta.dirname, '../../../docs/opencode-v2-events')
@@ -77,7 +77,7 @@ export function effectLines(effects: Effect[]): string[] {
       const reply = effect.replyTo ? ` reply to ${effect.replyTo}` : ''
       return `[show ${effect.key}${reply}] ${effect.messages.map(uiLine).join(' | ')}`
     }
-    if (effect.type === 'edit') return `[edit ${effect.messageId}] ${uiLine(effect.message)}`
+    if (effect.type === 'settle') return `[settle ${effect.key}] ${effect.final.map(uiLine).join(' | ')}`
     return effect.text.replace(/^\n/, '\\n')
   })
 }

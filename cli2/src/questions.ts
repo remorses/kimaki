@@ -29,7 +29,7 @@ import type { Actions } from './actions.ts'
 import { createLogger } from './logger.ts'
 import type { BotStore } from './store.ts'
 import type { Effect, ThreadView } from './thread-reducer.ts'
-import { settleUi, showUi, textOnly, type UiMessage } from './ui-prompts.ts'
+import { textOnly, type UiMessage } from './effects.ts'
 
 const logger = createLogger('QUESTION')
 
@@ -150,14 +150,10 @@ function answeredMessage({ field, label, answer }: { field: QuestionField; label
 function showForm({ view, form, label }: { view: ThreadView; form: FormLike; label: string | null }): Result {
   const fields = questionFields(form)
   if (!fields || view.forms[form.id]) return { view, effects: [] }
-  const shown = showUi({
-    ui: view.ui,
-    key: uiKey(form.id),
-    messages: fields.map((field, index) => questionMessage({ formID: form.id, index, field, label })),
-  })
+  const messages = fields.map((field, index) => questionMessage({ formID: form.id, index, field, label }))
   return {
-    view: { ...view, ui: shown.ui, forms: { ...view.forms, [form.id]: { sessionId: form.sessionID, fields, label } } },
-    effects: shown.effects,
+    view: { ...view, forms: { ...view.forms, [form.id]: { sessionId: form.sessionID, fields, label } } },
+    effects: [{ type: 'show', key: uiKey(form.id), messages, replyTo: null }],
   }
 }
 
@@ -165,12 +161,8 @@ function settleForm({ view, formID, status }: { view: ThreadView; formID: string
   const form = view.forms[formID]
   if (!form) return { view, effects: [] }
   const { [formID]: _settled, ...forms } = view.forms
-  const settled = settleUi({
-    ui: view.ui,
-    key: uiKey(formID),
-    final: form.fields.map((field) => textOnly(`${header({ field, label: form.label })}\n${status(field)}`)),
-  })
-  return { view: { ...view, forms, ui: settled.ui }, effects: settled.effects }
+  const final = form.fields.map((field) => textOnly(`${header({ field, label: form.label })}\n${status(field)}`))
+  return { view: { ...view, forms }, effects: [{ type: 'settle', key: uiKey(formID), final }] }
 }
 
 // Form events of any session in the thread (root or subagent).

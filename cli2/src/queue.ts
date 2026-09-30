@@ -24,7 +24,7 @@ import { createLogger } from './logger.ts'
 import type { BotStore } from './store.ts'
 import { stripTurnContext } from './system-prompt.ts'
 import type { Effect, ThreadView } from './thread-reducer.ts'
-import { button, buttonRow, settleUi, showUi, textOnly, type UiMessage } from './ui-prompts.ts'
+import { button, buttonRow, textOnly, type UiMessage } from './effects.ts'
 
 const logger = createLogger('QUEUE')
 
@@ -75,8 +75,7 @@ export function formatEcho({ username, text }: { username: string | null; text: 
 
 function settleAck({ view, item, content }: { view: ThreadView; item: QueuedItem; content: string }): Result {
   if (!item.acked) return { view, effects: [] }
-  const settled = settleUi({ ui: view.ui, key: ackKey(item.inboxID), final: [textOnly(asSubtext(content))] })
-  return { view: { ...view, ui: settled.ui }, effects: settled.effects }
+  return { view, effects: [{ type: 'settle', key: ackKey(item.inboxID), final: [textOnly(asSubtext(content))] }] }
 }
 
 function removeItem(view: ThreadView, inboxID: string): ThreadView {
@@ -101,13 +100,8 @@ export function reduceQueue({ view, event, busy }: { view: ThreadView; event: V2
       const queued: QueuedItem = { inboxID, text: stripTurnContext(item.payload.text), ...meta, acked }
       const next = { ...view, inputs, queue: [...view.queue, queued] }
       if (!acked) return { view: next, effects: [] }
-      const shown = showUi({
-        ui: next.ui,
-        key: ackKey(inboxID),
-        messages: [ackMessage({ inboxID, position: next.queue.length })],
-        replyTo: meta.messageId,
-      })
-      return { view: { ...next, ui: shown.ui }, effects: shown.effects }
+      const ack = ackMessage({ inboxID, position: next.queue.length })
+      return { view: next, effects: [{ type: 'show', key: ackKey(inboxID), messages: [ack], replyTo: meta.messageId }] }
     }
     case 'session.inbox.delivered': {
       const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)

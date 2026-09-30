@@ -34,7 +34,7 @@ import {
 import { hydratePermissions, reducePermissions, type PendingPermission } from './permissions.ts'
 import { hydrateForms, reduceForms, type PendingForm } from './questions.ts'
 import { hydrateQueue, reduceQueue, type QueuedItem } from './queue.ts'
-import { renderedUi, type UiEffect, type UiState } from './ui-prompts.ts'
+import type { UiEffect } from './effects.ts'
 
 export type Turn = {
   startedAt: number
@@ -74,8 +74,6 @@ export type ThreadView = {
   // Questions and permission requests waiting for the user (root and children).
   forms: Readonly<Record<string, PendingForm>>
   permissions: Readonly<Record<string, PendingPermission>>
-  // Posted interactive messages (queue acks, questions, permissions).
-  ui: UiState
 }
 
 export type Effect =
@@ -95,8 +93,6 @@ export type KimakiEvent =
   | { type: 'kimaki.child'; sessionId: string; agent: string }
   // An action failed after it returned (a `!cmd` request): shown as an error line.
   | { type: 'kimaki.error'; message: string }
-  // Message IDs of a `show` effect, reported back by the executor.
-  | { type: 'kimaki.rendered'; key: string; messageIds: readonly string[] }
   // After a (re)connect: what one session of the thread waits on right now.
   // `inbox` only for the root session.
   | {
@@ -113,7 +109,6 @@ const KIMAKI_EVENT_TYPES: ReadonlySet<string> = new Set<KimakiEvent['type']>([
   'kimaki.branch',
   'kimaki.synced',
   'kimaki.child',
-  'kimaki.rendered',
   'kimaki.hydrated',
   'kimaki.error',
 ])
@@ -157,7 +152,6 @@ export function emptyView({
     queue: [],
     forms: {},
     permissions: {},
-    ui: {},
   }
 }
 
@@ -433,10 +427,6 @@ function reduceKimaki({ view, event }: { view: ThreadView; event: KimakiEvent })
   switch (event.type) {
     case 'kimaki.error':
       return { view: { ...view, lastKind: null }, effects: [{ type: 'send', text: formatError(event.message) }] }
-    case 'kimaki.rendered': {
-      const rendered = renderedUi({ ui: view.ui, key: event.key, messageIds: event.messageIds })
-      return { view: { ...view, ui: rendered.ui }, effects: rendered.effects }
-    }
     case 'kimaki.hydrated': {
       const label = event.sessionId === view.sessionId ? null : (view.children[event.sessionId]?.agent ?? null)
       if (label === null && event.sessionId !== view.sessionId) return { view, effects: [] }

@@ -74,11 +74,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
   })
   const store = createBotStore()
-  const effects = createEffectsRunner({
-    discord,
-    // eventLoop is assigned below, before any effect can run.
-    onRendered: (threadId, event) => eventLoop.dispatch(threadId, event),
-  })
+  const effects = createEffectsRunner({ discord })
   const recorder = createEventRecorder({ dataDir: options.dataDir })
   const eventLoop = createEventLoop({ store, db: db.db, discord, effects, recorder })
   const loaded = await eventLoop.load()
