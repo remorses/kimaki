@@ -1,4 +1,4 @@
-// Phase 5: `!cmd`, /run-shell-command and `/command` messages. Shell
+// Phase 5: `!cmd` and `/command` messages. Shell
 // commands run through native session.shell: they do not interrupt a busy
 // run, their output shows in the thread and reaches the model context.
 
@@ -121,12 +121,12 @@ test('!cmd in a channel creates a thread and runs there', async () => {
   `)
 })
 
-test('/run-shell-command runs in the thread; /abort kills a running command', async () => {
+test('!cmd in a thread runs there; /abort kills a running command', async () => {
   const thread = await newThread('!echo first')
   // The output block, not the "$ echo first" line.
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: '```\nfirst' })
   const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
-  await user.runSlashCommand({ name: 'run-shell-command', options: [{ name: 'command', type: 3, value: 'sleep 30' }] })
+  await user.sendMessage({ content: '!sleep 30' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: '$ sleep 30' })
   await user.runSlashCommand({ name: 'abort' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'killed' })
@@ -141,7 +141,9 @@ test('/run-shell-command runs in the thread; /abort kills a running command', as
     \`\`\`
     first
     \`\`\`
-    -# Running
+    --- from: user (tommy)
+    !sleep 30
+    --- from: assistant (TestBot)
     -# $ sleep 30
     \`\`\`
     Shell command output is no longer available.

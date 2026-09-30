@@ -1159,7 +1159,7 @@ Consequences:
   chars) fed by `shell.output`
 - `!cmd` in a **channel** (no thread, no session): create the thread + session first,
   then `session.shell`. One code path instead of a separate "run in project dir" path
-- `/run-shell-command` becomes the same call
+- `/run-shell-command` is removed: `!cmd` covers it
 
 Open: `session.shell` has no `delivery` and no `timeout` parameter. Long-running
 commands (dev servers) block until exit; tell users to use `kimaki tunnel` / tuistory
@@ -1600,7 +1600,7 @@ DM disabled). Dynamic priority: agents, config commands, MCP prompts, skills.
 ### Other
 
 `/last-sessions`, `/tasks`, `/login` (provider auth → V2 `integration.*`),
-`/transcription-key`, `/mcp` (V2 `mcp.list`, transform to toggle), `/run-shell-command`,
+`/transcription-key`, `/mcp` (V2 `mcp.list`, transform to toggle),
 `/screenshare`, `/vscode`, `/restart-opencode-server`. (`/upgrade-and-restart` removed.)
 
 ### Component custom IDs
@@ -2109,7 +2109,7 @@ kimaki tunnel, tts, user list      voice routing  queued !cmd   external sync   
 ### Tier 3: independent, keep as is
 
 `/vscode`, `/screenshare`, `/diff`, `/tasks`, `/worktrees` list and delete,
-`/merge-worktree`, `/login`, `/mcp`, `/transcription-key`, `/run-shell-command` and `!cmd`
+`/merge-worktree`, `/login`, `/mcp`, `/transcription-key`, `!cmd`
 (immediate, not queued), `kimaki tunnel`, `tts`, `upload-to-discord`, `user list`,
 `thread list`, `project *`, `session read/search/list/archive`, onboarding, heap/cpu
 profiling, live voice channels (talks to OpenCode through its own tools).
@@ -2470,7 +2470,7 @@ kimaki CLI ──POST /kimaki/action/<name> { args, sessionID? }──┘
 | `/queue-command` | `session command <name> [args] --queue` | `command` |
 | `/<cmd>-cmd`, `/<skill>-skill`, `/<prompt>-mcp-prompt` | `session command <name> [args]` | `command` |
 | `. btw`, `/btw` | `session btw <text>` | `btw` |
-| `!cmd`, `/run-shell-command` | `session shell <command>` | `shell` |
+| `!cmd` | `session shell <command>` | `shell` |
 | `/abort` | `session abort` | `abort` |
 | `/agent`, `/<agent>-agent` | session: `opencode api session.switchAgent`; channel: `kimaki channel agent <name>` | `agent.set` |
 | `/model`, `/model-variant` | session: `opencode api session.switchModel`; channel: `kimaki channel model …`; global: OpenCode config | `model.set` |
@@ -3628,7 +3628,7 @@ while a question is pending; restart with a pending question still answerable.
 
 ### Phase 5: shell, attachments, voice
 
-- `!cmd` and `/run-shell-command` → `session.shell`; render `shell.started/ended`
+- `!cmd` → `session.shell` (no `/run-shell-command`); render `shell.started/ended`
   (output once at the end); `!cmd` in a channel creates the thread first
 - attachments: save to `<dir>/uploads/`, `files: [{ uri: 'file://…' }]`
 - `voice.ts`: transcription providers, tool schema `{ transcription, route, agent? }`,

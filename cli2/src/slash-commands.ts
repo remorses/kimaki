@@ -52,11 +52,6 @@ export const COMMANDS = [
     )
     .setDMPermission(false),
   new SlashCommandBuilder()
-    .setName('run-shell-command')
-    .setDescription('Run a shell command in the session folder; the output goes into the session context')
-    .addStringOption((option) => option.setName('command').setDescription('The command to run').setRequired(true))
-    .setDMPermission(false),
-  new SlashCommandBuilder()
     .setName('btw')
     .setDescription('Ask something without polluting or blocking the current session')
     .addStringOption((option) =>
@@ -186,14 +181,6 @@ async function handleThreadCommand({
       const content =
         result.cleared === 0 ? 'No queued messages' : `-# Cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}`
       await interaction.editReply({ content })
-      return
-    }
-    case 'run-shell-command': {
-      const command = interaction.options.getString('command', true).trim()
-      // Reply first: the command line and its output follow from session events.
-      await interaction.reply({ content: '-# Running', flags: MessageFlags.Ephemeral })
-      const result = await actions.dispatch({ thread, route: { kind: 'shell', command }, author, messageId: interaction.id })
-      if (result instanceof Error) return replyError(interaction, result)
       return
     }
     case 'btw': {
