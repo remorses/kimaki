@@ -584,4 +584,34 @@ describe('interactions', () => {
     const messages = await discord.channel(channelId).getMessages()
     expect(messages.find((m) => m.id === targetMsg.id)?.content).toBe('Answered: custom answer')
   })
+
+  test('guild commands are listed and autocomplete returns the bot choices', async () => {
+    await client.application!.commands.set(
+      [
+        {
+          name: 'resume',
+          description: 'Resume a session',
+          options: [{ name: 'session', description: 'Session', type: 3, required: true, autocomplete: true }],
+        },
+        { name: 'abort', description: 'Abort' },
+      ],
+      discord.guildId,
+    )
+    expect((await discord.getRegisteredCommands()).map((command) => command.name)).toEqual(['abort', 'resume'])
+    expect(await discord.getRegisteredCommands({ guildId: null })).toEqual([])
+
+    const handler = (interaction: Interaction) => {
+      if (!interaction.isAutocomplete()) return
+      const focused = interaction.options.getFocused(true)
+      void interaction.respond([{ name: `${focused.name}: ${focused.value}`, value: 'ses_1' }])
+    }
+    client.on('interactionCreate', handler)
+    const choices = await discord.channel(channelId).user(testUserId).autocomplete({
+      name: 'resume',
+      options: [{ name: 'session', type: 3, value: 'fix' }],
+      focused: 'session',
+    })
+    client.off('interactionCreate', handler)
+    expect(choices).toEqual([{ name: 'session: fix', value: 'ses_1' }])
+  })
 })

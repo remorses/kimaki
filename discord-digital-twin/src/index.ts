@@ -701,6 +701,83 @@ export class DigitalDiscord {
     })
   }
 
+  // Slash commands the bot registered, ordered by name. Guild commands by
+  // default; pass guildId: null for global commands.
+  async getRegisteredCommands({
+    guildId = this.guildId,
+  }: { guildId?: string | null } = {}): Promise<
+    Array<{ id: string; name: string; description: string; options: unknown[] }>
+  > {
+    const commands = await this.prisma.applicationCommand.findMany({
+      where: { applicationId: this.botUserId, guildId },
+      orderBy: { name: 'asc' },
+    })
+    return commands.map((command) => {
+      return {
+        id: command.id,
+        name: command.name,
+        description: command.description,
+        options: JSON.parse(command.options) as unknown[],
+      }
+    })
+  }
+
+  // Autocomplete for one option of a slash command: `focused` names the
+  // option being typed. Resolves with the choices the bot responded with.
+  async simulateAutocomplete({
+    channelId,
+    userId,
+    name,
+    options,
+    focused,
+    guildId,
+    timeout = 10_000,
+  }: {
+    channelId: string
+    userId: string
+    name: string
+    options: DigitalDiscordCommandOption[]
+    focused: string
+    guildId?: string
+    timeout?: number
+  }): Promise<Array<{ name: string; value: string | number }>> {
+    const resolvedGuildId = guildId ?? this.guildId
+    const command = await this.prisma.applicationCommand.findFirst({
+      where: { applicationId: this.botUserId, name, guildId: resolvedGuildId },
+    })
+    const { id } = await this.simulateInteraction({
+      type: InteractionType.ApplicationCommandAutocomplete,
+      channelId,
+      userId,
+      guildId,
+      data: {
+        id: command?.id ?? generateSnowflake(),
+        name,
+        type: 1,
+        options: options.map((option) => {
+          return option.name === focused ? { ...option, focused: true } : option
+        }),
+      },
+    })
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
+    const start = Date.now()
+    while (Date.now() - start < effectiveTimeout) {
+      const response = await this.prisma.interactionResponse.findUnique({
+        where: { interactionId: id },
+      })
+      if (response?.acknowledged) {
+        const data = response.data
+          ? (JSON.parse(response.data) as { choices?: Array<{ name: string; value: string | number }> })
+          : {}
+        return data.choices ?? []
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50)
+      })
+    }
+    throw new Error(`Timed out waiting for autocomplete response of /${name}`)
+  }
+
   async simulateButtonClick({
     channelId,
     userId,
@@ -1434,14 +1511,16 @@ export class ScopedUserActor {
   async sendVoiceMessage({
     content,
     url = 'https://fake-cdn.discord.test/voice-message.ogg',
-  }: { content?: string; url?: string } = {}) {
+    contentType = 'audio/ogg',
+    filename = 'voice-message.ogg',
+  }: { content?: string; url?: string; contentType?: string; filename?: string } = {}) {
     return this.sendMessage({
       content: content ?? '',
       attachments: [
         {
           id: generateSnowflake(),
-          filename: 'voice-message.ogg',
-          content_type: 'audio/ogg',
+          filename,
+          content_type: contentType,
           size: 1024,
           url,
           proxy_url: url,
@@ -1488,6 +1567,27 @@ export class ScopedUserActor {
       name,
       commandId,
       options,
+      guildId,
+    })
+  }
+
+  async autocomplete({
+    name,
+    options,
+    focused,
+    guildId,
+  }: {
+    name: string
+    options: DigitalDiscordCommandOption[]
+    focused: string
+    guildId?: string
+  }) {
+    return this.discord.simulateAutocomplete({
+      channelId: this.channelId,
+      userId: this.userId,
+      name,
+      options,
+      focused,
       guildId,
     })
   }
