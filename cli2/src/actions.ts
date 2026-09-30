@@ -143,7 +143,8 @@ export function createActions({
       .values({ thread_id: thread.id, session_id: session.id, source: 'kimaki' })
       .catch((e) => new DbError({ operation: 'insert thread_sessions', cause: e }))
     if (inserted instanceof Error) return inserted
-    eventLoop.bind({ threadId: thread.id, sessionId: session.id, channelId, directory })
+    const bound = await eventLoop.bind({ threadId: thread.id, sessionId: session.id, channelId, directory })
+    if (bound instanceof Error) return bound
     logger.log(`session ${session.id} bound to thread ${thread.id}`)
 
     const sent = await send({ threadId: thread.id, threadName, sessionId: session.id, text, author, messageId })

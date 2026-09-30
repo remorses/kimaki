@@ -67,21 +67,19 @@ export function createEventLoop({
   effects: EffectsRunner
 }) {
   const queues = new Map<string, { events: ThreadEvent[]; running: boolean; failures: number }>()
+  // Per-thread settings, loaded once: parent channel, directory, verbosity.
   const contexts = new Map<string, ThreadContext>()
-  const known = new Map<string, Omit<ThreadContext, 'verbosity'>>()
-  const contextLimits: Record<string, number> = {}
-  const connection: { client: OpenCodeClient | null } = { client: null }
-
-  function threadRootSession(threadId: string): string | null {
-    const view = store.getState().threads[threadId]
-    if (view) return view.sessionId
-    const entry = Object.entries(store.getState().sessionThreads).find(([, thread]) => thread === threadId)
-    return entry?.[0] ?? null
+  // Context window sizes ("providerID/modelID" -> tokens), refreshed per
+  // directory once per connection because project config can add providers.
+  const limits: { byModel: Readonly<Record<string, number>>; directories: Set<string> } = {
+    byModel: {},
+    directories: new Set(),
   }
+  const connection: { client: OpenCodeClient | null } = { client: null }
 
   async function loadModelLimits(directory: string) {
     const client = connection.client
-    if (!client) return
+    if (!client || limits.directories.has(directory)) return
     const models = await client.model
       .list({ location: { directory } })
       .catch((e) => new OpenCodeError({ operation: 'model.list', cause: e }))
@@ -89,17 +87,17 @@ export function createEventLoop({
       logger.warn(models.message)
       return
     }
-    for (const model of models.data) {
-      contextLimits[`${model.providerID}/${model.id}`] = model.limit.context
+    limits.directories.add(directory)
+    limits.byModel = {
+      ...limits.byModel,
+      ...Object.fromEntries(models.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context])),
     }
   }
 
   async function loadContext(threadId: string): Promise<ThreadContext | ThreadGoneError | DbError | DiscordError> {
-    const sessionId = threadRootSession(threadId)
+    const sessionId = store.getState().roots[threadId]
     if (!sessionId) return new ThreadGoneError({ threadId })
     const base = await (async () => {
-      const preset = known.get(threadId)
-      if (preset) return preset
       const thread = await discord.channels.fetch(threadId).catch((e) => {
         if (e instanceof DiscordAPIError && e.code === RESTJSONErrorCodes.UnknownChannel) {
           return new ThreadGoneError({ threadId })
@@ -119,14 +117,13 @@ export function createEventLoop({
     if (base instanceof Error) return base
     const verbosity = await readChannelVerbosity({ db, channelId: base.channelId })
     if (verbosity instanceof Error) return verbosity
-    await loadModelLimits(base.directory)
     const context = { ...base, verbosity }
     contexts.set(threadId, context)
     return context
   }
 
   function prefsFor(context: ThreadContext): Prefs {
-    return { verbosity: context.verbosity, contextLimits }
+    return { verbosity: context.verbosity, contextLimits: limits.byModel }
   }
 
   function apply({ threadId, context, event }: { threadId: string; context: ThreadContext; event: ThreadEvent }) {
@@ -152,6 +149,7 @@ export function createEventLoop({
     queue.running = true
     while (queue.events.length > 0) {
       const context = contexts.get(threadId) ?? (await loadContext(threadId))
+      if (!(context instanceof Error)) await loadModelLimits(context.directory)
       if (context instanceof ThreadGoneError || (context instanceof Error && queue.failures >= CONTEXT_RETRIES)) {
         logger.warn(`dropping ${queue.events.length} events of thread ${threadId}: ${context.message}`)
         queue.events.length = 0
@@ -253,12 +251,15 @@ export function createEventLoop({
         .findMany({ orderBy: { updated_at: 'asc' } })
         .catch((e) => new DbError({ operation: 'read thread_sessions', cause: e }))
       if (rows instanceof Error) return rows
-      const sessionThreads = Object.fromEntries(rows.map((row) => [row.session_id, row.thread_id]))
-      store.setState({ sessionThreads })
+      store.setState({
+        roots: Object.fromEntries(rows.map((row) => [row.thread_id, row.session_id])),
+        sessionThreads: Object.fromEntries(rows.map((row) => [row.session_id, row.thread_id])),
+      })
     },
 
-    // A session this bot just created for a thread.
-    bind({
+    // A session this bot just created for a thread. Called before the first
+    // prompt, so the whole first turn is routed and gets its banner.
+    async bind({
       threadId,
       sessionId,
       channelId,
@@ -268,10 +269,13 @@ export function createEventLoop({
       sessionId: string
       channelId: string
       directory: string
-    }): void {
-      known.set(threadId, { sessionId, channelId, directory })
+    }): Promise<DbError | void> {
+      const verbosity = await readChannelVerbosity({ db, channelId })
+      if (verbosity instanceof Error) return verbosity
+      contexts.set(threadId, { sessionId, channelId, directory, verbosity })
       ignoredSessions.delete(sessionId)
       store.setState((current) => ({
+        roots: { ...current.roots, [threadId]: sessionId },
         sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
         threads: {
           ...current.threads,
@@ -285,6 +289,9 @@ export function createEventLoop({
     // adopted through their parentID chain first.
     async onConnect({ client, signal }: ConnectContext): Promise<OpenCodeError | void> {
       connection.client = client
+      // A new connection may bring new providers, and old unrelated sessions are gone.
+      limits.directories.clear()
+      ignoredSessions.clear()
       const active = await client.session
         .active({ signal })
         .catch((e) => new OpenCodeError({ operation: 'session.active', cause: e }))

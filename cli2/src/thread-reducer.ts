@@ -45,9 +45,6 @@ export type Child = {
   running: boolean
 }
 
-// sessionId: the session that made the call (root or a child).
-type SubagentCall = { sessionId: string; agent: string; description: string; background: boolean }
-
 export type ThreadView = {
   threadId: string
   sessionId: string
@@ -60,7 +57,7 @@ export type ThreadView = {
   // Tool names by "assistantMessageID:toolID": session.tool.called has none.
   toolNames: Readonly<Record<string, string>>
   // Parent subagent calls whose child session is not known yet.
-  subagentCalls: Readonly<Record<string, SubagentCall>>
+  subagentCalls: Readonly<Record<string, { agent: string; description: string; background: boolean }>>
   children: Readonly<Record<string, Child>>
   // Blank line between text and tool blocks.
   lastKind: 'text' | 'tool' | null
@@ -190,7 +187,6 @@ function reduceTool({
               subagentCalls: {
                 ...view.subagentCalls,
                 [toolKey(event.data)]: {
-                  sessionId: event.data.sessionID,
                   agent: stringInput(input, 'agent') || 'subagent',
                   description: stringInput(input, 'description'),
                   background: input['background'] === true,
@@ -376,22 +372,16 @@ function reduceKimaki({ view, event }: { view: ThreadView; event: KimakiEvent })
   }
 }
 
-// Subagent sessions announce themselves before the parent tool progress
-// (29.2 #4). Until tool.progress links the exact call, the earliest pending
-// call of that parent is a best guess for the label; the call is kept so the
-// progress event can correct it when parallel children start out of order.
+// A subagent session is created, then the parent's tool.progress (with
+// metadata.sessionID) links it to the exact call, before any child tool event
+// (29.2 #4, verified in task-subagent and task-parallel fixtures). Creation only
+// registers the child; the progress event sets label and mode.
 function registerChild({ view, event }: { view: ThreadView; event: V2Event }): ThreadView {
   if (event.type !== 'session.created') return view
   const parentId = event.data.parentID
   if (!parentId || view.children[event.data.sessionID]) return view
   if (parentId !== view.sessionId && !view.children[parentId]) return view
-  const pending = Object.entries(view.subagentCalls).find(([, call]) => call.sessionId === parentId)
-  const child = {
-    agent: pending?.[1].agent ?? event.data.agent ?? 'subagent',
-    description: pending?.[1].description ?? '',
-    background: pending?.[1].background ?? false,
-    running: false,
-  }
+  const child = { agent: event.data.agent ?? 'subagent', description: '', background: false, running: false }
   return addChild({ view, sessionId: event.data.sessionID, child })
 }
 

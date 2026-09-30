@@ -6,7 +6,6 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { createClient, type Client } from '@libsql/client'
 import * as orm from 'drizzle-orm'
 import * as errore from 'errore'
@@ -15,6 +14,7 @@ import * as s from 'drizzle-orm/sqlite-core'
 
 import { DbError, DbNotMigratedError } from './errors.ts'
 import * as schema from './schema.ts'
+import { SCHEMA_SQL } from './schema-sql.ts'
 
 function createDrizzle(client: Client) {
   return drizzle({ client, schema, relations: schema.relations })
@@ -37,11 +37,7 @@ export function dbPath({ dataDir }: { dataDir: string }): string {
 }
 
 export function schemaStatements(): string[] {
-  // Works from src/ (tests, tsx) and dist/ (build): both resolve to src/schema.sql.
-  const schemaSqlPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/schema.sql')
-  return fs
-    .readFileSync(schemaSqlPath, 'utf8')
-    .split(';')
+  return SCHEMA_SQL.split(';')
     .map((statement) => {
       return statement
         .split('\n')
