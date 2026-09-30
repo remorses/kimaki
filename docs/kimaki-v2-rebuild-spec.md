@@ -649,13 +649,13 @@ Principles:
    `view = events.reduce(fold, empty)`. Discord side effects come from comparing
    `before` and `after`, not from ad-hoc flags.
 2. **Snapshot + live, on every connect.** Same protocol as the OpenCode mini TUI
-   (`packages/tui/src/mini/stream-v2.transport.ts`, see 6.8): hydrate from REST
-   projections while holding live events, then apply the held events. Missed output is
-   filled from `message.list`, not from the experimental `session.log`.
+   (`packages/tui/src/mini/stream-v2.transport.ts`, see 6.8): hydrate state from REST
+   while holding live events, then apply the held events. Output emitted while
+   disconnected is **not** replayed: Discord shows only what arrived live.
 3. **One reader, many writers.** The SSE reader only pushes into per-thread queues.
    Discord REST work runs in per-thread serialized workers.
-4. **Only Discord facts in memory.** The set of posted block keys (for dedupe) and
-   the Discord message IDs of live UI prompts. Kept in the per-thread view, in memory.
+4. **Only Discord facts in memory.** The Discord message IDs of live UI prompts. Kept
+   in the per-thread view, in memory.
 
 ### 6.4 Event → Discord action table (V2)
 
@@ -729,7 +729,6 @@ startup:
 | pending questions | `session.form.list` per bound session (children too) |
 | pending permissions | `permission.list` (children too) |
 | queue positions | `session.inbox.list` per busy session |
-| posted block keys | `message.list` (recent messages, keys only on the first connect) |
 
 Event handling table (everything not listed is ignored):
 
@@ -742,9 +741,9 @@ Event handling table (everything not listed is ignored):
 | `session.step.started` | banner on first step of a session; model and agent | `turn.model`, `turn.agent` |
 | `session.step.ended` | tokens for footer % | `turn.tokens` |
 | `session.retry.scheduled` | retry line | |
-| `session.text.ended` | text block | `lastKind`, `postedKeys` |
+| `session.text.ended` | text block | `lastKind` |
 | `session.tool.input.started` | tool **name** (`session.tool.called` has no name, only `assistantMessageID`, `id`, `input`; see `ToolBase` in `session-event.ts:472`) | `toolNames[assistantMessageID+id]` |
-| `session.tool.called` | tool line (root and children), name from `input.started` | `lastKind`, `postedKeys` |
+| `session.tool.called` | tool line (root and children), name from `input.started` | `lastKind` |
 | `session.tool.failed` | error line | |
 | `session.tool.progress` (task tool, `metadata.sessionID`) | fast path to register a child | `children`, store `sessionThreads` |
 | any event of an **unknown** session | hold its events, `session.get` → follow `parentID` up; if it reaches a bound session, register it as a child and apply the held events | `children`, store `sessionThreads` |
@@ -769,9 +768,8 @@ Kimaki has. **Use it as the reference implementation** for the event loop:
 | File | Reference for |
 |---|---|
 | [mini/ folder](https://github.com/anomalyco/opencode/tree/v2/packages/tui/src/mini) | whole renderer |
-| [stream-v2.transport.ts](https://github.com/anomalyco/opencode/blob/v2/packages/tui/src/mini/stream-v2.transport.ts) | `connect()`, `hydrate()`, `apply()`: event handling, dedupe, reconnect |
+| [stream-v2.transport.ts](https://github.com/anomalyco/opencode/blob/v2/packages/tui/src/mini/stream-v2.transport.ts) | `connect()`, `hydrate()`, `apply()`: event handling, reconnect |
 | [stream-v2.subagent.ts](https://github.com/anomalyco/opencode/blob/v2/packages/tui/src/mini/stream-v2.subagent.ts) | child session discovery, child permissions and forms |
-| [stream-v2.fragment.ts](https://github.com/anomalyco/opencode/blob/v2/packages/tui/src/mini/stream-v2.fragment.ts) | text/reasoning keys (`messageID + kind:ordinal`), delta vs projection dedupe |
 | [verbosity.ts](https://github.com/anomalyco/opencode/blob/v2/packages/tui/src/mini/verbosity.ts) | verbosity presets over separate settings |
 
 Copy its connect loop (`connect()` / `hydrate()`):
@@ -782,22 +780,17 @@ loop:
   stream = client.event.subscribe()
   first event must be server.connected          else treat as disconnected
   hold live events in a list
-  hydrate in parallel:                          message.list (limit ~200, per bound busy session)
-                                                inbox.list, permission.list, form.list,
-                                                session.active()
+  hydrate state in parallel:                    session.active(), inbox.list,
+                                                permission.list, form.list
   apply held events in order, then go live
 on error: post nothing, wait 250ms, optionally re-resolve the client
           (OpenCode restarted with a new port or password), retry
 ```
 
-Dedupe keys, same as the TUI: text `assistantMessageID + "text:" + ordinal`, tools
-`assistantMessageID + toolId`. The reducer skips any block whose key is in
-`postedKeys`.
-
-| Connect | Hydration renders? |
-|---|---|
-| first connect after bot start | **no**: record keys of existing messages only, so old history is not posted again |
-| reconnect | **yes**: post blocks from `message.list` whose keys are not in `postedKeys`. This fills gaps without `session.log` |
+Hydration never renders. It restores state only (busy, children, queue, pending
+forms and permissions). Text, tool lines and footers of executions that ran while the
+bot was disconnected are not posted; the next live event continues from there. This
+drops `message.list` hydration, block-key dedupe and the `postedKeys` set.
 
 Subagents (TUI `stream-v2.subagent.ts`) are discovered from four sources: task tool
 `metadata.sessionID` in projected messages, `session.list` filtered by `parentID`,
@@ -1790,7 +1783,7 @@ Native in V2 now, delete:
 - pinned system prompt files and `copySessionSystemPrompt` → instruction entries
 - `copySessionPreferences` on fork → fork keeps agent/model
 - event buffer compaction, persistence, flood protection → `session.log` replay
-- `sentPartIds` / `part_messages` dedupe → durable `seq` cursor per session in memory
+- `sentPartIds` / `part_messages` dedupe → removed: output missed while disconnected is not replayed
 - Hrana server + IPC polling + `KIMAKI_DB_URL` → events / forms / RPC
 - `cacheDriftPlugin`, `taskIdPlugin` (verify), legacy auth + rotation plugins,
   `multioauth` CLI, `oauth-rotation-shared.ts`
@@ -1924,9 +1917,9 @@ for await (const event of client.event.subscribe({ signal })) {
 - **Footer after background children.** When the parent execution succeeds while a child
   runs, the turn is closed without a footer; the footer of the later parent execution
   measures only that execution.
-- **Reconnect gap fill is not assigned to a phase.** cli2 reconciles busy state and adopts
-  running children on every connect (`session.active()` + parentID walk), but does not
-  yet post blocks missed while disconnected (`message.list` hydration in 6.8).
+- **No reconnect gap fill (decided).** cli2 reconciles busy state and adopts running
+  children on every connect (`session.active()` + parentID walk). Output missed while
+  disconnected is intentionally not posted (6.8).
 - **No plugin file yet.** P0 asked for a no-op Kimaki plugin in the test config; cli2 adds
   none until P7 (no stubs).
 
@@ -2753,7 +2746,7 @@ complexity. Ranked by how much they remove.
 | # | Area | Complex part | Simpler design | Removes |
 |---|---|---|---|---|
 | 1 | **renderer** | message edits: live text preview, tool line edit on success, quoting and final un-quote, restart map | **append-only renderer**: post text on `text.ended` (full width, never quoted), tools on `tool.called`, footer on `execution.succeeded`. No edits, no lookahead, no block → message ID map | edit throttling, message map, restart gap (Q5) |
-| 2 | **reconnect replay** | `seq` cursor per session, `session.log` catch-up (experimental API) | TUI connect protocol (6.8): hydrate from `message.list` on every connect, dedupe by block keys, render only on reconnect | cursor state, dependency on an experimental endpoint |
+| 2 | **reconnect replay** | `seq` cursor per session, `session.log` catch-up (experimental API) | **no replay**: on every connect hydrate state only (6.8); output missed while disconnected is not posted | cursor state, dedupe keys, dependency on an experimental endpoint |
 | 3 | **system prompt** | ~1000 lines in `system-message.ts`, 30 sections, conditionals | small instruction entry (identity, IDs, Discord formatting, callouts, "call UI commands last"). Move all `kimaki` CLI usage (send, schedule, worktrees, sessions, tunnels) into a bundled **`kimaki` skill** the model loads on demand | ~800 lines, tokens on every request |
 | 4 | **dynamic slash commands** | one Discord command per agent, OpenCode command, skill, MCP prompt; 100-command limit; name mapping state (`registeredUserCommands`); re-registration | fixed commands with **autocomplete**: `/agent name:`, `/command name: args:` (commands, skills, MCP prompts). Autocomplete reads `agent.list` / `command.list` live | registration sync, name mapping, limit handling |
 | 5 | **sleep** | own table, own scheduler path, wake claim | keep the `session_sleeps` table (compatibility); same scheduler loop as tasks, idempotent wake by `delivery_id` prompt ID. Originally proposed: a sleep **is a one-shot scheduled task** to the thread (`kind: 'wake'`). A new user prompt deletes wake tasks of that session | `session_sleeps` table, second scheduler loop |
@@ -2831,7 +2824,6 @@ type ThreadView = {
   turn: { startedAt: number; model: string; agent: string; tokens: number } | null
   children: Readonly<Record<string, string>>   // child sessionId → label ("explore")
   toolNames: Readonly<Record<string, string>>  // assistantMessageID+toolId → name (from tool.input.started)
-  postedKeys: ReadonlySet<string>              // dedupe on reconnect hydration (6.8)
   lastKind: 'text' | 'tool' | null       // blank line between kinds
   queued: readonly InboxItem[]           // pending queue, for "position N"
   ui: {                                  // Discord message IDs of live prompts
@@ -3233,7 +3225,7 @@ session.execution.succeeded { }                        no duration: use envelope
 | 7 | **interrupt parks queued items.** After `interrupt({ resume: false })` they run only after the next prompt. After steer + `interrupt({ resume: true })` the queued items stayed in the inbox **after** `execution.succeeded` and never ran | after an interrupted execution ends, if `inbox.list` still has `queue` items, wake them (try `inbox.update({ delivery: 'steer' })` on the first; verify) or report upstream. `/abort` should cancel queued items explicitly |
 | 8 | `prompt({ resume: false })` is enqueued but starts nothing; it is delivered with the next turn | native "context-only" message; `@otheruser` thread messages can use it |
 | 9 | `session.shell` emits `session.shell.started/ended` plus a `synthetic` inbox item "The following shell command was executed by the user" (`resume: false`); while busy it is delivered at the next step boundary | confirms 9.2.1 |
-| 10 | `session.log` returned only `{ type: 'log.synced', seq }`, even with `after=0`: **no history** in 2.0.19 | do not rely on `session.log` for `session editors`, `session read --json` or catch-up; use `session.message.list`. Durable events still carry `durable.seq` |
+| 10 | `session.log` returned only `{ type: 'log.synced', seq }`, even with `after=0`: **no history** in 2.0.19 | do not rely on `session.log` for `session editors` or `session read --json`; use `session.message.list`. Durable events still carry `durable.seq` |
 | 11 | interrupt emits `tool.failed { error.type: 'aborted' }`, `step.failed`, `execution.interrupted { reason: 'user' }`, global `shell.deleted` | no error line for `aborted`; no footer |
 | 12 | fork emits `session.forked { parentID, boundary, instructions }`, not `session.created` | btw/fork binding uses the fork response or `session.forked` |
 | 13 | `switchAgent('plan')` enqueues a `synthetic` "You are in Plan mode" item | synthetic items are never rendered |
