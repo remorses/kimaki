@@ -1886,8 +1886,9 @@ for await (const event of client.event.subscribe({ signal })) {
     returning `ConflictError`. Verify in `packages/core/src/session/session.ts`.
 12. ~~Remote sends.~~ Decided: option B in 9.5 (embed envelope only for channels owned
     by another machine). See section 24.
-13. **`/resume` binding.** `session_id UNIQUE` means resuming in a new thread detaches the
-    old thread. Confirm this is acceptable.
+13. ~~`/resume` binding.~~ Decided: `/resume` moves the session to the new thread; the
+    old `thread_sessions` rows of that session are deleted and the old thread stops
+    following it (one thread per session).
 14. **`session.shell` and `/abort`.** Check whether `interrupt` kills a running user shell;
     else call `client.shell.remove`.
 
@@ -1964,14 +1965,74 @@ for await (const event of client.event.subscribe({ signal })) {
   after the current step the model gets another step and answers it.
 - **Restart re-renders pending questions and permissions** (the old message IDs are
   unknown): the old message stays and still works. Old queue acks keep their Remove
-  button, which also still works (custom ID = inbox ID).
+  button, which also still works (custom ID = inbox ID). **Decided (P6): accept the
+  duplicates.** Both messages answer the same form or request; storing message IDs
+  would add persisted state only to hide a rare restart artifact.
 - **`. btw queue` forks at once**: a queued fork is not native (9.2).
 - **Voice routing:** one tool schema `{ transcription, route, agent? }`; `btw` and `queue`
   are offered only in a thread with a session. Tests use a local Gemini-compatible HTTP
-  server, so the real request and parser run. The OpenAI path (OGG/M4A → WAV) has no
-  e2e test.
+  server, so the real request and parser run. The OpenAI path got its e2e test in P6.
 - **Attachments** are saved in `<dataDir>/attachments/<messageId>/` (not in the project,
   to keep `git status` clean) and sent as `file://` URIs; OpenCode reads them.
+
+### Findings from building cli2 P6 (OpenCode 2.0.19)
+
+- **Agent ID vs name.** `agent.list` returns `{ id: 'plan', name: 'Plan' }`.
+  `session.create`, `switchAgent` and `SessionInfo.agent` take the **ID**; the name is
+  a label. Commands, selects and the voice agent enum use the ID (P5 offered display
+  names to the transcription model, which would have failed `switchAgent`).
+- **Command catalog.** `command.list` has no `source` field. MCP prompts are commands
+  named `server:prompt` (OpenCode sanitizes both parts, so only they contain `:`) and
+  register as `/<server>-<prompt>-mcp-prompt`. Built-in commands `init` (skipped, like
+  V1) and `review` always exist. Skills come from `skill.list` (built-ins `opencode`,
+  `report`) and run as `prompt({ text, skills: [{ id }] })`; `session.skill` takes no
+  text.
+- **Registration.** One bulk overwrite per guild, awaited at bot start and run again on
+  `guildCreate`. Dynamic commands are the union of the catalogs of the guild's project
+  directories (first project wins a name). The Discord name → OpenCode ID map is kept
+  in memory (no V1 `[agent:x]` description marker). Catalog changes need a bot restart.
+- **`/<agent>-agent` has no `variant` option** (listed in section 14): `/model-variant`
+  covers it.
+- **`/model` scopes are session and channel.** Session = `switchModel`, applied from the
+  next step, no restart of the running turn. Channel = `channel_models` for new
+  sessions only (V1 also switched the current session). No global scope: that is
+  OpenCode config.
+- **Model catalog.** `model.list` returns the enabled models of every provider OpenCode
+  can use: OpenCode Zen free models always, plus providers from env keys. The harness
+  strips `*_API_KEY` from the test server env so snapshots do not depend on the
+  developer machine. `ModelInfo.id` (not `modelID`) matches `step.started.model.id`.
+- **Fork title.** `session.fork` titles the new session `<title> (fork #1)`; cli2 uses
+  it as the thread name. Forks inherit metadata, so `/fork` and `/resume` overwrite
+  `metadata.kimaki` and put the instructions entry with the new thread ID (`. btw`
+  keeps the parent entry for the prompt cache).
+- **Replay and adoption order.** `/resume` and `/fork` post the last 30 text and tool
+  blocks of the assistant messages through the reducer (`kimaki.replay`), so the
+  effects executor stays the only writer of session output. Order: thread + intro,
+  metadata (merged, not replaced: `session.update` replaces the whole object) and
+  instructions, history, one DB batch that moves the binding, then routing and the
+  replay in the same tick, then the same hydration as a reconnect (`kimaki.synced`,
+  pending forms, permissions, inbox). A failure before the binding deletes the new
+  thread (and the fork). Events of a busy resumed session between the history read and
+  the routing change are lost (a few ms; busy state and pending UI come back through
+  hydration). Resuming a busy session puts the instructions entry mid-turn, which the
+  model sees as an instructions update. The old thread's effects worker is disposed.
+- **`message.list`**: `limit` ≤ 200 and a `cursor` must not be combined with `order`.
+- **Compaction** runs as its own execution without a model step. cli2 posts
+  `-# ⬦ context compacted` (or `✗ compaction failed: …`) and no footer for an
+  execution without a step. OpenCode rejects a summary without the template headings
+  (`## Objective`, …), so the test matcher answers with one.
+- **Revert.** `/undo` and `/redo` stop a running turn and `session.wait` for idle
+  first. `revert.stage(userMessageID)` reverts that turn and later ones, including
+  files; `revert.clear` restores everything.
+- **`/context-usage`** shows the last assistant message's tokens against
+  `model.list` `limit.context`, and `SessionInfo.cost`. V1's estimated input mix is
+  dropped.
+- **Voice (OpenAI).** e2e with a local OpenAI-compatible server and a real Ogg Opus
+  fixture, so the OGG → WAV conversion runs. The missing-FFmpeg error (M4A with
+  OpenAI) is not tested: it needs a PATH without ffmpeg for the whole in-process test,
+  and prism caches its ffmpeg lookup.
+- **`/diff`** is tested only for "No changes to show"; the critique.work upload needs
+  the network.
 
 ---
 
