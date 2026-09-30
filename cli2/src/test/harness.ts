@@ -253,6 +253,7 @@ export async function startTestBot({
   if (saved instanceof Error) throw saved
   const bot = await startBot({
     dataDir,
+    kimakiCommand: `kimaki --data-dir ${dataDir}`,
     token: credentials.token,
     lockPort: await freePort(),
     discordRestUrl: twin.discord.restUrl,

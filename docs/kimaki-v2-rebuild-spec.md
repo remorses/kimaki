@@ -1927,6 +1927,12 @@ for await (const event of client.event.subscribe({ signal })) {
   thread whose session asks which projects to add, searches for git repos, and runs
   `kimaki project add <dir>`. This replaces the `project.list` multiselect and the
   tutorial thread. The prompt forbids the question tool until P4 renders questions.
+- **Kimaki records session events (decided).** `session.log` has no history in 2.0.19 and
+  `message.list` drops transient events (`session.retry.scheduled`), so `session read
+  --json` cannot replace `export-events-jsonl`. cli2 appends every event folded into a
+  thread to `<dataDir>/session-events/<threadId>.jsonl` (no deltas, strings cut at 10k,
+  file restarted past 20 MB). `kimaki session events <id>` prints it; `session read <id>`
+  prints `message.list` as markdown; `/session-id` shows both commands.
 - **`Service.ensure()` binary.** Its default command is `opencode` from `PATH`, which is
   often V1 while V2 installs as `opencode2`. cli2 picks the first of `opencode2`,
   `opencode` whose `--version` is at least 2.0.19 and passes it as `command`.

@@ -22,6 +22,7 @@ import * as errore from 'errore'
 
 import { readChannelVerbosity, type KimakiDb, type Verbosity } from './db.ts'
 import type { EffectsRunner } from './effects.ts'
+import type { EventRecorder } from './session-events.ts'
 import { DbError, DiscordError, OpenCodeError } from './errors.ts'
 import { createLogger } from './logger.ts'
 import type { ConnectContext, OpenCodeClient, V2Event } from './opencode-server.ts'
@@ -60,11 +61,13 @@ export function createEventLoop({
   db,
   discord,
   effects,
+  recorder,
 }: {
   store: BotStore
   db: KimakiDb
   discord: Client
   effects: EffectsRunner
+  recorder: EventRecorder
 }) {
   const queues = new Map<string, { events: ThreadEvent[]; running: boolean; failures: number }>()
   // Per-thread settings, loaded once: parent channel, directory, verbosity.
@@ -176,6 +179,7 @@ export function createEventLoop({
   function enqueue(threadId: string, event: ThreadEvent) {
     const queue = queues.get(threadId) ?? { events: [], running: false, failures: 0 }
     queues.set(threadId, queue)
+    recorder.record(threadId, event)
     queue.events.push(event)
     void drain(threadId)
   }

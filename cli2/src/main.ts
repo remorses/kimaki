@@ -9,6 +9,8 @@ import { openDb, type OpenedDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
 import { createEventLoop } from './event-loop.ts'
+import { createEventRecorder } from './session-events.ts'
+import { registerSlashCommands } from './slash-commands.ts'
 import { registerIngress } from './ingress.ts'
 import { createLogger, setLogFile } from './logger.ts'
 import { startLockServer, type LockServer } from './lock-server.ts'
@@ -28,6 +30,9 @@ export type StartBotOptions = {
   opencodeServiceFile?: string
   // Start the service with Service.ensure() when none is running.
   ensureOpencode: boolean
+  // Shell command that runs this Kimaki install (shown by /session-id and
+  // given to agents), from kimakiShellCommand().
+  kimakiCommand: string
 }
 
 export type BotHandle = {
@@ -67,7 +72,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   })
   const store = createBotStore()
   const effects = createEffectsRunner({ discord })
-  const eventLoop = createEventLoop({ store, db: db.db, discord, effects })
+  const recorder = createEventRecorder({ dataDir: options.dataDir })
+  const eventLoop = createEventLoop({ store, db: db.db, discord, effects, recorder })
   const loaded = await eventLoop.load()
   if (loaded instanceof Error) {
     db.close()
@@ -87,6 +93,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const stop = async () => {
     opencode.stop()
     effects.stop()
+    await recorder.close()
     await discord.destroy()
     db.close()
     await lock.close()
@@ -113,6 +120,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     await stop()
     return failure
   }
+  registerSlashCommands({ discord, db: db.db, kimaki: options.kimakiCommand })
   logger.log(`bot ready as ${discord.user?.tag}`)
   return { discord, opencode, db, lock, store, actions, stop }
 }

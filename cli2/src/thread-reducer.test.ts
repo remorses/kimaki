@@ -200,8 +200,8 @@ test('retry notices are throttled to one per 10s', () => {
   const { effects } = replay({ events: [retry(1_000, 1), retry(6_000, 2), retry(12_000, 3)], view })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
-      "-# retrying in 5s (attempt 1)",
-      "-# retrying in 5s (attempt 3)",
+      "-# ⬦ retrying in 5s (attempt 1): rate limited",
+      "-# ⬦ retrying in 5s (attempt 3): rate limited",
     ]
   `)
 })

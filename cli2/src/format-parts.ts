@@ -61,8 +61,10 @@ export function formatError(message: string): string {
   return `✗ ${truncate(message.trim() || 'unknown error', 400)}`
 }
 
-export function formatRetry({ attempt, delayMs }: { attempt: number; delayMs: number }): string {
-  return asSubtext(`retrying in ${Math.max(1, Math.ceil(delayMs / 1_000))}s (attempt ${attempt})`)
+// The provider error is the whole point: "retrying" alone says nothing.
+export function formatRetry({ attempt, delayMs, message }: { attempt: number; delayMs: number; message: string }): string {
+  const seconds = Math.max(1, Math.ceil(delayMs / 1_000))
+  return asSubtext(`⬦ retrying in ${seconds}s (attempt ${attempt}): ${inline(message, 200)}`)
 }
 
 // One line, no markdown control characters, so `_x_` and `*x*` stay intact.

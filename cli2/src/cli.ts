@@ -3,14 +3,18 @@
 // `project list/add` manage project channels while the bot runs. Gateway mode
 // and the other subcommands arrive in later phases (spec section 30).
 
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { goke } from 'goke'
 
 import { openDb } from './db.ts'
 import { DEFAULT_LOCK_PORT } from './lock-server.ts'
 import { createLogger } from './logger.ts'
 import { startBot } from './main.ts'
+import { resolveOpencode } from './opencode-server.ts'
+import { readSessionMarkdown, resolveSession, sessionEventsFile } from './session-events.ts'
 import { readSavedCredentials, resolveCredentials, restApiUrl } from './credentials.ts'
 import { chooseGuild, kimakiShellCommand, runOnboarding } from './onboarding.ts'
 import {
@@ -58,8 +62,14 @@ cli
     })()
     if (resolved instanceof Error) fail(resolved)
     const { credentials, install } = resolved
+    // The agent calls this same install: same node, loader flags and script.
+    const kimaki = kimakiShellCommand({
+      command: [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki2'],
+      dataDir,
+    })
 
     const bot = await startBot({
+      kimakiCommand: kimaki,
       dataDir,
       token: credentials.token,
       discordRestUrl: restApiUrl(credentials),
@@ -75,11 +85,6 @@ cli
 
     const guild = await chooseGuild({ discord: bot.discord, guildId: options.guild ?? install?.guildId })
     if (guild instanceof Error) fail(guild)
-    // The agent calls this same install: same node, loader flags and script.
-    const kimaki = kimakiShellCommand({
-      command: [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki2'],
-      dataDir,
-    })
     const onboarded = await runOnboarding({
       bot,
       dataDir,
@@ -138,6 +143,42 @@ cli
     if (result instanceof Error) fail(result)
     const verb = result.created ? 'Added' : 'Already added'
     process.stdout.write(`${verb} <#${result.channelId}> for ${result.directory}\n`)
+  })
+
+cli.section('Session')
+
+cli
+  .command('session events <id>', 'Print the recorded OpenCode events of a thread as JSONL (root + subagents)')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .example('kimaki2 session events ses_abc | jq -r .event.type | sort | uniq -c')
+  .example(`kimaki2 session events ses_abc | jq 'select(.event.type == "session.retry.scheduled")'`)
+  .action(async (id, options) => {
+    const dataDir = dataDirOrDefault(options.dataDir)
+    const opened = await openDb({ dataDir, migrate: false })
+    if (opened instanceof Error) fail(opened)
+    const resolved = await resolveSession({ db: opened.db, id })
+    opened.close()
+    if (resolved instanceof Error) fail(resolved)
+    const file = sessionEventsFile({ dataDir, threadId: resolved.threadId })
+    if (!fs.existsSync(file)) fail(new Error(`No events recorded for thread ${resolved.threadId} yet (${file})`))
+    await pipeline(fs.createReadStream(file), process.stdout)
+  })
+
+cli
+  .command('session read <id>', 'Print the messages of a session from OpenCode as markdown')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .action(async (id, options) => {
+    const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
+    if (opened instanceof Error) fail(opened)
+    const resolved = await resolveSession({ db: opened.db, id })
+    opened.close()
+    // Subagent sessions are not in SQLite: read them directly.
+    const sessionId = resolved instanceof Error ? id : resolved.sessionId
+    const endpoint = await resolveOpencode({ ensure: false })
+    if (endpoint instanceof Error) fail(endpoint)
+    const markdown = await readSessionMarkdown({ client: endpoint.client, sessionId })
+    if (markdown instanceof Error) fail(markdown)
+    process.stdout.write(`${markdown}\n`)
   })
 
 cli.help()

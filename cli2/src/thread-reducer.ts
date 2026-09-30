@@ -333,7 +333,16 @@ function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; 
       if (view.lastRetryAt !== null && event.created - view.lastRetryAt < RETRY_NOTICE_INTERVAL_MS) return none
       return {
         view: { ...view, lastRetryAt: event.created },
-        effects: [{ type: 'send', text: formatRetry({ attempt: event.data.attempt, delayMs: event.data.at - event.created }) }],
+        effects: [
+          {
+            type: 'send',
+            text: formatRetry({
+              attempt: event.data.attempt,
+              delayMs: event.data.at - event.created,
+              message: event.data.error.message,
+            }),
+          },
+        ],
       }
     }
     case 'session.execution.succeeded':
