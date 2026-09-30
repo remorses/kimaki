@@ -212,6 +212,76 @@ importers:
         specifier: ^8.0.2
         version: 8.5.0
 
+  cli2:
+    dependencies:
+      '@libsql/client':
+        specifier: ^0.17.2
+        version: 0.17.4
+      '@opencode/client':
+        specifier: 2.0.19
+        version: 2.0.19(effect@4.0.0-rc.112)
+      '@opencode/plugin':
+        specifier: 2.0.19
+        version: 2.0.19(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.1))
+      discord.js:
+        specifier: ^14.26.3
+        version: 14.26.4
+      drizzle-orm:
+        specifier: 1.0.0-beta.22
+        version: 1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5)
+      errore:
+        specifier: workspace:^
+        version: link:../errore
+      goke:
+        specifier: ^6.15.1
+        version: 6.15.1
+      mdast-util-from-markdown:
+        specifier: ^2.0.3
+        version: 2.0.3
+      mdast-util-gfm:
+        specifier: ^3.1.0
+        version: 3.1.0
+      mdast-util-to-markdown:
+        specifier: ^2.1.2
+        version: 2.1.2
+      micromark-extension-gfm:
+        specifier: ^3.0.0
+        version: 3.0.0
+      string-dedent:
+        specifier: ^3.0.2
+        version: 3.0.2
+      zustand:
+        specifier: ^5.0.14
+        version: 5.0.15(@types/react@19.2.17)(react@19.2.8)
+    devDependencies:
+      '@opencode/cli':
+        specifier: 2.0.19
+        version: 2.0.19
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.13.2
+      discord-digital-twin:
+        specifier: workspace:^
+        version: link:../discord-digital-twin
+      drizzle-kit:
+        specifier: 1.0.0-beta.22
+        version: 1.0.0-beta.22
+      opencode-deterministic-provider:
+        specifier: workspace:^
+        version: link:../opencode-deterministic-provider
+      tsx:
+        specifier: ^4.20.5
+        version: 4.22.4
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
+
   db:
     dependencies:
       '@prisma/adapter-pg':
@@ -2609,7 +2679,6 @@ packages:
 
   '@opencode/cli@2.0.19':
     resolution: {integrity: sha512-F6PsjvY9iB67CmaJ+sTH0eOa/kcr9M8ajSxz+cGrldMKaj0QtY9UOcEU1pgsMm6I5bGEVyOAMjPCeQ11Hz/seg==}
-    cpu: [arm64, x64]
     os: [darwin, linux, win32]
     hasBin: true
 
@@ -9556,7 +9625,7 @@ snapshots:
       '@clack/prompts': 1.7.0
       '@opencode-ai/sdk': 1.18.5
       fflate: 0.8.3
-      goke: 6.14.1
+      goke: 6.15.1
       mdast-util-frontmatter: 2.0.1
       mdast-util-gfm: 3.1.0
       mdast-util-mdx: 3.0.0
@@ -12993,6 +13062,20 @@ snapshots:
       postgres: 3.4.7
       valibot: 1.2.0(typescript@5.9.3)
       zod: 4.4.3
+
+  drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5):
+    optionalDependencies:
+      '@cloudflare/workers-types': 4.20260619.1
+      '@electric-sql/pglite': 0.3.15
+      '@libsql/client': 0.17.4
+      '@opentelemetry/api': 1.9.1
+      '@types/pg': 8.20.0
+      bun-types: 1.4.2
+      mysql2: 3.15.3
+      pg: 8.22.0
+      postgres: 3.4.7
+      valibot: 1.2.0(typescript@5.9.3)
+      zod: 4.6.5
 
   dunder-proto@1.0.1:
     dependencies:

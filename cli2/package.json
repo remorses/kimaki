@@ -1,0 +1,41 @@
+{
+  "name": "kimaki-cli2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kimaki rebuilt on the OpenCode V2 event model. See docs/kimaki-v2-rebuild-spec.md",
+  "type": "module",
+  "bin": {
+    "kimaki2": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "generate": "tsx scripts/generate-schema-sql.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.2",
+    "@opencode/client": "2.0.19",
+    "@opencode/plugin": "2.0.19",
+    "discord.js": "^14.26.3",
+    "drizzle-orm": "1.0.0-beta.22",
+    "errore": "workspace:^",
+    "goke": "^6.15.1",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-to-markdown": "^2.1.2",
+    "micromark-extension-gfm": "^3.0.0",
+    "string-dedent": "^3.0.2",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@opencode/cli": "2.0.19",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^24.3.0",
+    "discord-digital-twin": "workspace:^",
+    "drizzle-kit": "1.0.0-beta.22",
+    "opencode-deterministic-provider": "workspace:^",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
