@@ -3419,6 +3419,19 @@ Rules for every phase:
 - **tests first**: write the e2e test for the phase's user-visible flow, see it fail,
   then implement. Pure modules (reducer, routes, markdown) get inline-snapshot unit
   tests
+- **every feature is proven end to end**: each user-visible feature (message flow,
+  slash command, button, select, modal, CLI command, startup side effect) gets at least
+  one e2e test that drives it through the digital twin and a real OpenCode server, the
+  way a user would. Unit tests alone never count as done. Startup side effects are
+  tested too: for example when slash commands are registered (per guild, including
+  per-agent commands like `/plan-agent`), a test asserts the twin has exactly the
+  expected commands after the bot starts, and that running one works
+- **extend the twin when it lacks a primitive**: if a feature cannot be driven or
+  asserted through `discord-digital-twin` (registered commands listing, select menus,
+  modals, message edit/delete events, attachments, voice messages, reactions, ...), add
+  the missing route or actor method to `discord-digital-twin/src/index.ts` first, with a
+  test in `discord-digital-twin/tests/`. Never skip the e2e test or fake the Discord
+  side in cli2 because the twin is missing something
 - **no stubs for later phases**: a feature is either complete or absent. No `TODO`
   branches in the reducer
 - **only the modules of section 27**; a phase may add a module or extend one, never
