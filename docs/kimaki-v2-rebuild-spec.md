@@ -1550,7 +1550,8 @@ SQLite + Discord REST access. They are separate short-lived processes, not the p
 ## 14. Discord slash commands
 
 36 fixed commands + dynamic families. Registered per guild (bulk overwrite, max 100,
-DM disabled). Dynamic priority: agents, config commands, MCP prompts, skills.
+DM disabled). Dynamic priority: agents, commands, skills. MCP prompts get no slash
+command; they run as `/server:prompt args` messages or from `/queue-command`.
 
 ### Sessions
 
@@ -1586,7 +1587,7 @@ DM disabled). Dynamic priority: agents, config commands, MCP prompts, skills.
 | `/model-variant` | same |
 | `/verbosity` | Kimaki channel pref |
 | `/<agent>-agent prompt? variant?` | switch or new thread with agent |
-| `/<cmd>-cmd`, `/<skill>-skill`, `/<prompt>-mcp-prompt` | `session.command`; lists from `command.list` / `skill.list` |
+| `/<cmd>-cmd`, `/<skill>-skill` | `session.command` / prompt with `skills`; lists from `command.list` / `skill.list` |
 
 ### Projects and worktrees
 
@@ -1982,8 +1983,10 @@ for await (const event of client.event.subscribe({ signal })) {
   a label. Commands, selects and the voice agent enum use the ID (P5 offered display
   names to the transcription model, which would have failed `switchAgent`).
 - **Command catalog.** `command.list` has no `source` field. MCP prompts are commands
-  named `server:prompt` (OpenCode sanitizes both parts, so only they contain `:`) and
-  register as `/<server>-<prompt>-mcp-prompt`. Built-in commands `init` (skipped, like
+  named `server:prompt`. Decided: **no slash commands for MCP prompts** (V1 had
+  `/<prompt>-mcp-prompt`). Without a source field the colon is the only sign, so every
+  command with a colon is left out, including a config command named with a colon. They
+  still run as `/server:prompt args` messages and from `/queue-command`. Built-in commands `init` (skipped, like
   V1) and `review` always exist. Skills come from `skill.list` (built-ins `opencode`,
   `report`) and run as `prompt({ text, skills: [{ id }] })`; `session.skill` takes no
   text.
@@ -3736,11 +3739,14 @@ E2E: btw thread answers while the source keeps running; fork before a message;
 - remote-send envelope for channels of another machine
 - plugin `plugin/index.ts`: bash schema, context hook (git branch), guarded by
   `metadata.kimaki`
+- `/login` and `kimaki login`: provider login as a thin UI over V2 `integration.*` and
+  `credential.*` (section 14, custom IDs `login_*:<hash>`, wizard context with TTL)
 
 E2E: `kimaki send --channel` returns thread + session IDs; `--thread` with `. queue`;
 agent runs `kimaki buttons` → buttons render after preceding text; click sends
 `User clicked: X`; `upload-request` round trip; second bot process sees `/health` and
-takes over.
+takes over; `/login` with an API key stores the credential in OpenCode and `/model`
+then lists that provider.
 
 ### Phase 8: scheduling and sleep
 
