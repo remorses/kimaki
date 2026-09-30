@@ -265,3 +265,49 @@ test('queue-parked: parked item runs and echoes after the next prompt', () => {
     ]
   `)
 })
+
+test('question: one dropdown per question, typing off while waiting, settled on reply', () => {
+  const { effects, view } = replay({ events: loadFixture('question.events.jsonl') })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "[typing on]",
+      "-# *using openai/gpt-6-luna ⋅ build*",
+      "[typing off]",
+      "[show form:frm_0f1ff0402001MIUy5ATcEElGcr] **Color**
+    Which color do you prefer? {Red/Green/Blue/Other} | **Fruits**
+    Which fruits do you like? {Apple/Pear/Kiwi/Other}",
+      "[typing on]",
+      "You prefer green, and you like apples and kiwi.",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 5s ⋅ 6% ⋅ gpt-6-luna*",
+    ]
+  `)
+  expect(view.forms).toMatchInlineSnapshot(`{}`)
+})
+
+test('permission: two requests, the rejected one fails its tool call', () => {
+  const { effects, view } = replay({ events: loadFixture('permission.events.jsonl') })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "[typing on]",
+      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# ┣ shell _echo first_",
+      "[typing off]",
+      "[show perm:per_0f202b5a4001acFP7sdJdnf7DQ] **Permission required**
+    **Type:** \`shell\`
+    **Pattern:** \`echo first\` {Accept, Accept Always, Deny}",
+      "[typing on]",
+      "-# ┣ shell _echo second_",
+      "[typing off]",
+      "[show perm:per_0f202be4b001DoNE0gpRKT1aa9] **Permission required**
+    **Type:** \`shell\`
+    **Pattern:** \`echo second\` {Accept, Accept Always, Deny}",
+      "[typing on]",
+      "-# ⨯ shell _Unable to execute command: echo second_",
+      "\\n\`echo first\` printed \`first\`; \`echo second\` failed to execute.",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 5s ⋅ 6% ⋅ gpt-6-luna*",
+    ]
+  `)
+  expect(view.permissions).toMatchInlineSnapshot(`{}`)
+})

@@ -23,6 +23,8 @@ import { DiscordError } from './errors.ts'
 import { formatError } from './format-parts.ts'
 import { canUseKimaki } from './ingress.ts'
 import { createLogger } from './logger.ts'
+import { handlePermissionButton, PERMISSION_PREFIX } from './permissions.ts'
+import { createQuestionHandlers, FORM_OTHER_PREFIX, FORM_SELECT_PREFIX } from './questions.ts'
 import { formatEcho, handleQueueRemove, QUEUE_REMOVE_PREFIX } from './queue.ts'
 import { resolveSession } from './session-events.ts'
 import type { BotStore } from './store.ts'
@@ -208,6 +210,8 @@ export function registerSlashCommands({
   discord.on(Events.GuildCreate, (guild) => void registerGuild({ discord, guild }))
   for (const guild of discord.guilds.cache.values()) void registerGuild({ discord, guild })
 
+  const questions = createQuestionHandlers({ store, actions })
+
   async function handle(interaction: Interaction) {
     if (!interaction.guildId) return
     const guild = interaction.guild ?? (await discord.guilds.fetch(interaction.guildId).catch(() => null))
@@ -223,6 +227,15 @@ export function registerSlashCommands({
     }
     if (interaction.isButton() && interaction.customId.startsWith(QUEUE_REMOVE_PREFIX)) {
       return handleQueueRemove({ interaction, actions })
+    }
+    if (interaction.isButton() && interaction.customId.startsWith(PERMISSION_PREFIX)) {
+      return handlePermissionButton({ interaction, store, actions })
+    }
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(FORM_SELECT_PREFIX)) {
+      return questions.handleSelect(interaction)
+    }
+    if (interaction.isModalSubmit() && interaction.customId.startsWith(FORM_OTHER_PREFIX)) {
+      return questions.handleOther(interaction)
     }
   }
 

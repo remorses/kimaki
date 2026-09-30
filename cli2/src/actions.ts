@@ -5,7 +5,8 @@
 //
 // A new plain message interrupts the run (spec 9.1, corrected in section 20):
 //
-//   interrupt(resume: false) ─▶ prompt(steer)
+//   cancel pending questions ─▶ reject pending permissions ─▶ interrupt(resume: false)
+//     ─▶ prompt(steer)
 //
 // Interrupt first, then prompt: the new prompt's wake starts the next
 // execution with "input" scope, which runs queued items after it. The other
@@ -18,6 +19,8 @@ import { DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from '
 import type { EventLoop } from './event-loop.ts'
 import { createLogger } from './logger.ts'
 import type { OpencodeConnection } from './opencode-server.ts'
+import type { PermissionDecision } from './permissions.ts'
+import type { FormAnswer } from './questions.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import * as schema from './schema.ts'
 import type { BotStore } from './store.ts'
@@ -133,6 +136,54 @@ export function createActions({
     if (result instanceof Error) return result
   }
 
+  // Questions and permissions of the thread (root and children) that wait for the user.
+  async function cancelPendingUi(threadId: string): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
+    const view = store.getState().threads[threadId]
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    if (!view) return
+    const forms = Object.entries(view.forms).map(([formID, form]) =>
+      opencodeClient.session.form
+        .cancel({ sessionID: form.sessionId, formID })
+        .catch((e) => new OpenCodeError({ operation: 'session.form.cancel', cause: e })),
+    )
+    const permissions = Object.entries(view.permissions).map(([requestID, request]) =>
+      opencodeClient.permission
+        .reply({ sessionID: request.sessionId, requestID, decision: 'reject' })
+        .catch((e) => new OpenCodeError({ operation: 'permission.reply', cause: e })),
+    )
+    // Settled meanwhile by someone else is fine: log and go on.
+    for (const result of await Promise.all([...forms, ...permissions])) {
+      if (result instanceof Error) logger.warn(`cancel pending UI in ${threadId}: ${result.message}`)
+    }
+  }
+
+  async function answerForm({ sessionId, formID, answer }: { sessionId: string; formID: string; answer: FormAnswer }) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const result = await opencodeClient.session.form
+      .reply({ sessionID: sessionId, formID, answer })
+      .catch((e) => new OpenCodeError({ operation: 'session.form.reply', cause: e }))
+    if (result instanceof Error) return result
+  }
+
+  async function replyPermission({
+    sessionId,
+    requestID,
+    decision,
+  }: {
+    sessionId: string
+    requestID: string
+    decision: PermissionDecision
+  }) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const result = await opencodeClient.permission
+      .reply({ sessionID: sessionId, requestID, decision })
+      .catch((e) => new OpenCodeError({ operation: 'permission.reply', cause: e }))
+    if (result instanceof Error) return result
+  }
+
   async function interrupt(sessionId: string): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
@@ -152,6 +203,8 @@ export function createActions({
     messageId: string
     files?: readonly PromptFile[]
   }): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
+    const cancelled = await cancelPendingUi(input.threadId)
+    if (cancelled instanceof Error) return cancelled
     const interrupted = await interrupt(input.sessionId)
     if (interrupted instanceof Error) return interrupted
     return prompt({ ...input, delivery: 'steer' })
@@ -310,12 +363,14 @@ export function createActions({
     return { cleared: targets.length }
   }
 
-  // /abort: stop the run and drop the queue.
+  // /abort: stop the run, drop the queue, cancel pending questions and permissions.
   async function abort({ threadId }: { threadId: string }) {
     const sessionId = rootSession(threadId)
     if (sessionId instanceof Error) return sessionId
     const cleared = await clearQueue({ threadId })
     if (cleared instanceof Error) return cleared
+    const cancelled = await cancelPendingUi(threadId)
+    if (cancelled instanceof Error) return cancelled
     const interrupted = await interrupt(sessionId)
     if (interrupted instanceof Error) return interrupted
     return cleared
@@ -455,7 +510,18 @@ export function createActions({
     return { threadId: thread.id, sessionId: session.id }
   }
 
-  return { startSession, dispatch, prompt, forkBtw, cancelQueued, clearQueue, abort, requeueEdited }
+  return {
+    startSession,
+    dispatch,
+    prompt,
+    forkBtw,
+    cancelQueued,
+    clearQueue,
+    abort,
+    requeueEdited,
+    answerForm,
+    replyPermission,
+  }
 }
 
 export type Actions = ReturnType<typeof createActions>

@@ -762,12 +762,16 @@ export class DigitalDiscord {
     customId,
     fields,
     guildId,
+    messageId,
   }: {
     channelId: string
     userId: string
     customId: string
     fields: DigitalDiscordModalField[]
     guildId?: string
+    // Set when the modal was opened from a message component: Discord then
+    // includes that message, so the bot can update it.
+    messageId?: string
   }): Promise<{ id: string; token: string }> {
     const components = fields.map((field) => {
       return {
@@ -787,6 +791,7 @@ export class DigitalDiscord {
       channelId,
       userId,
       guildId,
+      messageId,
       data: {
         custom_id: customId,
         components,
@@ -1530,10 +1535,12 @@ export class ScopedUserActor {
     customId,
     fields,
     guildId,
+    messageId,
   }: {
     customId: string
     fields: DigitalDiscordModalField[]
     guildId?: string
+    messageId?: string
   }) {
     return this.discord.simulateModalSubmit({
       channelId: this.channelId,
@@ -1541,6 +1548,7 @@ export class ScopedUserActor {
       customId,
       fields,
       guildId,
+      messageId,
     })
   }
 }

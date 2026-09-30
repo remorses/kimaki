@@ -251,6 +251,36 @@ export function createEventLoop({
     for (const event of entry.events) enqueue(found.threadId, event)
   }
 
+  async function hydrateSession({
+    client,
+    sessionId,
+    isRoot,
+    signal,
+  }: {
+    client: OpenCodeClient
+    sessionId: string
+    isRoot: boolean
+    signal: AbortSignal
+  }): Promise<OpenCodeError | Extract<KimakiEvent, { type: 'kimaki.hydrated' }>> {
+    const [inbox, forms, permissions] = await Promise.all([
+      isRoot
+        ? client.session.inbox
+            .list({ sessionID: sessionId }, { signal })
+            .catch((e) => new OpenCodeError({ operation: 'session.inbox.list', cause: e }))
+        : null,
+      client.session.form
+        .list({ sessionID: sessionId }, { signal })
+        .catch((e) => new OpenCodeError({ operation: 'session.form.list', cause: e })),
+      client.permission
+        .list({ sessionID: sessionId }, { signal })
+        .catch((e) => new OpenCodeError({ operation: 'permission.list', cause: e })),
+    ])
+    if (inbox instanceof Error) return inbox
+    if (forms instanceof Error) return forms
+    if (permissions instanceof Error) return permissions
+    return { type: 'kimaki.hydrated', sessionId, inbox, forms, permissions }
+  }
+
   return {
     // Bindings from SQLite. Several rows can share a session after V1 /resume;
     // the most recently updated one wins.
@@ -326,23 +356,31 @@ export function createEventLoop({
       for (const [threadId, activeSessionIds] of byThread) {
         enqueue(threadId, { type: 'kimaki.synced', activeSessionIds, at: now })
       }
-      // Queue state of busy roots, and of views that still show queued items.
+      // What busy sessions wait on (queue, questions, permissions), and what
+      // views still show from before, which may have settled meanwhile.
       const { roots } = store.getState()
-      const hydrate = Object.entries(roots).filter(
-        ([threadId, sessionId]) => active[sessionId] || (threads[threadId]?.queue.length ?? 0) > 0,
-      )
-      const inboxes = await Promise.all(
-        hydrate.map(async ([threadId, sessionId]) => {
-          const inbox = await client.session.inbox
-            .list({ sessionID: sessionId }, { signal })
-            .catch((e) => new OpenCodeError({ operation: 'session.inbox.list', cause: e }))
-          return { threadId, inbox }
-        }),
+      const targets = new Map<string, string>()
+      for (const sessionId of Object.keys(active)) {
+        const threadId = sessionThreads[sessionId]
+        if (threadId) targets.set(sessionId, threadId)
+      }
+      for (const [threadId, view] of Object.entries(threads)) {
+        const shown = [...Object.values(view.forms), ...Object.values(view.permissions)].map((item) => item.sessionId)
+        for (const sessionId of shown) targets.set(sessionId, threadId)
+        if (view.queue.length > 0) targets.set(view.sessionId, threadId)
+      }
+      const hydrated = await Promise.all(
+        [...targets].map(([sessionId, threadId]) =>
+          hydrateSession({ client, sessionId, isRoot: roots[threadId] === sessionId, signal }).then((event) => ({
+            threadId,
+            event,
+          })),
+        ),
       )
       if (signal.aborted) return new OpenCodeError({ operation: 'hydrate (superseded)' })
-      for (const { threadId, inbox } of inboxes) {
-        if (inbox instanceof Error) return inbox
-        enqueue(threadId, { type: 'kimaki.hydrated', inbox })
+      for (const { threadId, event } of hydrated) {
+        if (event instanceof Error) return event
+        enqueue(threadId, event)
       }
     },
 

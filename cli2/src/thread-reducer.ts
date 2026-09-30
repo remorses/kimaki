@@ -14,7 +14,7 @@
 // busy = root execution running OR any child running (29.2 #3). Typing
 // follows busy; the footer waits until nothing runs.
 
-import type { JsonValue, SessionInboxInfo, V2Event } from '@opencode/client'
+import type { FormInfo, JsonValue, PermissionRequest, SessionInboxInfo, V2Event } from '@opencode/client'
 
 import type { Verbosity } from './db.ts'
 import {
@@ -29,6 +29,8 @@ import {
   isToolVisible,
   type ModelRef,
 } from './format-parts.ts'
+import { hydratePermissions, reducePermissions, type PendingPermission } from './permissions.ts'
+import { hydrateForms, reduceForms, type PendingForm } from './questions.ts'
 import { hydrateQueue, reduceQueue, type QueuedItem } from './queue.ts'
 import { renderedUi, type UiEffect, type UiState } from './ui-prompts.ts'
 
@@ -67,6 +69,9 @@ export type ThreadView = {
   // Root inbox: user items not delivered yet, and the queued ones among them.
   inputs: readonly string[]
   queue: readonly QueuedItem[]
+  // Questions and permission requests waiting for the user (root and children).
+  forms: Readonly<Record<string, PendingForm>>
+  permissions: Readonly<Record<string, PendingPermission>>
   // Posted interactive messages (queue acks, questions, permissions).
   ui: UiState
 }
@@ -88,8 +93,15 @@ export type KimakiEvent =
   | { type: 'kimaki.child'; sessionId: string; agent: string }
   // Message IDs of a `show` effect, reported back by the executor.
   | { type: 'kimaki.rendered'; key: string; messageIds: readonly string[] }
-  // After a (re)connect: the root session inbox as OpenCode has it.
-  | { type: 'kimaki.hydrated'; inbox: readonly SessionInboxInfo[] }
+  // After a (re)connect: what one session of the thread waits on right now.
+  // `inbox` only for the root session.
+  | {
+      type: 'kimaki.hydrated'
+      sessionId: string
+      inbox: readonly SessionInboxInfo[] | null
+      forms: readonly FormInfo[]
+      permissions: readonly PermissionRequest[]
+    }
 
 export type ThreadEvent = V2Event | KimakiEvent
 
@@ -138,6 +150,8 @@ export function emptyView({
     lastRetryAt: null,
     inputs: [],
     queue: [],
+    forms: {},
+    permissions: {},
     ui: {},
   }
 }
@@ -146,7 +160,13 @@ export function isBusy(view: ThreadView): boolean {
   return view.turn !== null || Object.values(view.children).some((child) => child.running)
 }
 
+// Typing stops while the agent waits for the user (spec 6.6).
+function isTyping(view: ThreadView): boolean {
+  return isBusy(view) && Object.keys(view.forms).length === 0 && Object.keys(view.permissions).length === 0
+}
+
 export function eventSessionId(event: V2Event): string | null {
+  if (event.type === 'form.created') return event.data.form.sessionID
   // Global events (project.updated, shell.created, ...) have no sessionID.
   const data: { readonly [key: string]: JsonValue | undefined } = event.data
   return typeof data['sessionID'] === 'string' ? data['sessionID'] : null
@@ -392,8 +412,19 @@ function reduceKimaki({ view, event }: { view: ThreadView; event: KimakiEvent })
       const rendered = renderedUi({ ui: view.ui, key: event.key, messageIds: event.messageIds })
       return { view: { ...view, ui: rendered.ui }, effects: rendered.effects }
     }
-    case 'kimaki.hydrated':
-      return hydrateQueue({ view, inbox: event.inbox })
+    case 'kimaki.hydrated': {
+      const label = event.sessionId === view.sessionId ? null : (view.children[event.sessionId]?.agent ?? null)
+      if (label === null && event.sessionId !== view.sessionId) return { view, effects: [] }
+      const queued = event.inbox ? hydrateQueue({ view, inbox: event.inbox }) : { view, effects: [] }
+      const forms = hydrateForms({ view: queued.view, sessionId: event.sessionId, forms: event.forms, label })
+      const permissions = hydratePermissions({
+        view: forms.view,
+        sessionId: event.sessionId,
+        requests: event.permissions,
+        label,
+      })
+      return { view: permissions.view, effects: [...queued.effects, ...forms.effects, ...permissions.effects] }
+    }
     case 'kimaki.branch':
       return { view: { ...view, branch: event.branch }, effects: [] }
     case 'kimaki.child': {
@@ -431,16 +462,23 @@ function reduceEvent({ view, event, prefs }: { view: ThreadView; event: ThreadEv
   if (isKimakiEvent(event)) return reduceKimaki({ view, event })
   if (event.type === 'session.created') return { view: registerChild({ view, event }), effects: [] }
   const sessionId = eventSessionId(event)
-  if (sessionId === view.sessionId) return reduceRoot({ view, event, prefs })
-  if (sessionId && view.children[sessionId]) return reduceChild({ view, event, sessionId, prefs })
-  return { view, effects: [] }
+  if (!sessionId) return { view, effects: [] }
+  const isRoot = sessionId === view.sessionId
+  const child = view.children[sessionId]
+  if (!isRoot && !child) return { view, effects: [] }
+  // Questions and permissions of subagents show in this thread too.
+  const label = child?.agent ?? null
+  const interactive = reduceForms({ view, event, label }) ?? reducePermissions({ view, event, label })
+  if (interactive) return interactive
+  if (isRoot) return reduceRoot({ view, event, prefs })
+  return reduceChild({ view, event, sessionId, prefs })
 }
 
 export function reduce({ view, event, prefs }: { view: ThreadView; event: ThreadEvent; prefs: Prefs }): Result {
   const result = reduceEvent({ view, event, prefs })
-  const wasBusy = isBusy(view)
-  const busy = isBusy(result.view)
-  if (wasBusy === busy) return result
-  // Typing goes first: on before the banner, off before the footer.
-  return { view: result.view, effects: [{ type: 'typing', on: busy }, ...result.effects] }
+  const wasTyping = isTyping(view)
+  const typing = isTyping(result.view)
+  if (wasTyping === typing) return result
+  // Typing goes first: on before the banner, off before the footer or a prompt.
+  return { view: result.view, effects: [{ type: 'typing', on: typing }, ...result.effects] }
 }

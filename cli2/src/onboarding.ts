@@ -75,8 +75,6 @@ function shellQuote(arg: string): string {
 }
 
 export function onboardingPrompt({ kimaki }: { kimaki: string }): string {
-  // TODO: allow the question tool once Discord renders it (phase 4). Until then
-  // a question would wait forever, so the prompt asks for a plain reply.
   return dedent`
     This is the Kimaki onboarding thread. Kimaki maps Discord channels to project folders on this computer:
     a message in a project channel starts a coding session in that folder.
@@ -88,8 +86,7 @@ export function onboardingPrompt({ kimaki }: { kimaki: string }): string {
     2. If they agree, search. Only list folders that exist, most recently changed first, at most 15:
        \`find ~/Documents ~/Projects ~/projects ~/code ~/dev ~/src ~/repos ~/GitHub ~/github -maxdepth 3 -name .git -prune 2>/dev/null\`
        Skip folders that already have a channel: \`${kimaki} project list\`
-    3. Show a numbered list and ask which ones to add. Ask in a normal message and wait for the reply.
-       Do not use the question tool.
+    3. Ask which ones to add with the question tool (multiple choice, one option per folder).
     4. Add each chosen folder with its absolute path: \`${kimaki} project add <absolute-directory>\`
        The command prints the new channel as a mention like <#123>. Reply with the list of new channels.
 

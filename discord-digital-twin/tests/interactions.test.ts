@@ -561,4 +561,27 @@ describe('interactions', () => {
     expect(msg?.content).toBe('Edited after deferUpdate')
     expect(msg?.edited_timestamp).toBeTruthy()
   })
+
+  test('modal submitted from a message component can update that message', async () => {
+    const channel = client.channels.cache.get(channelId) as TextChannel
+    const targetMsg = await channel.send({ content: 'Question with an Other option' })
+
+    const received = new Promise<Interaction>((resolve) => {
+      client.once('interactionCreate', (i) => {
+        if (i.isModalSubmit()) resolve(i)
+      })
+    })
+    await discord.channel(channelId).user(testUserId).submitModal({
+      customId: 'answer-modal',
+      messageId: targetMsg.id,
+      fields: [{ customId: 'answer', value: 'custom answer' }],
+    })
+    const interaction = await received
+    if (!interaction.isModalSubmit() || !interaction.isFromMessage()) throw new Error('expected a modal from a message')
+    expect(interaction.fields.getTextInputValue('answer')).toBe('custom answer')
+    await interaction.update({ content: 'Answered: custom answer', components: [] })
+
+    const messages = await discord.channel(channelId).getMessages()
+    expect(messages.find((m) => m.id === targetMsg.id)?.content).toBe('Answered: custom answer')
+  })
 })

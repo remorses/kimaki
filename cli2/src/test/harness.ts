@@ -63,8 +63,11 @@ export type OpencodeTestServer = {
 
 export async function startOpencodeTestServer({
   matchers = [],
+  permissions = [],
 }: {
   matchers?: DeterministicMatcher[]
+  // Appended after the allow-all rules: the last matching rule wins.
+  permissions?: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }>
 } = {}): Promise<OpencodeTestServer> {
   // realpath: macOS tmpdir is /var/... but OpenCode resolves /private/var/...
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-e2e-')))
@@ -78,6 +81,7 @@ export async function startOpencodeTestServer({
     permissions: [
       { action: 'shell', resource: '*', effect: 'allow' },
       { action: 'edit', resource: '*', effect: 'allow' },
+      ...permissions,
     ],
   })
   const inherited = Object.fromEntries(
