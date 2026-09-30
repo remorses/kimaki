@@ -3498,14 +3498,14 @@ Rules for every phase:
 - **only the modules of section 27**; a phase may add a module or extend one, never
   add a second path for an existing job
 - `tsc` and `lintcn lint` clean at the end of every phase
-- `cli/` stays untouched until phase 10
+- `cli/` stays untouched until phase 11
 
 ```
 P0 harness ─▶ P1 hello thread ─▶ P2 renderer ─▶ P3 interrupt+queue ─▶ P4 questions+perms
                                                                          │
-P9 schedule ◀─ P8 worktrees ◀─ P7 CLI+lock ◀─ P6 btw/fork/cmds ◀─ P5 shell+voice+files
+P9 onboarding ◀─ P8 schedule ◀─ P7 CLI+lock ◀─ P6 btw/fork/cmds ◀─ P5 shell+voice+files
    │
-   └─▶ P10 onboarding + gateway + import ─▶ P11 swap cli2 → cli
+   └─▶ P10 worktrees + projects ─▶ P11 swap cli2 → cli
 ```
 
 ### Phase 0: harness
@@ -3535,7 +3535,7 @@ service, and reconnects when either restarts. No message handling yet.
 - `startTestBot` runs the bot **in-process** (so tests can reach the handle, the store,
   and later the scheduler), with a temp `dataDir` and a random lock port
 - `seedProjectChannel({ directory })` creates a twin guild, category, and channel, and
-  inserts the `channels` row (onboarding is P10)
+  inserts the `channels` row (onboarding is P9)
 - `warmUp()`: one throwaway `session.create` + `prompt` so the first real test does not
   pay OpenCode cold start inside Discord waits
 - wait helpers: port only what P1–P2 need (`waitForFooter`, `waitForBotMessageContaining`),
@@ -3742,17 +3742,7 @@ agent runs `kimaki buttons` → buttons render after preceding text; click sends
 `User clicked: X`; `upload-request` round trip; second bot process sees `/health` and
 takes over.
 
-### Phase 8: worktrees and projects
-
-- `/new-worktree`, `send --worktree`, channel auto-worktree: session created with
-  `location: { directory: worktreePath }` via V2 `worktree.*`
-- `/worktrees` (direct components, no `<button>` markdown), `/merge-worktree`
-- `/add-project`, `/create-new-project`, `/remove-project`, `kimaki project *`
-
-E2E: worktree thread edits a file in the worktree, not the project root; merge
-worktree; add project creates a channel.
-
-### Phase 9: scheduling and sleep
+### Phase 8: scheduling and sleep
 
 - `scheduler.ts`: cron and one-shot tasks, `--pre-run`, `--allow-concurrency`
   (busy check via `session.active`), task ID in session metadata
@@ -3808,7 +3798,7 @@ await discord.waitForThread(...)
 - cron expressions are evaluated in UTC with the clock's time, never `new Date()`
 
 
-### Phase 10: onboarding, gateway, import, analytics
+### Phase 9: onboarding, gateway, import, analytics
 
 - `onboarding.ts`: credentials wizard (gateway + self-hosted), guild pick, category
   `Kimaki <machine>`, project channels, default channel
@@ -3820,6 +3810,16 @@ await discord.waitForThread(...)
 
 E2E: onboarding in non-interactive mode against the twin; bot starts on a V1 database
 and answers in an old thread.
+
+### Phase 10: worktrees and projects
+
+- `/new-worktree`, `send --worktree`, channel auto-worktree: session created with
+  `location: { directory: worktreePath }` via V2 `worktree.*`
+- `/worktrees` (direct components, no `<button>` markdown), `/merge-worktree`
+- `/add-project`, `/create-new-project`, `/remove-project`, `kimaki project *`
+
+E2E: worktree thread edits a file in the worktree, not the project root; merge
+worktree; add project creates a channel.
 
 ### Phase 11: swap
 
@@ -3839,9 +3839,9 @@ and answers in an old thread.
 | P5 | M | voice fixtures |
 | P6 | M | many small commands |
 | P7 | L | CLI surface + lock server + plugin |
-| P8 | M | V2 worktree API |
-| P9 | S | fake clock design |
-| P10 | L | onboarding flows, legacy import |
+| P8 | S | fake clock design |
+| P9 | L | onboarding flows, legacy import |
+| P10 | M | V2 worktree API |
 | P11 | S | packaging |
 
 If a phase does not fit one session, split it along its feature files (for example P2
