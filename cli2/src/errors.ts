@@ -9,7 +9,7 @@ export class OpenCodeError extends errore.createTaggedError({
 
 export class OpenCodeUnavailableError extends errore.createTaggedError({
   name: 'OpenCodeUnavailableError',
-  message: 'OpenCode service not reachable ($reason). Install OpenCode 2 and run: opencode serve --service',
+  message: 'OpenCode service not reachable ($reason). Install OpenCode 2 with: npm i -g @opencode/cli',
 }) {}
 
 export class OpenCodeVersionError extends errore.createTaggedError({

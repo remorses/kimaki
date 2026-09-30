@@ -1,7 +1,13 @@
 // Connection to the user's OpenCode V2 service (spec 28.2). Kimaki never
 // spawns OpenCode itself: it discovers the service registration file, or asks
-// Service.ensure() to start `opencode serve --service` without a version pin
+// Service.ensure() to start `<bin> serve --service` without a version pin
 // (a version pin would replace a running server and kill TUI sessions).
+//
+// Service.ensure() defaults to `opencode` from PATH. While V2 is in beta it
+// installs as `opencode2` and `opencode` is usually V1, which prints help for
+// `serve --service` and exits. So the binary is resolved first: the first of
+// `opencode2`, `opencode` on PATH whose `--version` is a supported V2.
+// TODO: drop the lookup and use the Service.ensure() default once V2 ships as `opencode`.
 //
 // watchOpencode() owns the single /api/event subscription and implements the
 // mini TUI connect protocol (stream-v2.transport.ts connect()):
@@ -13,7 +19,9 @@
 //     deliver held events, then go live
 //   on error: backoff 0.5s -> 30s, retry
 
+import { execFile } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { promisify } from 'node:util'
 import { OpenCode, type OpenCodeClient, type V2Event } from '@opencode/client'
 import { Service } from '@opencode/client/service'
 import * as errore from 'errore'
@@ -47,6 +55,33 @@ export function isSupportedVersion(version: string): boolean {
   return true
 }
 
+const execFileAsync = promisify(execFile)
+
+function errorText(error: Error): string {
+  const cause = error.cause instanceof Error ? `: ${error.cause.message}` : ''
+  return `${error.message}${cause}`
+}
+
+const BINARY_CANDIDATES = ['opencode2', 'opencode']
+
+// "opencode v2.0.19" -> "2.0.19"
+export function parseVersionOutput(output: string): string | null {
+  return output.match(/(\d+\.\d+\.\d+(?:-[\w.-]+)?)/)?.[1] ?? null
+}
+
+export async function resolveOpencodeBinary(): Promise<OpenCodeUnavailableError | string> {
+  const found: string[] = []
+  for (const candidate of BINARY_CANDIDATES) {
+    const result = await execFileAsync(candidate, ['--version'], { timeout: 10_000 }).catch(() => null)
+    const version = result ? parseVersionOutput(result.stdout) : null
+    if (!version) continue
+    if (isSupportedVersion(version)) return candidate
+    found.push(`${candidate} ${version}`)
+  }
+  const seen = found.length > 0 ? `found ${found.join(', ')}` : 'no opencode binary on PATH'
+  return new OpenCodeUnavailableError({ reason: `no OpenCode >= ${MIN_OPENCODE_VERSION}: ${seen}` })
+}
+
 export type OpencodeEndpoint = {
   client: OpenCodeClient
   url: string
@@ -67,9 +102,11 @@ export async function resolveOpencode({
   const endpoint = await (async () => {
     if (discovered) return discovered
     if (!ensure) return new OpenCodeUnavailableError({ reason: 'no running service' })
-    logger.log('no OpenCode service found, starting it with Service.ensure()')
-    return Service.ensure({ file: serviceFile }).catch(
-      (e) => new OpenCodeUnavailableError({ reason: 'ensure failed', cause: e }),
+    const binary = await resolveOpencodeBinary()
+    if (binary instanceof Error) return binary
+    logger.log(`no OpenCode service found, starting \`${binary} serve --service\``)
+    return Service.ensure({ file: serviceFile, command: [binary, 'serve', '--service'] }).catch(
+      (e) => new OpenCodeUnavailableError({ reason: `${binary} serve --service failed: ${errorText(e)}`, cause: e }),
     )
   })()
   if (endpoint instanceof Error) return endpoint
@@ -181,7 +218,9 @@ export function watchOpencode({
     while (!controller.signal.aborted) {
       const endpoint = await resolveOpencode({ serviceFile, ensure })
       if (controller.signal.aborted) return
-      if (endpoint instanceof OpenCodeVersionError) {
+      // Wrong version, or no service at startup: fatal, the user must act.
+      // After a first connect, failures are restarts and upgrades: retry.
+      if (endpoint instanceof OpenCodeVersionError || (endpoint instanceof Error && state.endpoint === null)) {
         readyDeferred.resolve(endpoint)
         logger.error(endpoint.message)
         return

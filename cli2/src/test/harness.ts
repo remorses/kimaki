@@ -5,6 +5,7 @@
 // against discord-digital-twin.
 
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -20,7 +21,9 @@ import {
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 
+import { GATEWAY_APP_ID, saveCredentials, type Credentials } from '../credentials.ts'
 import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
+import type { ToolInput } from '../format-parts.ts'
 import * as schema from '../schema.ts'
 import { startBot, type BotHandle } from '../main.ts'
 
@@ -167,7 +170,8 @@ export type TestTwin = {
   unregisteredChannelId: string
 }
 
-export async function startTwin(): Promise<TestTwin> {
+// gateway: the twin plays gateway-proxy and accepts a clientId:secret token.
+export async function startTwin({ gateway = false }: { gateway?: boolean } = {}): Promise<TestTwin> {
   const channelId = '200000000000000100'
   const unregisteredChannelId = '200000000000000101'
   const quietChannelId = '200000000000000102'
@@ -176,6 +180,7 @@ export async function startTwin(): Promise<TestTwin> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-twin-'))
   const discord = new DigitalDiscord({
     dbUrl: `file:${path.join(root, 'twin.db')}`,
+    ...(gateway && { botToken: `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}` }),
     guild: { name: 'Kimaki Test', ownerId: TEST_USER_ID },
     channels: [
       { id: channelId, name: 'project', type: ChannelType.GuildText },
@@ -237,9 +242,18 @@ export async function startTestBot({
   twin: TestTwin
   server: OpencodeTestServer
 }): Promise<BotHandle> {
+  // What credential resolution saves in production; `kimaki project add` reads it.
+  const credentials: Credentials = twin.discord.botToken.includes(':')
+    ? { mode: 'gateway', appId: GATEWAY_APP_ID, token: twin.discord.botToken, baseUrl: new URL('/', twin.discord.restUrl).toString() }
+    : { mode: 'self_hosted', appId: twin.discord.botUserId, token: twin.discord.botToken, baseUrl: null }
+  const opened = await openDb({ dataDir, migrate: true })
+  if (opened instanceof Error) throw opened
+  const saved = await saveCredentials({ db: opened.db, credentials })
+  opened.close()
+  if (saved instanceof Error) throw saved
   const bot = await startBot({
     dataDir,
-    token: twin.discord.botToken,
+    token: credentials.token,
     lockPort: await freePort(),
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,
@@ -315,4 +329,63 @@ export async function waitForBotMessageContaining({
       return messages.find((message) => message.author.id === discord.botUserId && message.content.includes(text))
     },
   })
+}
+
+// Deterministic provider responses for scripted turns.
+const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
+
+export function textParts(text: string): DeterministicMatcher['then']['parts'] {
+  return [
+    { type: 'text-start', id: 'text' },
+    { type: 'text-delta', id: 'text', delta: text },
+    { type: 'text-end', id: 'text' },
+    { type: 'finish', finishReason: 'stop', usage },
+  ]
+}
+
+export function toolParts({
+  toolCallId,
+  toolName,
+  input,
+}: {
+  toolCallId: string
+  toolName: string
+  input: ToolInput
+}): DeterministicMatcher['then']['parts'] {
+  return [
+    { type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input) },
+    { type: 'finish', finishReason: 'tool-calls', usage },
+  ]
+}
+
+// Each step of a scripted turn matches on the tool call id of the previous
+// step, which is in the raw prompt only after that tool ran.
+export function scriptedTurn({
+  marker,
+  steps,
+  finalText,
+}: {
+  marker: string
+  steps: Array<{ id: string; tool: string; input: ToolInput }>
+  finalText: string
+}): DeterministicMatcher[] {
+  const toolMatchers = steps.map((step, index): DeterministicMatcher => {
+    const previous = steps[index - 1]
+    return {
+      id: `${marker}-${step.id}`,
+      priority: 100 + index,
+      when: { latestUserTextIncludes: marker, ...(previous && { rawPromptIncludes: previous.id }) },
+      then: { parts: toolParts({ toolCallId: step.id, toolName: step.tool, input: step.input }) },
+    }
+  })
+  const last = steps[steps.length - 1]
+  return [
+    ...toolMatchers,
+    {
+      id: `${marker}-final`,
+      priority: 100 + steps.length,
+      when: { latestUserTextIncludes: marker, ...(last && { rawPromptIncludes: last.id }) },
+      then: { parts: textParts(finalText) },
+    },
+  ]
 }

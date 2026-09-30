@@ -86,12 +86,16 @@ export function createActions({
     text,
     author,
     messageId,
+    threadName: explicitName,
   }: {
     channelId: string
     directory: string
     text: string
     author: Author
+    // The thread starts from this message; it also keys the prompt id.
     messageId: string
+    // Default: the prompt text, flattened and cut to 80 chars.
+    threadName?: string
   }): Promise<
     OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }
   > {
@@ -105,7 +109,7 @@ export function createActions({
     if (channel?.type !== ChannelType.GuildText) {
       return new DiscordError({ operation: `start thread in non-text channel ${channelId}` })
     }
-    const threadName = text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session'
+    const threadName = explicitName ?? (text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
     const thread = await channel.threads
       .create({ name: threadName, startMessage: messageId, autoArchiveDuration: 1440 })
       .catch((e) => new DiscordError({ operation: 'create thread', cause: e }))

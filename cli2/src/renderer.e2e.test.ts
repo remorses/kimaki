@@ -10,66 +10,18 @@ import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
 import {
   TEST_USER_ID,
+  scriptedTurn,
   seedProjectChannel,
   startOpencodeTestServer,
   startTestBot,
   startTwin,
   tempDataDir,
+  textParts,
   waitForFooter,
   warmUp,
   type OpencodeTestServer,
   type TestTwin,
 } from './test/harness.ts'
-
-const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 }
-
-function textParts(text: string): DeterministicMatcher['then']['parts'] {
-  return [
-    { type: 'text-start', id: 'text' },
-    { type: 'text-delta', id: 'text', delta: text },
-    { type: 'text-end', id: 'text' },
-    { type: 'finish', finishReason: 'stop', usage },
-  ]
-}
-
-function toolParts(toolCallId: string, toolName: string, input: unknown): DeterministicMatcher['then']['parts'] {
-  return [
-    { type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input) },
-    { type: 'finish', finishReason: 'tool-calls', usage },
-  ]
-}
-
-// Each step of a scripted turn matches on the tool call id of the previous
-// step, which is in the raw prompt only after that tool ran.
-function scriptedTurn({
-  marker,
-  steps,
-  finalText,
-}: {
-  marker: string
-  steps: Array<{ id: string; tool: string; input: unknown }>
-  finalText: string
-}): DeterministicMatcher[] {
-  const toolMatchers = steps.map((step, index): DeterministicMatcher => {
-    const previous = steps[index - 1]
-    return {
-      id: `${marker}-${step.id}`,
-      priority: 100 + index,
-      when: { latestUserTextIncludes: marker, ...(previous && { rawPromptIncludes: previous.id }) },
-      then: { parts: toolParts(step.id, step.tool, step.input) },
-    }
-  })
-  const last = steps[steps.length - 1]
-  return [
-    ...toolMatchers,
-    {
-      id: `${marker}-final`,
-      priority: 100 + steps.length,
-      when: { latestUserTextIncludes: marker, ...(last && { rawPromptIncludes: last.id }) },
-      then: { parts: textParts(finalText) },
-    },
-  ]
-}
 
 const LONG_CODE = Array.from({ length: 80 }, (_, index) => `const value${index} = compute(${index}) // line ${index}`).join(
   '\n',

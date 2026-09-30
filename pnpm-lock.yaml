@@ -214,6 +214,12 @@ importers:
 
   cli2:
     dependencies:
+      '@clack/prompts':
+        specifier: ^1.7.0
+        version: 1.7.0
+      '@discordjs/core':
+        specifier: 2.5.0
+        version: 2.5.0
       '@libsql/client':
         specifier: ^0.17.2
         version: 0.17.4
@@ -1406,6 +1412,10 @@ packages:
     resolution: {integrity: sha512-LiSusze9Tc7qF03sLCujF5iZp7K+vRNEDBZ86FT9aQAv3vxMLihUvKvpsCWiQ2DJq1tVckopKm1rxomgNUc9hg==}
     engines: {node: '>=18'}
 
+  '@discordjs/core@2.5.0':
+    resolution: {integrity: sha512-7wRdqrfT/cBOwDCj1wu8KrvolUad9fIdYTBk8EOzaz8+9Yqu38R2ZxEQEDxKU4kIi8p4UK8SGOjd6gV3hZZBjw==}
+    engines: {node: '>=20'}
+
   '@discordjs/formatters@0.6.2':
     resolution: {integrity: sha512-y4UPwWhH6vChKRkGdMB4odasUbHOUwy7KL+OVwF86PvT6QVOwElx+TiI1/6kcmcEe+g5YRXJFiXSXUdabqZOvQ==}
     engines: {node: '>=16.11.0'}
@@ -1425,6 +1435,10 @@ packages:
   '@discordjs/ws@1.2.3':
     resolution: {integrity: sha512-wPlQDxEmlDg5IxhJPuxXr3Vy9AjYq5xCvFWGJyD7w7Np8ZGu+Mc+97LCoEc/+AYCo2IDpKioiH0/c/mj5ZR9Uw==}
     engines: {node: '>=16.11.0'}
+
+  '@discordjs/ws@2.0.4':
+    resolution: {integrity: sha512-ARXnE+qi+D7Y4trd1bKA9uhiUxQvLbOKcdehDa6NLd7FiqmDvvk8N5RGk6Ho9gdT/Wap09dz/IuLv7hNpUzt6g==}
+    engines: {node: '>=20'}
 
   '@drizzle-team/brocli@0.11.0':
     resolution: {integrity: sha512-hD3pekGiPg0WPCCGAZmusBBJsDqGUR66Y452YgQsZOnkdQ7ViEPKuyP4huUGEZQefp8g34RRodXYmJ2TbCH+tg==}
@@ -9122,6 +9136,18 @@ snapshots:
 
   '@discordjs/collection@2.1.1': {}
 
+  '@discordjs/core@2.5.0':
+    dependencies:
+      '@discordjs/rest': 2.6.1
+      '@discordjs/util': 1.2.0
+      '@discordjs/ws': 2.0.4
+      '@sapphire/snowflake': 3.5.5
+      '@vladfrangu/async_event_emitter': 2.4.7
+      discord-api-types: 0.38.49
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@discordjs/formatters@0.6.2':
     dependencies:
       discord-api-types: 0.38.49
@@ -9161,6 +9187,21 @@ snapshots:
       - utf-8-validate
 
   '@discordjs/ws@1.2.3':
+    dependencies:
+      '@discordjs/collection': 2.1.1
+      '@discordjs/rest': 2.6.1
+      '@discordjs/util': 1.2.0
+      '@sapphire/async-queue': 1.5.5
+      '@types/ws': 8.18.1
+      '@vladfrangu/async_event_emitter': 2.4.7
+      discord-api-types: 0.38.49
+      tslib: 2.8.1
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@discordjs/ws@2.0.4':
     dependencies:
       '@discordjs/collection': 2.1.1
       '@discordjs/rest': 2.6.1

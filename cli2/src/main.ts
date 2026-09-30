@@ -4,7 +4,7 @@
 
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 
-import { createActions } from './actions.ts'
+import { createActions, type Actions } from './actions.ts'
 import { openDb, type OpenedDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
@@ -12,7 +12,7 @@ import { createEventLoop } from './event-loop.ts'
 import { registerIngress } from './ingress.ts'
 import { createLogger, setLogFile } from './logger.ts'
 import { startLockServer, type LockServer } from './lock-server.ts'
-import { watchOpencode, type OpencodeConnection } from './opencode-server.ts'
+import { watchOpencode, type OpencodeConnection, type OpencodeEndpoint } from './opencode-server.ts'
 import { createBotStore, type BotStore } from './store.ts'
 
 const logger = createLogger('MAIN')
@@ -21,8 +21,9 @@ export type StartBotOptions = {
   dataDir: string
   token: string
   lockPort: number
-  // Test only: digital twin REST base URL. The gateway URL comes from /gateway/bot.
-  discordRestUrl?: string
+  // discord.js REST `api` URL: gateway-proxy in gateway mode, the digital twin
+  // in tests. The WebSocket URL comes from GET /gateway/bot on that host.
+  discordRestUrl?: string | null
   // Registration file of the OpenCode service. Defaults to the XDG state dir.
   opencodeServiceFile?: string
   // Start the service with Service.ensure() when none is running.
@@ -35,6 +36,7 @@ export type BotHandle = {
   db: OpenedDb
   lock: LockServer
   store: BotStore
+  actions: Actions
   stop: () => Promise<void>
 }
 
@@ -90,25 +92,27 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     await lock.close()
   }
 
-  // A fatal error on one side stops the other, so startup never hangs.
-  const [opencodeReady, discordReady] = await Promise.all([
-    opencode.ready.then((ready) => {
-      if (ready instanceof Error) void discord.destroy()
-      return ready
-    }),
-    loginDiscord({ discord, token: options.token }).then((login) => {
-      if (login instanceof Error) opencode.stop()
-      return login
-    }),
-  ])
-  if (opencodeReady instanceof Error) {
+  // Resolves with the first fatal error, or null when both sides are ready.
+  // Not Promise.all: a failed side must not wait for the other (Discord login
+  // or OpenCode retries can take long), and the other side's "stopped" error
+  // would hide the real cause.
+  const failure = await new Promise<Error | null>((resolve) => {
+    const pending = { count: 2 }
+    const settle = (result: Error | OpencodeEndpoint | void) => {
+      if (result instanceof Error) {
+        resolve(result)
+        return
+      }
+      pending.count--
+      if (pending.count === 0) resolve(null)
+    }
+    void opencode.ready.then(settle)
+    void loginDiscord({ discord, token: options.token }).then(settle)
+  })
+  if (failure) {
     await stop()
-    return opencodeReady
-  }
-  if (discordReady instanceof Error) {
-    await stop()
-    return discordReady
+    return failure
   }
   logger.log(`bot ready as ${discord.user?.tag}`)
-  return { discord, opencode, db, lock, store, stop }
+  return { discord, opencode, db, lock, store, actions, stop }
 }

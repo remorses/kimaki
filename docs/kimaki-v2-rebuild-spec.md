@@ -1922,6 +1922,14 @@ for await (const event of client.event.subscribe({ signal })) {
   disconnected is intentionally not posted (6.8).
 - **No plugin file yet.** P0 asked for a no-op Kimaki plugin in the test config; cli2 adds
   none until P7 (no stubs).
+- **Onboarding without a project picker (decided).** The first start creates only the
+  default `kimaki-<bot>` channel (`<dataDir>/projects/kimaki`) and a `Kimaki onboarding`
+  thread whose session asks which projects to add, searches for git repos, and runs
+  `kimaki project add <dir>`. This replaces the `project.list` multiselect and the
+  tutorial thread. The prompt forbids the question tool until P4 renders questions.
+- **`Service.ensure()` binary.** Its default command is `opencode` from `PATH`, which is
+  often V1 while V2 installs as `opencode2`. cli2 picks the first of `opencode2`,
+  `opencode` whose `--version` is at least 2.0.19 and passes it as `command`.
 
 ---
 
