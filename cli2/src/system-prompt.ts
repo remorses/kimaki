@@ -52,6 +52,15 @@ function escapeAttribute(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
 }
 
+// Prompt text as the user wrote it: withTurnContext() appends the block.
+export function stripTurnContext(text: string): string {
+  return text.replace(/\n\n<discord-user [^\n]*\/>$/, '')
+}
+
+export function withTurnContext({ text, context }: { text: string; context: string }): string {
+  return `${text}\n\n${context}`
+}
+
 export function turnContext({
   username,
   userId,

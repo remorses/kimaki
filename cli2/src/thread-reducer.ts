@@ -14,7 +14,7 @@
 // busy = root execution running OR any child running (29.2 #3). Typing
 // follows busy; the footer waits until nothing runs.
 
-import type { JsonValue, V2Event } from '@opencode/client'
+import type { JsonValue, SessionInboxInfo, V2Event } from '@opencode/client'
 
 import type { Verbosity } from './db.ts'
 import {
@@ -29,6 +29,8 @@ import {
   isToolVisible,
   type ModelRef,
 } from './format-parts.ts'
+import { hydrateQueue, reduceQueue, type QueuedItem } from './queue.ts'
+import { renderedUi, type UiEffect, type UiState } from './ui-prompts.ts'
 
 export type Turn = {
   startedAt: number
@@ -62,6 +64,11 @@ export type ThreadView = {
   // Blank line between text and tool blocks.
   lastKind: 'text' | 'tool' | null
   lastRetryAt: number | null
+  // Root inbox: user items not delivered yet, and the queued ones among them.
+  inputs: readonly string[]
+  queue: readonly QueuedItem[]
+  // Posted interactive messages (queue acks, questions, permissions).
+  ui: UiState
 }
 
 export type Effect =
@@ -70,6 +77,7 @@ export type Effect =
   // Model markdown, rendered and split by the executor.
   | { type: 'markdown'; text: string; blankLineBefore: boolean }
   | { type: 'typing'; on: boolean }
+  | UiEffect
 
 // Internal events produced by the event loop, folded through the same path.
 export type KimakiEvent =
@@ -78,8 +86,24 @@ export type KimakiEvent =
   | { type: 'kimaki.synced'; activeSessionIds: readonly string[]; at: number }
   // A session found by walking parentID after a bot restart.
   | { type: 'kimaki.child'; sessionId: string; agent: string }
+  // Message IDs of a `show` effect, reported back by the executor.
+  | { type: 'kimaki.rendered'; key: string; messageIds: readonly string[] }
+  // After a (re)connect: the root session inbox as OpenCode has it.
+  | { type: 'kimaki.hydrated'; inbox: readonly SessionInboxInfo[] }
 
 export type ThreadEvent = V2Event | KimakiEvent
+
+const KIMAKI_EVENT_TYPES: ReadonlySet<string> = new Set<KimakiEvent['type']>([
+  'kimaki.branch',
+  'kimaki.synced',
+  'kimaki.child',
+  'kimaki.rendered',
+  'kimaki.hydrated',
+])
+
+function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
+  return KIMAKI_EVENT_TYPES.has(event.type)
+}
 
 export type Prefs = {
   verbosity: Verbosity
@@ -112,6 +136,9 @@ export function emptyView({
     children: {},
     lastKind: null,
     lastRetryAt: null,
+    inputs: [],
+    queue: [],
+    ui: {},
   }
 }
 
@@ -355,12 +382,18 @@ function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; 
     case 'session.execution.interrupted':
       return { view: { ...view, turn: null, lastKind: null }, effects: [] }
     default:
-      return reduceTool({ view, event, prefs, label: undefined }) ?? none
+      return reduceQueue({ view, event, busy: isBusy(view) }) ?? reduceTool({ view, event, prefs, label: undefined }) ?? none
   }
 }
 
 function reduceKimaki({ view, event }: { view: ThreadView; event: KimakiEvent }): Result {
   switch (event.type) {
+    case 'kimaki.rendered': {
+      const rendered = renderedUi({ ui: view.ui, key: event.key, messageIds: event.messageIds })
+      return { view: { ...view, ui: rendered.ui }, effects: rendered.effects }
+    }
+    case 'kimaki.hydrated':
+      return hydrateQueue({ view, inbox: event.inbox })
     case 'kimaki.branch':
       return { view: { ...view, branch: event.branch }, effects: [] }
     case 'kimaki.child': {
@@ -395,9 +428,7 @@ function registerChild({ view, event }: { view: ThreadView; event: V2Event }): T
 }
 
 function reduceEvent({ view, event, prefs }: { view: ThreadView; event: ThreadEvent; prefs: Prefs }): Result {
-  if (event.type === 'kimaki.branch' || event.type === 'kimaki.synced' || event.type === 'kimaki.child') {
-    return reduceKimaki({ view, event })
-  }
+  if (isKimakiEvent(event)) return reduceKimaki({ view, event })
   if (event.type === 'session.created') return { view: registerChild({ view, event }), effects: [] }
   const sessionId = eventSessionId(event)
   if (sessionId === view.sessionId) return reduceRoot({ view, event, prefs })

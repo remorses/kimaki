@@ -7,12 +7,13 @@
 // queue; consecutive bot lines are then merged into one message (≤ 2000
 // chars) so a burst of tool lines does not hit the 5 msg / 5s channel limit.
 
-import type { Client, MessageCreateOptions } from 'discord.js'
+import type { Client, MessageCreateOptions, SendableChannels } from 'discord.js'
 
 import { createLogger } from './logger.ts'
 import { segmentPayloads, type DiscordPayload } from './markdown/components.ts'
 import { DISCORD_TEXT_LIMIT, renderMarkdown } from './markdown/render-markdown.ts'
-import type { Effect } from './thread-reducer.ts'
+import type { Effect, KimakiEvent } from './thread-reducer.ts'
+import type { UiMessage } from './ui-prompts.ts'
 
 const logger = createLogger('EFFECTS')
 
@@ -42,7 +43,14 @@ function markdownMessages({ text, blankLineBefore }: { text: string; blankLineBe
   return segmentPayloads([{ kind: 'text', markdown: `\n${first.markdown}` }, ...rest])
 }
 
-export function createEffectsRunner({ discord }: { discord: Client }) {
+export function createEffectsRunner({
+  discord,
+  onRendered,
+}: {
+  discord: Client
+  // Feeds the IDs of posted interactive messages back into the reducer.
+  onRendered: (threadId: string, event: KimakiEvent) => void
+}) {
   const workers = new Map<string, ThreadWorker>()
   // After stop(): no more sends or typing, even from effects already queued.
   const lifecycle = { closed: false }
@@ -78,13 +86,21 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     thread.typing = null
   }
 
-  async function post(threadId: string, payload: DiscordPayload) {
-    if (lifecycle.closed) return
+  async function post({ threadId, options }: { threadId: string; options: MessageCreateOptions }) {
+    if (lifecycle.closed) return null
     const channel = await sendableChannel(threadId)
-    if (!channel || lifecycle.closed) return
-    const options: MessageCreateOptions = { ...payload, allowedMentions: { parse: ['users'] } }
-    const sent = await channel.send(options).catch((e: Error) => e)
-    if (sent instanceof Error) logger.error(`send failed in ${threadId}: ${sent.message}`)
+    if (!channel || lifecycle.closed) return null
+    const sent = await channel.send({ ...options, allowedMentions: { parse: ['users'] } }).catch((e: Error) => e)
+    if (!(sent instanceof Error)) return sent.id
+    logger.error(`send failed in ${threadId}: ${sent.message}`)
+    return null
+  }
+
+  async function edit({ channel, messageId, message }: { channel: SendableChannels; messageId: string; message: UiMessage }) {
+    const edited = await channel.messages
+      .edit(messageId, { content: message.content, components: [...message.components] })
+      .catch((e: Error) => e)
+    if (edited instanceof Error) logger.warn(`edit of ${messageId} failed: ${edited.message}`)
   }
 
   async function runOne(threadId: string, effect: Effect) {
@@ -99,10 +115,31 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
       await pulseTyping(threadId)
       return
     }
+    if (effect.type === 'edit') {
+      const channel = await sendableChannel(threadId)
+      if (channel && !lifecycle.closed) await edit({ channel, messageId: effect.messageId, message: effect.message })
+      return
+    }
+    if (effect.type === 'show') {
+      const ids: string[] = []
+      for (const [index, message] of effect.messages.entries()) {
+        const replyTo = index === 0 ? effect.replyTo : null
+        const id = await post({
+          threadId,
+          options: {
+            content: message.content,
+            components: [...message.components],
+            ...(replyTo && { reply: { messageReference: replyTo, failIfNotExists: false } }),
+          },
+        })
+        if (id) ids.push(id)
+      }
+      if (!lifecycle.closed) onRendered(threadId, { type: 'kimaki.rendered', key: effect.key, messageIds: ids })
+    }
     const payloads =
-      effect.type === 'send' ? [{ content: effect.text }] : markdownMessages(effect)
+      effect.type === 'send' ? [{ content: effect.text }] : effect.type === 'markdown' ? markdownMessages(effect) : []
     for (const payload of payloads) {
-      await post(threadId, payload)
+      await post({ threadId, options: payload })
     }
     // A bot message ends the typing indicator in the Discord UI.
     if (thread.typing) await pulseTyping(threadId)

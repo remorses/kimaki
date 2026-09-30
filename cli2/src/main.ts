@@ -71,7 +71,11 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
   })
   const store = createBotStore()
-  const effects = createEffectsRunner({ discord })
+  const effects = createEffectsRunner({
+    discord,
+    // eventLoop is assigned below, before any effect can run.
+    onRendered: (threadId, event) => eventLoop.dispatch(threadId, event),
+  })
   const recorder = createEventRecorder({ dataDir: options.dataDir })
   const eventLoop = createEventLoop({ store, db: db.db, discord, effects, recorder })
   const loaded = await eventLoop.load()
@@ -87,8 +91,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     onEvent: eventLoop.onEvent,
     onDisconnect: eventLoop.onDisconnect,
   })
-  const actions = createActions({ discord, db: db.db, opencode, eventLoop })
-  registerIngress({ discord, db: db.db, actions })
+  const actions = createActions({ discord, db: db.db, opencode, eventLoop, store })
+  registerIngress({ discord, db: db.db, store, actions })
 
   const stop = async () => {
     opencode.stop()
@@ -120,7 +124,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     await stop()
     return failure
   }
-  registerSlashCommands({ discord, db: db.db, kimaki: options.kimakiCommand })
+  registerSlashCommands({ discord, db: db.db, kimaki: options.kimakiCommand, store, actions })
   logger.log(`bot ready as ${discord.user?.tag}`)
   return { discord, opencode, db, lock, store, actions, stop }
 }

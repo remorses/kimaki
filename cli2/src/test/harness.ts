@@ -344,6 +344,26 @@ export function textParts(text: string): DeterministicMatcher['then']['parts'] {
   ]
 }
 
+// A reply that streams `text` only after `delayMs`, so tests can act while
+// the run is busy. Lowest priority: the marker stays in the thread name,
+// which is part of every later prompt's per-turn context.
+export function slowTextMatcher({
+  marker,
+  text,
+  delayMs,
+}: {
+  marker: string
+  text: string
+  delayMs: number
+}): DeterministicMatcher {
+  return {
+    id: marker,
+    priority: 1,
+    when: { latestUserTextIncludes: marker },
+    then: { parts: textParts(text), partDelaysMs: [0, delayMs, 0, 0] },
+  }
+}
+
 export function toolParts({
   toolCallId,
   toolName,

@@ -6,6 +6,8 @@ import path from 'node:path'
 import type { V2Event } from '@opencode/client'
 
 import { emptyView, reduce, type Effect, type Prefs, type ThreadEvent, type ThreadView } from '../thread-reducer.ts'
+import type { UiMessage } from '../ui-prompts.ts'
+import { ButtonStyle, ComponentType } from 'discord.js'
 
 const FIXTURES_DIR = path.join(import.meta.dirname, '../../../docs/opencode-v2-events')
 
@@ -54,11 +56,28 @@ export function replay({
   )
 }
 
+// "content {button labels / select placeholders}" for interactive messages.
+function uiLine(message: UiMessage): string {
+  const controls = message.components.flatMap((row) =>
+    row.components.map((component) => {
+      if (component.type === ComponentType.Button) return component.style === ButtonStyle.Premium ? 'sku' : (component.label ?? '')
+      if (component.type === ComponentType.StringSelect) return component.options.map((option) => option.label).join('/')
+      return String(component.type)
+    }),
+  )
+  return controls.length > 0 ? `${message.content} {${controls.join(', ')}}` : message.content
+}
+
 // One readable line per effect, for inline snapshots.
 export function effectLines(effects: Effect[]): string[] {
   return effects.map((effect) => {
     if (effect.type === 'typing') return `[typing ${effect.on ? 'on' : 'off'}]`
     if (effect.type === 'markdown') return `${effect.blankLineBefore ? '\\n' : ''}${effect.text}`
+    if (effect.type === 'show') {
+      const reply = effect.replyTo ? ` reply to ${effect.replyTo}` : ''
+      return `[show ${effect.key}${reply}] ${effect.messages.map(uiLine).join(' | ')}`
+    }
+    if (effect.type === 'edit') return `[edit ${effect.messageId}] ${uiLine(effect.message)}`
     return effect.text.replace(/^\n/, '\\n')
   })
 }

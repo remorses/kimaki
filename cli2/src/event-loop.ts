@@ -27,7 +27,7 @@ import { DbError, DiscordError, OpenCodeError } from './errors.ts'
 import { createLogger } from './logger.ts'
 import type { ConnectContext, OpenCodeClient, V2Event } from './opencode-server.ts'
 import type { BotStore } from './store.ts'
-import { emptyView, eventSessionId, reduce, type Prefs, type ThreadEvent } from './thread-reducer.ts'
+import { emptyView, eventSessionId, reduce, type KimakiEvent, type Prefs, type ThreadEvent } from './thread-reducer.ts'
 
 const logger = createLogger('EVENTS')
 
@@ -168,7 +168,11 @@ export function createEventLoop({
       queue.failures = 0
       const event = queue.events.shift()
       if (!event) break
-      if (event.type === 'session.execution.started' && eventSessionId(event) === context.sessionId) {
+      // A root execution starts, or one was found running after a (re)connect.
+      const rootStarts =
+        (event.type === 'session.execution.started' && eventSessionId(event) === context.sessionId) ||
+        (event.type === 'kimaki.synced' && event.activeSessionIds.includes(context.sessionId))
+      if (rootStarts) {
         apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory) } })
       }
       apply({ threadId, context, event })
@@ -261,18 +265,21 @@ export function createEventLoop({
       })
     },
 
-    // A session this bot just created for a thread. Called before the first
-    // prompt, so the whole first turn is routed and gets its banner.
+    // A session this bot just created or forked for a thread. Called before
+    // the first prompt, so the whole first turn is routed.
     async bind({
       threadId,
       sessionId,
       channelId,
       directory,
+      isNew,
     }: {
       threadId: string
       sessionId: string
       channelId: string
       directory: string
+      // New sessions show a banner on their first step; forks do not.
+      isNew: boolean
     }): Promise<DbError | void> {
       const verbosity = await readChannelVerbosity({ db, channelId })
       if (verbosity instanceof Error) return verbosity
@@ -283,7 +290,7 @@ export function createEventLoop({
         sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
         threads: {
           ...current.threads,
-          [threadId]: emptyView({ threadId, sessionId, folder: path.basename(directory), isNew: true }),
+          [threadId]: emptyView({ threadId, sessionId, folder: path.basename(directory), isNew }),
         },
       }))
     },
@@ -319,6 +326,29 @@ export function createEventLoop({
       for (const [threadId, activeSessionIds] of byThread) {
         enqueue(threadId, { type: 'kimaki.synced', activeSessionIds, at: now })
       }
+      // Queue state of busy roots, and of views that still show queued items.
+      const { roots } = store.getState()
+      const hydrate = Object.entries(roots).filter(
+        ([threadId, sessionId]) => active[sessionId] || (threads[threadId]?.queue.length ?? 0) > 0,
+      )
+      const inboxes = await Promise.all(
+        hydrate.map(async ([threadId, sessionId]) => {
+          const inbox = await client.session.inbox
+            .list({ sessionID: sessionId }, { signal })
+            .catch((e) => new OpenCodeError({ operation: 'session.inbox.list', cause: e }))
+          return { threadId, inbox }
+        }),
+      )
+      if (signal.aborted) return new OpenCodeError({ operation: 'hydrate (superseded)' })
+      for (const { threadId, inbox } of inboxes) {
+        if (inbox instanceof Error) return inbox
+        enqueue(threadId, { type: 'kimaki.hydrated', inbox })
+      }
+    },
+
+    // Internal events (executor results) go through the same per-thread FIFO.
+    dispatch(threadId: string, event: KimakiEvent): void {
+      enqueue(threadId, event)
     },
 
     onEvent(event: V2Event): void {

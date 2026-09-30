@@ -173,3 +173,95 @@ test('parallel children created out of call order get the right label and mode',
     }
   `)
 })
+
+test('queue-plain: acks with positions while busy, echo per delivered item, one footer', () => {
+  const { effects, view } = replay({ events: loadFixture('queue-plain.events.jsonl') })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "[typing on]",
+      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# ┣ shell _sleep 6 && echo slow-done_",
+      "[show queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued at position 1. Edit or delete your message to update the queue {Remove from queue}",
+      "[show queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued at position 2. Edit or delete your message to update the queue {Remove from queue}",
+      "\\nDone.",
+      "» **queued:** QUEUED-1: reply with the word apple.",
+      "apple",
+      "» **queued:** QUEUED-2: reply with the word cherry.",
+      "cherry",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 15s ⋅ 6% ⋅ gpt-6-luna*",
+    ]
+  `)
+  expect({ queue: view.queue, inputs: view.inputs, ui: view.ui }).toMatchInlineSnapshot(`
+    {
+      "inputs": [],
+      "queue": [],
+      "ui": {
+        "queue:msg_0f20347e1001nsJ7W4hOvhBpQb": {
+          "final": [
+            {
+              "components": [],
+              "content": "-# Queued message sent",
+            },
+          ],
+          "messageIds": null,
+        },
+        "queue:msg_0f20347e500196F4o0voD7LGMV": {
+          "final": [
+            {
+              "components": [],
+              "content": "-# Queued message sent",
+            },
+          ],
+          "messageIds": null,
+        },
+      },
+    }
+  `)
+})
+
+test('steer-queue: cancelled item settles its ack, interrupted run has no footer', () => {
+  const { effects, view } = replay({ events: loadFixture('steer-queue.events.jsonl') })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "[typing on]",
+      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# ┣ shell _sleep 8 && echo slow-done_",
+      "[show queue:msg_0f200f884001tIpWlHhNB8Y5bv] -# Queued at position 1. Edit or delete your message to update the queue {Remove from queue}",
+      "[show queue:msg_kimaki_queued_b_test1] -# Queued at position 2. Edit or delete your message to update the queue {Remove from queue}",
+      "[show queue:msg_0f200f88a001SXny4FyIMuMPS6] -# Queued at position 3. Edit or delete your message to update the queue {Remove from queue}",
+      "[typing off]",
+      "[typing on]",
+      "-# ┣ shell _date_",
+      "\\nDone. The current date is Wed Sep 30 2026.",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
+    ]
+  `)
+  // The recorded order (prompt, then interrupt with resume) parks queued items.
+  expect(view.queue.map((item) => item.text)).toMatchInlineSnapshot(`
+    [
+      "QUEUED-A: after everything, reply with the word apple.",
+      "QUEUED-C: reply with the word cherry.",
+    ]
+  `)
+})
+
+test('queue-parked: parked item runs and echoes after the next prompt', () => {
+  const { effects } = replay({ events: loadFixture('queue-parked.events.jsonl') })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "[typing on]",
+      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# ┣ shell _sleep 6 && echo slow-done_",
+      "[show queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued at position 1. Edit or delete your message to update the queue {Remove from queue}",
+      "[typing off]",
+      "[typing on]",
+      "kiwi",
+      "» **queued:** PARKED-1: reply with the word apple.",
+      "apple",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 6s ⋅ 6% ⋅ gpt-6-luna*",
+    ]
+  `)
+})
