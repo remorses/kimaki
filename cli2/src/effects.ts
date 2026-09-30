@@ -71,6 +71,8 @@ type ThreadWorker = {
   queue: Effect[]
   running: boolean
   typing: ReturnType<typeof setInterval> | null
+  // Bumped by dispose(): effects taken before it are dropped.
+  generation: number
 }
 
 // Adjacent `send` effects become one, as long as the joined text fits a message.
@@ -102,7 +104,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
   function worker(threadId: string): ThreadWorker {
     const existing = workers.get(threadId)
     if (existing) return existing
-    const created: ThreadWorker = { queue: [], running: false, typing: null }
+    const created: ThreadWorker = { queue: [], running: false, typing: null, generation: 0 }
     workers.set(threadId, created)
     return created
   }
@@ -201,7 +203,9 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     if (thread.running) return
     thread.running = true
     while (thread.queue.length > 0) {
+      const generation = thread.generation
       for (const effect of mergeSends(thread.queue.splice(0))) {
+        if (thread.generation !== generation) break
         await runOne(threadId, effect)
       }
     }
@@ -213,6 +217,14 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
       if (effects.length === 0 || lifecycle.closed) return
       worker(threadId).queue.push(...effects)
       void drain(threadId)
+    },
+    // The thread no longer shows a session: drop what is pending and stop typing.
+    dispose(threadId: string): void {
+      const thread = workers.get(threadId)
+      if (!thread) return
+      thread.queue.length = 0
+      thread.generation++
+      stopTyping(threadId)
     },
     stop(): void {
       lifecycle.closed = true

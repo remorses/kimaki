@@ -180,14 +180,14 @@ export function registerIngress({
     if (route instanceof Error) return reportError(route)
     if (!route) return
     // The transcription is not visible anywhere else.
-    if (voice && thread && route.kind !== 'shell' && route.kind !== 'command') {
+    if (voice && thread && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
       await message.reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] } })
     }
 
     if (!thread) {
       // A channel message starts a session. Queue and btw need one to wait
       // for or fork from: here they are plain prompts.
-      const first = route.kind === 'shell' || route.kind === 'command' ? route : { ...route, kind: 'steer' as const }
+      const first = route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' ? route : { ...route, kind: 'steer' as const }
       const started = await actions.startSession({
         channelId,
         directory: project.directory,

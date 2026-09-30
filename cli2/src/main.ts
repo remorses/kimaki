@@ -124,7 +124,9 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     await stop()
     return failure
   }
-  registerSlashCommands({ discord, db: db.db, kimaki: options.kimakiCommand, store, actions })
+  const commands = registerSlashCommands({ discord, db: db.db, kimaki: options.kimakiCommand, store, actions, opencode })
+  // Awaited so the handle is only returned once every guild has its commands.
+  await commands.registerAll()
   logger.log(`bot ready as ${discord.user?.tag}`)
   return { discord, opencode, db, lock, store, actions, stop }
 }

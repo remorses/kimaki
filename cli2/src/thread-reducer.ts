@@ -14,10 +14,18 @@
 // busy = root execution running OR any child running (29.2 #3). Typing
 // follows busy; the footer waits until nothing runs.
 
-import type { FormInfo, JsonValue, PermissionRequest, SessionInboxInfo, V2Event } from '@opencode/client'
+import type {
+  FormInfo,
+  JsonValue,
+  PermissionRequest,
+  SessionInboxInfo,
+  SessionMessageInfo,
+  V2Event,
+} from '@opencode/client'
 
 import type { Verbosity } from './db.ts'
 import {
+  asSubtext,
   formatBanner,
   type ToolInput,
   formatError,
@@ -93,6 +101,8 @@ export type KimakiEvent =
   | { type: 'kimaki.child'; sessionId: string; agent: string }
   // An action failed after it returned (a `!cmd` request): shown as an error line.
   | { type: 'kimaki.error'; message: string }
+  // History of a resumed or forked session, oldest first, then a closing note.
+  | { type: 'kimaki.replay'; messages: readonly SessionMessageInfo[]; note: string }
   // After a (re)connect: what one session of the thread waits on right now.
   // `inbox` only for the root session.
   | {
@@ -111,6 +121,7 @@ const KIMAKI_EVENT_TYPES: ReadonlySet<string> = new Set<KimakiEvent['type']>([
   'kimaki.child',
   'kimaki.hydrated',
   'kimaki.error',
+  'kimaki.replay',
 ])
 
 function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
@@ -335,7 +346,8 @@ function reduceChild({
 function footerResult({ view, created, prefs }: { view: ThreadView; created: number; prefs: Prefs }): Result {
   const turn = view.turn
   const next = { ...view, turn: null, lastKind: null }
-  if (!turn) return { view: next, effects: [] }
+  // No model step ran (a compaction-only execution): nothing to summarize.
+  if (!turn?.model) return { view: next, effects: [] }
   // A child still runs: the answer comes in a later parent execution.
   if (Object.values(view.children).some((child) => child.running)) return { view: next, effects: [] }
   const footer = formatFooter({
@@ -409,6 +421,11 @@ function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; 
           },
         ],
       }
+    // `/compact` or automatic compaction when the context is full.
+    case 'session.compaction.ended':
+      return toolLine({ view, text: asSubtext('⬦ context compacted') })
+    case 'session.compaction.failed':
+      return toolLine({ view, text: formatError(`compaction failed: ${event.data.error.message}`) })
     case 'session.execution.succeeded':
       return footerResult({ view, created: event.created, prefs })
     case 'session.execution.failed':
@@ -423,8 +440,47 @@ function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; 
   }
 }
 
-function reduceKimaki({ view, event }: { view: ThreadView; event: KimakiEvent }): Result {
+const REPLAY_LIMIT = 30
+
+// The last text and tool blocks of the assistant messages, like live output
+// (V1 /resume and /fork showed the last 30 parts). User messages are skipped.
+export function replayEffects({
+  messages,
+  prefs,
+  note,
+}: {
+  messages: readonly SessionMessageInfo[]
+  prefs: Prefs
+  note: string
+}): Effect[] {
+  type Block = { kind: 'text' | 'tool'; text: string }
+  const blocks = messages.flatMap((message): Block[] => {
+    if (message.type !== 'assistant') return []
+    return message.content.flatMap((part): Block[] => {
+      if (part.type === 'text') return part.text.trim() ? [{ kind: 'text', text: part.text.trim() }] : []
+      if (part.type !== 'tool' || typeof part.state.input === 'string') return []
+      const call = { name: part.name, input: part.state.input }
+      return isToolVisible(call, prefs.verbosity) ? [{ kind: 'tool', text: formatToolLine(call) }] : []
+    })
+  })
+  const kept = blocks.slice(-REPLAY_LIMIT)
+  const skipped = blocks.length - kept.length
+  const effects = kept.map((block, index): Effect => {
+    const previous = kept[index - 1]?.kind ?? null
+    if (block.kind === 'text') return { type: 'markdown', text: block.text, blankLineBefore: previous === 'tool' }
+    return { type: 'send', text: previous === 'text' ? `\n${block.text}` : block.text }
+  })
+  return [
+    ...(skipped > 0 ? [{ type: 'send' as const, text: asSubtext(`Skipped ${skipped} older parts`) }] : []),
+    ...effects,
+    { type: 'send', text: note },
+  ]
+}
+
+function reduceKimaki({ view, event, prefs }: { view: ThreadView; event: KimakiEvent; prefs: Prefs }): Result {
   switch (event.type) {
+    case 'kimaki.replay':
+      return { view: { ...view, lastKind: null }, effects: replayEffects({ messages: event.messages, prefs, note: event.note }) }
     case 'kimaki.error':
       return { view: { ...view, lastKind: null }, effects: [{ type: 'send', text: formatError(event.message) }] }
     case 'kimaki.hydrated': {
@@ -474,7 +530,7 @@ function registerChild({ view, event }: { view: ThreadView; event: V2Event }): T
 }
 
 function reduceEvent({ view, event, prefs }: { view: ThreadView; event: ThreadEvent; prefs: Prefs }): Result {
-  if (isKimakiEvent(event)) return reduceKimaki({ view, event })
+  if (isKimakiEvent(event)) return reduceKimaki({ view, event, prefs })
   if (event.type === 'session.created') return { view: registerChild({ view, event }), effects: [] }
   const sessionId = eventSessionId(event)
   if (!sessionId) return { view, effects: [] }

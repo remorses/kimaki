@@ -131,6 +131,8 @@ export function createEventLoop({
 
   function apply({ threadId, context, event }: { threadId: string; context: ThreadContext; event: ThreadEvent }) {
     const state = store.getState()
+    // Unbound (or rebound) while this event waited: it belongs to no view now.
+    if (state.roots[threadId] !== context.sessionId) return
     const view =
       state.threads[threadId] ??
       emptyView({
@@ -303,6 +305,7 @@ export function createEventLoop({
       channelId,
       directory,
       isNew,
+      first,
     }: {
       threadId: string
       sessionId: string
@@ -310,6 +313,8 @@ export function createEventLoop({
       directory: string
       // New sessions show a banner on their first step; forks do not.
       isNew: boolean
+      // Internal events folded before any live event of the session (history replay).
+      first?: readonly KimakiEvent[]
     }): Promise<DbError | void> {
       const verbosity = await readChannelVerbosity({ db, channelId })
       if (verbosity instanceof Error) return verbosity
@@ -323,6 +328,58 @@ export function createEventLoop({
           [threadId]: emptyView({ threadId, sessionId, folder: path.basename(directory), isNew }),
         },
       }))
+      // Same synchronous turn as the routing change: no live event can come first.
+      for (const event of first ?? []) enqueue(threadId, event)
+    },
+
+    // An existing session was bound to this thread (`/resume`, `/fork`): load
+    // what it runs and waits on now, like after a reconnect.
+    async hydrateThread(threadId: string): Promise<OpenCodeError | void> {
+      const client = connection.client
+      const sessionId = store.getState().roots[threadId]
+      if (!client || !sessionId) return
+      const signal = AbortSignal.timeout(10_000)
+      const active = await client.session
+        .active({ signal })
+        .catch((e) => new OpenCodeError({ operation: 'session.active', cause: e }))
+      if (active instanceof Error) return active
+      const unknown = Object.keys(active).filter((id) => !store.getState().sessionThreads[id] && !ignoredSessions.has(id))
+      const found = await Promise.all(unknown.map((id) => findAncestorThread({ client, sessionId: id, signal })))
+      for (const result of found) {
+        if (result && !(result instanceof Error)) adoptChain(result)
+      }
+      const { sessionThreads } = store.getState()
+      const activeSessionIds = Object.keys(active).filter((id) => sessionThreads[id] === threadId)
+      enqueue(threadId, { type: 'kimaki.synced', activeSessionIds, at: Date.now() })
+      const targets = [...new Set([sessionId, ...activeSessionIds])]
+      const hydrated = await Promise.all(
+        targets.map((id) => hydrateSession({ client, sessionId: id, isRoot: id === sessionId, signal })),
+      )
+      for (const event of hydrated) {
+        if (event instanceof Error) return event
+        enqueue(threadId, event)
+      }
+    },
+
+    // A thread loses its session (`/resume` moved the session to a new thread).
+    unbind(threadId: string): void {
+      contexts.delete(threadId)
+      effects.dispose(threadId)
+      store.setState((current) => {
+        const { [threadId]: _root, ...roots } = current.roots
+        const { [threadId]: _view, ...threads } = current.threads
+        const sessionThreads = Object.fromEntries(
+          Object.entries(current.sessionThreads).filter(([, mapped]) => mapped !== threadId),
+        )
+        return { roots, threads, sessionThreads }
+      })
+    },
+
+    // Channel settings changed (`/verbosity`): threads reload them with their next event.
+    forgetChannel(channelId: string): void {
+      for (const [threadId, context] of contexts) {
+        if (context.channelId === channelId) contexts.delete(threadId)
+      }
     },
 
     // Held live events wait while this runs (connect protocol, spec 6.8).

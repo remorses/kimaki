@@ -13,6 +13,8 @@ export type Route =
   | { kind: 'steer' | 'queue' | 'btw' | 'new-session'; text: string; agent?: string }
   | { kind: 'shell'; command: string }
   | { kind: 'command'; name: string; arguments: string; queue: boolean }
+  // `/<skill>-skill args`: a prompt with the skill attached.
+  | { kind: 'skill'; id: string; arguments: string }
 
 const BTW_SUFFIX_RE = /(?:[.!?,;:])\s*btw\.?\s*$|\n\s*btw\.?\s*$/i
 // "btw queue" forks at once: a queued fork is not native (spec 9.2).

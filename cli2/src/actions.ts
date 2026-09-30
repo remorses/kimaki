@@ -12,10 +12,13 @@
 // execution with "input" scope, which runs queued items after it. The other
 // order (prompt, then interrupt with resume) parks queued items for good.
 
-import { ChannelType, type Client, type Message, type ThreadChannel } from 'discord.js'
+import path from 'node:path'
+import type { SessionMetadata } from '@opencode/client'
+import { ChannelType, type Client, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
+import * as orm from 'drizzle-orm'
 
-import type { KimakiDb } from './db.ts'
-import { DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
+import { verbosityToV1, type KimakiDb, type Verbosity } from './db.ts'
+import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import type { EventLoop } from './event-loop.ts'
 import { createLogger } from './logger.ts'
 import type { OpencodeConnection } from './opencode-server.ts'
@@ -26,12 +29,15 @@ import { parseTextMessage, type Route } from './routes.ts'
 import * as schema from './schema.ts'
 import type { BotStore } from './store.ts'
 import { baseInstructions, INSTRUCTION_KEY, turnContext, withTurnContext } from './system-prompt.ts'
+import { isBusy } from './thread-reducer.ts'
 
 const logger = createLogger('ACTIONS')
 
 export type Author = { id: string; username: string }
 
 export type PromptFile = { uri: string; name: string }
+
+export type ModelChoice = { providerID: string; id: string; variant: string | null }
 
 // Prompt IDs map a Discord message to its inbox item without stored state (spec 9.2.2).
 export function promptIdForMessage(messageId: string): string {
@@ -53,6 +59,7 @@ function parseModel(value: string | null | undefined, variant: string | null | u
 function routeText(route: Route): string {
   if (route.kind === 'shell') return `!${route.command}`
   if (route.kind === 'command') return `/${route.name}${route.arguments ? ` ${route.arguments}` : ''}`
+  if (route.kind === 'skill') return `/${route.id}${route.arguments ? ` ${route.arguments}` : ''}`
   return route.text
 }
 
@@ -115,6 +122,7 @@ export function createActions({
     messageId,
     delivery,
     files = [],
+    skills = [],
     id = promptIdForMessage(messageId),
   }: {
     sessionId: string
@@ -126,6 +134,8 @@ export function createActions({
     messageId: string
     delivery: 'steer' | 'queue'
     files?: readonly PromptFile[]
+    // Skill IDs attached to the prompt (`/<skill>-skill`).
+    skills?: readonly string[]
     id?: string
   }): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
     const opencodeClient = client()
@@ -137,6 +147,7 @@ export function createActions({
         id,
         text: withTurnContext({ text, context }),
         files: files.map((file) => ({ uri: file.uri, name: file.name })),
+        ...(skills.length > 0 && { skills: skills.map((skill) => ({ id: skill })) }),
         delivery,
         metadata: { discord: { userId: author.id, username: author.username, messageId, threadId } },
       })
@@ -210,12 +221,22 @@ export function createActions({
     author: Author
     messageId: string
     files?: readonly PromptFile[]
+    skills?: readonly string[]
   }): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
     const cancelled = await cancelPendingUi(input.threadId)
     if (cancelled instanceof Error) return cancelled
     const interrupted = await interrupt(input.sessionId)
     if (interrupted instanceof Error) return interrupted
     return prompt({ ...input, delivery: 'steer' })
+  }
+
+  async function textChannel(channelId: string): Promise<DiscordError | TextChannel> {
+    const channel = await discord.channels
+      .fetch(channelId)
+      .catch((e) => new DiscordError({ operation: `fetch channel ${channelId}`, cause: e }))
+    if (channel instanceof Error) return channel
+    if (channel?.type !== ChannelType.GuildText) return new DiscordError({ operation: `use non-text channel ${channelId}` })
+    return channel
   }
 
   async function threadProject(thread: ThreadChannel): Promise<DbError | DiscordError | { channelId: string; directory: string }> {
@@ -277,13 +298,8 @@ export function createActions({
     if (parentSessionId instanceof Error) return parentSessionId
     const project = await threadProject(sourceThread)
     if (project instanceof Error) return project
-    const channel = await discord.channels
-      .fetch(project.channelId)
-      .catch((e) => new DiscordError({ operation: `fetch channel ${project.channelId}`, cause: e }))
+    const channel = await textChannel(project.channelId)
     if (channel instanceof Error) return channel
-    if (channel?.type !== ChannelType.GuildText) {
-      return new DiscordError({ operation: `fork into non-text channel ${project.channelId}` })
-    }
 
     const [forked, thread] = await Promise.all([
       opencodeClient.session
@@ -515,7 +531,8 @@ export function createActions({
     if (agents instanceof Error) return agents
     return agents.data
       .filter((agent) => agent.mode !== 'subagent' && !agent.hidden)
-      .map((agent) => ({ name: agent.name, description: agent.description ?? '' }))
+      // The ID is what switchAgent and session.create take; the name is for display.
+      .map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
   }
 
   async function switchAgent({ sessionId, agent }: { sessionId: string; agent: string }) {
@@ -553,6 +570,8 @@ export function createActions({
         return shell({ threadId, sessionId, command: route.command })
       case 'command':
         return command({ ...base, directory, route })
+      case 'skill':
+        return steer({ ...base, text: route.arguments, skills: [route.id] })
       case 'queue':
         // A queued voice message does not switch the agent: that would change the running turn.
         if (route.agent) logger.log(`ignoring agent ${route.agent} of a queued message`)
@@ -646,13 +665,8 @@ export function createActions({
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
 
-    const channel = await discord.channels
-      .fetch(channelId)
-      .catch((e) => new DiscordError({ operation: `fetch channel ${channelId}`, cause: e }))
+    const channel = await textChannel(channelId)
     if (channel instanceof Error) return channel
-    if (channel?.type !== ChannelType.GuildText) {
-      return new DiscordError({ operation: `start thread in non-text channel ${channelId}` })
-    }
     const text = routeText(route)
     const threadName = explicitName ?? (text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
     const thread = await channel.threads
@@ -690,8 +704,10 @@ export function createActions({
     const bound = await bindThread({ threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
     if (bound instanceof Error) return bound
     if (showInput) {
+      const names = files.map((file) => file.name).join(', ')
+      const shown = names ? `${text}\nFiles: ${names}` : text
       const echo = await thread
-        .send({ content: formatEcho({ username: author.username, text }), allowedMentions: { parse: [] } })
+        .send({ content: formatEcho({ username: author.username, text: shown }), allowedMentions: { parse: [] } })
         .catch((e) => new DiscordError({ operation: 'send first input', cause: e }))
       if (echo instanceof Error) return echo
     }
@@ -711,7 +727,340 @@ export function createActions({
     return { threadId: thread.id, sessionId: session.id }
   }
 
+  // --- Sessions that get a new thread: /resume, /fork, /fork-subagent.
+
+  // Binds an existing session to a new thread. Order matters:
+  //
+  //   thread + intro ─▶ metadata + instructions (new IDs) ─▶ history
+  //     ─▶ one DB batch: old bindings out, new one in ─▶ routing + replay (same tick)
+  //     ─▶ hydrate what it runs and waits on now
+  //
+  // Nothing routes to the thread before the replay, so live output follows
+  // it. A failure before the binding deletes the new thread (and calls
+  // `discard`), leaving any old binding untouched.
+  async function adoptSession({
+    channel,
+    session,
+    directory,
+    threadName,
+    intro,
+    note,
+    author,
+    discard,
+  }: {
+    channel: TextChannel
+    session: { id: string; metadata?: SessionMetadata }
+    directory: string
+    threadName: string
+    intro: string
+    note: string
+    author: Author
+    // Cleanup of a session created only for this thread (a fork).
+    discard?: () => Promise<void>
+  }): Promise<OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }> {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const sessionId = session.id
+    const thread = await channel.threads
+      .create({ name: threadName.replace(/\s+/g, ' ').slice(0, 100), autoArchiveDuration: 1440 })
+      .catch((e) => new DiscordError({ operation: 'create thread', cause: e }))
+    if (thread instanceof Error) return thread
+
+    const prepared = await (async () => {
+      const posted = await thread
+        .send({ content: intro.slice(0, 2_000), allowedMentions: { parse: [] } })
+        .catch((e) => new DiscordError({ operation: 'send intro', cause: e }))
+      if (posted instanceof Error) return posted
+      // Merge: other metadata (and task fields of the marker) stay.
+      const previous = session.metadata?.['kimaki']
+      const marker = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : {}
+      const marked = await opencodeClient.session
+        .update({
+          sessionID: sessionId,
+          metadata: {
+            ...session.metadata,
+            kimaki: { source: 'discord', ...marker, threadId: thread.id, channelId: channel.id },
+          },
+        })
+        .catch((e) => new OpenCodeError({ operation: 'session.update', cause: e }))
+      if (marked instanceof Error) return marked
+      const instructions = await opencodeClient.session.instructions.entry
+        .put({
+          sessionID: sessionId,
+          key: INSTRUCTION_KEY,
+          value: baseInstructions({ sessionId, threadId: thread.id, channelId: channel.id, guildId: channel.guildId }),
+        })
+        .catch((e) => new OpenCodeError({ operation: 'instructions.entry.put', cause: e }))
+      if (instructions instanceof Error) return instructions
+      const messages = await opencodeClient.message
+        .list({ sessionID: sessionId, order: 'desc', limit: 100 })
+        .catch((e) => new OpenCodeError({ operation: 'message.list', cause: e }))
+      if (messages instanceof Error) return messages
+      // One thread per session: older threads of this session stop following it.
+      const moved = await db
+        .batch([
+          db
+            .delete(schema.thread_sessions)
+            .where(orm.eq(schema.thread_sessions.session_id, sessionId))
+            .returning({ threadId: schema.thread_sessions.thread_id }),
+          db.insert(schema.thread_sessions).values({ thread_id: thread.id, session_id: sessionId, source: 'kimaki' }),
+        ])
+        .catch((e) => new DbError({ operation: 'move thread_sessions', cause: e }))
+      if (moved instanceof Error) return moved
+      return { history: [...messages.data].reverse(), previous: moved[0].map((row) => row.threadId) }
+    })()
+    if (prepared instanceof Error) {
+      await thread.delete('session adoption failed').catch(() => undefined)
+      await discard?.()
+      return prepared
+    }
+
+    for (const previousThread of prepared.previous) eventLoop.unbind(previousThread)
+    const bound = await eventLoop.bind({
+      threadId: thread.id,
+      sessionId,
+      channelId: channel.id,
+      directory,
+      isNew: false,
+      first: [{ type: 'kimaki.replay', messages: prepared.history, note }],
+    })
+    if (bound instanceof Error) return bound
+    logger.log(`session ${sessionId} bound to thread ${thread.id}`)
+    await thread.members.add(author.id).catch((e: Error) => logger.warn(`add member: ${e.message}`))
+    const hydrated = await eventLoop.hydrateThread(thread.id)
+    if (hydrated instanceof Error) logger.warn(`hydrate ${thread.id}: ${hydrated.message}`)
+    return { threadId: thread.id, sessionId }
+  }
+
+  // Binds an existing session of the channel's project to a new thread.
+  async function resume({ channelId, sessionId, author }: { channelId: string; sessionId: string; author: Author }) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const [channel, project] = await Promise.all([
+      textChannel(channelId),
+      db.query.channel_directories
+        .findFirst({ where: { channel_id: channelId } })
+        .catch((e) => new DbError({ operation: 'read channel_directories', cause: e })),
+    ])
+    if (channel instanceof Error) return channel
+    if (project instanceof Error) return project
+    if (!project) return new ConfigError({ reason: 'This channel is not configured with a project directory' })
+    const info = await opencodeClient.session
+      .get({ sessionID: sessionId })
+      .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
+    if (info instanceof Error) return info
+    if (path.resolve(info.location.directory) !== path.resolve(project.directory)) {
+      return new ConfigError({
+        reason: `This session belongs to a different project or worktree: \`${info.location.directory}\`. Run \`/resume\` in the channel for that directory.`,
+      })
+    }
+    const title = info.title ?? 'Untitled'
+    const adopted = await adoptSession({
+      channel,
+      session: info,
+      directory: project.directory,
+      threadName: `Resume: ${title}`,
+      intro: `**Resumed session:** ${title}\n**Created:** <t:${Math.floor(info.time.created / 1_000)}:f>`,
+      note: '**Session resumed!** You can now continue the conversation by sending messages in this thread.',
+      author,
+    })
+    if (adopted instanceof Error) return adopted
+    return { ...adopted, title }
+  }
+
+  // Forks the thread's session (or one of its subagent sessions) into a new
+  // thread. `before`: a user message ID; the fork ends right before it.
+  async function fork({
+    sourceThread,
+    sessionId,
+    before,
+    subagent,
+    author,
+  }: {
+    sourceThread: ThreadChannel
+    sessionId: string
+    before?: string
+    // Set when forking a subagent session: its agent and task.
+    subagent?: { agent: string; description: string }
+    author: Author
+  }) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const project = await threadProject(sourceThread)
+    if (project instanceof Error) return project
+    const channel = await textChannel(project.channelId)
+    if (channel instanceof Error) return channel
+    const forked = await opencodeClient.session
+      .fork({ sessionID: sessionId, ...(before && { before }) })
+      .catch((e) => new OpenCodeError({ operation: 'session.fork', cause: e }))
+    if (forked instanceof Error) return forked
+    const intro = subagent
+      ? `**Forked subagent session created!**\nAgent: \`${subagent.agent}\`\nTask: ${subagent.description || 'No description'}\nFrom: \`${sessionId}\`\nNew session: \`${forked.id}\``
+      : `**Forked session created!**\nFrom: <#${sourceThread.id}> (\`${sessionId}\`)\nNew session: \`${forked.id}\``
+    return adoptSession({
+      channel,
+      session: forked,
+      discard: async () => {
+        await opencodeClient.session.remove({ sessionID: forked.id }).catch(() => undefined)
+      },
+      directory: project.directory,
+      // OpenCode titles forks "<title> (fork #1)".
+      threadName: forked.title || `Fork: ${subagent?.description || sourceThread.name}`,
+      intro,
+      note: 'You can now continue the conversation from this point.',
+      author,
+    })
+  }
+
+  // --- Agent, model and channel preferences.
+
+  async function switchModel({ sessionId, model }: { sessionId: string; model: ModelChoice }) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const result = await opencodeClient.session
+      .switchModel({
+        sessionID: sessionId,
+        model: { providerID: model.providerID, id: model.id, ...(model.variant && { variant: model.variant }) },
+      })
+      .catch((e) => new OpenCodeError({ operation: 'session.switchModel', cause: e }))
+    if (result instanceof Error) return result
+  }
+
+  async function setChannelModel({ channelId, model }: { channelId: string; model: ModelChoice }): Promise<DbError | void> {
+    const values = { model_id: `${model.providerID}/${model.id}`, variant: model.variant ?? null }
+    const result = await db
+      .insert(schema.channel_models)
+      .values({ channel_id: channelId, ...values })
+      .onConflictDoUpdate({ target: schema.channel_models.channel_id, set: values })
+      .catch((e) => new DbError({ operation: 'write channel_models', cause: e }))
+    if (result instanceof Error) return result
+  }
+
+  async function setChannelAgent({ channelId, agent }: { channelId: string; agent: string }): Promise<DbError | void> {
+    const result = await db
+      .insert(schema.channel_agents)
+      .values({ channel_id: channelId, agent_name: agent })
+      .onConflictDoUpdate({ target: schema.channel_agents.channel_id, set: { agent_name: agent } })
+      .catch((e) => new DbError({ operation: 'write channel_agents', cause: e }))
+    if (result instanceof Error) return result
+  }
+
+  // Applies to running sessions of the channel too, from their next event.
+  async function setVerbosity({ channelId, verbosity }: { channelId: string; verbosity: Verbosity }): Promise<DbError | void> {
+    const value = verbosityToV1(verbosity)
+    const result = await db
+      .insert(schema.channel_verbosity)
+      .values({ channel_id: channelId, verbosity: value })
+      .onConflictDoUpdate({ target: schema.channel_verbosity.channel_id, set: { verbosity: value } })
+      .catch((e) => new DbError({ operation: 'write channel_verbosity', cause: e }))
+    if (result instanceof Error) return result
+    eventLoop.forgetChannel(channelId)
+  }
+
+  // --- Session history: /compact, /undo, /redo.
+
+  async function compact({ threadId }: { threadId: string }) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const sessionId = rootSession(threadId)
+    if (sessionId instanceof Error) return sessionId
+    const result = await opencodeClient.session
+      .compact({ sessionID: sessionId })
+      .catch((e) => new OpenCodeError({ operation: 'session.compact', cause: e }))
+    if (result instanceof Error) return result
+  }
+
+  // All user messages, oldest first: revert boundaries are user messages.
+  async function userMessages(sessionId: string): Promise<OpenCodeUnavailableError | OpenCodeError | Array<{ id: string }>> {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const collected: Array<{ id: string }> = []
+    let cursor: string | undefined
+    for (let page = 0; page < 100; page++) {
+      const result = await opencodeClient.message
+        // A cursor must not be combined with `order`.
+        .list({ sessionID: sessionId, type: 'user', limit: 200, ...(cursor ? { cursor } : { order: 'asc' as const }) })
+        .catch((e) => new OpenCodeError({ operation: 'message.list', cause: e }))
+      if (result instanceof Error) return result
+      collected.push(...result.data.map((message) => ({ id: message.id })))
+      cursor = result.cursor.next ?? undefined
+      if (!cursor) break
+    }
+    return collected
+  }
+
+  // Revert needs an idle session: stop the run first, like the OpenCode TUI.
+  async function idleSession(threadId: string) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const sessionId = rootSession(threadId)
+    if (sessionId instanceof Error) return sessionId
+    const view = store.getState().threads[threadId]
+    if (view && isBusy(view)) {
+      const interrupted = await interrupt(sessionId)
+      if (interrupted instanceof Error) return interrupted
+      const waited = await opencodeClient.session
+        .wait({ sessionID: sessionId })
+        .catch((e) => new OpenCodeError({ operation: 'session.wait', cause: e }))
+      if (waited instanceof Error) return waited
+    }
+    const info = await opencodeClient.session
+      .get({ sessionID: sessionId })
+      .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
+    if (info instanceof Error) return info
+    return { client: opencodeClient, sessionId, revert: info.revert?.messageID ?? null }
+  }
+
+  // Hides the last turn and reverts its file changes. Repeating goes one turn further back.
+  async function undo({ threadId }: { threadId: string }) {
+    const session = await idleSession(threadId)
+    if (session instanceof Error) return session
+    const messages = await userMessages(session.sessionId)
+    if (messages instanceof Error) return messages
+    const boundary = session.revert ? messages.findIndex((message) => message.id === session.revert) : messages.length
+    const target = messages[boundary - 1]
+    if (!target) return { reverted: null }
+    const staged = await session.client.session.revert
+      .stage({ sessionID: session.sessionId, messageID: target.id })
+      .catch((e) => new OpenCodeError({ operation: 'session.revert.stage', cause: e }))
+    if (staged instanceof Error) return staged
+    return { reverted: { files: staged.files?.length ?? 0 } }
+  }
+
+  // One turn forward again; past the last turn the revert is cleared.
+  async function redo({ threadId }: { threadId: string }) {
+    const session = await idleSession(threadId)
+    if (session instanceof Error) return session
+    if (!session.revert) return { restored: 'nothing' as const }
+    const messages = await userMessages(session.sessionId)
+    if (messages instanceof Error) return messages
+    const index = messages.findIndex((message) => message.id === session.revert)
+    const next = index >= 0 ? messages[index + 1] : undefined
+    if (!next) {
+      const cleared = await session.client.session.revert
+        .clear({ sessionID: session.sessionId })
+        .catch((e) => new OpenCodeError({ operation: 'session.revert.clear', cause: e }))
+      if (cleared instanceof Error) return cleared
+      return { restored: 'all' as const }
+    }
+    const staged = await session.client.session.revert
+      .stage({ sessionID: session.sessionId, messageID: next.id })
+      .catch((e) => new OpenCodeError({ operation: 'session.revert.stage', cause: e }))
+    if (staged instanceof Error) return staged
+    return { restored: 'step' as const }
+  }
+
   return {
+    resume,
+    fork,
+    switchAgent,
+    switchModel,
+    setChannelModel,
+    setChannelAgent,
+    setVerbosity,
+    compact,
+    undo,
+    redo,
     startSession,
     dispatch,
     shell,

@@ -15,7 +15,7 @@ import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { OpenCode, type OpenCodeClient } from '@opencode/client'
 import { Service } from '@opencode/client/service'
-import { ChannelType, type APIMessage } from 'discord.js'
+import { ChannelType, ComponentType, type APIMessage } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencode2Config,
@@ -66,12 +66,21 @@ export async function startOpencodeTestServer({
   matchers = [],
   permissions = [],
   commands = {},
+  models = {},
+  agents = {},
+  mcp,
 }: {
   matchers?: DeterministicMatcher[]
   // OpenCode commands (`/name args` in Discord), e.g. { review: { template: 'Review: $ARGUMENTS' } }.
   commands?: Record<string, { template: string; description?: string }>
   // Appended after the allow-all rules: the last matching rule wins.
   permissions?: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }>
+  // More deterministic models next to TEST_MODEL, e.g. with thinking variants.
+  models?: Record<string, { name: string; variants?: Array<{ id: string }> }>
+  // Agent overrides and custom agents (config `agents`).
+  agents?: Record<string, { description?: string; mode?: 'primary' | 'subagent' | 'all'; hidden?: boolean }>
+  // MCP servers (config `mcp.servers`).
+  mcp?: { servers: Record<string, { type: 'local'; command: string[] }> }
 } = {}): Promise<OpencodeTestServer> {
   // realpath: macOS tmpdir is /var/... but OpenCode resolves /private/var/...
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-e2e-')))
@@ -88,8 +97,9 @@ export async function startOpencodeTestServer({
       ...permissions,
     ],
   })
+  // No provider keys: the model catalog must not depend on the developer's env.
   const inherited = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith('OPENCODE_')),
+    Object.entries(process.env).filter(([key]) => !key.startsWith('OPENCODE_') && !key.endsWith('_API_KEY')),
   )
   const env = {
     ...inherited,
@@ -99,7 +109,15 @@ export async function startOpencodeTestServer({
     XDG_CONFIG_HOME: path.join(root, 'config'),
     XDG_CACHE_HOME: path.join(root, 'cache'),
     OPENCODE_TEST_HOME: path.join(root, 'home'),
-    OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, commands }),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      ...config,
+      providers: Object.fromEntries(
+        Object.entries(config.providers).map(([id, provider]) => [id, { ...provider, models: { ...provider.models, ...models } }]),
+      ),
+      commands,
+      agents,
+      ...(mcp && { mcp }),
+    }),
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
     OPENCODE_DISABLE_MODELS_FETCH: '1',
   } satisfies NodeJS.ProcessEnv
@@ -444,6 +462,39 @@ export async function waitForBotMessageContaining({
     check: async () => {
       const messages = await discord.thread(threadId).getMessages()
       return messages.find((message) => message.author.id === discord.botUserId && message.content.includes(text))
+    },
+  })
+}
+
+function selectOf(message: APIMessage) {
+  for (const row of message.components ?? []) {
+    if (row.type !== ComponentType.ActionRow) continue
+    for (const component of row.components) {
+      if (component.type === ComponentType.StringSelect) return component
+    }
+  }
+  return null
+}
+
+// The newest bot message with a select menu whose custom ID starts with `prefix`.
+export async function waitForSelectMenu({
+  discord,
+  channelId,
+  prefix,
+}: {
+  discord: DigitalDiscord
+  channelId: string
+  prefix: string
+}) {
+  return waitFor({
+    label: `select menu ${prefix}`,
+    check: async () => {
+      const messages = await discord.channel(channelId).getMessages()
+      for (const message of [...messages].reverse()) {
+        const select = selectOf(message)
+        if (select?.custom_id.startsWith(prefix)) return { message, select }
+      }
+      return null
     },
   })
 }

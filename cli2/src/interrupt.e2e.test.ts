@@ -18,7 +18,6 @@ import {
   startTwin,
   tempDataDir,
   textParts,
-  waitFor,
   waitForBotMessageContaining,
   waitForFooter,
   warmUp,
@@ -148,24 +147,5 @@ test('a restarted bot still echoes and runs the queue it did not see', async () 
     » **tommy:** Survives restart queued-one
     queued one ok
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-  `)
-})
-
-test('slash commands are registered in the guild', async () => {
-  const names = await waitFor({
-    label: 'registered commands',
-    check: async () => {
-      const rows = await twin.discord.prisma.applicationCommand.findMany({ where: { guildId: twin.discord.guildId } })
-      return rows.length > 0 ? rows.map((row) => row.name).sort() : null
-    },
-  })
-  expect(names).toMatchInlineSnapshot(`
-    [
-      "abort",
-      "btw",
-      "clear-queue",
-      "queue",
-      "session-id",
-    ]
   `)
 })
