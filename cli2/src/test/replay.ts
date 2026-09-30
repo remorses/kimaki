@@ -77,7 +77,7 @@ export function effectLines(effects: Effect[]): string[] {
       const reply = effect.replyTo ? ` reply to ${effect.replyTo}` : ''
       return `[show ${effect.key}${reply}] ${effect.messages.map(uiLine).join(' | ')}`
     }
-    if (effect.type === 'settle') return `[settle ${effect.key}] ${effect.final.map(uiLine).join(' | ')}`
+    if (effect.type === 'edit') return `[edit ${effect.key}] ${effect.messages.map(uiLine).join(' | ')}`
     return effect.text.replace(/^\n/, '\\n')
   })
 }

@@ -4,8 +4,8 @@
 // awaited by the event loop.
 //
 // Interactive prompts: `show` remembers the posted message IDs under its key,
-// `settle` edits those messages and forgets the key. A settle for a key this
-// process never showed (posted before a restart) does nothing.
+// `edit` with the same key replaces them and forgets the key. An edit for a
+// key this process never showed (posted before a restart) does nothing.
 //
 // When Discord is slower than the event stream, effects pile up in the
 // queue; consecutive bot lines are then merged into one message (≤ 2000
@@ -42,8 +42,8 @@ export type UiMessage = {
 export type UiEffect =
   // Posts the messages in order; the first replies to `replyTo` when set.
   | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null }
-  // Edits each posted message of `key` (by index; the last `final` covers the rest).
-  | { type: 'settle'; key: string; final: readonly UiMessage[] }
+  // Edits the messages `show` posted under `key` (by index; the last one covers the rest).
+  | { type: 'edit'; key: string; messages: readonly UiMessage[] }
 
 export function textOnly(content: string): UiMessage {
   return { content, components: [] }
@@ -93,7 +93,7 @@ function markdownMessages({ text, blankLineBefore }: { text: string; blankLineBe
 
 export function createEffectsRunner({ discord }: { discord: Client }) {
   const workers = new Map<string, ThreadWorker>()
-  // Prompt key -> IDs of its posted messages, until settled. The only
+  // Prompt key -> IDs of its posted messages, until edited. The only
   // Discord facts kept in memory (spec 6.3 #4).
   const prompts = new Map<string, readonly string[]>()
   // After stop(): no more sends or typing, even from effects already queued.
@@ -159,14 +159,14 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
       await pulseTyping(threadId)
       return
     }
-    if (effect.type === 'settle') {
+    if (effect.type === 'edit') {
       const ids = prompts.get(effect.key)
       prompts.delete(effect.key)
       if (!ids || ids.length === 0) return
       const channel = await sendableChannel(threadId)
       if (!channel || lifecycle.closed) return
       for (const [index, messageId] of ids.entries()) {
-        const message = effect.final[index] ?? effect.final[effect.final.length - 1]
+        const message = effect.messages[index] ?? effect.messages[effect.messages.length - 1]
         if (message) await edit({ channel, messageId, message })
       }
       return

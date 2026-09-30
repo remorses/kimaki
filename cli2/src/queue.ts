@@ -73,9 +73,9 @@ export function formatEcho({ username, text }: { username: string | null; text: 
   return `» **${username ?? 'queued'}:** ${body}`
 }
 
-function settleAck({ view, item, content }: { view: ThreadView; item: QueuedItem; content: string }): Result {
+function closeAck({ view, item, content }: { view: ThreadView; item: QueuedItem; content: string }): Result {
   if (!item.acked) return { view, effects: [] }
-  return { view, effects: [{ type: 'settle', key: ackKey(item.inboxID), final: [textOnly(asSubtext(content))] }] }
+  return { view, effects: [{ type: 'edit', key: ackKey(item.inboxID), messages: [textOnly(asSubtext(content))] }] }
 }
 
 function removeItem(view: ThreadView, inboxID: string): ThreadView {
@@ -107,7 +107,7 @@ export function reduceQueue({ view, event, busy }: { view: ThreadView; event: V2
       const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)
       const next = removeItem(view, event.data.inboxID)
       if (!item?.acked) return { view: next, effects: [] }
-      const settled = settleAck({ view: next, item, content: 'Queued message sent' })
+      const settled = closeAck({ view: next, item, content: 'Queued message sent' })
       return {
         view: { ...settled.view, lastKind: null },
         effects: [...settled.effects, { type: 'send', text: formatEcho(item) }],
@@ -117,13 +117,13 @@ export function reduceQueue({ view, event, busy }: { view: ThreadView; event: V2
       const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)
       const next = removeItem(view, event.data.inboxID)
       if (!item) return { view: next, effects: [] }
-      return settleAck({ view: next, item, content: 'Removed from queue' })
+      return closeAck({ view: next, item, content: 'Removed from queue' })
     }
     case 'session.inbox.delivery.changed': {
       // Promoted to steer: it leaves the queue and runs at the next step.
       const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)
       if (!item || event.data.delivery !== 'steer') return { view, effects: [] }
-      return settleAck({ view: { ...view, queue: view.queue.filter((q) => q !== item) }, item, content: 'Queued message sent' })
+      return closeAck({ view: { ...view, queue: view.queue.filter((q) => q !== item) }, item, content: 'Queued message sent' })
     }
     default:
       return null
@@ -146,7 +146,7 @@ export function hydrateQueue({ view, inbox }: { view: ThreadView; inbox: readonl
   const gone = view.queue.filter((item) => !pending.has(item.inboxID))
   return gone.reduce<Result>(
     (acc, item) => {
-      const settled = settleAck({ view: acc.view, item, content: 'No longer queued' })
+      const settled = closeAck({ view: acc.view, item, content: 'No longer queued' })
       return { view: settled.view, effects: [...acc.effects, ...settled.effects] }
     },
     { view: { ...view, queue, inputs: users.map((item) => item.id) }, effects: [] },

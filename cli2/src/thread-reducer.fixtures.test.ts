@@ -184,10 +184,10 @@ test('queue-plain: acks with positions while busy, echo per delivered item, one 
       "[show queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued at position 1. Edit or delete your message to update the queue {Remove from queue}",
       "[show queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued at position 2. Edit or delete your message to update the queue {Remove from queue}",
       "\\nDone.",
-      "[settle queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued message sent",
+      "[edit queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued message sent",
       "» **queued:** QUEUED-1: reply with the word apple.",
       "apple",
-      "[settle queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued message sent",
+      "[edit queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued message sent",
       "» **queued:** QUEUED-2: reply with the word cherry.",
       "cherry",
       "[typing off]",
@@ -202,7 +202,7 @@ test('queue-plain: acks with positions while busy, echo per delivered item, one 
   `)
 })
 
-test('steer-queue: cancelled item settles its ack, interrupted run has no footer', () => {
+test('steer-queue: cancelled item edits its ack, interrupted run has no footer', () => {
   const { effects, view } = replay({ events: loadFixture('steer-queue.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
@@ -212,7 +212,7 @@ test('steer-queue: cancelled item settles its ack, interrupted run has no footer
       "[show queue:msg_0f200f884001tIpWlHhNB8Y5bv] -# Queued at position 1. Edit or delete your message to update the queue {Remove from queue}",
       "[show queue:msg_kimaki_queued_b_test1] -# Queued at position 2. Edit or delete your message to update the queue {Remove from queue}",
       "[show queue:msg_0f200f88a001SXny4FyIMuMPS6] -# Queued at position 3. Edit or delete your message to update the queue {Remove from queue}",
-      "[settle queue:msg_kimaki_queued_b_test1] -# Removed from queue",
+      "[edit queue:msg_kimaki_queued_b_test1] -# Removed from queue",
       "[typing off]",
       "[typing on]",
       "-# ┣ shell _date_",
@@ -241,7 +241,7 @@ test('queue-parked: parked item runs and echoes after the next prompt', () => {
       "[typing off]",
       "[typing on]",
       "kiwi",
-      "[settle queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued message sent",
+      "[edit queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued message sent",
       "» **queued:** PARKED-1: reply with the word apple.",
       "apple",
       "[typing off]",
@@ -250,7 +250,7 @@ test('queue-parked: parked item runs and echoes after the next prompt', () => {
   `)
 })
 
-test('question: one dropdown per question, typing off while waiting, settled on reply', () => {
+test('question: one dropdown per question, typing off while waiting, edited on reply', () => {
   const { effects, view } = replay({ events: loadFixture('question.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
@@ -261,7 +261,7 @@ test('question: one dropdown per question, typing off while waiting, settled on 
     Which color do you prefer? {Red/Green/Blue/Other} | **Fruits**
     Which fruits do you like? {Apple/Pear/Kiwi/Other}",
       "[typing on]",
-      "[settle form:frm_0f1ff0402001MIUy5ATcEElGcr] **Color**
+      "[edit form:frm_0f1ff0402001MIUy5ATcEElGcr] **Color**
     Which color do you prefer?
     ✓ _green_ | **Fruits**
     Which fruits do you like?
@@ -286,7 +286,7 @@ test('permission: two requests, the rejected one fails its tool call', () => {
     **Type:** \`shell\`
     **Pattern:** \`echo first\` {Accept, Accept Always, Deny}",
       "[typing on]",
-      "[settle perm:per_0f202b5a4001acFP7sdJdnf7DQ] **Permission required**
+      "[edit perm:per_0f202b5a4001acFP7sdJdnf7DQ] **Permission required**
     **Type:** \`shell\`
     **Pattern:** \`echo first\`
     ✓ _Accepted_",
@@ -296,7 +296,7 @@ test('permission: two requests, the rejected one fails its tool call', () => {
     **Type:** \`shell\`
     **Pattern:** \`echo second\` {Accept, Accept Always, Deny}",
       "[typing on]",
-      "[settle perm:per_0f202be4b001DoNE0gpRKT1aa9] **Permission required**
+      "[edit perm:per_0f202be4b001DoNE0gpRKT1aa9] **Permission required**
     **Type:** \`shell\`
     **Pattern:** \`echo second\`
     ✗ _Denied_",

@@ -6,7 +6,7 @@
 //   form.created ─▶ one dropdown message per field (+ "Other" when custom)
 //   select       ─▶ message shows "✓ answer"; last field answered ─▶ form.reply
 //   "Other"      ─▶ modal with a text input ─▶ same as a select
-//   form.replied / form.cancelled ─▶ every message of the form is settled
+//   form.replied / form.cancelled ─▶ every message of the form is edited: answer or cancelled, no dropdown
 //
 // Custom IDs carry only the form ID and field index. Answers of a form with
 // several questions wait in a closure map until the last one (spec 27.4:
@@ -167,7 +167,7 @@ function showForm({ view, form, label }: { view: ThreadView; form: FormLike; lab
 }
 
 // `render` builds each question's final text from its header.
-function settleForm({
+function closeForm({
   view,
   formID,
   render,
@@ -179,8 +179,8 @@ function settleForm({
   const form = view.forms[formID]
   if (!form) return { view, effects: [] }
   const { [formID]: _settled, ...forms } = view.forms
-  const final = form.fields.map((field) => textOnly(render(field, header({ field, label: form.label }))))
-  return { view: { ...view, forms }, effects: [{ type: 'settle', key: uiKey(formID), final }] }
+  const messages = form.fields.map((field) => textOnly(render(field, header({ field, label: form.label }))))
+  return { view: { ...view, forms }, effects: [{ type: 'edit', key: uiKey(formID), messages }] }
 }
 
 // Form events of any session in the thread (root or subagent).
@@ -189,20 +189,20 @@ export function reduceForms({ view, event, label }: { view: ThreadView; event: V
     case 'form.created':
       return showForm({ view, form: event.data.form, label })
     case 'form.replied':
-      return settleForm({
+      return closeForm({
         view,
         formID: event.data.id,
         render: (field, text) => withAnswer({ header: text, answer: formatAnswer(event.data.answer[field.key]) }),
       })
     case 'form.cancelled':
-      return settleForm({ view, formID: event.data.id, render: (_field, text) => `${text}\n✗ _cancelled_` })
+      return closeForm({ view, formID: event.data.id, render: (_field, text) => `${text}\n✗ _cancelled_` })
     default:
       return null
   }
 }
 
 // After a (re)connect: pending forms of one session as OpenCode has them.
-// Unknown ones are shown (again); gone ones are settled.
+// Unknown ones are shown (again); gone ones are closed.
 export function hydrateForms({
   view,
   sessionId,
@@ -218,7 +218,7 @@ export function hydrateForms({
   const gone = Object.entries(view.forms).filter(([formID, form]) => form.sessionId === sessionId && !pending.has(formID))
   const settled = gone.reduce<Result>(
     (acc, [formID]) => {
-      const next = settleForm({ view: acc.view, formID, render: (_field, text) => `${text}\n_no longer pending_` })
+      const next = closeForm({ view: acc.view, formID, render: (_field, text) => `${text}\n_no longer pending_` })
       return { view: next.view, effects: [...acc.effects, ...next.effects] }
     },
     { view, effects: [] },

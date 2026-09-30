@@ -85,12 +85,12 @@ function showRequest({ view, request }: { view: ThreadView; request: PermissionR
   }
 }
 
-function settleRequest({ view, requestID, status }: { view: ThreadView; requestID: string; status: string }): Result {
+function closeRequest({ view, requestID, status }: { view: ThreadView; requestID: string; status: string }): Result {
   const request = view.permissions[requestID]
   if (!request) return { view, effects: [] }
   const { [requestID]: _settled, ...permissions } = view.permissions
-  const final = [textOnly(`${describe(request)}\n${status}`)]
-  return { view: { ...view, permissions }, effects: [{ type: 'settle', key: uiKey(requestID), final }] }
+  const messages = [textOnly(`${describe(request)}\n${status}`)]
+  return { view: { ...view, permissions }, effects: [{ type: 'edit', key: uiKey(requestID), messages }] }
 }
 
 export function reducePermissions({
@@ -106,7 +106,7 @@ export function reducePermissions({
     case 'permission.asked':
       return showRequest({ view, request: { ...event.data, label } })
     case 'permission.replied':
-      return settleRequest({ view, requestID: event.data.requestID, status: STATUS[event.data.reply] })
+      return closeRequest({ view, requestID: event.data.requestID, status: STATUS[event.data.reply] })
     default:
       return null
   }
@@ -128,7 +128,7 @@ export function hydratePermissions({
   const gone = Object.entries(view.permissions).filter(([id, request]) => request.sessionId === sessionId && !pending.has(id))
   const settled = gone.reduce<Result>(
     (acc, [requestID]) => {
-      const next = settleRequest({ view: acc.view, requestID, status: '_no longer pending_' })
+      const next = closeRequest({ view: acc.view, requestID, status: '_no longer pending_' })
       return { view: next.view, effects: [...acc.effects, ...next.effects] }
     },
     { view, effects: [] },
