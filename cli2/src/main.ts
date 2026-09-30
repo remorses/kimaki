@@ -4,11 +4,16 @@
 
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 
+import { createActions } from './actions.ts'
 import { openDb, type OpenedDb } from './db.ts'
+import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
+import { createEventLoop } from './event-loop.ts'
+import { registerIngress } from './ingress.ts'
 import { createLogger, setLogFile } from './logger.ts'
 import { startLockServer, type LockServer } from './lock-server.ts'
 import { watchOpencode, type OpencodeConnection } from './opencode-server.ts'
+import { createBotStore, type BotStore } from './store.ts'
 
 const logger = createLogger('MAIN')
 
@@ -29,15 +34,8 @@ export type BotHandle = {
   opencode: OpencodeConnection
   db: OpenedDb
   lock: LockServer
+  store: BotStore
   stop: () => Promise<void>
-}
-
-function createDiscordClient({ restUrl }: { restUrl?: string }): Client {
-  return new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-    partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
-    ...(restUrl && { rest: { api: restUrl, version: '10' } }),
-  })
 }
 
 async function loginDiscord({ discord, token }: { discord: Client; token: string }): Promise<DiscordError | void> {
@@ -59,17 +57,33 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     return db
   }
 
-  const discord = createDiscordClient({ restUrl: options.discordRestUrl })
+  const discord = new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
+    ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
+  })
+  const store = createBotStore()
+  const effects = createEffectsRunner({ discord })
+  const eventLoop = createEventLoop({ store, db: db.db, discord, effects })
+  const loaded = await eventLoop.load()
+  if (loaded instanceof Error) {
+    db.close()
+    await lock.close()
+    return loaded
+  }
   const opencode = watchOpencode({
     serviceFile: options.opencodeServiceFile,
     ensure: options.ensureOpencode,
-    onConnect: async () => {},
-    onEvent: () => {},
-    onDisconnect: () => {},
+    onConnect: eventLoop.onConnect,
+    onEvent: eventLoop.onEvent,
+    onDisconnect: eventLoop.onDisconnect,
   })
+  const actions = createActions({ discord, db: db.db, opencode, eventLoop })
+  registerIngress({ discord, db: db.db, actions })
 
   const stop = async () => {
     opencode.stop()
+    effects.stopAll()
     await discord.destroy()
     db.close()
     await lock.close()
@@ -88,5 +102,5 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     return discordReady
   }
   logger.log(`bot ready as ${discord.user?.tag}`)
-  return { discord, opencode, db, lock, stop }
+  return { discord, opencode, db, lock, store, stop }
 }
