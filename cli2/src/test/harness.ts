@@ -246,12 +246,14 @@ export async function startTestBot({
   twin,
   server,
   geminiBaseUrl,
+  openaiBaseUrl,
 }: {
   dataDir: string
   twin: TestTwin
   server: OpencodeTestServer
-  // Voice transcription against startFakeGemini().
+  // Voice transcription against startFakeGemini() / startFakeOpenAI().
   geminiBaseUrl?: string
+  openaiBaseUrl?: string
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -270,7 +272,10 @@ export async function startTestBot({
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,
     ensureOpencode: false,
-    ...(geminiBaseUrl && { transcriptionBaseUrls: { gemini: geminiBaseUrl } }),
+    transcriptionBaseUrls: {
+      ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
+      ...(openaiBaseUrl && { openai: openaiBaseUrl }),
+    },
   })
   if (bot instanceof Error) throw bot
   return bot
@@ -311,6 +316,57 @@ export async function startFakeGemini(): Promise<FakeGemini> {
       response.end(
         JSON.stringify({
           candidates: [{ finishReason: 'STOP', content: { parts: [{ functionCall: { name: declaration.name, args } }] } }],
+        }),
+      )
+    })
+  })
+  const port = await freePort()
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    requests,
+    stop: () => new Promise((resolve) => server.close(() => resolve())),
+  }
+}
+
+export type FakeOpenAI = {
+  baseUrl: string
+  // Audio of each request, as OpenAI received it.
+  requests: Array<{ model: string; format: string; audio: Buffer; routes: unknown }>
+  stop: () => Promise<void>
+}
+
+// OpenAI chat completions over HTTP, deterministic: every request gets the
+// same transcription tool call. Real Opus audio goes through the OGG -> WAV
+// conversion first, so the audio cannot carry the answer like voiceUrl().
+export async function startFakeOpenAI({ result }: { result: FakeTranscription }): Promise<FakeOpenAI> {
+  const requests: FakeOpenAI['requests'] = []
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+        model: string
+        tools: Array<{ function: { name: string; parameters: { properties: { route?: { enum?: unknown } } } } }>
+        messages: Array<{ content: Array<{ type: string; input_audio?: { data: string; format: string } }> }>
+      }
+      const tool = body.tools[0]!.function
+      const audio = body.messages[0]!.content.find((part) => part.input_audio)!.input_audio!
+      requests.push({
+        model: body.model,
+        format: audio.format,
+        audio: Buffer.from(audio.data, 'base64'),
+        routes: tool.parameters.properties.route?.enum ?? null,
+      })
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: 'tool_calls',
+              message: { role: 'assistant', content: null, tool_calls: [{ type: 'function', function: { name: tool.name, arguments: JSON.stringify(result) } }] },
+            },
+          ],
         }),
       )
     })
