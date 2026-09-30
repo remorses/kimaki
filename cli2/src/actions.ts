@@ -395,22 +395,32 @@ export function createActions({
   }
 
   // An edited queued message: cancel the old item, queue the new text at the end.
-  async function requeueEdited({ message, inboxID }: { message: Message; inboxID: string }) {
+  async function requeueEdited({
+    message,
+    inboxID,
+    files,
+  }: {
+    message: Message
+    inboxID: string
+    files: readonly PromptFile[]
+  }) {
     const route = parseTextMessage({ content: message.content })
     const sessionId = rootSession(message.channelId)
     if (sessionId instanceof Error) return sessionId
     const cancelled = await cancelQueued({ threadId: message.channelId, inboxID })
     if (cancelled instanceof Error) return cancelled
-    if (!route || (route.kind !== 'queue' && route.kind !== 'steer')) return
+    const text = route?.kind === 'queue' || route?.kind === 'steer' ? route.text : files.length > 0 ? '' : null
+    if (text === null) return
     const thread = message.channel.isThread() ? message.channel : null
     return prompt({
       sessionId,
       threadId: message.channelId,
       threadName: thread?.name ?? '',
-      text: route.text,
+      text,
       author: { id: message.author.id, username: message.author.username },
       messageId: message.id,
       delivery: 'queue',
+      files,
       // IDs are unique per item: every edit gets its own.
       id: `${promptIdForMessage(message.id)}_e${message.editedTimestamp ?? Date.now()}`,
     })

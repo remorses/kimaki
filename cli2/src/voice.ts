@@ -276,18 +276,34 @@ function pcmToWav({ stream, label }: { stream: NodeJS.ReadableStream; label: str
   })
 }
 
-function oggToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
-  const demuxer = new prism.opus.OggDemuxer()
-  const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 1, frameSize: 960 })
-  demuxer.on('error', (error) => decoder.emit('error', error))
-  Readable.from(input).pipe(demuxer).pipe(decoder)
-  return pcmToWav({ stream: decoder, label: 'OGG Opus decode' })
+// prism constructors throw synchronously when the opus library or the
+// ffmpeg binary is missing.
+async function oggToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
+  const pipeline = errore.try(
+    () => {
+      const demuxer = new prism.opus.OggDemuxer()
+      const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 1, frameSize: 960 })
+      demuxer.on('error', (error) => decoder.emit('error', error))
+      Readable.from(input).pipe(demuxer).pipe(decoder)
+      return decoder
+    },
+    (cause) => new TranscriptionError({ reason: 'the OGG Opus decoder could not start', cause }),
+  )
+  if (pipeline instanceof Error) return pipeline
+  return pcmToWav({ stream: pipeline, label: 'OGG Opus decode' })
 }
 
-// Needs an ffmpeg binary on PATH.
-function m4aToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
+async function m4aToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
   const args = ['-analyzeduration', '0', '-loglevel', '0', '-f', 'mp4', '-i', 'pipe:0']
-  const transcoder = new prism.FFmpeg({ args: [...args, '-f', 's16le', '-acodec', 'pcm_s16le', '-ac', '1', '-ar', '48000', 'pipe:1'] })
+  const transcoder = errore.try(
+    () => new prism.FFmpeg({ args: [...args, '-f', 's16le', '-acodec', 'pcm_s16le', '-ac', '1', '-ar', '48000', 'pipe:1'] }),
+    (cause) =>
+      new TranscriptionError({
+        reason: 'M4A voice messages with OpenAI need ffmpeg. Install it (brew install ffmpeg) or use a Gemini key',
+        cause,
+      }),
+  )
+  if (transcoder instanceof Error) return transcoder
   Readable.from(input).pipe(transcoder)
   return pcmToWav({ stream: transcoder, label: 'M4A decode with ffmpeg' })
 }

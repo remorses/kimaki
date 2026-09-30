@@ -24,7 +24,7 @@ import type { Actions, PromptFile } from './actions.ts'
 import type { KimakiDb } from './db.ts'
 import { formatError } from './format-parts.ts'
 import { createLogger } from './logger.ts'
-import { formatEcho, handleQueuedMessageDelete, handleQueuedMessageEdit } from './queue.ts'
+import { formatEcho, handleQueuedMessageDelete, handleQueuedMessageEdit, queuedItemFor } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import type { BotStore } from './store.ts'
 import { isVoiceAttachment, parseVoiceMessage, type AttachmentLike, type Transcriber } from './voice.ts'
@@ -226,7 +226,14 @@ export function registerIngress({
     if (message.author?.bot) return
     serialize(message.channelId, async () => {
       const full = message.partial ? await message.fetch().catch(() => null) : message
-      if (full) await handleQueuedMessageEdit({ message: full, store, actions })
+      if (!full || !queuedItemFor({ store, threadId: full.channelId, messageId: full.id })) return
+      // The re-queued prompt must carry the message's attachments again.
+      const files = await saveAttachments({ dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
+      if (files instanceof Error) {
+        logger.error(`edit of ${full.id}: ${files.message}`)
+        return
+      }
+      await handleQueuedMessageEdit({ message: full, files, store, actions })
     })
   })
 }

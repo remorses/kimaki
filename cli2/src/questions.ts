@@ -143,8 +143,17 @@ export function formatAnswer(value: string | readonly string[] | number | boolea
   return String(value)
 }
 
+const MESSAGE_LIMIT = 2_000
+
+// Header plus "✓ answer" within one Discord message. Only the display is
+// cut: OpenCode always gets the full answer.
+function withAnswer({ header: text, answer }: { header: string; answer: string }): string {
+  const room = MESSAGE_LIMIT - text.length - 6
+  return `${text}\n✓ _${answer.length > room ? `${answer.slice(0, room - 1)}…` : answer}_`
+}
+
 function answeredMessage({ field, label, answer }: { field: QuestionField; label: string | null; answer: string }) {
-  return textOnly(`${header({ field, label })}\n✓ _${answer}_`)
+  return textOnly(withAnswer({ header: header({ field, label }), answer }))
 }
 
 function showForm({ view, form, label }: { view: ThreadView; form: FormLike; label: string | null }): Result {
@@ -157,11 +166,20 @@ function showForm({ view, form, label }: { view: ThreadView; form: FormLike; lab
   }
 }
 
-function settleForm({ view, formID, status }: { view: ThreadView; formID: string; status: (field: QuestionField) => string }): Result {
+// `render` builds each question's final text from its header.
+function settleForm({
+  view,
+  formID,
+  render,
+}: {
+  view: ThreadView
+  formID: string
+  render: (field: QuestionField, header: string) => string
+}): Result {
   const form = view.forms[formID]
   if (!form) return { view, effects: [] }
   const { [formID]: _settled, ...forms } = view.forms
-  const final = form.fields.map((field) => textOnly(`${header({ field, label: form.label })}\n${status(field)}`))
+  const final = form.fields.map((field) => textOnly(render(field, header({ field, label: form.label }))))
   return { view: { ...view, forms }, effects: [{ type: 'settle', key: uiKey(formID), final }] }
 }
 
@@ -174,10 +192,10 @@ export function reduceForms({ view, event, label }: { view: ThreadView; event: V
       return settleForm({
         view,
         formID: event.data.id,
-        status: (field) => `✓ _${formatAnswer(event.data.answer[field.key])}_`,
+        render: (field, text) => withAnswer({ header: text, answer: formatAnswer(event.data.answer[field.key]) }),
       })
     case 'form.cancelled':
-      return settleForm({ view, formID: event.data.id, status: () => '✗ _cancelled_' })
+      return settleForm({ view, formID: event.data.id, render: (_field, text) => `${text}\n✗ _cancelled_` })
     default:
       return null
   }
@@ -200,7 +218,7 @@ export function hydrateForms({
   const gone = Object.entries(view.forms).filter(([formID, form]) => form.sessionId === sessionId && !pending.has(formID))
   const settled = gone.reduce<Result>(
     (acc, [formID]) => {
-      const next = settleForm({ view: acc.view, formID, status: () => '_no longer pending_' })
+      const next = settleForm({ view: acc.view, formID, render: (_field, text) => `${text}\n_no longer pending_` })
       return { view: next.view, effects: [...acc.effects, ...next.effects] }
     },
     { view, effects: [] },
@@ -238,6 +256,9 @@ async function acknowledge({
 export function createQuestionHandlers({ store, actions }: { store: BotStore; actions: Actions }) {
   // formID -> answers so far, for forms with several questions.
   const partial = new Map<string, FormAnswer>()
+  // "formID:key" -> options picked together with "Other" in a multi-select,
+  // kept while the modal asks for the typed answer.
+  const pickedWithOther = new Map<string, readonly string[]>()
 
   function pendingField({ threadId, customId, prefix }: { threadId: string; customId: string; prefix: string }) {
     const parsed = parseCustomId(customId, prefix)
@@ -286,7 +307,12 @@ export function createQuestionHandlers({ store, actions }: { store: BotStore; ac
       const pending = pendingField({ threadId: interaction.channelId, customId: interaction.customId, prefix: FORM_SELECT_PREFIX })
       if (!pending) return expired(interaction)
       const { formID, field } = pending
+      const values = interaction.values.flatMap((value) => {
+        const option = field.options[Number(value)]
+        return option ? [option.value] : []
+      })
       if (interaction.values.includes(OTHER_VALUE)) {
+        pickedWithOther.set(`${formID}:${field.key}`, values)
         const input = new TextInputBuilder()
           .setCustomId('answer')
           .setLabel('Your answer')
@@ -300,10 +326,6 @@ export function createQuestionHandlers({ store, actions }: { store: BotStore; ac
         )
         return
       }
-      const values = interaction.values.flatMap((value) => {
-        const option = field.options[Number(value)]
-        return option ? [option.value] : []
-      })
       await record({ interaction, ...pending, value: field.multiple ? values : (values[0] ?? '') })
     },
 
@@ -311,7 +333,10 @@ export function createQuestionHandlers({ store, actions }: { store: BotStore; ac
       const pending = pendingField({ threadId: interaction.channelId ?? '', customId: interaction.customId, prefix: FORM_OTHER_PREFIX })
       if (!pending) return expired(interaction)
       const text = interaction.fields.getTextInputValue('answer').trim()
-      await record({ interaction, ...pending, value: pending.field.multiple ? [text] : text })
+      const key = `${pending.formID}:${pending.field.key}`
+      const picked = pickedWithOther.get(key) ?? []
+      pickedWithOther.delete(key)
+      await record({ interaction, ...pending, value: pending.field.multiple ? [...picked, text] : text })
     },
   }
 }

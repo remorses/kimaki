@@ -18,7 +18,7 @@ import {
 } from 'discord.js'
 import type { JsonValue, SessionInboxInfo, V2Event } from '@opencode/client'
 
-import type { Actions } from './actions.ts'
+import type { Actions, PromptFile } from './actions.ts'
 import { asSubtext } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { BotStore } from './store.ts'
@@ -172,7 +172,7 @@ export async function handleQueueRemove({
     .catch(() => undefined)
 }
 
-function queuedItemFor({ store, threadId, messageId }: { store: BotStore; threadId: string; messageId: string }) {
+export function queuedItemFor({ store, threadId, messageId }: { store: BotStore; threadId: string; messageId: string }) {
   return store.getState().threads[threadId]?.queue.find((item) => item.messageId === messageId) ?? null
 }
 
@@ -196,15 +196,17 @@ export async function handleQueuedMessageDelete({
 // option A: the inbox has no API to change an item's text).
 export async function handleQueuedMessageEdit({
   message,
+  files,
   store,
   actions,
 }: {
   message: Message
+  files: readonly PromptFile[]
   store: BotStore
   actions: Actions
 }): Promise<void> {
   const item = queuedItemFor({ store, threadId: message.channelId, messageId: message.id })
   if (!item) return
-  const result = await actions.requeueEdited({ message, inboxID: item.inboxID })
+  const result = await actions.requeueEdited({ message, inboxID: item.inboxID, files })
   if (result instanceof Error) logger.warn(`edit of queued ${message.id} failed: ${result.message}`)
 }

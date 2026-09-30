@@ -148,11 +148,16 @@ test('single question answered from the dropdown', async () => {
   `)
 })
 
-test('two questions: the form is answered after both, multi-select keeps all values', async () => {
+test('two questions: the form is answered after both, multi-select keeps options picked with Other', async () => {
   const thread = await startThread('Two questions ask-two')
   const [color, fruits] = await waitForSelects({ threadId: thread.id, count: 2 })
   const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
-  await user.selectMenu({ messageId: fruits!.message.id, customId: fruits!.customId, values: [fruits!.values[0]!, fruits!.values[1]!] })
+  await user.selectMenu({ messageId: fruits!.message.id, customId: fruits!.customId, values: [fruits!.values[0]!, fruits!.values[1]!, 'other'] })
+  await user.submitModal({
+    customId: fruits!.customId.replace(/^form:/, 'form_other:'),
+    messageId: fruits!.message.id,
+    fields: [{ customId: 'answer', value: 'Banana' }],
+  })
   await user.selectMenu({ messageId: color!.message.id, customId: color!.customId, values: [color!.values[0]!] })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
@@ -165,13 +170,13 @@ test('two questions: the form is answered after both, multi-select keeps all val
     ✓ _Red_
     **Fruits**
     Which fruits do you like?
-    ✓ _Apple, Kiwi_
+    ✓ _Apple, Kiwi, Banana_
     answers received ask-two
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const sessionId = bot.store.getState().roots[thread.id]!
   const messages = await (await server.client()).message.list({ sessionID: sessionId })
-  expect(JSON.stringify(messages.data)).toContain('\\"Which fruits do you like?\\"=\\"Apple, Kiwi\\"')
+  expect(JSON.stringify(messages.data)).toContain('\\"Which fruits do you like?\\"=\\"Apple, Kiwi, Banana\\"')
 })
 
 test('Other opens a modal and sends the typed answer', async () => {

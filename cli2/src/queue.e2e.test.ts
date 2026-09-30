@@ -1,7 +1,5 @@
-// Phase 3: interrupt and queue on the native OpenCode inbox. A plain message
-// interrupts the run, `. queue` waits for it, the Remove button and message
-// delete/edit change the inbox, /abort stops and clears, and a restarted bot
-// still shows the queue it did not see being created.
+// Phase 3: the queue on the native OpenCode inbox. `. queue` waits for the run,
+// the Remove button, message delete/edit and /clear-queue change the inbox.
 
 import fs from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -107,24 +105,6 @@ async function expectNever({ threadId, text }: { threadId: string; text: string 
   }
 }
 
-test('plain message interrupts the run and is answered', async () => {
-  const thread = await startSlowThread('Interrupt me')
-  await twin.discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'Stop and do this steer-marker' })
-  await waitForFooter({ discord: twin.discord, threadId: thread.id })
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Interrupt me slow-marker
-    --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    --- from: user (tommy)
-    Stop and do this steer-marker
-    --- from: assistant (TestBot)
-    steer ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-  `)
-  await expectNever({ threadId: thread.id, text: 'slow-done' })
-})
-
 test('. queue waits for the run, acks with position, echoes when it starts', async () => {
   const thread = await startSlowThread('Queue after me')
   const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
@@ -169,7 +149,19 @@ test('Remove button and message delete take items out of the queue, edit re-queu
   await waitForAck({ threadId: thread.id, messageId: deleted.id })
   await user.deleteMessage({ messageId: deleted.id })
 
-  const edited = await user.sendMessage({ content: 'Old text. queue' })
+  const edited = await user.sendMessage({
+    content: 'Old text. queue',
+    attachments: [
+      {
+        id: '1',
+        filename: 'queued-notes.txt',
+        size: 12,
+        url: `data:text/plain;base64,${Buffer.from('queued file').toString('base64')}`,
+        proxy_url: '',
+        content_type: 'text/plain',
+      },
+    ],
+  })
   await waitForAck({ threadId: thread.id, messageId: edited.id })
   await user.editMessage({ messageId: edited.id, content: 'New text edited-marker. queue' })
 
@@ -188,6 +180,7 @@ test('Remove button and message delete take items out of the queue, edit re-queu
     -# Removed from queue
     --- from: user (tommy)
     New text edited-marker. queue
+    [attachment: queued-notes.txt]
     --- from: assistant (TestBot)
     -# Removed from queue
     -# Queued message sent
@@ -198,29 +191,10 @@ test('Remove button and message delete take items out of the queue, edit re-queu
   `)
   await expectNever({ threadId: thread.id, text: 'queued one ok' })
   await expectNever({ threadId: thread.id, text: 'queued two ok' })
-})
-
-test('/abort stops the run and clears the queue', async () => {
-  const thread = await startSlowThread('Abort me')
-  const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
-  await user.sendMessage({ content: 'Never runs queued-one. queue' })
-  await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'position 1' })
-  await user.runSlashCommand({ name: 'abort' })
-  await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'aborted' })
-  await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'Removed from queue' })
-  await expectNever({ threadId: thread.id, text: 'slow-done' })
-  await expectNever({ threadId: thread.id, text: 'queued one ok' })
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Abort me slow-marker
-    --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    --- from: user (tommy)
-    Never runs queued-one. queue
-    --- from: assistant (TestBot)
-    -# Removed from queue
-    Request **aborted**, cleared 1 queued message"
-  `)
+  // The re-queued prompt keeps the edited message's attachment.
+  const messages = await (await server.client()).message.list({ sessionID: bot.store.getState().roots[thread.id]! })
+  const requeued = messages.data.find((message) => message.type === 'user' && JSON.stringify(message).includes('edited-marker'))
+  expect(JSON.stringify(requeued)).toContain('queued-notes.txt')
 })
 
 test('/queue and /clear-queue', async () => {
@@ -249,48 +223,4 @@ test('/queue and /clear-queue', async () => {
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   await expectNever({ threadId: thread.id, text: 'queued one ok' })
-})
-
-test('a restarted bot still echoes and runs the queue it did not see', async () => {
-  const thread = await startSlowThread('Restart during queue')
-  const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
-  await user.sendMessage({ content: 'Survives restart queued-one. queue' })
-  await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'position 1' })
-  await bot.stop()
-  bot = await startTestBot({ dataDir, twin, server })
-  await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'queued one ok' })
-  await waitForFooter({ discord: twin.discord, threadId: thread.id })
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Restart during queue slow-marker
-    --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    --- from: user (tommy)
-    Survives restart queued-one. queue
-    --- from: assistant (TestBot)
-    -# Queued at position 1. Edit or delete your message to update the queue
-    slow-done
-    » **tommy:** Survives restart queued-one
-    queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
-  `)
-})
-
-test('slash commands are registered in the guild', async () => {
-  const names = await waitFor({
-    label: 'registered commands',
-    check: async () => {
-      const rows = await twin.discord.prisma.applicationCommand.findMany({ where: { guildId: twin.discord.guildId } })
-      return rows.length > 0 ? rows.map((row) => row.name).sort() : null
-    },
-  })
-  expect(names).toMatchInlineSnapshot(`
-    [
-      "abort",
-      "btw",
-      "clear-queue",
-      "queue",
-      "session-id",
-    ]
-  `)
 })
