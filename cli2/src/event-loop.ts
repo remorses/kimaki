@@ -7,11 +7,17 @@
 //
 // The SSE reader must never block: the server drops subscribers whose
 // 4096-event buffer overflows.
+//
+// Subagent sessions join their parent's thread (spec 6.8): session.created
+// with a known parentID maps the child at once; any other unknown session is
+// resolved by walking parentID with session.get while its events are held
+// (covers children that started before a bot restart). Sessions that lead to
+// no bound thread (TUI sessions) are remembered and dropped.
 
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import type { Client } from 'discord.js'
+import { DiscordAPIError, RESTJSONErrorCodes, type Client } from 'discord.js'
 import * as errore from 'errore'
 
 import { readChannelVerbosity, type KimakiDb, type Verbosity } from './db.ts'
@@ -23,6 +29,10 @@ import type { BotStore } from './store.ts'
 import { emptyView, eventSessionId, reduce, type Prefs, type ThreadEvent } from './thread-reducer.ts'
 
 const logger = createLogger('EVENTS')
+
+const CONTEXT_RETRIES = 5
+const CONTEXT_RETRY_MS = 2_000
+const MAX_HELD_EVENTS = 1_000
 const execFileAsync = promisify(execFile)
 
 type ThreadContext = {
@@ -56,7 +66,7 @@ export function createEventLoop({
   discord: Client
   effects: EffectsRunner
 }) {
-  const queues = new Map<string, { events: ThreadEvent[]; running: boolean }>()
+  const queues = new Map<string, { events: ThreadEvent[]; running: boolean; failures: number }>()
   const contexts = new Map<string, ThreadContext>()
   const known = new Map<string, Omit<ThreadContext, 'verbosity'>>()
   const contextLimits: Record<string, number> = {}
@@ -90,11 +100,14 @@ export function createEventLoop({
     const base = await (async () => {
       const preset = known.get(threadId)
       if (preset) return preset
-      const thread = await discord.channels
-        .fetch(threadId)
-        .catch((e) => new DiscordError({ operation: `fetch thread ${threadId}`, cause: e }))
+      const thread = await discord.channels.fetch(threadId).catch((e) => {
+        if (e instanceof DiscordAPIError && e.code === RESTJSONErrorCodes.UnknownChannel) {
+          return new ThreadGoneError({ threadId })
+        }
+        return new DiscordError({ operation: `fetch thread ${threadId}`, cause: e })
+      })
       if (thread instanceof Error) return thread
-      const channelId = thread && 'parentId' in thread ? thread.parentId : null
+      const channelId = thread?.isThread() ? thread.parentId : null
       if (!channelId) return new ThreadGoneError({ threadId })
       const row = await db.query.channel_directories
         .findFirst({ where: { channel_id: channelId } })
@@ -116,7 +129,7 @@ export function createEventLoop({
     return { verbosity: context.verbosity, contextLimits }
   }
 
-  function apply(threadId: string, context: ThreadContext, event: ThreadEvent) {
+  function apply({ threadId, context, event }: { threadId: string; context: ThreadContext; event: ThreadEvent }) {
     const state = store.getState()
     const view =
       state.threads[threadId] ??
@@ -126,7 +139,7 @@ export function createEventLoop({
         folder: path.basename(context.directory),
         isNew: false,
       })
-    const result = reduce(view, event, prefsFor(context))
+    const result = reduce({ view, event, prefs: prefsFor(context) })
     if (result.view !== state.threads[threadId]) {
       store.setState((current) => ({ threads: { ...current.threads, [threadId]: result.view } }))
     }
@@ -139,26 +152,97 @@ export function createEventLoop({
     queue.running = true
     while (queue.events.length > 0) {
       const context = contexts.get(threadId) ?? (await loadContext(threadId))
-      if (context instanceof Error) {
-        logger.warn(`dropping ${queue.events.length} events: ${context.message}`)
+      if (context instanceof ThreadGoneError || (context instanceof Error && queue.failures >= CONTEXT_RETRIES)) {
+        logger.warn(`dropping ${queue.events.length} events of thread ${threadId}: ${context.message}`)
         queue.events.length = 0
         break
       }
+      if (context instanceof Error) {
+        // Transient Discord or SQLite failure: keep the events and retry.
+        queue.failures++
+        logger.warn(`thread ${threadId} context failed (${queue.failures}/${CONTEXT_RETRIES}): ${context.message}`)
+        setTimeout(() => void drain(threadId), CONTEXT_RETRY_MS * queue.failures)
+        break
+      }
+      queue.failures = 0
       const event = queue.events.shift()
       if (!event) break
       if (event.type === 'session.execution.started' && eventSessionId(event) === context.sessionId) {
-        apply(threadId, context, { type: 'kimaki.branch', branch: await gitBranch(context.directory) })
+        apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory) } })
       }
-      apply(threadId, context, event)
+      apply({ threadId, context, event })
     }
     queue.running = false
   }
 
   function enqueue(threadId: string, event: ThreadEvent) {
-    const queue = queues.get(threadId) ?? { events: [], running: false }
+    const queue = queues.get(threadId) ?? { events: [], running: false, failures: 0 }
     queues.set(threadId, queue)
     queue.events.push(event)
     void drain(threadId)
+  }
+
+  const ignoredSessions = new Set<string>()
+  // Events of sessions whose thread is being looked up, in arrival order.
+  const resolving = new Map<string, { events: V2Event[]; inFlight: boolean }>()
+
+  function mapSession(sessionId: string, threadId: string) {
+    store.setState((current) => ({ sessionThreads: { ...current.sessionThreads, [sessionId]: threadId } }))
+  }
+
+  // Walks parentID up to a bound session. null = confirmed unrelated (no parent
+  // leads to a thread); an Error = lookup failed, try again later.
+  async function findAncestorThread({
+    client,
+    sessionId,
+    signal,
+  }: {
+    client: OpenCodeClient
+    sessionId: string
+    signal?: AbortSignal
+  }): Promise<OpenCodeError | null | { threadId: string; chain: Array<{ sessionId: string; agent: string }> }> {
+    const chain: Array<{ sessionId: string; agent: string }> = []
+    let current = sessionId
+    for (let depth = 0; depth < 8; depth++) {
+      const info = await client.session
+        .get({ sessionID: current }, { signal })
+        .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
+      if (info instanceof Error) return info
+      if (!info.parentID) return null
+      chain.unshift({ sessionId: current, agent: info.agent ?? 'subagent' })
+      const threadId = store.getState().sessionThreads[info.parentID]
+      if (threadId) return { threadId, chain }
+      current = info.parentID
+    }
+    return null
+  }
+
+  function adoptChain({ threadId, chain }: { threadId: string; chain: Array<{ sessionId: string; agent: string }> }) {
+    for (const link of chain) {
+      mapSession(link.sessionId, threadId)
+      enqueue(threadId, { type: 'kimaki.child', sessionId: link.sessionId, agent: link.agent })
+    }
+  }
+
+  async function resolveUnknownSession(sessionId: string) {
+    const entry = resolving.get(sessionId)
+    const client = connection.client
+    if (!entry || entry.inFlight || !client) return
+    entry.inFlight = true
+    const found = await findAncestorThread({ client, sessionId })
+    entry.inFlight = false
+    if (found instanceof Error) {
+      // Keep the held events; the next event of this session retries.
+      logger.warn(`cannot resolve session ${sessionId}: ${found.message}`)
+      return
+    }
+    resolving.delete(sessionId)
+    if (!found) {
+      ignoredSessions.add(sessionId)
+      return
+    }
+    adoptChain(found)
+    for (const event of entry.events) enqueue(found.threadId, event)
   }
 
   return {
@@ -186,6 +270,7 @@ export function createEventLoop({
       directory: string
     }): void {
       known.set(threadId, { sessionId, channelId, directory })
+      ignoredSessions.delete(sessionId)
       store.setState((current) => ({
         sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
         threads: {
@@ -196,31 +281,57 @@ export function createEventLoop({
     },
 
     // Held live events wait while this runs (connect protocol, spec 6.8).
-    async onConnect({ client }: ConnectContext): Promise<OpenCodeError | void> {
+    // Reconciles busy state; children that started while the bot was away are
+    // adopted through their parentID chain first.
+    async onConnect({ client, signal }: ConnectContext): Promise<OpenCodeError | void> {
       connection.client = client
       const active = await client.session
-        .active()
+        .active({ signal })
         .catch((e) => new OpenCodeError({ operation: 'session.active', cause: e }))
       if (active instanceof Error) return active
+      const unknown = Object.keys(active).filter(
+        (sessionId) => !store.getState().sessionThreads[sessionId] && !ignoredSessions.has(sessionId),
+      )
+      const found = await Promise.all(unknown.map((sessionId) => findAncestorThread({ client, sessionId, signal })))
+      if (signal.aborted) return new OpenCodeError({ operation: 'hydrate (superseded)' })
+      for (const result of found) {
+        if (result && !(result instanceof Error)) adoptChain(result)
+      }
       const now = Date.now()
       const { threads, sessionThreads } = store.getState()
-      const threadIds = new Set([
-        ...Object.keys(threads),
-        ...Object.keys(active).flatMap((sessionId) => sessionThreads[sessionId] ?? []),
-      ])
-      for (const threadId of threadIds) {
-        const sessionId = threadRootSession(threadId)
-        if (!sessionId) continue
-        enqueue(threadId, { type: 'kimaki.synced', active: sessionId in active, at: now })
+      const byThread = new Map<string, string[]>(Object.keys(threads).map((threadId) => [threadId, []]))
+      for (const sessionId of Object.keys(active)) {
+        const threadId = sessionThreads[sessionId]
+        if (!threadId) continue
+        byThread.set(threadId, [...(byThread.get(threadId) ?? []), sessionId])
+      }
+      for (const [threadId, activeSessionIds] of byThread) {
+        enqueue(threadId, { type: 'kimaki.synced', activeSessionIds, at: now })
       }
     },
 
     onEvent(event: V2Event): void {
       const sessionId = eventSessionId(event)
       if (!sessionId) return
-      const threadId = store.getState().sessionThreads[sessionId]
-      if (!threadId) return
-      enqueue(threadId, event)
+      const { sessionThreads } = store.getState()
+      const threadId = sessionThreads[sessionId]
+      if (threadId) {
+        enqueue(threadId, event)
+        return
+      }
+      if (ignoredSessions.has(sessionId)) return
+      const parentThread = event.type === 'session.created' && event.data.parentID ? sessionThreads[event.data.parentID] : null
+      if (parentThread) {
+        mapSession(sessionId, parentThread)
+        enqueue(parentThread, event)
+        return
+      }
+      const entry = resolving.get(sessionId) ?? { events: [], inFlight: false }
+      resolving.set(sessionId, entry)
+      entry.events.push(event)
+      // Bounded: a session whose lookup keeps failing must not grow forever.
+      if (entry.events.length > MAX_HELD_EVENTS) entry.events.shift()
+      void resolveUnknownSession(sessionId)
     },
 
     onDisconnect(): void {

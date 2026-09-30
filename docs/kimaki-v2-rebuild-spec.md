@@ -1898,6 +1898,38 @@ for await (const event of client.event.subscribe({ signal })) {
 14. **`session.shell` and `/abort`.** Check whether `interrupt` kills a running user shell;
     else call `client.shell.remove`.
 
+### Findings from building cli2 P0–P2 (OpenCode 2.0.19)
+
+- **Test server port.** `serve --service` binds a fixed default port, so parallel test
+  files collide. The harness passes `--port <free port>`; each restart gets a new port.
+  In service mode `OPENCODE_PASSWORD` is ignored; the password is only in `service.json`.
+- **Version check.** `Service.discover()` returns no version. cli2 reads it from
+  `client.server.info()`.
+- **Message listing.** 2.0.19 exposes `client.message.list({ sessionID })`, not
+  `session.messages` (28.6 table).
+- **Callouts are grouped by a fence-aware line pass, not mdast `html` nodes.** A
+  `</callout>` directly after a list item (no blank line, the common model shape) is a
+  lazy paragraph continuation in CommonMark, never an `html` node. Everything else is
+  mdast, and text is sliced from the source by node offsets instead of re-serialized, so
+  `mdast-util-to-markdown` is not needed. Nested callouts: the inner one wins, the outer
+  open tag stays text.
+- **`markdown` effect.** The reducer emits `{ type: 'markdown', text }` for model text and
+  `{ type: 'send', text }` for bot lines (tool lines, footer). The executor renders and
+  splits markdown. Bot lines must never go through the markdown parser: `-# …` parses as
+  a list item.
+- **`text` verbosity** follows the P2 rule (text + edits + errors). The 7.2 "drop
+  narration of assistant messages with tool calls" rule is not implemented.
+- **Default verbosity hides `glob`/`read`/`grep`,** also for children, so the P2 e2e uses a
+  child `shell` call to show a labelled child line.
+- **Footer after background children.** When the parent execution succeeds while a child
+  runs, the turn is closed without a footer; the footer of the later parent execution
+  measures only that execution.
+- **Reconnect gap fill is not assigned to a phase.** cli2 reconciles busy state and adopts
+  running children on every connect (`session.active()` + parentID walk), but does not
+  yet post blocks missed while disconnected (`message.list` hydration in 6.8).
+- **No plugin file yet.** P0 asked for a no-op Kimaki plugin in the test config; cli2 adds
+  none until P7 (no stubs).
+
 ---
 
 ## 21. Review of the existing V2 branch

@@ -4,15 +4,23 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import util from 'node:util'
+import * as errore from 'errore'
+
+import { ConfigError } from './errors.ts'
 
 const logTarget: { file: string | null } = { file: null }
 
 // Reset the log file on every bot start, like V1.
-export function setLogFile({ dataDir }: { dataDir: string }): void {
-  fs.mkdirSync(dataDir, { recursive: true })
+export function setLogFile({ dataDir }: { dataDir: string }): ConfigError | void {
   const file = path.join(dataDir, 'kimaki.log')
-  fs.writeFileSync(file, '')
+  const created = errore.try(
+    () => {
+      fs.mkdirSync(dataDir, { recursive: true })
+      fs.writeFileSync(file, '')
+    },
+    (e) => new ConfigError({ reason: `Cannot write ${file}. Check --data-dir permissions`, cause: e }),
+  )
+  if (created instanceof Error) return created
   logTarget.file = file
 }
 
@@ -21,8 +29,8 @@ function stderrEnabled(): boolean {
   return process.env['KIMAKI_TEST_LOGS'] === '1'
 }
 
-function write({ level, prefix, args }: { level: string; prefix: string; args: unknown[] }) {
-  const text = util.format(...args)
+function write({ level, prefix, args }: { level: string; prefix: string; args: string[] }) {
+  const text = args.join(' ')
   const line = `${new Date().toISOString()} ${level.padEnd(5)} [${prefix.padEnd(8)}] ${text}\n`
   if (logTarget.file) {
     fs.appendFile(logTarget.file, line, () => {})
@@ -34,9 +42,9 @@ function write({ level, prefix, args }: { level: string; prefix: string; args: u
 
 export function createLogger(prefix: string) {
   return {
-    log: (...args: unknown[]) => write({ level: 'info', prefix, args }),
-    warn: (...args: unknown[]) => write({ level: 'warn', prefix, args }),
-    error: (...args: unknown[]) => write({ level: 'error', prefix, args }),
+    log: (...args: string[]) => write({ level: 'info', prefix, args }),
+    warn: (...args: string[]) => write({ level: 'warn', prefix, args }),
+    error: (...args: string[]) => write({ level: 'error', prefix, args }),
   }
 }
 

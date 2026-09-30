@@ -1,30 +1,57 @@
 // Effects executor (spec 27.5): the only Discord writer for session output.
-// One promise chain per thread keeps Discord order equal to event order, and
+// One FIFO worker per thread keeps Discord order equal to event order, and
 // one typing interval per thread refreshes the indicator every 7s. Never
 // awaited by the event loop.
+//
+// When Discord is slower than the event stream, effects pile up in the
+// queue; consecutive bot lines are then merged into one message (≤ 2000
+// chars) so a burst of tool lines does not hit the 5 msg / 5s channel limit.
 
-import type { Client } from 'discord.js'
+import type { Client, MessageCreateOptions } from 'discord.js'
 
 import { createLogger } from './logger.ts'
+import { segmentPayloads, type DiscordPayload } from './markdown/components.ts'
+import { DISCORD_TEXT_LIMIT, renderMarkdown } from './markdown/render-markdown.ts'
 import type { Effect } from './thread-reducer.ts'
 
 const logger = createLogger('EFFECTS')
 
 const TYPING_REFRESH_MS = 7_000
 
-type ThreadResources = {
-  chain: Promise<void>
+type ThreadWorker = {
+  queue: Effect[]
+  running: boolean
   typing: ReturnType<typeof setInterval> | null
 }
 
-export function createEffectsRunner({ discord }: { discord: Client }) {
-  const threads = new Map<string, ThreadResources>()
+// Adjacent `send` effects become one, as long as the joined text fits a message.
+export function mergeSends(effects: Effect[]): Effect[] {
+  return effects.reduce<Effect[]>((merged, effect) => {
+    const last = merged[merged.length - 1]
+    if (effect.type !== 'send' || last?.type !== 'send') return [...merged, effect]
+    const text = `${last.text}\n${effect.text}`
+    if (text.length > DISCORD_TEXT_LIMIT) return [...merged, effect]
+    return [...merged.slice(0, -1), { type: 'send', text }]
+  }, [])
+}
 
-  function resources(threadId: string): ThreadResources {
-    const existing = threads.get(threadId)
+function markdownMessages({ text, blankLineBefore }: { text: string; blankLineBefore: boolean }): DiscordPayload[] {
+  const segments = renderMarkdown(text, { limit: DISCORD_TEXT_LIMIT - 1 })
+  const [first, ...rest] = segments
+  if (!blankLineBefore || first?.kind !== 'text') return segmentPayloads(segments)
+  return segmentPayloads([{ kind: 'text', markdown: `\n${first.markdown}` }, ...rest])
+}
+
+export function createEffectsRunner({ discord }: { discord: Client }) {
+  const workers = new Map<string, ThreadWorker>()
+  // After stop(): no more sends or typing, even from effects already queued.
+  const lifecycle = { closed: false }
+
+  function worker(threadId: string): ThreadWorker {
+    const existing = workers.get(threadId)
     if (existing) return existing
-    const created: ThreadResources = { chain: Promise.resolve(), typing: null }
-    threads.set(threadId, created)
+    const created: ThreadWorker = { queue: [], running: false, typing: null }
+    workers.set(threadId, created)
     return created
   }
 
@@ -38,55 +65,73 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
   }
 
   async function pulseTyping(threadId: string) {
+    if (lifecycle.closed) return
     const channel = await sendableChannel(threadId)
-    if (!channel) return
+    if (!channel || lifecycle.closed) return
     await channel.sendTyping().catch((e: Error) => logger.warn(`typing failed in ${threadId}: ${e.message}`))
   }
 
   function stopTyping(threadId: string) {
-    const thread = threads.get(threadId)
+    const thread = workers.get(threadId)
     if (!thread?.typing) return
     clearInterval(thread.typing)
     thread.typing = null
   }
 
+  async function post(threadId: string, payload: DiscordPayload) {
+    if (lifecycle.closed) return
+    const channel = await sendableChannel(threadId)
+    if (!channel || lifecycle.closed) return
+    const options: MessageCreateOptions = { ...payload, allowedMentions: { parse: ['users'] } }
+    const sent = await channel.send(options).catch((e: Error) => e)
+    if (sent instanceof Error) logger.error(`send failed in ${threadId}: ${sent.message}`)
+  }
+
   async function runOne(threadId: string, effect: Effect) {
-    const thread = resources(threadId)
+    const thread = worker(threadId)
     if (effect.type === 'typing') {
       if (!effect.on) {
         stopTyping(threadId)
         return
       }
-      if (thread.typing) return
+      if (thread.typing || lifecycle.closed) return
       thread.typing = setInterval(() => void pulseTyping(threadId), TYPING_REFRESH_MS)
       await pulseTyping(threadId)
       return
     }
-    const channel = await sendableChannel(threadId)
-    if (!channel) return
-    const sent = await channel
-      .send({ content: effect.text, allowedMentions: { parse: ['users'] } })
-      .catch((e: Error) => e)
-    if (sent instanceof Error) {
-      logger.error(`send failed in ${threadId}: ${sent.message}`)
-      return
+    const payloads =
+      effect.type === 'send' ? [{ content: effect.text }] : markdownMessages(effect)
+    for (const payload of payloads) {
+      await post(threadId, payload)
     }
     // A bot message ends the typing indicator in the Discord UI.
     if (thread.typing) await pulseTyping(threadId)
   }
 
+  async function drain(threadId: string) {
+    const thread = worker(threadId)
+    if (thread.running) return
+    thread.running = true
+    while (thread.queue.length > 0) {
+      for (const effect of mergeSends(thread.queue.splice(0))) {
+        await runOne(threadId, effect)
+      }
+    }
+    thread.running = false
+  }
+
   return {
     run(threadId: string, effects: Effect[]): void {
-      if (effects.length === 0) return
-      const thread = resources(threadId)
-      thread.chain = thread.chain.then(async () => {
-        for (const effect of effects) {
-          await runOne(threadId, effect)
-        }
-      })
+      if (effects.length === 0 || lifecycle.closed) return
+      worker(threadId).queue.push(...effects)
+      void drain(threadId)
     },
-    stopAll(): void {
-      for (const threadId of threads.keys()) stopTyping(threadId)
+    stop(): void {
+      lifecycle.closed = true
+      for (const [threadId, thread] of workers) {
+        thread.queue.length = 0
+        stopTyping(threadId)
+      }
     },
   }
 }

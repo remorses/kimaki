@@ -37,14 +37,28 @@ export function replay({
   prefs?: Prefs
   view?: ThreadView
 }): { view: ThreadView; effects: Effect[] } {
-  const sessionId = rootSessionId(events.filter((event): event is V2Event => !event.type.startsWith('kimaki.')))
   const start =
-    initial ?? emptyView({ threadId: 'thread', sessionId, folder: 'project', isNew: true })
+    initial ??
+    emptyView({
+      threadId: 'thread',
+      sessionId: rootSessionId(events.filter((event): event is V2Event => !event.type.startsWith('kimaki.'))),
+      folder: 'project',
+      isNew: true,
+    })
   return events.reduce<{ view: ThreadView; effects: Effect[] }>(
     (acc, event) => {
-      const result = reduce(acc.view, event, prefs)
+      const result = reduce({ view: acc.view, event, prefs })
       return { view: result.view, effects: [...acc.effects, ...result.effects] }
     },
     { view: { ...start, branch: 'main' }, effects: [] },
   )
+}
+
+// One readable line per effect, for inline snapshots.
+export function effectLines(effects: Effect[]): string[] {
+  return effects.map((effect) => {
+    if (effect.type === 'typing') return `[typing ${effect.on ? 'on' : 'off'}]`
+    if (effect.type === 'markdown') return `${effect.blankLineBefore ? '\\n' : ''}${effect.text}`
+    return effect.text.replace(/^\n/, '\\n')
+  })
 }

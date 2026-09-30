@@ -8,7 +8,10 @@ import { goke } from 'goke'
 
 import { openDb } from './db.ts'
 import { DEFAULT_LOCK_PORT } from './lock-server.ts'
+import { createLogger } from './logger.ts'
 import { startBot } from './main.ts'
+
+const logger = createLogger('CLI')
 
 const cli = goke('kimaki2')
 
@@ -26,11 +29,11 @@ cli
       return row?.token ?? null
     })()
     if (token instanceof Error) {
-      console.error(token.message)
+      logger.error(token.message)
       process.exit(1)
     }
     if (!token) {
-      console.error('No self-hosted bot token found. Run kimaki once to onboard, or set KIMAKI_BOT_TOKEN.')
+      logger.error('No self-hosted bot token found. Run kimaki once to onboard, or set KIMAKI_BOT_TOKEN.')
       process.exit(1)
     }
     const bot = await startBot({
@@ -40,7 +43,7 @@ cli
       ensureOpencode: true,
     })
     if (bot instanceof Error) {
-      console.error(bot.message)
+      logger.error(bot.message)
       process.exit(1)
     }
     const shutdown = () => {

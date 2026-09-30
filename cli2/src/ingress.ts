@@ -4,7 +4,6 @@
 // Messages of one channel are handled in arrival order.
 
 import {
-  ChannelType,
   Events,
   GuildMember,
   PermissionFlagsBits,
@@ -19,10 +18,6 @@ import { createLogger } from './logger.ts'
 import { parseTextMessage } from './routes.ts'
 
 const logger = createLogger('INGRESS')
-
-function isThreadType(type: ChannelType): boolean {
-  return type === ChannelType.PublicThread || type === ChannelType.PrivateThread
-}
 
 // Owner, Administrator, Manage Server, or a role named "Kimaki". A role named
 // "no-kimaki" always denies. Missing member data fails closed.
@@ -44,8 +39,8 @@ export function registerIngress({ discord, db, actions }: { discord: Client; db:
 
   async function handle(message: Message) {
     const channel = message.channel
-    const inThread = isThreadType(channel.type)
-    const channelId = inThread && 'parentId' in channel ? channel.parentId : channel.id
+    const thread = channel.isThread() ? channel : null
+    const channelId = thread ? thread.parentId : channel.id
     if (!channelId) return
 
     const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } })
@@ -58,7 +53,7 @@ export function registerIngress({ discord, db, actions }: { discord: Client; db:
     if (!route) return
     const author = { id: message.author.id, username: message.author.username }
 
-    if (!inThread) {
+    if (!thread) {
       const started = await actions.startSession({
         channelId,
         directory: project.directory,
@@ -73,11 +68,11 @@ export function registerIngress({ discord, db, actions }: { discord: Client; db:
       return
     }
 
-    const binding = await db.query.thread_sessions.findFirst({ where: { thread_id: channel.id } })
+    const binding = await db.query.thread_sessions.findFirst({ where: { thread_id: thread.id } })
     if (!binding) return
     const sent = await actions.send({
-      threadId: channel.id,
-      threadName: 'name' in channel ? (channel.name ?? '') : '',
+      threadId: thread.id,
+      threadName: thread.name,
       sessionId: binding.session_id,
       text: route.text,
       author,

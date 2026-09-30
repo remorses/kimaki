@@ -37,7 +37,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await bot?.stop()
-  await twin?.discord.stop()
+  await twin?.stop()
   await server?.stop()
   fs.rmSync(dataDir, { recursive: true, force: true })
 })

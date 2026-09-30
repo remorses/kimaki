@@ -20,7 +20,7 @@ import {
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 
-import { openDb } from '../db.ts'
+import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
 import * as schema from '../schema.ts'
 import { startBot, type BotHandle } from '../main.ts'
 
@@ -80,7 +80,7 @@ export async function startOpencodeTestServer({
   const inherited = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('OPENCODE_')),
   )
-  const env: NodeJS.ProcessEnv = {
+  const env = {
     ...inherited,
     HOME: path.join(root, 'home'),
     XDG_DATA_HOME: path.join(root, 'data'),
@@ -91,9 +91,9 @@ export async function startOpencodeTestServer({
     OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
     OPENCODE_DISABLE_MODELS_FETCH: '1',
-  }
+  } satisfies NodeJS.ProcessEnv
   for (const key of ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'] as const) {
-    fs.mkdirSync(env[key]!, { recursive: true })
+    fs.mkdirSync(env[key], { recursive: true })
   }
 
   const current: { child: ChildProcess | null } = { child: null }
@@ -160,18 +160,27 @@ export const OTHER_USER_ID = '200000000000000002'
 
 export type TestTwin = {
   discord: DigitalDiscord
+  stop: () => Promise<void>
   channelId: string
+  // A second project channel, for per-channel settings like verbosity.
+  quietChannelId: string
   unregisteredChannelId: string
 }
 
 export async function startTwin(): Promise<TestTwin> {
   const channelId = '200000000000000100'
   const unregisteredChannelId = '200000000000000101'
+  const quietChannelId = '200000000000000102'
+  // A file DB per twin: the default shared in-memory DB outlives stop() and
+  // collides with the next twin when vitest reuses a worker process.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-twin-'))
   const discord = new DigitalDiscord({
+    dbUrl: `file:${path.join(root, 'twin.db')}`,
     guild: { name: 'Kimaki Test', ownerId: TEST_USER_ID },
     channels: [
       { id: channelId, name: 'project', type: ChannelType.GuildText },
       { id: unregisteredChannelId, name: 'random', type: ChannelType.GuildText },
+      { id: quietChannelId, name: 'quiet', type: ChannelType.GuildText },
     ],
     users: [
       { id: TEST_USER_ID, username: 'tommy' },
@@ -179,7 +188,17 @@ export async function startTwin(): Promise<TestTwin> {
     ],
   })
   await discord.start()
-  return { discord, channelId, unregisteredChannelId }
+  return {
+    discord,
+    channelId,
+    quietChannelId,
+    unregisteredChannelId,
+    stop: async () => {
+      await discord.stop()
+      await discord.prisma.$disconnect()
+      fs.rmSync(root, { recursive: true, force: true })
+    },
+  }
 }
 
 // Onboarding is phase 10: tests insert the channel mapping directly.
@@ -188,17 +207,24 @@ export async function seedProjectChannel({
   channelId,
   guildId,
   directory,
+  verbosity,
 }: {
   dataDir: string
   channelId: string
   guildId: string
   directory: string
+  verbosity?: Verbosity
 }): Promise<void> {
   const opened = await openDb({ dataDir, migrate: true })
   if (opened instanceof Error) throw opened
   await opened.db
     .insert(schema.channel_directories)
     .values({ channel_id: channelId, directory, channel_type: 'text', guild_id: guildId })
+  if (verbosity) {
+    await opened.db
+      .insert(schema.channel_verbosity)
+      .values({ channel_id: channelId, verbosity: verbosityToV1(verbosity) })
+  }
   opened.close()
 }
 
@@ -227,12 +253,6 @@ export function tempDataDir(): string {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-data-')))
 }
 
-// Wait timeouts are clamped to 8..10s: the first turn on a fresh server pays
-// session create, config load and provider load.
-function clampTimeout(timeout: number): number {
-  return Math.min(10_000, Math.max(8_000, timeout))
-}
-
 export async function waitFor<T>({
   label,
   timeout = 4_000,
@@ -242,7 +262,9 @@ export async function waitFor<T>({
   timeout?: number
   check: () => Promise<T | null | undefined | false>
 }): Promise<T> {
-  const deadline = Date.now() + clampTimeout(timeout)
+  // Clamped to 8..10s: the first turn on a fresh server pays session create,
+  // config load and provider load.
+  const deadline = Date.now() + Math.min(10_000, Math.max(8_000, timeout))
   while (Date.now() < deadline) {
     const value = await check()
     if (value) return value

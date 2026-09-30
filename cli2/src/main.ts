@@ -46,7 +46,8 @@ async function loginDiscord({ discord, token }: { discord: Client; token: string
 }
 
 export async function startBot(options: StartBotOptions): Promise<Error | BotHandle> {
-  setLogFile({ dataDir: options.dataDir })
+  const logFile = setLogFile({ dataDir: options.dataDir })
+  if (logFile instanceof Error) return logFile
 
   const lock = await startLockServer({ port: options.lockPort })
   if (lock instanceof Error) return lock
@@ -83,15 +84,22 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
 
   const stop = async () => {
     opencode.stop()
-    effects.stopAll()
+    effects.stop()
     await discord.destroy()
     db.close()
     await lock.close()
   }
 
+  // A fatal error on one side stops the other, so startup never hangs.
   const [opencodeReady, discordReady] = await Promise.all([
-    opencode.ready,
-    loginDiscord({ discord, token: options.token }),
+    opencode.ready.then((ready) => {
+      if (ready instanceof Error) void discord.destroy()
+      return ready
+    }),
+    loginDiscord({ discord, token: options.token }).then((login) => {
+      if (login instanceof Error) opencode.stop()
+      return login
+    }),
   ])
   if (opencodeReady instanceof Error) {
     await stop()

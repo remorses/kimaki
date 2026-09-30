@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createClient, type Client } from '@libsql/client'
 import * as orm from 'drizzle-orm'
+import * as errore from 'errore'
 import { drizzle } from 'drizzle-orm/libsql'
 import * as s from 'drizzle-orm/sqlite-core'
 
@@ -35,14 +36,11 @@ export function dbPath({ dataDir }: { dataDir: string }): string {
   return path.join(dataDir, 'discord-sessions.db')
 }
 
-// Works from src/ (tests, tsx) and dist/ (build): both resolve to src/schema.sql.
-function schemaSqlPath(): string {
-  return path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/schema.sql')
-}
-
 export function schemaStatements(): string[] {
+  // Works from src/ (tests, tsx) and dist/ (build): both resolve to src/schema.sql.
+  const schemaSqlPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/schema.sql')
   return fs
-    .readFileSync(schemaSqlPath(), 'utf8')
+    .readFileSync(schemaSqlPath, 'utf8')
     .split(';')
     .map((statement) => {
       return statement
@@ -61,7 +59,11 @@ export async function openDb({
   dataDir: string
   migrate: boolean
 }): Promise<DbError | DbNotMigratedError | OpenedDb> {
-  fs.mkdirSync(dataDir, { recursive: true })
+  const created = errore.try(
+    () => fs.mkdirSync(dataDir, { recursive: true }),
+    (e) => new DbError({ operation: `create ${dataDir}`, cause: e }),
+  )
+  if (created instanceof Error) return created
   const client = createClient({ url: `file:${dbPath({ dataDir })}` })
   const setup = await (async () => {
     await client.execute('PRAGMA journal_mode = WAL')

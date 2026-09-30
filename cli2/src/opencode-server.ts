@@ -126,11 +126,13 @@ export function watchOpencode({
   const state: { connected: boolean; endpoint: OpencodeEndpoint | null } = { connected: false, endpoint: null }
   const readyDeferred = Promise.withResolvers<Error | OpencodeEndpoint>()
 
+  // One subscription attempt. Its signal aborts on stop() and when the attempt
+  // ends, so a stale hydration can never publish into a newer connection.
   async function runAttempt({ endpoint, reconnect }: { endpoint: OpencodeEndpoint; reconnect: boolean }) {
     const attempt = new AbortController()
-    const abortAttempt = () => attempt.abort()
-    controller.signal.addEventListener('abort', abortAttempt, { once: true })
-    const iterator = endpoint.client.event.subscribe({ signal: attempt.signal })[Symbol.asyncIterator]()
+    const signal = AbortSignal.any([controller.signal, attempt.signal])
+    const iterator = endpoint.client.event.subscribe({ signal })[Symbol.asyncIterator]()
+    const hydrating = { started: false }
     const result = await (async () => {
       const first = await nextEvent(iterator)
       if (first instanceof Error) return first
@@ -144,6 +146,7 @@ export function watchOpencode({
           const next = await nextEvent(iterator)
           if (next instanceof Error) return next
           if (next.done) return new StreamClosedError({ reason: 'stream ended' })
+          if (signal.aborted) return new StreamClosedError({ reason: 'stopped' })
           if (phase.booting) {
             held.push(next.value)
             continue
@@ -151,11 +154,10 @@ export function watchOpencode({
           onEvent(next.value)
         }
       })()
-      const hydrated = await Promise.race([
-        onConnect({ client: endpoint.client, reconnect, signal: attempt.signal }),
-        consume,
-      ])
+      hydrating.started = true
+      const hydrated = await Promise.race([onConnect({ client: endpoint.client, reconnect, signal }), consume])
       if (hydrated instanceof Error) return hydrated
+      if (signal.aborted) return new StreamClosedError({ reason: 'stopped' })
       for (const event of held.splice(0)) {
         onEvent(event)
       }
@@ -167,33 +169,30 @@ export function watchOpencode({
       return consume
     })()
     attempt.abort()
-    controller.signal.removeEventListener('abort', abortAttempt)
     void iterator.return?.(undefined).catch(() => {})
+    state.connected = false
+    // Hydration may have published the client before failing: always undo it.
+    if (hydrating.started) onDisconnect()
     return result
   }
 
   void (async () => {
-    const backoff = { ms: 500, everConnected: false }
+    const backoff = { ms: 500 }
     while (!controller.signal.aborted) {
       const endpoint = await resolveOpencode({ serviceFile, ensure })
+      if (controller.signal.aborted) return
       if (endpoint instanceof OpenCodeVersionError) {
         readyDeferred.resolve(endpoint)
         logger.error(endpoint.message)
         return
       }
+      if (endpoint instanceof Error) logger.warn(`OpenCode not reachable: ${endpoint.message}`)
       if (!(endpoint instanceof Error)) {
-        const result = await runAttempt({ endpoint, reconnect: backoff.everConnected })
-        if (state.connected) {
-          backoff.everConnected = true
-          backoff.ms = 500
-          state.connected = false
-          onDisconnect()
-        }
+        const result = await runAttempt({ endpoint, reconnect: state.endpoint !== null })
         if (controller.signal.aborted) return
+        // This attempt connected: start the backoff over.
+        if (state.endpoint === endpoint) backoff.ms = 500
         logger.warn(`event stream ended: ${result.message}`)
-      }
-      if (endpoint instanceof Error) {
-        logger.warn(`OpenCode not reachable: ${endpoint.message}`)
       }
       await sleep(backoff.ms, undefined, { signal: controller.signal }).catch(() => undefined)
       backoff.ms = Math.min(backoff.ms * 2, 30_000)
