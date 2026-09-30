@@ -7,6 +7,7 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -64,8 +65,11 @@ export type OpencodeTestServer = {
 export async function startOpencodeTestServer({
   matchers = [],
   permissions = [],
+  commands = {},
 }: {
   matchers?: DeterministicMatcher[]
+  // OpenCode commands (`/name args` in Discord), e.g. { review: { template: 'Review: $ARGUMENTS' } }.
+  commands?: Record<string, { template: string; description?: string }>
   // Appended after the allow-all rules: the last matching rule wins.
   permissions?: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }>
 } = {}): Promise<OpencodeTestServer> {
@@ -95,7 +99,7 @@ export async function startOpencodeTestServer({
     XDG_CONFIG_HOME: path.join(root, 'config'),
     XDG_CACHE_HOME: path.join(root, 'cache'),
     OPENCODE_TEST_HOME: path.join(root, 'home'),
-    OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, commands }),
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
     OPENCODE_DISABLE_MODELS_FETCH: '1',
   } satisfies NodeJS.ProcessEnv
@@ -241,10 +245,13 @@ export async function startTestBot({
   dataDir,
   twin,
   server,
+  geminiBaseUrl,
 }: {
   dataDir: string
   twin: TestTwin
   server: OpencodeTestServer
+  // Voice transcription against startFakeGemini().
+  geminiBaseUrl?: string
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -263,9 +270,58 @@ export async function startTestBot({
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,
     ensureOpencode: false,
+    ...(geminiBaseUrl && { transcriptionBaseUrls: { gemini: geminiBaseUrl } }),
   })
   if (bot instanceof Error) throw bot
   return bot
+}
+
+export type FakeTranscription = { transcription: string; route?: string; agent?: string }
+
+// A voice message whose audio bytes are the transcription the fake returns.
+export function voiceUrl(result: FakeTranscription): string {
+  return `data:audio/ogg;base64,${Buffer.from(JSON.stringify(result)).toString('base64')}`
+}
+
+export type FakeGemini = {
+  baseUrl: string
+  // Route enum offered by each transcription request (tool schema).
+  requests: Array<{ routes: unknown }>
+  stop: () => Promise<void>
+}
+
+// Gemini generateContent over HTTP, deterministic: the "audio" is JSON of
+// the transcription tool call to return (see voiceUrl()). Exercises the real
+// request, schema and response parsing of voice.ts.
+export async function startFakeGemini(): Promise<FakeGemini> {
+  const requests: FakeGemini['requests'] = []
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+        contents: Array<{ parts: Array<{ inlineData?: { data: string } }> }>
+        tools: Array<{ functionDeclarations: Array<{ name: string; parameters: { properties: { route?: { enum?: unknown } } } }> }>
+      }
+      const declaration = body.tools[0]!.functionDeclarations[0]!
+      requests.push({ routes: declaration.parameters.properties.route?.enum ?? null })
+      const audio = body.contents[0]!.parts.find((part) => part.inlineData)!.inlineData!.data
+      const args = JSON.parse(Buffer.from(audio, 'base64').toString('utf8')) as FakeTranscription
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify({
+          candidates: [{ finishReason: 'STOP', content: { parts: [{ functionCall: { name: declaration.name, args } }] } }],
+        }),
+      )
+    })
+  })
+  const port = await freePort()
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    requests,
+    stop: () => new Promise((resolve) => server.close(() => resolve())),
+  }
 }
 
 export function tempDataDir(): string {

@@ -16,6 +16,7 @@ import { createLogger, setLogFile } from './logger.ts'
 import { startLockServer, type LockServer } from './lock-server.ts'
 import { watchOpencode, type OpencodeConnection, type OpencodeEndpoint } from './opencode-server.ts'
 import { createBotStore, type BotStore } from './store.ts'
+import { createTranscriber, type TranscriptionBaseUrls } from './voice.ts'
 
 const logger = createLogger('MAIN')
 
@@ -33,6 +34,8 @@ export type StartBotOptions = {
   // Shell command that runs this Kimaki install (shown by /session-id and
   // given to agents), from kimakiShellCommand().
   kimakiCommand: string
+  // Voice transcription API base URLs; tests point Gemini at a local fake.
+  transcriptionBaseUrls?: TranscriptionBaseUrls
 }
 
 export type BotHandle = {
@@ -92,7 +95,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     onDisconnect: eventLoop.onDisconnect,
   })
   const actions = createActions({ discord, db: db.db, opencode, eventLoop, store })
-  registerIngress({ discord, db: db.db, store, actions })
+  const transcriber = createTranscriber({ db: db.db, token: options.token, baseUrls: options.transcriptionBaseUrls })
+  registerIngress({ discord, db: db.db, store, actions, transcriber, dataDir: options.dataDir })
 
   const stop = async () => {
     opencode.stop()

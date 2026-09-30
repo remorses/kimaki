@@ -9,7 +9,8 @@
 //   anything else           steer      (interrupts the current run)
 
 export type Route =
-  | { kind: 'steer' | 'queue' | 'btw' | 'new-session'; text: string }
+  // `agent`: a voice message asked for this agent (spec 9.4).
+  | { kind: 'steer' | 'queue' | 'btw' | 'new-session'; text: string; agent?: string }
   | { kind: 'shell'; command: string }
   | { kind: 'command'; name: string; arguments: string; queue: boolean }
 

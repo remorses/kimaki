@@ -290,6 +290,7 @@ test('slash commands are registered in the guild', async () => {
       "btw",
       "clear-queue",
       "queue",
+      "run-shell-command",
       "session-id",
     ]
   `)

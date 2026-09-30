@@ -188,3 +188,34 @@ export function formatSubagentFinished({ agent, description }: { agent: string; 
   return asSubtext(`⬦ ${inline(agent)} finished: ${inline(description)}`)
 }
 
+
+const SHELL_OUTPUT_LIMIT = 1_800
+
+export function formatShellStarted(command: string): string {
+  return asSubtext(`$ ${inline(command, 200)}`)
+}
+
+// Output of a user `!cmd`: the tail in a code block, then exit status. Bot
+// line, not markdown: backtick fences in the output are neutralized.
+export function formatShellEnded({
+  output,
+  truncated,
+  status,
+  exit,
+}: {
+  output: string
+  truncated: boolean
+  status: string
+  exit: number | null
+}): string {
+  const body = output.trimEnd()
+  const tail = body.length > SHELL_OUTPUT_LIMIT ? `…${body.slice(-SHELL_OUTPUT_LIMIT)}` : body
+  const notes = [
+    status === 'killed' ? 'killed' : null,
+    status === 'timeout' ? 'timed out' : null,
+    exit !== null && exit !== 0 ? `exit ${exit}` : null,
+    truncated || tail !== body ? 'output truncated' : null,
+  ].filter((note) => note !== null)
+  const block = tail ? `\`\`\`\n${tail.replaceAll('```', 'ʼʼʼ')}\n\`\`\`` : asSubtext('(no output)')
+  return notes.length > 0 ? `${block}\n${asSubtext(notes.join(' ⋅ '))}` : block
+}

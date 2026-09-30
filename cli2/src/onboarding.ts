@@ -190,7 +190,7 @@ export async function runOnboarding({
   const session = await bot.actions.startSession({
     channelId: channel.channelId,
     directory,
-    text: onboardingPrompt({ kimaki }),
+    route: { kind: 'steer', text: onboardingPrompt({ kimaki }) },
     author: { id: owner.id, username: owner.user.username },
     messageId: welcome.id,
     threadName: 'Kimaki onboarding',

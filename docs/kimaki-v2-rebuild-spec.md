@@ -1926,7 +1926,7 @@ for await (const event of client.event.subscribe({ signal })) {
   default `kimaki-<bot>` channel (`<dataDir>/projects/kimaki`) and a `Kimaki onboarding`
   thread whose session asks which projects to add, searches for git repos, and runs
   `kimaki project add <dir>`. This replaces the `project.list` multiselect and the
-  tutorial thread. The prompt forbids the question tool until P4 renders questions.
+  tutorial thread. Since P4 the prompt asks with the question tool.
 - **Kimaki records session events (decided).** `session.log` has no history in 2.0.19 and
   `message.list` drops transient events (`session.retry.scheduled`), so `session read
   --json` cannot replace `export-events-jsonl`. cli2 appends every event folded into a
@@ -1936,6 +1936,42 @@ for await (const event of client.event.subscribe({ signal })) {
 - **`Service.ensure()` binary.** Its default command is `opencode` from `PATH`, which is
   often V1 while V2 installs as `opencode2`. cli2 picks the first of `opencode2`,
   `opencode` whose `--version` is at least 2.0.19 and passes it as `command`.
+
+### Findings from building cli2 P3–P5 (OpenCode 2.0.19)
+
+- **Interrupt before steer, not after.** `prompt(steer)` then `interrupt({ resume: true })`
+  (9.1) parks queued items for good: the resumed drain is steer-scoped and never
+  promotes `queue` items (`execution.ts`, `steer-queue` fixture). cli2 calls
+  `interrupt({ resume: false })` first, then `prompt(steer)`: the prompt's wake has
+  "input" scope, so the steer runs and then the queue (`queue-parked` fixture, e2e).
+  Pending questions are cancelled and permissions rejected before the interrupt.
+- **`form.created` has no `data.sessionID`**: it is `data.form.sessionID`. `form.replied`
+  and `form.cancelled` do have `data.sessionID`.
+- **Permission API is top level**: `client.permission.list/reply({ sessionID, … })`,
+  not `session.permission.*` (28.6).
+- **Deny ends the run.** Rejecting a live permission request fails the tool with
+  `aborted` ("The user declined this tool call") and ends the execution with
+  `execution.interrupted { reason: 'shutdown' }`. The recorded `permission` fixture
+  continued instead. Kimaki shows no error and no footer.
+- **`inbox.delivered` carries only the inbox ID.** The reducer keeps text and user name
+  from `inbox.enqueued` (or `inbox.list` after a restart) for the `» user: text` echo.
+- **`session.shell` returns when the command ends** and `session.command` has no `id` or
+  `metadata`: queued `/command` items get no Discord user in their echo. `!cmd` is
+  never awaited; an HTTP failure comes back as an internal `kimaki.error` event.
+- **`interrupt` does not stop user shells** (they run in the background). `/abort` also
+  lists the location's shells and removes the running ones of the session.
+- **A `!cmd` while busy wakes the model.** Its synthetic output item is a steer item, so
+  after the current step the model gets another step and answers it.
+- **Restart re-renders pending questions and permissions** (the old message IDs are
+  unknown): the old message stays and still works. Old queue acks keep their Remove
+  button, which also still works (custom ID = inbox ID).
+- **`. btw queue` forks at once**: a queued fork is not native (9.2).
+- **Voice routing:** one tool schema `{ transcription, route, agent? }`; `btw` and `queue`
+  are offered only in a thread with a session. Tests use a local Gemini-compatible HTTP
+  server, so the real request and parser run. The OpenAI path (OGG/M4A → WAV) has no
+  e2e test.
+- **Attachments** are saved in `<dataDir>/attachments/<messageId>/` (not in the project,
+  to keep `git status` clean) and sent as `file://` URIs; OpenCode reads them.
 
 ---
 

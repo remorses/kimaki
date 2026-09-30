@@ -311,3 +311,26 @@ test('permission: two requests, the rejected one fails its tool call', () => {
   `)
   expect(view.permissions).toMatchInlineSnapshot(`{}`)
 })
+
+test('shell: user !cmd output while idle and while busy, synthetic items render nothing', () => {
+  const { effects } = replay({ events: loadFixture('shell.events.jsonl') })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "-# $ echo user-shell-idle && git log --oneline -1",
+      "\`\`\`
+    user-shell-idle
+    05de62d feat: make external opencode session sync opt-in via --enable-sync
+    \`\`\`",
+      "[typing on]",
+      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# ┣ shell _sleep 5_",
+      "-# $ echo user-shell-busy",
+      "\`\`\`
+    user-shell-busy
+    \`\`\`",
+      "\\nYour shell command printed \`user-shell-idle\` and \`05de62d feat: make external opencode session sync opt-in via --enable-sync\`. The deploy tag is \`v9.9.9\`.",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 9s ⋅ 6% ⋅ gpt-6-luna*",
+    ]
+  `)
+})

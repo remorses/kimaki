@@ -3,17 +3,31 @@
 // ownership (only channels mapped in this machine's SQLite), permission.
 // Messages of one channel are handled in arrival order.
 //
-// Edits and deletes of messages that sit in the queue update the queue.
+// Attachments become prompt files; voice messages are transcribed into the
+// same Route as text. Edits and deletes of queued messages update the queue.
 
-import { Events, GuildMember, PermissionFlagsBits, type Client, type Guild, type Message } from 'discord.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import {
+  Events,
+  GuildMember,
+  PermissionFlagsBits,
+  type Attachment,
+  type Client,
+  type Guild,
+  type Message,
+} from 'discord.js'
+import * as errore from 'errore'
 
-import type { Actions } from './actions.ts'
+import type { Actions, PromptFile } from './actions.ts'
 import type { KimakiDb } from './db.ts'
 import { formatError } from './format-parts.ts'
 import { createLogger } from './logger.ts'
-import { handleQueuedMessageDelete, handleQueuedMessageEdit } from './queue.ts'
-import { parseTextMessage } from './routes.ts'
+import { formatEcho, handleQueuedMessageDelete, handleQueuedMessageEdit } from './queue.ts'
+import { parseTextMessage, type Route } from './routes.ts'
 import type { BotStore } from './store.ts'
+import { isVoiceAttachment, parseVoiceMessage, type AttachmentLike, type Transcriber } from './voice.ts'
 
 const logger = createLogger('INGRESS')
 
@@ -30,18 +44,107 @@ export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: st
   return roleNames.includes('kimaki')
 }
 
+// Attachments are saved under <dataDir>/attachments/<messageId>/ and sent as
+// file:// URIs; OpenCode reads them into the prompt (images are resized there).
+async function saveAttachments({
+  dataDir,
+  messageId,
+  attachments,
+}: {
+  dataDir: string
+  messageId: string
+  attachments: readonly Attachment[]
+}): Promise<AttachmentError | PromptFile[]> {
+  if (attachments.length === 0) return []
+  const directory = path.join(dataDir, 'attachments', messageId)
+  const created = await fs.promises
+    .mkdir(directory, { recursive: true })
+    .catch((e) => new AttachmentError({ file: directory, cause: e }))
+  if (created instanceof Error) return created
+  const saved: PromptFile[] = []
+  for (const [index, attachment] of attachments.entries()) {
+    const bytes = await download(attachment.url)
+    if (bytes instanceof Error) return bytes
+    // Index prefix: two attachments may share a name.
+    const file = path.join(directory, `${index}-${path.basename(attachment.name) || 'attachment'}`)
+    const written = await fs.promises
+      .writeFile(file, bytes)
+      .catch((e) => new AttachmentError({ file: attachment.name, cause: e }))
+    if (written instanceof Error) return written
+    saved.push({ uri: pathToFileURL(file).href, name: attachment.name })
+  }
+  return saved
+}
+
+class AttachmentError extends errore.createTaggedError({
+  name: 'AttachmentError',
+  message: 'Could not download attachment $file',
+}) {}
+
+async function download(url: string): Promise<AttachmentError | Buffer> {
+  const response = await fetch(url).catch((e) => new AttachmentError({ file: url, cause: e }))
+  if (response instanceof Error) return response
+  if (!response.ok) return new AttachmentError({ file: `${url} (HTTP ${response.status})` })
+  const body = await response.arrayBuffer().catch((e) => new AttachmentError({ file: url, cause: e }))
+  if (body instanceof Error) return body
+  return Buffer.from(body)
+}
+
+function attachmentLike(attachment: Attachment): AttachmentLike {
+  return {
+    contentType: attachment.contentType,
+    name: attachment.name,
+    duration: attachment.duration,
+    waveform: attachment.waveform,
+    width: attachment.width,
+    height: attachment.height,
+  }
+}
+
 export function registerIngress({
   discord,
   db,
   store,
   actions,
+  transcriber,
+  dataDir,
 }: {
   discord: Client
   db: KimakiDb
   store: BotStore
   actions: Actions
+  transcriber: Transcriber
+  dataDir: string
 }) {
   const chains = new Map<string, Promise<void>>()
+
+  // Voice: transcribe first. The transcription picks the route (spec 9.4).
+  async function voiceRoute({
+    message,
+    attachment,
+    directory,
+    inSession,
+  }: {
+    message: Message
+    attachment: Attachment
+    directory: string
+    inSession: boolean
+  }): Promise<Error | Route> {
+    const audio = await download(attachment.url)
+    if (audio instanceof Error) return audio
+    const agents = await actions.primaryAgents({ directory })
+    if (agents instanceof Error) return agents
+    const result = await transcriber.transcribe({
+      audio,
+      mediaType: attachment.contentType ?? 'audio/ogg',
+      directory,
+      agents,
+      inSession,
+    })
+    if (result instanceof Error) return result
+    logger.log(`voice message ${message.id} -> ${result.route}${result.agent ? ` (${result.agent})` : ''}`)
+    return parseVoiceMessage(result)
+  }
 
   async function handle(message: Message) {
     const channel = message.channel
@@ -55,36 +158,55 @@ export function registerIngress({
       logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
       return
     }
-    const route = parseTextMessage({ content: message.content })
-    if (!route) return
+    const inSession = thread ? Boolean(store.getState().roots[thread.id]) : false
+    if (thread && !inSession) return
     const author = { id: message.author.id, username: message.author.username }
+    const reportError = async (error: Error) => {
+      logger.error(`message ${message.id} failed: ${error.message}`)
+      await message.reply(formatError(error.message)).catch(() => undefined)
+    }
+
+    const attachments = [...message.attachments.values()]
+    const voice = attachments.find((attachment) => isVoiceAttachment(attachmentLike(attachment)))
+    const files = await saveAttachments({
+      dataDir,
+      messageId: message.id,
+      attachments: attachments.filter((attachment) => attachment !== voice),
+    })
+    if (files instanceof Error) return reportError(files)
+    const route = voice
+      ? await voiceRoute({ message, attachment: voice, directory: project.directory, inSession })
+      : (parseTextMessage({ content: message.content }) ?? (files.length > 0 ? { kind: 'steer' as const, text: '' } : null))
+    if (route instanceof Error) return reportError(route)
+    if (!route) return
+    // The transcription is not visible anywhere else.
+    if (voice && thread && route.kind !== 'shell' && route.kind !== 'command') {
+      await message.reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] } })
+    }
 
     if (!thread) {
-      // A channel message starts a session; its text is the first prompt as is.
+      // A channel message starts a session. Queue and btw need one to wait
+      // for or fork from: here they are plain prompts.
+      const first = route.kind === 'shell' || route.kind === 'command' ? route : { ...route, kind: 'steer' as const }
       const started = await actions.startSession({
         channelId,
         directory: project.directory,
-        text: message.content.trim(),
+        route: first,
         author,
         messageId: message.id,
+        showInput: Boolean(voice),
+        files,
       })
-      if (started instanceof Error) {
-        logger.error(`start session failed: ${started.message}`)
-        await message.reply(formatError(started.message)).catch(() => undefined)
-      }
+      if (started instanceof Error) return reportError(started)
       return
     }
 
-    if (!store.getState().roots[thread.id]) return
-    const result = await actions.dispatch({ thread, route, author, messageId: message.id })
-    if (result instanceof Error) {
-      logger.error(`${route.kind} failed: ${result.message}`)
-      await message.reply(formatError(result.message)).catch(() => undefined)
-      return
-    }
-    if (route.kind === 'btw' && result) {
-      await message.reply(`Session forked! Continue in <#${result.threadId}>`).catch(() => undefined)
-    }
+    const result = await actions.dispatch({ thread, route, author, messageId: message.id, files })
+    if (result instanceof Error) return reportError(result)
+    if (!result) return
+    const note =
+      route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
+    await message.reply(note).catch(() => undefined)
   }
 
   function serialize(channelId: string, task: () => Promise<void>) {

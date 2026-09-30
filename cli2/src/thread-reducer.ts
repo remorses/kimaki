@@ -23,6 +23,8 @@ import {
   formatError,
   formatFooter,
   formatRetry,
+  formatShellEnded,
+  formatShellStarted,
   formatSubagentFinished,
   formatToolFailed,
   formatToolLine,
@@ -91,6 +93,8 @@ export type KimakiEvent =
   | { type: 'kimaki.synced'; activeSessionIds: readonly string[]; at: number }
   // A session found by walking parentID after a bot restart.
   | { type: 'kimaki.child'; sessionId: string; agent: string }
+  // An action failed after it returned (a `!cmd` request): shown as an error line.
+  | { type: 'kimaki.error'; message: string }
   // Message IDs of a `show` effect, reported back by the executor.
   | { type: 'kimaki.rendered'; key: string; messageIds: readonly string[] }
   // After a (re)connect: what one session of the thread waits on right now.
@@ -111,6 +115,7 @@ const KIMAKI_EVENT_TYPES: ReadonlySet<string> = new Set<KimakiEvent['type']>([
   'kimaki.child',
   'kimaki.rendered',
   'kimaki.hydrated',
+  'kimaki.error',
 ])
 
 function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
@@ -392,6 +397,24 @@ function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; 
         ],
       }
     }
+    // User `!cmd` (session.shell): shown at every verbosity.
+    case 'session.shell.started':
+      return toolLine({ view, text: formatShellStarted(event.data.shell.command) })
+    case 'session.shell.ended':
+      return {
+        view: { ...view, lastKind: 'tool' },
+        effects: [
+          {
+            type: 'send',
+            text: formatShellEnded({
+              output: event.data.output.output,
+              truncated: event.data.output.truncated,
+              status: event.data.shell.status,
+              exit: event.data.shell.exit ?? null,
+            }),
+          },
+        ],
+      }
     case 'session.execution.succeeded':
       return footerResult({ view, created: event.created, prefs })
     case 'session.execution.failed':
@@ -408,6 +431,8 @@ function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; 
 
 function reduceKimaki({ view, event }: { view: ThreadView; event: KimakiEvent }): Result {
   switch (event.type) {
+    case 'kimaki.error':
+      return { view: { ...view, lastKind: null }, effects: [{ type: 'send', text: formatError(event.message) }] }
     case 'kimaki.rendered': {
       const rendered = renderedUi({ ui: view.ui, key: event.key, messageIds: event.messageIds })
       return { view: { ...view, ui: rendered.ui }, effects: rendered.effects }
