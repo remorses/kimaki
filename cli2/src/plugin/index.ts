@@ -4,14 +4,12 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 
 import { fileEditTool, recordToolEdits } from '../file-edit-log.ts'
-import { setupAnthropicOAuth } from './anthropic.ts'
 
 const exec = promisify(execFile)
 
 export default Plugin.define({
   id: 'kimaki',
   async setup(ctx) {
-    await setupAnthropicOAuth(ctx)
     async function marker(sessionID: string) {
       const session = await ctx.session.get({ sessionID }).catch(() => null)
       const value: unknown = session?.metadata?.['kimaki']

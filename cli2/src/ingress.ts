@@ -169,8 +169,11 @@ export function registerIngress({
       if (decoded instanceof Error) return
       const value = decoded.value
       if (!value || typeof value !== 'object' || !('requestId' in value) || typeof value.requestId !== 'string' || !/^[0-9a-f]{16}$/.test(value.requestId) || !('options' in value) || !value.options || typeof value.options !== 'object' || Array.isArray(value.options)) return
-      const promptAttachment = 'promptFile' in value && value.promptFile === REMOTE_PROMPT_FILE ? message.attachments.find((attachment) => attachment.name === REMOTE_PROMPT_FILE) : undefined
-      const prompt = promptAttachment ? await remotePromptText(promptAttachment.url) : message.content
+      const promptInFile = 'promptFile' in value && value.promptFile === REMOTE_PROMPT_FILE
+      const first = message.attachments.first()
+      const promptAttachment = promptInFile && first?.name === REMOTE_PROMPT_FILE ? first : undefined
+      // Never fall back to the truncated preview in the message content.
+      const prompt = !promptInFile ? message.content : promptAttachment ? await remotePromptText(promptAttachment.url) : new AttachmentError({ file: REMOTE_PROMPT_FILE, cause: new Error('missing from the remote envelope') })
       const input = prompt instanceof Error ? prompt : parseSendInput({ ...value.options, ...(thread ? { threadId: thread.id } : { channelId }), prompt })
       const files = await saveAttachments({ dataDir, messageId: message.id, attachments: [...message.attachments.values()].filter((attachment) => attachment !== promptAttachment) })
       const result = input instanceof Error ? input : files instanceof Error ? files : await actions.send({ ...input, files }, { localOnly: true })

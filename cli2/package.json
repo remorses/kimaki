@@ -22,6 +22,7 @@
     "cron-parser": "^5.5.0",
     "discord.js": "^14.26.3",
     "drizzle-orm": "1.0.0-beta.22",
+    "effect": "4.0.0-rc.112",
     "errore": "workspace:^",
     "goke": "^6.15.1",
     "mdast-util-from-markdown": "^2.0.3",

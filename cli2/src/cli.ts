@@ -314,17 +314,17 @@ cli.command('session search <query>', 'Search titles, then real message content'
       }
       return scan(undefined)
     }
-    const results: Array<Error | boolean> = new Array(recent.length)
+    const results: boolean[] = new Array(recent.length)
     const next = { index: 0 }
     await Promise.all(Array.from({ length: Math.min(8, recent.length) }, async () => {
       while (next.index < recent.length) {
         const index = next.index++
-        results[index] = await hit(recent[index]!)
+        const result = await hit(recent[index]!)
+        if (result instanceof Error) fail(result)
+        results[index] = result
       }
     }))
-    const failed = results.find((result) => result instanceof Error)
-    if (failed instanceof Error) fail(failed)
-    const found = recent.filter((_, index) => results[index] === true)
+    const found = recent.filter((_, index) => results[index])
     process.stdout.write(options.json ? `${JSON.stringify(found, null, 2)}\n` : found.map((session) => `${session.id} ${session.title}\n`).join(''))
   })
 

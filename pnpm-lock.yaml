@@ -241,6 +241,9 @@ importers:
       drizzle-orm:
         specifier: 1.0.0-beta.22
         version: 1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5)
+      effect:
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
       errore:
         specifier: workspace:^
         version: link:../errore

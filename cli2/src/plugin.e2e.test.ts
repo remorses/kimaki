@@ -45,10 +45,11 @@ test('bot start writes the plugin shim, OpenCode loads it, a restart does not re
   const shim = path.join(server.configDir, 'plugins', 'kimaki', 'index.js')
   expect(fs.existsSync(shim)).toBe(false)
   const client = await server.client()
-  const kimakiStatus = async () => {
+  const pluginStatus = async (id: string) => {
     const plugins = await client.plugin.list({ location: { directory: server.projectDirectory } })
-    return plugins.data.find((plugin) => plugin.id === 'kimaki')?.state.status ?? 'missing'
+    return plugins.data.find((plugin) => plugin.id === id)?.state.status ?? 'missing'
   }
+  const kimakiStatus = () => pluginStatus('kimaki')
   expect(await kimakiStatus()).toBe('missing')
 
   bot = await startTestBot({ dataDir, twin, server })
@@ -62,6 +63,7 @@ test('bot start writes the plugin shim, OpenCode loads it, a restart does not re
   const thread = await twin.discord.channel(twin.channelId).waitForThread({ timeout: 8_000 })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await kimakiStatus()).toBe('active')
+  expect(await pluginStatus('kimaki-anthropic')).toBe('active')
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     plugin shim turn

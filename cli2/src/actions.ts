@@ -1310,9 +1310,10 @@ export function createActions({
     const long = prompt.length > 2000
     const footer = `${REMOTE_SEND_PREFIX}${JSON.stringify({ requestId, options, ...(long && { promptFile: REMOTE_PROMPT_FILE }) })}`
     if (footer.length > 2048) return new ConfigError({ reason: 'Remote send options exceed the Discord embed limit. Send fewer options.' })
+    // The prompt file goes first: the receiver reads the first attachment, so a user file with the same name cannot replace it.
     const attachments = [
-      ...(files ?? []).map((file) => ({ name: file.name, attachment: file.uri.startsWith('file:') ? fileURLToPath(file.uri) : file.uri })),
       ...(long ? [{ name: REMOTE_PROMPT_FILE, attachment: Buffer.from(prompt) }] : []),
+      ...(files ?? []).map((file) => ({ name: file.name, attachment: file.uri.startsWith('file:') ? fileURLToPath(file.uri) : file.uri })),
     ]
     return new Promise<Error | { threadId: string; sessionId: string | null }>((resolve) => {
       const finish = (result: Error | { threadId: string; sessionId: string | null }) => { clearTimeout(timer); discord.off(Events.MessageCreate, receive); resolve(result) }
