@@ -30,13 +30,25 @@ import * as schema from './schema.ts'
 const logger = createLogger('CREDS')
 const execFileAsync = promisify(execFile)
 
-// Deploy-time constants of the shared gateway bot; env overrides for staging.
+// Deploy-time constants of the shared gateway bot; env overrides for staging
+// and tests (gatewayUrlsFromEnv()).
 export const GATEWAY_APP_ID = process.env['KIMAKI_GATEWAY_APP_ID'] || '1477605701202481173'
-export const WEBSITE_URL = process.env['KIMAKI_WEBSITE_URL'] || 'https://kimaki.dev'
-// REST base of gateway-proxy (its WebSocket URL with wss -> https).
-export const GATEWAY_PROXY_URL = (process.env['KIMAKI_GATEWAY_PROXY_URL'] || 'wss://discord-gateway.kimaki.dev')
-  .replace(/^wss:/, 'https:')
-  .replace(/^ws:/, 'http:')
+
+export type GatewayUrls = {
+  // kimaki.dev: install page and /api/onboarding/status.
+  website: string
+  // REST base of gateway-proxy (its WebSocket URL with wss -> https).
+  proxy: string
+}
+
+export function gatewayUrlsFromEnv(): GatewayUrls {
+  return {
+    website: process.env['KIMAKI_WEBSITE_URL'] || 'https://kimaki.dev',
+    proxy: (process.env['KIMAKI_GATEWAY_PROXY_URL'] || 'wss://discord-gateway.kimaki.dev')
+      .replace(/^wss:/, 'https:')
+      .replace(/^ws:/, 'http:'),
+  }
+}
 
 export type BotMode = 'self_hosted' | 'gateway'
 
@@ -67,7 +79,7 @@ export function credentialsFromRow(row: typeof schema.bot_tokens.$inferSelect): 
   }
   const token = row.client_id && row.client_secret ? `${row.client_id}:${row.client_secret}` : row.token
   if (!token.includes(':')) return null
-  return { mode: 'gateway', appId: row.app_id, token, baseUrl: row.proxy_url || GATEWAY_PROXY_URL }
+  return { mode: 'gateway', appId: row.app_id, token, baseUrl: row.proxy_url || gatewayUrlsFromEnv().proxy }
 }
 
 export async function readSavedCredentials({
@@ -134,51 +146,114 @@ export function selfHostedInstallUrl({ appId }: { appId: string }): string {
   return `https://discord.com/oauth2/authorize?${params}`
 }
 
-// The website starts the Discord OAuth flow and stores the client in gateway_clients.
-export function gatewayInstallUrl({ clientId, clientSecret }: { clientId: string; clientSecret: string }): string {
-  const url = new URL('/discord-install', WEBSITE_URL)
+// The website starts the Discord OAuth flow and stores the client in
+// gateway_clients. callbackUrl: the website redirects there with ?guild_id=.
+export function gatewayInstallUrl({
+  clientId,
+  clientSecret,
+  website,
+  callbackUrl,
+}: {
+  clientId: string
+  clientSecret: string
+  website: string
+  callbackUrl?: string
+}): string {
+  const url = new URL('/discord-install', website)
   url.searchParams.set('clientId', clientId)
   url.searchParams.set('clientSecret', clientSecret)
+  if (callbackUrl) url.searchParams.set('kimakiCallbackUrl', callbackUrl)
   return url.toString()
+}
+
+export function installUrlFor({
+  credentials,
+  website,
+  callbackUrl,
+}: {
+  credentials: Credentials
+  website: string
+  callbackUrl?: string
+}): string {
+  if (credentials.mode === 'self_hosted') return selfHostedInstallUrl({ appId: credentials.appId })
+  const [clientId = '', clientSecret = ''] = credentials.token.split(':')
+  return gatewayInstallUrl({ clientId, clientSecret, website, callbackUrl })
+}
+
+// Non-TTY hosts (cloud sandboxes, CI) read these on stdout. SSE framing, so
+// consumers can use eventsource-parser on noisy output. Public format:
+// website/src/docs/docs/guides/programmatic-gateway.mdx.
+export type ProgrammaticEvent =
+  | { type: 'install_url'; url: string }
+  | { type: 'authorized'; guild_id: string }
+  | { type: 'ready'; app_id: string; guild_ids: string[] }
+  | { type: 'error'; message: string; install_url?: string }
+
+export function emitEvent(event: ProgrammaticEvent): void {
+  process.stdout.write(`data: ${JSON.stringify(event)}\n\n`)
 }
 
 export type GatewayInstall = { guildId: string; installerId: string | null }
 
-// One status request. null = not installed yet (or website unreachable).
+type InstallStatus =
+  | { kind: 'installed'; install: GatewayInstall }
+  | { kind: 'failed'; reason: string }
+  | { kind: 'pending' }
+  | { kind: 'unreachable' }
+
+// One status request.
 async function checkInstallStatus({
-  clientId,
-  clientSecret,
+  credentials,
+  website,
 }: {
-  clientId: string
-  clientSecret: string
-}): Promise<ConfigError | GatewayInstall | null> {
-  const url = new URL('/api/onboarding/status', WEBSITE_URL)
+  credentials: Credentials
+  website: string
+}): Promise<InstallStatus> {
+  const [clientId = '', clientSecret = ''] = credentials.token.split(':')
+  const url = new URL('/api/onboarding/status', website)
   url.searchParams.set('client_id', clientId)
   url.searchParams.set('secret', clientSecret)
   const response = await fetch(url, { signal: AbortSignal.timeout(10_000) }).catch(() => null)
-  if (!response) return null
+  if (!response) return { kind: 'unreachable' }
   const body = (await response.json().catch(() => null)) as { guild_id?: string; discord_user_id?: string; error?: string; onboarding_error?: boolean } | null
-  if (response.ok && body?.guild_id) return { guildId: body.guild_id, installerId: body.discord_user_id ?? null }
-  if (response.status === 404 && body?.onboarding_error && body.error) {
-    return new ConfigError({ reason: `Authorization failed: ${body.error}` })
+  if (response.ok && body?.guild_id) {
+    return { kind: 'installed', install: { guildId: body.guild_id, installerId: body.discord_user_id ?? null } }
   }
-  return null
+  if (response.status === 404 && body?.onboarding_error && body.error) return { kind: 'failed', reason: body.error }
+  if (response.status === 404) return { kind: 'pending' }
+  return { kind: 'unreachable' }
 }
 
 async function pollInstallStatus({
-  clientId,
-  clientSecret,
+  credentials,
+  website,
+  onWait,
 }: {
-  clientId: string
-  clientSecret: string
+  credentials: Credentials
+  website: string
+  onWait: (attempt: number) => void
 }): Promise<ConfigError | GatewayInstall> {
-  // 100 x 3s = 5 minutes, like V1.
-  for (let attempt = 0; attempt < 100; attempt++) {
-    await sleep(3_000)
-    const status = await checkInstallStatus({ clientId, clientSecret })
-    if (status) return status
+  // First check at once (a resumed install may be done), then every 3s for 5 minutes, like V1.
+  for (let attempt = 0; attempt <= 100; attempt++) {
+    if (attempt > 0) await sleep(3_000)
+    onWait(attempt)
+    const status = await checkInstallStatus({ credentials, website })
+    if (status.kind === 'installed') return status.install
+    if (status.kind === 'failed') return new ConfigError({ reason: `Authorization failed: ${status.reason}. Run kimaki again.` })
   }
   return new ConfigError({ reason: 'Bot authorization timed out after 5 minutes. Run kimaki again.' })
+}
+
+// gateway-proxy reloads gateway_clients every 1s (db_config.rs) and rejects
+// unknown clients. Waits until it accepts this one, instead of a fixed sleep.
+async function waitForProxyClient({ credentials, proxy }: { credentials: Credentials; proxy: string }): Promise<ConfigError | void> {
+  const url = new URL('/api/v10/gateway/bot', proxy)
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (attempt > 0) await sleep(500)
+    const response = await fetch(url, { headers: { authorization: `Bot ${credentials.token}` }, signal: AbortSignal.timeout(10_000) }).catch(() => null)
+    if (response?.ok) return
+  }
+  return new ConfigError({ reason: `gateway-proxy ${proxy} did not accept the new client within 30s. Run kimaki again.` })
 }
 
 async function openInBrowser(url: string): Promise<void> {
@@ -186,45 +261,37 @@ async function openInBrowser(url: string): Promise<void> {
   await execFileAsync(command, [url]).catch(() => undefined)
 }
 
-// Headless hosts (non-TTY) read one JSON event per line on stdout, like V1.
-function emitJsonEvent(event: Record<string, string>): void {
-  process.stdout.write(`${JSON.stringify(event)}\n`)
-}
-
-// Only a definite "not installed" answer counts: when kimaki.dev is down,
-// saved credentials are tried as before.
-async function isGatewayInstalled(credentials: Credentials): Promise<boolean> {
-  const [clientId = '', clientSecret = ''] = credentials.token.split(':')
-  const url = new URL('/api/onboarding/status', WEBSITE_URL)
-  url.searchParams.set('client_id', clientId)
-  url.searchParams.set('secret', clientSecret)
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) }).catch(() => null)
-  if (!response) return true
-  if (response.status !== 404) return true
-  logger.log('saved gateway client was never installed, resuming the install')
-  return false
-}
-
-export async function installGateway({ db }: { db: KimakiDb }): Promise<ConfigError | DbError | {
-  credentials: Credentials
-  install: GatewayInstall
-}> {
-  // Reuse an unfinished install's client, so an old install URL stays valid.
+// Gateway credentials are saved before the install finishes, so an install
+// URL stays valid across restarts. Reuses them, else creates new ones.
+export async function gatewayCredentials({ db, urls }: { db: KimakiDb; urls: GatewayUrls }): Promise<DbError | Credentials> {
   const saved = await readSavedCredentials({ db, mode: 'gateway' })
   if (saved instanceof Error) return saved
   const credentials: Credentials = saved ?? {
     mode: 'gateway',
     appId: GATEWAY_APP_ID,
     token: `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}`,
-    baseUrl: GATEWAY_PROXY_URL,
+    baseUrl: urls.proxy,
   }
   const stored = await saveCredentials({ db, credentials })
   if (stored instanceof Error) return stored
-  const [clientId = '', clientSecret = ''] = credentials.token.split(':')
-  const url = gatewayInstallUrl({ clientId, clientSecret })
+  return credentials
+}
+
+export async function installGateway({
+  db,
+  urls,
+  callbackUrl,
+}: {
+  db: KimakiDb
+  urls: GatewayUrls
+  callbackUrl?: string
+}): Promise<ConfigError | DbError | ResolvedCredentials> {
+  const credentials = await gatewayCredentials({ db, urls })
+  if (credentials instanceof Error) return credentials
+  const url = installUrlFor({ credentials, website: urls.website, callbackUrl })
 
   const interactive = Boolean(process.stdin.isTTY)
-  if (!interactive) emitJsonEvent({ type: 'install_url', url })
+  if (!interactive) emitEvent({ type: 'install_url', url })
   if (interactive) {
     clack.note(
       `${url}\n\nDo not share this URL: it contains your credentials.\nNo server yet? Create one first (+ in the Discord sidebar).`,
@@ -234,13 +301,22 @@ export async function installGateway({ db }: { db: KimakiDb }): Promise<ConfigEr
   }
   const spinner = interactive ? clack.spinner() : null
   spinner?.start('Waiting for the bot to be installed in a server...')
-  const install = await pollInstallStatus({ clientId, clientSecret })
+  const install = await pollInstallStatus({
+    credentials,
+    website: urls.website,
+    onWait: (attempt) => {
+      if (attempt === 15) spinner?.message('Still waiting... Select a server on the Discord page and click "Authorize"')
+      if (attempt === 45) spinner?.message('Still waiting... No servers listed? Create one first, then reopen the URL above')
+    },
+  })
   spinner?.stop(install instanceof Error ? install.message : 'Bot installed')
-  if (install instanceof Error) return install
-  if (!interactive) emitJsonEvent({ type: 'authorized', guild_id: install.guildId })
-  // gateway-proxy reloads gateway_clients every 1s (db_config.rs); give it one
-  // cycle more so the first IDENTIFY is not rejected.
-  await sleep(2_000)
+  if (install instanceof Error) {
+    if (!interactive) emitEvent({ type: 'error', message: install.message, install_url: url })
+    return install
+  }
+  if (!interactive) emitEvent({ type: 'authorized', guild_id: install.guildId })
+  const accepted = await waitForProxyClient({ credentials, proxy: credentials.baseUrl ?? urls.proxy })
+  if (accepted instanceof Error) return accepted
   logger.log(`gateway client installed in guild ${install.guildId}`)
   return { credentials, install }
 }
@@ -269,16 +345,21 @@ export async function resolveCredentials({
   db,
   gateway,
   restartOnboarding,
+  urls,
+  callbackUrl,
 }: {
   db: KimakiDb
   // --gateway: use saved gateway credentials, or install the gateway bot.
   gateway: boolean
   restartOnboarding: boolean
+  urls: GatewayUrls
+  // --gateway-callback-url
+  callbackUrl?: string
 }): Promise<ConfigError | DbError | ResolvedCredentials> {
   const envToken = process.env['KIMAKI_BOT_TOKEN']?.trim()
   if (envToken && !gateway && !restartOnboarding) {
     const credentials: Credentials | null = envToken.includes(':')
-      ? { mode: 'gateway', appId: GATEWAY_APP_ID, token: envToken, baseUrl: GATEWAY_PROXY_URL }
+      ? { mode: 'gateway', appId: GATEWAY_APP_ID, token: envToken, baseUrl: urls.proxy }
       : appIdFromToken(envToken)
         ? { mode: 'self_hosted', appId: appIdFromToken(envToken)!, token: envToken, baseUrl: null }
         : null
@@ -291,17 +372,21 @@ export async function resolveCredentials({
   if (!restartOnboarding) {
     const saved = await readSavedCredentials({ db, mode: gateway ? 'gateway' : undefined })
     if (saved instanceof Error) return saved
-    // Gateway credentials are saved before the install finishes, so the URL
-    // stays valid across restarts. Unfinished ones are unknown to the proxy
-    // (login fails): continue that install instead of logging in.
-    const unfinished = saved?.mode === 'gateway' && !(await isGatewayInstalled(saved))
+    // Unfinished gateway installs are unknown to the proxy (login fails):
+    // continue that install. Only a definite "not installed" answer counts,
+    // so a kimaki.dev outage does not block saved credentials.
+    const status = saved?.mode === 'gateway' ? await checkInstallStatus({ credentials: saved, website: urls.website }) : null
+    const unfinished = status?.kind === 'pending' || status?.kind === 'failed'
     if (saved && !unfinished) {
       // Mark as most recently used, so `project add` picks the same bot.
       const touched = await saveCredentials({ db, credentials: saved })
       if (touched instanceof Error) return touched
       return { credentials: saved, install: null }
     }
-    if (unfinished) return installGateway({ db })
+    if (saved) {
+      logger.log('saved gateway client was never installed, resuming the install')
+      return installGateway({ db, urls, callbackUrl })
+    }
   }
 
   const mode = await (async (): Promise<ConfigError | BotMode> => {
@@ -317,7 +402,7 @@ export async function resolveCredentials({
     return choice
   })()
   if (mode instanceof Error) return mode
-  if (mode === 'gateway') return installGateway({ db })
+  if (mode === 'gateway') return installGateway({ db, urls, callbackUrl })
 
   const credentials = await promptSelfHostedToken()
   if (credentials instanceof Error) return credentials

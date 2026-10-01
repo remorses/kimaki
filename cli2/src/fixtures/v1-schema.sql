@@ -1,5 +1,5 @@
 -- Schema of a real V1 Kimaki install (~/.kimaki/discord-sessions.db), dumped with sqlite3 .schema.
--- Used by db.test.ts to prove V2 opens old databases without touching V1-only tables.
+-- Schema only, no data. db.test.ts builds fake V1 databases from it to test the import in migrations.ts.
 CREATE TABLE thread_sessions (
     thread_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,

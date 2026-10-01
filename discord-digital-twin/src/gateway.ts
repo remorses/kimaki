@@ -35,7 +35,13 @@ interface ConnectedClient {
   sequence: number
   identified: boolean
   intents: number
+  // Guilds this connection may see. null = all (the real bot token).
+  guilds: ReadonlySet<string> | null
 }
+
+// Result of authenticating a token: the guilds it may see, null = all guilds,
+// false = rejected.
+export type GatewayAuthorize = (token: string) => ReadonlySet<string> | null | false
 
 export interface GatewayGuildState {
   id: string
@@ -55,22 +61,22 @@ export class DiscordGateway {
   clients: ConnectedClient[] = []
   private loadState: () => Promise<GatewayState>
   private port: number
-  private expectedToken: string
+  private authorize: GatewayAuthorize
 
   constructor({
     httpServer,
     port,
     loadState,
-    expectedToken,
+    authorize,
   }: {
     httpServer: http.Server
     port: number
     loadState: () => Promise<GatewayState>
-    expectedToken: string
+    authorize: GatewayAuthorize
   }) {
     this.port = port
     this.loadState = loadState
-    this.expectedToken = expectedToken
+    this.authorize = authorize
     // Use noServer mode so we can accept both /gateway and /gateway/
     // (twilight-gateway appends /?v=10&encoding=json, creating path /gateway/)
     this.wss = new WebSocketServer({ noServer: true })
@@ -90,10 +96,15 @@ export class DiscordGateway {
   }
 
   broadcast<T>(event: string, data: T): void {
+    // gateway-proxy forwards guild events only to clients authorized for that guild.
+    const guildId =
+      data && typeof data === 'object' && 'guild_id' in data && typeof data.guild_id === 'string'
+        ? data.guild_id
+        : null
     for (const client of this.clients) {
-      if (client.identified) {
-        this.sendDispatch(client, event, data)
-      }
+      if (!client.identified) continue
+      if (guildId && client.guilds && !client.guilds.has(guildId)) continue
+      this.sendDispatch(client, event, data)
     }
   }
 
@@ -158,6 +169,7 @@ export class DiscordGateway {
       sequence: 0,
       identified: false,
       intents: 0,
+      guilds: null,
     }
     this.clients.push(client)
     this.sendHello(client)
@@ -190,11 +202,12 @@ export class DiscordGateway {
         // Switch on `op` narrows GatewaySendPayload to GatewayIdentify,
         // so payload.d is already GatewayIdentifyData -- no cast needed
         const { token, intents } = payload.d
-        const cleanToken = token.replace(/^Bot\s+/i, '')
-        if (cleanToken !== this.expectedToken) {
+        const guilds = this.authorize(token.replace(/^Bot\s+/i, ''))
+        if (guilds === false) {
           client.ws.close(4004, 'Authentication failed')
           return
         }
+        client.guilds = guilds
         client.identified = true
         client.intents = intents
         await this.sendReadySequence(client)
@@ -204,7 +217,11 @@ export class DiscordGateway {
   }
 
   private async sendReadySequence(client: ConnectedClient): Promise<void> {
-    const state = await this.loadState()
+    const loaded = await this.loadState()
+    const state = {
+      ...loaded,
+      guilds: loaded.guilds.filter((guild) => !client.guilds || client.guilds.has(guild.id)),
+    }
 
     const readyData: GatewayReadyDispatchData = {
       v: 10,

@@ -67,7 +67,8 @@ test('a second real bot takes over the isolated lock port and answers its projec
   await seedProjectChannel({ dataDir: otherData, channelId: twin.quietChannelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   const code = dedent`
     import { startBot } from ${JSON.stringify(path.resolve('src/main.ts'))}
-    const result = await startBot(${JSON.stringify({ dataDir: otherData, token: twin.discord.botToken, lockPort: port, discordRestUrl: twin.discord.restUrl, opencodeServiceFile: server.serviceFile, ensureOpencode: false, kimakiCommand: 'kimaki' })})
+    import { disabledAnalytics } from ${JSON.stringify(path.resolve('src/analytics.ts'))}
+    const result = await startBot({ analytics: disabledAnalytics, ...${JSON.stringify({ dataDir: otherData, token: twin.discord.botToken, lockPort: port, discordRestUrl: twin.discord.restUrl, opencodeServiceFile: server.serviceFile, opencodeConfigDir: server.configDir, ensureOpencode: false, kimakiCommand: 'kimaki' })} })
     if (result instanceof Error) throw result
     process.send({ ready: true })
     process.once('SIGTERM', async () => { await result.stop(); process.exit(0) })

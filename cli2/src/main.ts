@@ -5,17 +5,24 @@
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 
 import { createActions, parseSendInput, type Actions } from './actions.ts'
+import type { Analytics } from './analytics.ts'
+import { countUserProjects } from './project.ts'
 import { createAgentUi } from './agent-ui.ts'
 import { openDb, type OpenedDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { ConfigError, DiscordError } from './errors.ts'
 import { createEventLoop } from './event-loop.ts'
 import { createEventRecorder } from './session-events.ts'
-import { registerSlashCommands } from './slash-commands.ts'
+import { isCatalogEvent, registerSlashCommands } from './slash-commands.ts'
 import { registerIngress } from './ingress.ts'
 import { createLogger, setLogFile } from './logger.ts'
 import { installShim, startLockServer, type LockServer } from './lock-server.ts'
-import { watchOpencode, type OpencodeConnection, type OpencodeEndpoint } from './opencode-server.ts'
+import {
+  installPluginShim,
+  watchOpencode,
+  type OpencodeConnection,
+  type OpencodeEndpoint,
+} from './opencode-server.ts'
 import { createBotStore, type BotStore } from './store.ts'
 import { createTranscriber, type TranscriptionBaseUrls } from './voice.ts'
 
@@ -32,9 +39,13 @@ export type StartBotOptions = {
   opencodeServiceFile?: string
   // Start the service with Service.ensure() when none is running.
   ensureOpencode: boolean
-  // Shell command that runs this Kimaki install (shown by /session-id and
-  // given to agents), from kimakiShellCommand().
+  // Global OpenCode config dir that gets plugins/kimaki/ (opencodeConfigDir()).
+  // Required, so no caller writes into the user's real config by accident.
+  opencodeConfigDir: string
+  // Shell command that runs this Kimaki install (given to agents), from kimakiShellCommand().
   kimakiCommand: string
+  // Product analytics sink (createAnalytics or disabledAnalytics).
+  analytics: Analytics
   // Voice transcription API base URLs; tests point Gemini at a local fake.
   transcriptionBaseUrls?: TranscriptionBaseUrls
 }
@@ -46,6 +57,7 @@ export type BotHandle = {
   lock: LockServer
   store: BotStore
   actions: Actions
+  analytics: Analytics
   stop: () => Promise<void>
 }
 
@@ -77,18 +89,35 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const store = createBotStore()
   const effects = createEffectsRunner({ discord })
   const recorder = createEventRecorder({ dataDir: options.dataDir })
-  const eventLoop = createEventLoop({ store, db: db.db, discord, effects, recorder })
+  const eventLoop = createEventLoop({ store, db: db.db, discord, effects, recorder, analytics: options.analytics })
   const loaded = await eventLoop.load()
   if (loaded instanceof Error) {
     db.close()
     await lock.close()
     return loaded
   }
+  // Slash commands exist once both sides are ready; earlier catalog events are covered by registerAll().
+  const slash: { commands: ReturnType<typeof registerSlashCommands> | null } = { commands: null }
+  // Before the service is used, so a service started by ensure() loads it at once.
+  const plugin = await installPluginShim({ configDir: options.opencodeConfigDir })
+  if (plugin instanceof Error) {
+    db.close()
+    await lock.close()
+    return plugin
+  }
   const opencode = watchOpencode({
     serviceFile: options.opencodeServiceFile,
     ensure: options.ensureOpencode,
-    onConnect: eventLoop.onConnect,
-    onEvent: eventLoop.onEvent,
+    onConnect: async (context) => {
+      const hydrated = await eventLoop.onConnect(context)
+      // Agents, commands and skills may have changed while the bot was away.
+      if (!(hydrated instanceof Error) && context.reconnect) slash.commands?.scheduleRefresh({ force: true })
+      return hydrated
+    },
+    onEvent: (event) => {
+      if (isCatalogEvent(event)) slash.commands?.scheduleRefresh({ force: false })
+      eventLoop.onEvent(event)
+    },
     onDisconnect: eventLoop.onDisconnect,
   })
   const shim = await installShim({ dataDir: options.dataDir, command: options.kimakiCommand })
@@ -98,7 +127,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     await lock.close()
     return shim
   }
-  const actions = createActions({ discord, db: db.db, opencode, eventLoop, store, cliContext: { dataDir: options.dataDir, lockPort: lock.port } })
+  const actions = createActions({ discord, db: db.db, opencode, eventLoop, store, analytics: options.analytics, cliContext: { dataDir: options.dataDir, lockPort: lock.port } })
   const agentUi = createAgentUi({ store, eventLoop, actions, directoryFor: async (sessionId) => {
     const client = opencode.endpoint?.client
     if (!client) return new ConfigError({ reason: 'OpenCode is disconnected' })
@@ -136,6 +165,18 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
       const result = await actions.credential({ id, operation, label })
       return result instanceof Error ? result : { data: result }
     }
+    if (route === '/kimaki/status') {
+      return {
+        data: {
+          pid: process.pid,
+          uptimeSec: Math.round(process.uptime()),
+          dataDir: options.dataDir,
+          mode: options.token.includes(':') ? 'gateway' : 'self_hosted',
+          opencode: { connected: opencode.connected, url: opencode.endpoint?.url ?? null, version: opencode.endpoint?.version ?? null },
+          guilds: [...discord.guilds.cache.values()].map((guild) => ({ id: guild.id, name: guild.name })),
+        },
+      }
+    }
     if (route !== '/kimaki/send') return new ConfigError({ reason: 'Unknown bot action' })
     const parsed = parseSendInput(input)
     if (parsed instanceof Error) return parsed
@@ -146,10 +187,12 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   registerIngress({ discord, db: db.db, store, actions, transcriber, dataDir: options.dataDir })
 
   const stop = async () => {
+    await slash.commands?.stop()
     agentUi.stop()
     opencode.stop()
     effects.stop()
     await recorder.close()
+    await options.analytics.flush()
     await discord.destroy()
     db.close()
     await lock.close()
@@ -178,9 +221,16 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   }
   const refreshed = await actions.refreshCliContext()
   if (refreshed instanceof Error) { await stop(); return refreshed }
-  const commands = registerSlashCommands({ discord, db: db.db, kimaki: options.kimakiCommand, store, actions, opencode, agentUi })
+  const commands = registerSlashCommands({ discord, db: db.db, store, actions, opencode, agentUi })
+  slash.commands = commands
   // Awaited so the handle is only returned once every guild has its commands.
   await commands.registerAll()
   logger.log(`bot ready as ${discord.user?.tag}`)
-  return { discord, opencode, db, lock, store, actions, stop }
+  const projects = await countUserProjects({ db: db.db, dataDir: options.dataDir })
+  if (projects instanceof Error) logger.warn(projects.message)
+  options.analytics.track('bot_started', {
+    guild_count: discord.guilds.cache.size,
+    ...(!(projects instanceof Error) && { user_project_count: projects }),
+  })
+  return { discord, opencode, db, lock, store, actions, analytics: options.analytics, stop }
 }

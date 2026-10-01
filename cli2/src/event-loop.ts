@@ -22,12 +22,13 @@ import * as errore from 'errore'
 
 import { readChannelVerbosity, type KimakiDb, type Verbosity } from './db.ts'
 import type { EffectsRunner } from './effects.ts'
+import type { Analytics } from './analytics.ts'
 import type { EventRecorder } from './session-events.ts'
 import { DbError, DiscordError, OpenCodeError } from './errors.ts'
 import { createLogger } from './logger.ts'
 import type { ConnectContext, OpenCodeClient, V2Event } from './opencode-server.ts'
 import type { BotStore } from './store.ts'
-import { emptyView, eventSessionId, reduce, type KimakiEvent, type Prefs, type ThreadEvent } from './thread-reducer.ts'
+import { emptyView, eventSessionId, isKimakiEvent, reduce, type KimakiEvent, type Prefs, type ThreadEvent } from './thread-reducer.ts'
 
 const logger = createLogger('EVENTS')
 
@@ -62,12 +63,14 @@ export function createEventLoop({
   discord,
   effects,
   recorder,
+  analytics,
 }: {
   store: BotStore
   db: KimakiDb
   discord: Client
   effects: EffectsRunner
   recorder: EventRecorder
+  analytics: Analytics
 }) {
   const queues = new Map<string, { events: ThreadEvent[]; running: boolean; failures: number }>()
   // Per-thread settings, loaded once: parent channel, directory, verbosity.
@@ -187,6 +190,7 @@ export function createEventLoop({
     const queue = queues.get(threadId) ?? { events: [], running: false, failures: 0 }
     queues.set(threadId, queue)
     recorder.record(threadId, event)
+    if (!isKimakiEvent(event)) analytics.observe(event, store.getState().roots[threadId] === eventSessionId(event))
     queue.events.push(event)
     void drain(threadId)
   }

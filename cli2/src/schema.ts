@@ -1,8 +1,7 @@
-// Drizzle schema for Kimaki's local SQLite file (~/.kimaki/discord-sessions.db).
-// Declares only the V1 tables V2 still uses, copied with identical column
-// names, types and constraints (spec section 17). The other V1 tables stay in
-// old databases untouched, so a user can downgrade to V1 at any time.
-// Never add or drop tables or columns here without a migration plan.
+// Drizzle schema for Kimaki's local SQLite file (~/.kimaki/kimaki.db).
+// The tables are the V1 tables cli2 still uses, with identical columns, so
+// migrations.ts can import a V1 discord-sessions.db with INSERT ... SELECT.
+// Every schema change needs a step in migrations.ts.
 
 import { defineRelations } from 'drizzle-orm'
 import * as orm from 'drizzle-orm'

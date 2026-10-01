@@ -1,10 +1,13 @@
-// Project channels: one Discord text channel per directory, inside the
-// "Kimaki <bot>" category, mapped in channel_directories. Uses only the
+// Project channels: one Discord text channel per directory, inside this
+// machine's "Kimaki <machine>" category (spec 24), mapped in
+// channel_directories. The category is found by stored ID first, so a V1
+// "Kimaki" category or a rename in Discord keeps working. Uses only the
 // Discord REST API (guild-scoped routes), so the same code runs in the bot
 // (onboarding) and in `kimaki project add` while the bot keeps running: the
 // bot reads channel_directories on every message and the Guilds intent
 // delivers CHANNEL_CREATE, so a new channel works without a restart.
 
+import os from 'node:os'
 import path from 'node:path'
 import { API } from '@discordjs/core/http-only'
 import { ChannelType, REST, type RESTPostAPIGuildChannelJSONBody } from 'discord.js'
@@ -29,14 +32,15 @@ export function channelNameFor(name: string): string {
   return sanitized || 'project'
 }
 
-// V1 names: "Kimaki" category and "kimaki" channel, with the bot name for
-// self-hosted bots not called "kimaki". The shared gateway bot is always "kimaki".
-export function defaultNames({ botName, gateway }: { botName: string; gateway: boolean }) {
-  const plain = gateway || botName.toLowerCase() === 'kimaki'
-  return {
-    category: plain ? 'Kimaki' : `Kimaki ${botName}`,
-    channel: plain ? 'kimaki' : channelNameFor(`kimaki-${botName}`),
-  }
+// The default channel: "kimaki", with the bot name for self-hosted bots not
+// called "kimaki" (V1 names). The category is per machine, see addProjectChannel.
+export function defaultChannelName({ botName, gateway }: { botName: string; gateway: boolean }): string {
+  return gateway || botName.toLowerCase() === 'kimaki' ? 'kimaki' : channelNameFor(`kimaki-${botName}`)
+}
+
+// "Tommys-MacBook-Pro.local" -> "Tommys-MacBook-Pro". --machine-name overrides it.
+export function defaultMachineName(): string {
+  return os.hostname().replace(/\.(local|lan|home)$/i, '') || 'machine'
 }
 
 export function defaultProjectDirectory({ dataDir }: { dataDir: string }): string {
@@ -68,20 +72,18 @@ async function ensureCategory({
   db,
   guildId,
   name,
+  channels,
 }: {
   api: API
   db: KimakiDb
   guildId: string
   name: string
+  channels: Awaited<ReturnType<API['guilds']['getChannels']>>
 }): Promise<DbError | DiscordError | string> {
   const stored = await db.query.guild_categories
     .findFirst({ where: { guild_id: guildId } })
     .catch((e) => new DbError({ operation: 'read guild_categories', cause: e }))
   if (stored instanceof Error) return stored
-  const channels = await api.guilds
-    .getChannels(guildId)
-    .catch((e) => new DiscordError({ operation: 'list guild channels', cause: e }))
-  if (channels instanceof Error) return channels
   const categories = channels.filter((channel) => channel.type === ChannelType.GuildCategory)
   const existing =
     categories.find((channel) => channel.id === stored?.category_id) ??
@@ -108,28 +110,6 @@ async function ensureCategory({
 
 export type ProjectChannel = { channelId: string; name: string; directory: string; created: boolean }
 
-// Self-hosted bots name their category after the bot. Read through a
-// guild-scoped route: gateway-proxy only forwards those, and @discordjs/core
-// encodes "@me" as "%40me", which proxies may not match.
-export async function categoryNameFor({
-  api,
-  guildId,
-  botId,
-  gateway,
-}: {
-  api: API
-  guildId: string
-  botId: string
-  gateway: boolean
-}): Promise<DiscordError | string> {
-  if (gateway) return defaultNames({ botName: 'kimaki', gateway }).category
-  const member = await api.guilds
-    .getMember(guildId, botId)
-    .catch((e) => new DiscordError({ operation: 'read bot member', cause: e }))
-  if (member instanceof Error) return member
-  return defaultNames({ botName: member.user.username, gateway }).category
-}
-
 // Idempotent: a directory already mapped in this guild returns its channel.
 export async function addProjectChannel({
   api,
@@ -138,7 +118,7 @@ export async function addProjectChannel({
   directory,
   name,
   topic,
-  categoryName,
+  machine,
 }: {
   api: API
   db: KimakiDb
@@ -146,8 +126,8 @@ export async function addProjectChannel({
   directory: string
   name?: string
   topic?: string
-  // Used only when the stored category is gone: defaultNames().category.
-  categoryName: string
+  // Names a new category and tells this machine's channels apart.
+  machine: string
 }): Promise<DbError | DiscordError | ProjectChannel> {
   const existing = await db.query.channel_directories
     .findFirst({ where: { directory, guild_id: guildId, channel_type: 'text' } })
@@ -155,11 +135,20 @@ export async function addProjectChannel({
   if (existing instanceof Error) return existing
   if (existing) return { channelId: existing.channel_id, name: '', directory, created: false }
 
-  const categoryId = await ensureCategory({ api, db, guildId, name: categoryName })
+  const channels = await api.guilds
+    .getChannels(guildId)
+    .catch((e) => new DiscordError({ operation: 'list guild channels', cause: e }))
+  if (channels instanceof Error) return channels
+  const categoryId = await ensureCategory({ api, db, guildId, name: `Kimaki ${machine}`, channels })
   if (categoryId instanceof Error) return categoryId
 
+  // The same project on another machine: "website" there, "website-<machine>" here.
+  const baseName = name ?? channelNameFor(path.basename(directory))
+  const taken = channels.some(
+    (channel) => channel.type === ChannelType.GuildText && channel.name === baseName && channel.parent_id !== categoryId,
+  )
   const body: RESTPostAPIGuildChannelJSONBody = {
-    name: name ?? channelNameFor(path.basename(directory)),
+    name: taken ? channelNameFor(`${baseName}-${machine}`) : baseName,
     type: ChannelType.GuildText,
     parent_id: categoryId,
     ...(topic && { topic }),
@@ -180,4 +169,13 @@ export async function listProjects({ db }: { db: KimakiDb }) {
   return db.query.channel_directories
     .findMany({ where: { channel_type: 'text' }, orderBy: { created_at: 'asc' } })
     .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
+}
+
+// Distinct project directories with a text channel, without the default
+// kimaki channel (analytics user_project_count).
+export async function countUserProjects({ db, dataDir }: { db: KimakiDb; dataDir: string }): Promise<DbError | number> {
+  const rows = await listProjects({ db })
+  if (rows instanceof Error) return rows
+  const defaultDirectory = path.resolve(defaultProjectDirectory({ dataDir }))
+  return new Set(rows.map((row) => path.resolve(row.directory)).filter((directory) => directory !== defaultDirectory)).size
 }

@@ -23,6 +23,7 @@ import {
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 
+import { disabledAnalytics, type Analytics } from '../analytics.ts'
 import { GATEWAY_APP_ID, saveCredentials, type Credentials } from '../credentials.ts'
 import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
 import type { ToolInput } from '../format-parts.ts'
@@ -56,6 +57,8 @@ function opencodeBinary(): string {
 export type OpencodeTestServer = {
   root: string
   serviceFile: string
+  // Global OpenCode config dir of this server (XDG_CONFIG_HOME/opencode).
+  configDir: string
   projectDirectory: string
   client: () => Promise<OpenCodeClient>
   kill: () => Promise<void>
@@ -119,7 +122,9 @@ export async function startOpencodeTestServer({
       ),
       commands,
       agents,
-      plugins: [pathToFileURL(path.resolve('src/plugin')).href, ...plugins],
+      // The Kimaki plugin is not listed: the bot writes plugins/kimaki/ into
+      // configDir on start, the same path as production.
+      plugins: plugins.map((plugin) => pathToFileURL(plugin).href),
       ...(mcp && { mcp }),
     }),
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
@@ -167,6 +172,7 @@ export async function startOpencodeTestServer({
   return {
     root,
     serviceFile,
+    configDir: path.join(env.XDG_CONFIG_HOME, 'opencode'),
     projectDirectory,
     client,
     kill,
@@ -200,8 +206,12 @@ export type TestTwin = {
   unregisteredChannelId: string
 }
 
-// gateway: the twin plays gateway-proxy and accepts a clientId:secret token.
-export async function startTwin({ gateway = false }: { gateway?: boolean } = {}): Promise<TestTwin> {
+// gateway: the twin plays gateway-proxy (REST scope rules of rest_proxy.rs)
+// and accepts a clientId:secret token. KIMAKI_TEST_GATEWAY=1 runs every e2e
+// file in gateway mode, to find REST calls the proxy would reject.
+export async function startTwin({
+  gateway = process.env['KIMAKI_TEST_GATEWAY'] === '1',
+}: { gateway?: boolean } = {}): Promise<TestTwin> {
   const channelId = '200000000000000100'
   const unregisteredChannelId = '200000000000000101'
   const quietChannelId = '200000000000000102'
@@ -210,7 +220,7 @@ export async function startTwin({ gateway = false }: { gateway?: boolean } = {})
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-twin-'))
   const discord = new DigitalDiscord({
     dbUrl: `file:${path.join(root, 'twin.db')}`,
-    ...(gateway && { botToken: `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}` }),
+    ...(gateway && { gatewayProxy: true, botToken: `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}` }),
     guild: { name: 'Kimaki Test', ownerId: TEST_USER_ID },
     channels: [
       { id: channelId, name: 'project', type: ChannelType.GuildText },
@@ -270,6 +280,8 @@ export async function startTestBot({
   geminiBaseUrl,
   openaiBaseUrl,
   lockPort,
+  saveTwinCredentials = true,
+  analytics,
 }: {
   dataDir: string
   twin: TestTwin
@@ -278,16 +290,22 @@ export async function startTestBot({
   geminiBaseUrl?: string
   openaiBaseUrl?: string
   lockPort?: number
+  // false: the data dir is used as is (a V1 database the bot start must import).
+  saveTwinCredentials?: boolean
+  // Default: off. Tests pass createAnalytics() with a local OTLP endpoint.
+  analytics?: Analytics
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
     ? { mode: 'gateway', appId: GATEWAY_APP_ID, token: twin.discord.botToken, baseUrl: new URL('/', twin.discord.restUrl).toString() }
     : { mode: 'self_hosted', appId: twin.discord.botUserId, token: twin.discord.botToken, baseUrl: null }
-  const opened = await openDb({ dataDir, migrate: true })
-  if (opened instanceof Error) throw opened
-  const saved = await saveCredentials({ db: opened.db, credentials })
-  opened.close()
-  if (saved instanceof Error) throw saved
+  if (saveTwinCredentials) {
+    const opened = await openDb({ dataDir, migrate: true })
+    if (opened instanceof Error) throw opened
+    const saved = await saveCredentials({ db: opened.db, credentials })
+    opened.close()
+    if (saved instanceof Error) throw saved
+  }
   const bot = await startBot({
     dataDir,
     kimakiCommand: `'${process.execPath}' --import '${createRequire(import.meta.url).resolve('tsx')}' '${path.resolve('src/cli.ts')}' --data-dir '${dataDir}'`,
@@ -295,7 +313,9 @@ export async function startTestBot({
     lockPort: lockPort ?? await freePort(),
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,
+    opencodeConfigDir: server.configDir,
     ensureOpencode: false,
+    analytics: analytics ?? disabledAnalytics,
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),

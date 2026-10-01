@@ -8,6 +8,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { pipeline } from 'node:stream/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
+import dedent from 'string-dedent'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { goke, wrapJsonSchema } from 'goke'
@@ -18,17 +20,20 @@ import { callBot, DEFAULT_LOCK_PORT } from './lock-server.ts'
 import { editorsForFile, loadFileEditEvents } from './file-edit-log.ts'
 import { createLogger } from './logger.ts'
 import { startBot } from './main.ts'
-import { resolveOpencode } from './opencode-server.ts'
+import { opencodeConfigDir, resolveOpencode } from './opencode-server.ts'
 import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEventsFile, waitForSessionReady } from './session-events.ts'
-import { readSavedCredentials, resolveCredentials, restApiUrl } from './credentials.ts'
-import { chooseGuild, kimakiShellCommand, runOnboarding } from './onboarding.ts'
 import {
-  addProjectChannel,
-  categoryNameFor,
-  createApi,
-  listProjects,
-  resolveGuildId,
-} from './project.ts'
+  emitEvent,
+  gatewayCredentials,
+  gatewayUrlsFromEnv,
+  installUrlFor,
+  readSavedCredentials,
+  resolveCredentials,
+  restApiUrl,
+} from './credentials.ts'
+import { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate } from './onboarding.ts'
+import { createAnalytics } from './analytics.ts'
+import { addProjectChannel, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from './project.ts'
 
 const logger = createLogger('CLI')
 const execFileAsync = promisify(execFile)
@@ -77,6 +82,31 @@ async function projectDirectory({ project, channel, dataDir }: { project: string
   return row.directory
 }
 
+// null when the file vanished meanwhile (bot restart).
+async function readRange({ file, start, end }: { file: string; start: number; end: number }): Promise<Buffer | null> {
+  const handle = await fs.promises.open(file, 'r').catch(() => null)
+  if (!handle) return null
+  const buffer = Buffer.alloc(end - start)
+  const read = await handle.read(buffer, 0, buffer.length, start).catch(() => null)
+  await handle.close().catch(() => undefined)
+  return read ? buffer.subarray(0, read.bytesRead) : null
+}
+
+// tail -f that survives the bot truncating the file on restart.
+async function followFile(file: string): Promise<never> {
+  const position = { offset: 0 }
+  while (true) {
+    const size = await fs.promises.stat(file).then((stat) => stat.size).catch(() => 0)
+    if (size < position.offset) position.offset = 0
+    if (size > position.offset) {
+      const chunk = await readRange({ file, start: position.offset, end: size })
+      if (chunk) process.stdout.write(chunk)
+      position.offset = size
+    }
+    await sleep(300)
+  }
+}
+
 // Prints the error and its cause chain: "Discord login failed" alone hides why.
 function fail(error: Error, code = 1): never {
   const lines = [error.message]
@@ -85,27 +115,53 @@ function fail(error: Error, code = 1): never {
   process.exit(code)
 }
 
+// Non-TTY hosts get the failure as an `error` event too (programmatic onboarding).
+function failStartup(error: Error, installUrl?: string): never {
+  if (!process.stdin.isTTY) emitEvent({ type: 'error', message: error.message, ...(installUrl && { install_url: installUrl }) })
+  fail(error)
+}
+
 cli
   .command('', 'Start the bot. Runs onboarding on first start')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-g, --guild <guildId>', 'Server to onboard when the bot is in several')
   .option('--gateway', 'Use the shared Kimaki bot, no Discord app needed')
+  .option('--gateway-callback-url <url>', 'Redirect here after the gateway install (appends ?guild_id=<id>)')
+  .option('--install-url', 'Print the install URL and exit (non-interactive onboarding)')
+  .option('--machine-name <name>', 'Name in this machine\'s category "Kimaki <name>" (default: hostname)')
   .option('--restart-onboarding', 'Choose credentials again')
+  .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
   .action(async (options) => {
     const dataDir = dataDirOrDefault(options.dataDir)
-    const resolved = await (async () => {
-      const opened = await openDb({ dataDir, migrate: true })
-      if (opened instanceof Error) return opened
-      const result = await resolveCredentials({
-        db: opened.db,
-        gateway: Boolean(options.gateway),
-        restartOnboarding: Boolean(options.restartOnboarding),
-      })
+    const urls = gatewayUrlsFromEnv()
+    const machine = options.machineName ?? defaultMachineName()
+    const opened = await openDb({ dataDir, migrate: true })
+    if (opened instanceof Error) failStartup(opened)
+
+    if (options.installUrl) {
+      const credentials = options.gateway
+        ? await gatewayCredentials({ db: opened.db, urls })
+        : await readSavedCredentials({ db: opened.db })
       opened.close()
-      return result
-    })()
-    if (resolved instanceof Error) fail(resolved)
+      if (credentials instanceof Error) fail(credentials)
+      if (!credentials) fail(new Error('No bot configured yet. Run kimaki first, or pass --gateway.'))
+      process.stdout.write(`${installUrlFor({ credentials, website: urls.website, callbackUrl: options.gatewayCallbackUrl })}\n`)
+      if (credentials.mode === 'gateway') process.stderr.write('This URL contains your client credentials. Do not share it.\n')
+      return
+    }
+
+    startCaffeinate()
+    const resolved = await resolveCredentials({
+      db: opened.db,
+      gateway: Boolean(options.gateway),
+      restartOnboarding: Boolean(options.restartOnboarding),
+      urls,
+      callbackUrl: options.gatewayCallbackUrl,
+    })
+    opened.close()
+    if (resolved instanceof Error) failStartup(resolved)
     const { credentials, install } = resolved
+    const installUrl = installUrlFor({ credentials, website: urls.website, callbackUrl: options.gatewayCallbackUrl })
     // The agent calls this same install: same node, loader flags and script.
     const kimaki = kimakiShellCommand({
       command: [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki2'],
@@ -118,29 +174,30 @@ cli
       token: credentials.token,
       discordRestUrl: restApiUrl(credentials),
       lockPort: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT),
+      opencodeServiceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'],
       ensureOpencode: true,
+      opencodeConfigDir: opencodeConfigDir(),
+      analytics: createAnalytics({ dataDir, botMode: credentials.mode, enabled: !options.noAnalytics }),
     })
-    if (bot instanceof Error) fail(bot)
+    if (bot instanceof Error) failStartup(bot)
     const shutdown = () => {
       void bot.stop().then(() => process.exit(0))
     }
     process.once('SIGTERM', shutdown)
     process.once('SIGINT', shutdown)
 
-    const guild = await chooseGuild({ discord: bot.discord, guildId: options.guild ?? install?.guildId })
-    if (guild instanceof Error) fail(guild)
-    const onboarded = await runOnboarding({
-      bot,
-      dataDir,
-      guild,
-      kimaki,
-      gateway: credentials.mode === 'gateway',
-      installerId: install?.installerId,
-    })
+    const gateway = credentials.mode === 'gateway'
+    const guild = await chooseGuild({ discord: bot.discord, guildId: options.guild ?? install?.guildId, installUrl, gateway })
+    if (guild instanceof Error) {
+      await bot.stop()
+      failStartup(guild, installUrl)
+    }
+    const onboarded = await runOnboarding({ bot, dataDir, guild, kimaki, gateway, installerId: install?.installerId, machine })
     if (onboarded instanceof Error) logger.error(`onboarding failed: ${onboarded.message}`)
     if (onboarded && !(onboarded instanceof Error)) {
       process.stderr.write(`Onboarding thread: https://discord.com/channels/${guild.id}/${onboarded.threadId}\n`)
     }
+    if (!process.stdin.isTTY) emitEvent({ type: 'ready', app_id: credentials.appId, guild_ids: [...bot.discord.guilds.cache.keys()] })
   })
 
 cli.section('Project')
@@ -167,6 +224,7 @@ cli
   .command('project add [directory]', 'Create a channel for a directory (default: current directory)')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-g, --guild <guildId>', 'Server (default: the one with Kimaki channels)')
+  .option('--machine-name <name>', 'Machine name of a new category and of a channel name suffix (default: hostname)')
   .action(async (directory, options) => {
     const projectDirectory = path.resolve(directory ?? process.cwd())
     const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
@@ -178,10 +236,13 @@ cli
       const guildId = await resolveGuildId({ db: opened.db, guildId: options.guild })
       if (guildId instanceof Error) return guildId
       const api = createApi({ token: credentials.token, restUrl: restApiUrl(credentials) })
-      const gateway = credentials.mode === 'gateway'
-      const categoryName = await categoryNameFor({ api, guildId, botId: credentials.appId, gateway })
-      if (categoryName instanceof Error) return categoryName
-      return addProjectChannel({ api, db: opened.db, guildId, directory: projectDirectory, categoryName })
+      const added = await addProjectChannel({ api, db: opened.db, guildId, directory: projectDirectory, machine: options.machineName ?? defaultMachineName() })
+      if (added instanceof Error || !added.created) return added
+      const analytics = createAnalytics({ dataDir: dataDirOrDefault(options.dataDir), botMode: credentials.mode, enabled: true })
+      const projects = await countUserProjects({ db: opened.db, dataDir: dataDirOrDefault(options.dataDir) })
+      analytics.track('project_registered', { project_kind: 'user', source: 'cli', ...(!(projects instanceof Error) && { user_project_count: projects }) })
+      await analytics.flush()
+      return added
     })()
     opened.close()
     if (result instanceof Error) fail(result)
@@ -569,15 +630,54 @@ cli.command('upload-to-discord <...files>', 'Attach local files to a session thr
     process.stdout.write(`${JSON.stringify(result.data)}\n`)
   })
 
+cli.section('Bot')
+
+cli.command('status', 'Bot health: running, pid, uptime, OpenCode URL and version, guilds')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/status', input: {} })
+    if (result instanceof Error) {
+      process.stdout.write(options.json ? `${JSON.stringify({ running: false, reason: result.message })}\n` : `not running: ${result.message}\n`)
+      process.exitCode = 1
+      return
+    }
+    const status = { running: true, ...(result.data && typeof result.data === 'object' ? result.data : {}) }
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(status, null, 2)}\n`)
+      return
+    }
+    const value = (key: string) => (key in status ? JSON.stringify(status[key as keyof typeof status]) : '?')
+    process.stdout.write(dedent`
+      running: pid ${value('pid')}, up ${value('uptimeSec')}s, mode ${value('mode')}
+      opencode: ${value('opencode')}
+      guilds: ${value('guilds')}
+      data dir: ${value('dataDir')}
+    ` + '\n')
+  })
+
+cli.command('logs', 'Print the log file path. The bot resets the file on every start')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-f, --follow', 'Print the log and keep printing new lines')
+  .action(async (options) => {
+    const file = path.join(dataDirOrDefault(options.dataDir), 'kimaki.log')
+    if (!options.follow) {
+      process.stdout.write(`${file}\n`)
+      return
+    }
+    await followFile(file)
+  })
+
 cli.command('bot token', 'Print saved bot credentials for automation')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .action(async (options) => process.stdout.write(`${(await discordApi(options.dataDir)).credentials.token}\n`))
 
 cli.command('bot install-url', 'Print the Discord bot install URL')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--gateway-callback-url <url>', 'Gateway only: redirect here after the install')
   .action(async (options) => {
     const { credentials } = await discordApi(options.dataDir)
-    process.stdout.write(`https://discord.com/oauth2/authorize?client_id=${credentials.appId}&scope=bot%20applications.commands&permissions=397284576336\n`)
+    process.stdout.write(`${installUrlFor({ credentials, website: gatewayUrlsFromEnv().website, callbackUrl: options.gatewayCallbackUrl })}\n`)
   })
 
 cli.help()

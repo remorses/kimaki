@@ -1,8 +1,8 @@
-// SQLite access through Drizzle + libSQL. Same file as V1
-// (<dataDir>/discord-sessions.db), subset of V1 tables with identical DDL.
-// Only the bot start opens with migrate: true, which runs the idempotent
-// schema.sql. Subcommands open without migrating and fail with
-// DbNotMigratedError when a table is missing.
+// SQLite access through Drizzle + libSQL, file <dataDir>/kimaki.db. Only the
+// bot start opens with migrate: true (migrations.ts: V1 import + schema).
+// Subcommands open without migrating and fail with DbNotMigratedError when the
+// file or a table is missing; they never create the file, so the next bot
+// start still imports the V1 database.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -13,8 +13,8 @@ import { drizzle } from 'drizzle-orm/libsql'
 import * as s from 'drizzle-orm/sqlite-core'
 
 import { DbError, DbNotMigratedError } from './errors.ts'
+import { DB_FILE, migrateDb } from './migrations.ts'
 import * as schema from './schema.ts'
-import { SCHEMA_SQL } from './schema-sql.ts'
 
 function createDrizzle(client: Client) {
   return drizzle({ client, schema, relations: schema.relations })
@@ -33,19 +33,7 @@ export const REQUIRED_TABLES: string[] = Object.values(schema)
   .sort()
 
 export function dbPath({ dataDir }: { dataDir: string }): string {
-  return path.join(dataDir, 'discord-sessions.db')
-}
-
-export function schemaStatements(): string[] {
-  return SCHEMA_SQL.split(';')
-    .map((statement) => {
-      return statement
-        .split('\n')
-        .filter((line) => !line.trimStart().startsWith('--'))
-        .join('\n')
-        .trim()
-    })
-    .filter((statement) => statement.length > 0)
+  return path.join(dataDir, DB_FILE)
 }
 
 export async function openDb({
@@ -60,15 +48,15 @@ export async function openDb({
     (e) => new DbError({ operation: `create ${dataDir}`, cause: e }),
   )
   if (created instanceof Error) return created
+  if (migrate) {
+    const migrated = await migrateDb({ dataDir })
+    if (migrated instanceof Error) return migrated
+  }
+  if (!fs.existsSync(dbPath({ dataDir }))) return new DbNotMigratedError({ missing: DB_FILE })
   const client = createClient({ url: `file:${dbPath({ dataDir })}` })
   const setup = await (async () => {
     await client.execute('PRAGMA journal_mode = WAL')
     await client.execute('PRAGMA busy_timeout = 5000')
-    if (migrate) {
-      for (const statement of schemaStatements()) {
-        await client.execute(statement)
-      }
-    }
     const rows = await client.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     return new Set(rows.rows.map((row) => String(row.name)))
   })().catch((e) => new DbError({ operation: 'open', cause: e }))
@@ -79,7 +67,7 @@ export async function openDb({
   const missing = REQUIRED_TABLES.find((table) => !setup.has(table))
   if (missing) {
     client.close()
-    return new DbNotMigratedError({ table: missing })
+    return new DbNotMigratedError({ missing: `table ${missing}` })
   }
   return { db: createDrizzle(client), client, close: () => client.close() }
 }

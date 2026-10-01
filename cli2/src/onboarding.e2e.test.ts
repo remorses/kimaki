@@ -90,7 +90,7 @@ async function guildChannels() {
 test('onboarding thread adds a project channel through the kimaki CLI, which answers at once', async () => {
   const { discord } = twin
   const guild = bot.discord.guilds.cache.get(discord.guildId)!
-  const onboarded = await runOnboarding({ bot, dataDir, guild, kimaki, gateway: true, installerId: TEST_USER_ID })
+  const onboarded = await runOnboarding({ bot, dataDir, guild, kimaki, gateway: true, installerId: TEST_USER_ID, machine: 'test-machine' })
   if (!onboarded || onboarded instanceof Error) throw new Error(`onboarding failed: ${onboarded?.message}`, { cause: onboarded })
   await waitForFooter({ discord, threadId: onboarded.threadId })
 
@@ -122,9 +122,9 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
       "project",
       "random",
       "quiet",
-      "Kimaki",
-      "kimaki (in Kimaki)",
-      "other-project (in Kimaki)",
+      "Kimaki test-machine",
+      "kimaki (in Kimaki test-machine)",
+      "other-project (in Kimaki test-machine)",
     ]
   `)
 
@@ -143,6 +143,6 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
   await waitForFooter({ discord, threadId: thread.id })
 
   // Second start: nothing is created again.
-  expect(await runOnboarding({ bot, dataDir, guild, kimaki, gateway: true })).toBe(null)
+  expect(await runOnboarding({ bot, dataDir, guild, kimaki, gateway: true, machine: 'test-machine' })).toBe(null)
   await waitFor({ label: 'no extra channels', check: async () => (await guildChannels()).length === 6 })
 }, 30_000)

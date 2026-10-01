@@ -132,7 +132,7 @@ const KIMAKI_EVENT_TYPES: ReadonlySet<string> = new Set<KimakiEvent['type']>([
   'kimaki.upload',
 ])
 
-function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
+export function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
   return KIMAKI_EVENT_TYPES.has(event.type)
 }
 

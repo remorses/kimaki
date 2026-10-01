@@ -45,7 +45,9 @@ beforeAll(async () => {
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
   bot = await startTestBot({ dataDir, twin, server, openaiBaseUrl: openai.baseUrl })
-  await bot.db.db.insert(schema.bot_api_keys).values({ app_id: twin.discord.botUserId, openai_api_key: 'test-openai-key' })
+  // The saved bot (self-hosted or gateway): the transcriber reads its keys.
+  const savedBot = await bot.db.db.query.bot_tokens.findFirst()
+  await bot.db.db.insert(schema.bot_api_keys).values({ app_id: savedBot!.app_id, openai_api_key: 'test-openai-key' })
 })
 
 afterAll(async () => {

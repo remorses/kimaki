@@ -49,6 +49,7 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
   expect(threads.stdout).toContain(started.threadId)
   expect(users.stdout).toContain(TEST_USER_ID)
   expect(token.stdout.trim()).toBe(twin.discord.botToken)
-  expect(install.stdout).toContain(twin.discord.botUserId)
+  // Self-hosted: the bot's own OAuth URL. Gateway: kimaki.dev with the client ID.
+  expect(install.stdout).toContain(twin.discord.botToken.includes(':') ? `clientId=${twin.discord.botToken.split(':')[0]}` : twin.discord.botUserId)
   expect((await twin.discord.thread(started.threadId).getMessages()).some((message) => message.attachments.some((file) => file.filename === 'report.txt'))).toBe(true)
 })

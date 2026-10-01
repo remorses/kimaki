@@ -40,7 +40,7 @@ import type {
   RESTPostAPIInteractionCallbackJSONBody,
 } from 'discord-api-types/v10'
 import { DiscordGateway } from './gateway.js'
-import type { GatewayState } from './gateway.js'
+import type { GatewayAuthorize, GatewayState } from './gateway.js'
 import type { PrismaClient } from './generated/client.js'
 import {
   userToAPI,
@@ -128,16 +128,50 @@ export type TypingEventRecord = {
   timestamp: number
 }
 
+// REST route scope of gateway-proxy, ported 1:1 from
+// gateway-proxy/src/rest_proxy.rs resolve_route_scope(). Keep them in sync.
+export type RouteScope =
+  | { kind: 'guild'; guildId: string }
+  | { kind: 'channel'; channelId: string }
+  | { kind: 'allowed-without-guild' }
+  | { kind: 'allowed-without-auth' }
+  | { kind: 'denied' }
+
+const SNOWFLAKE = /^\d+$/
+
+export function resolveRouteScope(pathname: string): RouteScope {
+  const segments = pathname.split('/').filter((segment) => segment.length > 0)
+  const base = segments[0] === 'api' && segments[1] === 'v10' ? 2 : segments[0] === 'v10' ? 1 : -1
+  if (base === -1 || segments.length <= base) return { kind: 'denied' }
+  const route = segments.slice(base)
+  const [first = '', second = '', third = '', fourth = ''] = route
+  if (first === 'gateway' && second === 'bot') return { kind: 'allowed-without-guild' }
+  if (first === 'users' && (second === '@me' || second.toLowerCase() === '%40me')) return { kind: 'allowed-without-guild' }
+  if ((first === 'interactions' || first === 'webhooks') && route.length >= 3) {
+    return SNOWFLAKE.test(second) && third ? { kind: 'allowed-without-auth' } : { kind: 'denied' }
+  }
+  if (first === 'guilds' && route.length >= 2) return SNOWFLAKE.test(second) ? { kind: 'guild', guildId: second } : { kind: 'denied' }
+  if (first === 'channels' && route.length >= 2) return SNOWFLAKE.test(second) ? { kind: 'channel', channelId: second } : { kind: 'denied' }
+  if (first === 'applications' && third === 'guilds' && route.length >= 4) {
+    return SNOWFLAKE.test(fourth) ? { kind: 'guild', guildId: fourth } : { kind: 'denied' }
+  }
+  return { kind: 'denied' }
+}
+
 export function createServer({
   prisma,
   botUserId,
-  botToken,
+  authorize,
+  gatewayProxy,
   loadGatewayState,
   gatewayUrlOverride,
 }: {
   prisma: PrismaClient
   botUserId: string
-  botToken: string
+  authorize: GatewayAuthorize
+  // Enforce gateway-proxy REST rules: client tokens only reach routes of
+  // their authorized guilds, fail closed otherwise.
+  gatewayProxy: boolean
   loadGatewayState: () => Promise<GatewayState>
   gatewayUrlOverride?: string
 }): ServerComponents {
@@ -1955,7 +1989,35 @@ export function createServer({
       },
     })
 
+  // Same status codes as rest_proxy.rs: 401 bad token, 403 outside the
+  // authorized guilds, 404 + 10003 for an unknown channel.
+  async function proxyRejection(req: http.IncomingMessage): Promise<Response | null> {
+    if (!gatewayProxy) return null
+    const scope = resolveRouteScope(new URL(req.url ?? '/', 'http://localhost').pathname)
+    if (scope.kind === 'allowed-without-auth') return null
+    const token = (req.headers.authorization ?? '').replace(/^Bot\s+/i, '')
+    const guilds = authorize(token)
+    if (guilds === false) return Response.json({ error: 'Invalid client credentials' }, { status: 401 })
+    if (guilds === null || scope.kind === 'allowed-without-guild') return null
+    if (scope.kind === 'denied') return Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
+    if (scope.kind === 'guild') {
+      return guilds.has(scope.guildId) ? null : Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
+    }
+    const channel = await prisma.channel.findUnique({ where: { id: scope.channelId } })
+    if (!channel) return Response.json({ message: 'Unknown Channel', code: 10003 }, { status: 404 })
+    if (channel.guildId && guilds.has(channel.guildId)) return null
+    return Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
+  }
+
   const httpServer = http.createServer((req, res) => {
+    void proxyRejection(req).then(async (rejection) => {
+      if (!rejection) return handleRequest(req, res)
+      res.writeHead(rejection.status, { 'content-type': 'application/json' })
+      res.end(await rejection.text())
+    })
+  })
+
+  function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     const origWriteHead = res.writeHead.bind(res)
     // Node's writeHead has complex overloads. Intercept to inject rate
     // limit headers on every response.
@@ -1972,13 +2034,13 @@ export function createServer({
       return origWriteHead(statusCode, ...rest)
     } as typeof res.writeHead
     return app.handleForNode(req, res)
-  })
+  }
 
   gateway = new DiscordGateway({
     httpServer,
     port: 0,
     loadState: loadGatewayState,
-    expectedToken: botToken,
+    authorize,
   })
 
   return {

@@ -66,7 +66,9 @@ beforeAll(async () => {
   })
   await warmUp({ server })
   bot = await startTestBot({ dataDir, twin, server, geminiBaseUrl: gemini.baseUrl })
-  await bot.db.db.insert(schema.bot_api_keys).values({ app_id: twin.discord.botUserId, gemini_api_key: 'test-gemini-key' })
+  // The saved bot (self-hosted or gateway): the transcriber reads its keys.
+  const savedBot = await bot.db.db.query.bot_tokens.findFirst()
+  await bot.db.db.insert(schema.bot_api_keys).values({ app_id: savedBot!.app_id, gemini_api_key: 'test-gemini-key' })
 })
 
 afterAll(async () => {

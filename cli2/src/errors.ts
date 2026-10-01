@@ -29,7 +29,7 @@ export class DbError extends errore.createTaggedError({
 
 export class DbNotMigratedError extends errore.createTaggedError({
   name: 'DbNotMigratedError',
-  message: 'Database table $table is missing. Run kimaki once to set up the database',
+  message: 'Kimaki database is not set up ($missing is missing). Run kimaki once to set up the database',
 }) {}
 
 export class ConfigError extends errore.createTaggedError({

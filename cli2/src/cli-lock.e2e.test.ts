@@ -4,7 +4,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
-import { seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitForFooter, warmUp, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
+import { seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitFor, waitForFooter, warmUp, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
 
 const exec = promisify(execFile)
 const dataDir = tempDataDir()
@@ -78,6 +78,7 @@ test('CLI help documents the supported P7 commands', async () => {
       project add [directory]           Create a channel for a directory (default: current directory)
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -g, --guild <guildId>           Server (default: the one with Kimaki channels)
+        --machine-name <name>           Machine name of a new category and of a channel name suffix (default: hostname)
 
       Session:
       session list                      List sessions with native status and token counts
@@ -253,18 +254,32 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
 
+      Bot:
+      status                            Bot health: running, pid, uptime, OpenCode URL and version, guilds
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --json                          Output as JSON
+
+      logs                              Print the log file path. The bot resets the file on every start
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -f, --follow                    Print the log and keep printing new lines
+
       bot token                         Print saved bot credentials for automation
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
       bot install-url                   Print the Discord bot install URL
         --data-dir <path>               Data directory (default: ~/.kimaki)
+        --gateway-callback-url <url>    Gateway only: redirect here after the install
 
     Options:
-      --data-dir <path>      Data directory (default: ~/.kimaki)
-      -g, --guild <guildId>  Server to onboard when the bot is in several
-      --gateway              Use the shared Kimaki bot, no Discord app needed
-      --restart-onboarding   Choose credentials again
-      -h, --help             Display this message
+      --data-dir <path>             Data directory (default: ~/.kimaki)
+      -g, --guild <guildId>         Server to onboard when the bot is in several
+      --gateway                     Use the shared Kimaki bot, no Discord app needed
+      --gateway-callback-url <url>  Redirect here after the gateway install (appends ?guild_id=<id>)
+      --install-url                 Print the install URL and exit (non-interactive onboarding)
+      --machine-name <name>         Name in this machine's category "Kimaki <name>" (default: hostname)
+      --restart-onboarding          Choose credentials again
+      --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
+      -h, --help                    Display this message
     "
   `)
 })
@@ -317,4 +332,51 @@ test('send settings reach native session creation; notifications create no sessi
   `)
   expect(notice.sessionId).toBe(null)
   expect(bot.store.getState().roots[notice.threadId]).toBeUndefined()
+})
+
+test('status reports the running bot, logs prints and follows the log file', async () => {
+  const running = JSON.parse((await cli(['status', '--json'])).stdout) as Record<string, unknown>
+  const opencode = running['opencode'] as { url: string; version: string; connected: boolean }
+  expect({ ...running, mode: running['mode'] === (twin.discord.botToken.includes(':') ? 'gateway' : 'self_hosted'), guilds: (running['guilds'] as Array<{ id: string; name: string }>).map((guild) => ({ ...guild, id: guild.id === twin.discord.guildId })), pid: typeof running['pid'], uptimeSec: typeof running['uptimeSec'], dataDir: running['dataDir'] === dataDir, opencode: { ...opencode, url: opencode.url === bot.opencode.endpoint?.url, version: typeof opencode.version } }).toMatchInlineSnapshot(`
+    {
+      "dataDir": true,
+      "guilds": [
+        {
+          "id": true,
+          "name": "Kimaki Test",
+        },
+      ],
+      "mode": true,
+      "opencode": {
+        "connected": true,
+        "url": true,
+        "version": "string",
+      },
+      "pid": "number",
+      "running": true,
+      "uptimeSec": "number",
+    }
+  `)
+
+  // A data dir without a running bot.
+  const otherDir = tempDataDir()
+  const stopped = await exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'status', '--json', '--data-dir', otherDir]).catch((error: { code: number; stdout: string }) => error)
+  fs.rmSync(otherDir, { recursive: true, force: true })
+  expect({ code: 'code' in stopped ? stopped.code : 0, stdout: JSON.parse(stopped.stdout) }).toMatchInlineSnapshot(`
+    {
+      "code": 1,
+      "stdout": {
+        "reason": "Kimaki bot is not running. Start kimaki first.",
+        "running": false,
+      },
+    }
+  `)
+
+  expect((await cli(['logs'])).stdout.trim()).toBe(path.join(dataDir, 'kimaki.log'))
+  const follow = execFile(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'logs', '--follow', '--data-dir', dataDir])
+  const output = { text: '' }
+  follow.stdout?.on('data', (chunk: Buffer) => (output.text += chunk.toString()))
+  fs.appendFileSync(path.join(dataDir, 'kimaki.log'), 'follow-marker-line\n')
+  await waitFor({ label: 'followed log line', check: async () => output.text.includes('follow-marker-line') })
+  follow.kill()
 })

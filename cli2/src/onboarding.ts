@@ -5,13 +5,13 @@
 // `kimaki project add` (see project.ts).
 //
 //   credentials (credentials.ts) ─▶ bot ready ─▶ pick guild (gateway: the
-//     installed one) ─▶ "Kimaki" category + #kimaki channel ─▶ welcome message
+//     installed one) ─▶ "Kimaki <machine>" category + #kimaki channel ─▶ welcome message
 //     ─▶ "Kimaki onboarding" thread + session with ONBOARDING prompt
 //
 // Runs once per data dir: when the default directory already has a mapping
 // (also if the user later deleted that channel) nothing happens.
 
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -22,11 +22,10 @@ import dedent from 'string-dedent'
 
 import { API } from '@discordjs/core/http-only'
 
-import { selfHostedInstallUrl } from './credentials.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import { createLogger } from './logger.ts'
 import type { BotHandle } from './main.ts'
-import { addProjectChannel, defaultNames, defaultProjectDirectory } from './project.ts'
+import { addProjectChannel, defaultChannelName, defaultProjectDirectory } from './project.ts'
 
 const logger = createLogger('ONBOARD')
 const execFileAsync = promisify(execFile)
@@ -34,13 +33,17 @@ const execFileAsync = promisify(execFile)
 const DEFAULT_CHANNEL_TOPIC =
   'General channel for misc tasks with Kimaki. Not connected to a specific project or repository.'
 
-// Waits until the bot is in at least one server, printing the install URL.
-export async function waitForGuild({ discord }: { discord: Client }): Promise<Guild> {
+// Waits until a self-hosted bot is in at least one server. A gateway client
+// in no server cannot be fixed by waiting: the install URL must be opened
+// again (V1 behavior), so that is an error with the URL.
+async function waitForGuild({ discord, installUrl, gateway }: { discord: Client; installUrl: string; gateway: boolean }): Promise<ConfigError | Guild> {
   const first = discord.guilds.cache.first()
   if (first) return first
-  const url = selfHostedInstallUrl({ appId: discord.user?.id ?? '' })
-  logger.log(`bot is in no server yet, install it: ${url}`)
-  process.stderr.write(`\nAdd the bot to your Discord server:\n${url}\n\nWaiting...\n`)
+  if (gateway) {
+    return new ConfigError({ reason: `The Kimaki bot is in no Discord server. Open this URL to add it (do not share it, it contains your credentials), then run kimaki again: ${installUrl}` })
+  }
+  logger.log(`bot is in no server yet, install it: ${installUrl}`)
+  process.stderr.write(`\nAdd the bot to your Discord server:\n${installUrl}\n\nWaiting...\n`)
   return new Promise((resolve) => discord.once(Events.GuildCreate, resolve))
 }
 
@@ -48,16 +51,20 @@ export async function waitForGuild({ discord }: { discord: Client }): Promise<Gu
 export async function chooseGuild({
   discord,
   guildId,
+  installUrl,
+  gateway,
 }: {
   discord: Client
   guildId?: string
+  installUrl: string
+  gateway: boolean
 }): Promise<ConfigError | Guild> {
   if (guildId) {
     const guild = discord.guilds.cache.get(guildId)
     return guild ?? new ConfigError({ reason: `The bot is not in server ${guildId}` })
   }
   const guilds = [...discord.guilds.cache.values()]
-  if (guilds.length <= 1) return waitForGuild({ discord })
+  if (guilds.length <= 1) return waitForGuild({ discord, installUrl, gateway })
   if (!process.stdin.isTTY) {
     const choices = guilds.map((guild) => `${guild.id} (${guild.name})`).join(', ')
     return new ConfigError({ reason: `The bot is in several servers: ${choices}. Pass --guild <id>.` })
@@ -70,7 +77,23 @@ export async function chooseGuild({
   return discord.guilds.cache.get(picked) ?? new ConfigError({ reason: `Unknown server ${picked}` })
 }
 
-function shellQuote(arg: string): string {
+// macOS: keep the machine awake while the bot runs (-s also on lid close on
+// AC power). -w exits caffeinate with this process, whatever ends it.
+export function startCaffeinate(): void {
+  if (process.platform !== 'darwin') return
+  const child = errore.try(
+    () => spawn('caffeinate', ['-s', '-w', String(process.pid)], { stdio: 'ignore' }),
+    (e) => new ConfigError({ reason: 'caffeinate failed to start', cause: e }),
+  )
+  if (child instanceof Error) {
+    logger.warn(child.message)
+    return
+  }
+  child.on('error', (error) => logger.warn(`caffeinate: ${error.message}`))
+  child.unref()
+}
+
+export function shellQuote(arg: string): string {
   return /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`
 }
 
@@ -131,6 +154,7 @@ export async function runOnboarding({
   kimaki,
   gateway,
   installerId,
+  machine,
 }: {
   bot: BotHandle
   dataDir: string
@@ -138,6 +162,8 @@ export async function runOnboarding({
   // Shell command for `kimaki`, from kimakiShellCommand().
   kimaki: string
   gateway: boolean
+  // --machine-name, else defaultMachineName().
+  machine: string
   // Gateway installs report who installed the bot; else the guild owner.
   installerId?: string | null
 }): Promise<
@@ -159,11 +185,12 @@ export async function runOnboarding({
     db,
     guildId: guild.id,
     directory,
-    name: defaultNames({ botName, gateway }).channel,
+    name: defaultChannelName({ botName, gateway }),
     topic: DEFAULT_CHANNEL_TOPIC,
-    categoryName: defaultNames({ botName, gateway }).category,
+    machine,
   })
   if (channel instanceof Error) return channel
+  bot.analytics.track('project_registered', { project_kind: 'default', source: 'onboarding' })
 
   const textChannel = await bot.discord.channels
     .fetch(channel.channelId)

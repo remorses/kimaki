@@ -1685,10 +1685,12 @@ pending-forms check. `session list --active` derives from execution events or
 
 ### V2 schema: a subset of the existing tables
 
-**Decision:** V2 uses the **same file** (`~/.kimaki/discord-sessions.db`) and a **subset
-of the existing tables with their existing columns**. No new tables, no new columns, no
-dropped or rebuilt tables, no import step. Old databases work unchanged, and a user can
-downgrade to V1 at any time.
+**Decision (changed in P9):** V2 uses its **own file** `~/.kimaki/kimaki.db` with a
+**subset of the V1 tables and their columns**. On the first start, when `kimaki.db` is
+missing and `discord-sessions.db` exists, the bot imports the rows of these tables
+(`cli2/src/migrations.ts`, the only place for migrations). The V1 file is opened
+read-only and never changed or deleted. **No downgrade:** changes made by V2 stay in
+`kimaki.db`.
 
 ```
 used by V2 (unchanged DDL)                    left alone (V1 only)
@@ -1709,13 +1711,13 @@ session_sleeps      sleeps
 
 The V2 Drizzle schema (`cli2/src/schema.ts`) declares **only the used tables**, copied
 from the V1 schema with identical column names, types, and the same custom `datetime`
-type. `schema.sql` generated from it creates exactly these tables with
-`CREATE TABLE IF NOT EXISTS`, so:
+type, so the import is one `INSERT … SELECT` per table:
 
-| Database | Result |
+| Data dir | First V2 start |
 |---|---|
-| existing V1 database | all statements are no-ops; V1-only tables stay untouched |
-| new install | only the used tables exist; if the user later runs V1, V1's own `migrateSchema()` creates the rest |
+| V1 `discord-sessions.db` only | `kimaki.db.import` is built from `schema.sql` + the V1 rows, then renamed to `kimaki.db` (a crash leaves no half import). Columns an older V1 file lacks get defaults; `bot_mode` `'self-hosted'`/NULL becomes `'self_hosted'` |
+| nothing | empty `kimaki.db` |
+| `kimaki.db` exists | no import, even if V1 keeps writing its own file |
 
 Rules for the V2 code:
 
@@ -1734,10 +1736,9 @@ Session IDs in existing `thread_sessions` rows: OpenCode V2 migrates V1 sessions
 its own database (`packages/core/src/database/v1-migration.bun.ts`) and appears to keep
 their IDs, so old threads keep working. Verify with an old thread before P1 relies on it.
 
-Migrations: only the bot start runs `schema.sql` (plus future additive `ALTER TABLE …
-ADD COLUMN` if ever needed, following root `AGENTS.md`). Subcommands never run it. No
-`PRAGMA user_version` (V1 does not set it; a subcommand that finds a missing table
-prints `run kimaki once to set up the database`).
+Migrations: only the bot start runs `migrations.ts` (import + `schema.sql` + future
+`ALTER TABLE`). Subcommands never run it and never create the file; a subcommand that
+finds no `kimaki.db` or a missing table prints `Run kimaki once to set up the database`.
 
 Access: only the bot and the CLI open the file (WAL mode). The plugin never does, so
 `KIMAKI_DB_URL` and the Hrana HTTP proxy disappear.
@@ -1765,7 +1766,7 @@ dispatching IDs, event buffer persistence, replay sets) is derived or gone.
 - `injection-guard/<session>.json` → delete (no injection guard in V2)
 - `file-edit-events.jsonl` → delete; `session editors` derives from `session.log` tool inputs
 - `opencode-config.json` → delete; the plugin is registered in the user's `~/.config/opencode/opencode.json`
-- `discord-sessions.db` → read once by the importer, never written by V2
+- `discord-sessions.db` → read once (read-only) by the first V2 start, never written by V2; V2 uses `kimaki.db`
 - new: `lock-token` (0600) for CLI → bot auth
 
 ---
@@ -1801,7 +1802,7 @@ Native in V2 now, delete:
 - `<button>` markdown extension, `html-components.ts`, `html-actions.ts` → `/tasks` and
   `/worktrees` build components directly; model buttons only via `kimaki buttons`
 - `!cmd. queue` (until [opencode#52274](https://github.com/anomalyco/opencode/issues/52274) adds queued shell), `. btw queue`
-- 12 V1-only SQLite tables are no longer read or written (left in place for downgrade)
+- 12 V1-only SQLite tables are not imported into `kimaki.db` (they stay in the V1 file)
 - external session sync, thread rename from OpenCode title, footer mentions, cache
   notices, large output notice, toast relay, thinking lines, fork/resume replay
   (see [section 22](#22-coupled-features-remove-candidates))
@@ -2058,7 +2059,7 @@ for await (const event of client.event.subscribe({ signal })) {
 - **Plugin loading:** configured standalone plugin files are silently ignored by
   2.0.19. Configure the **directory** with `index.ts`/`index.js`, not its file path.
   The harness loads the directory; session creation now fails clearly if `kimaki` is
-  not active. Consent-based installation remains the P9 onboarding responsibility.
+  not active. P9: the bot writes a `plugins/kimaki/` shim on start (see P9 findings).
 - **Shell context:** `shell.hook('create.before')` has no session ID, and native
   `OPENCODE_SESSION_ID` is set after that hook. The current implementation uses the
   session-aware `tool.execute.before` hook to prefix POSIX environment exports.
@@ -2101,6 +2102,43 @@ for await (const event of client.event.subscribe({ signal })) {
   field by field and casts the input), login forms and command-based connection methods,
   an in-flight upload-cancellation regression test, and the shell-environment design
   review (Windows untested). Worktrees, scheduling, and onboarding stay P10/P8/P9.
+
+### Findings from building cli2 P9 (OpenCode 2.0.19)
+
+- **Own database file.** `kimaki.db` with a one-time read-only import of
+  `discord-sessions.db` (section 17). Real V1 files are in WAL mode with rows still in
+  the `-wal` file: the import attaches with `?mode=ro` and reads them; the test keeps a V1
+  connection open during the import and checks that neither file changes.
+- **Legacy sessions.** Imported bindings point at sessions V1 created without
+  `metadata.kimaki` and without an instructions entry. `actions.dispatch` checks the
+  marker on each input and adopts the session (marker + instructions). Startup refreshes
+  the CLI routing fields only of **active** sessions: a real V1 install has over 10k
+  bindings, one `session.get` each would block the start.
+- **Plugin registration.** Folder discovery works on 2.0.19: the bot writes
+  `<config dir>/plugins/kimaki/index.js` (`OPENCODE_CONFIG_DIR`, else
+  `$XDG_CONFIG_HOME/opencode`), and an already loaded location activates it through the
+  watcher. `Host.resolve` tries `server`, then `index`, so other files in the folder are
+  removed. The harness no longer lists the plugin in `OPENCODE_CONFIG_CONTENT`.
+- **Gateway proxy in the twin.** `DigitalDiscord({ gatewayProxy: true })` ports
+  `rest_proxy.rs` route scoping (401 unknown client, 403 outside the authorized guilds,
+  404 + 10003 unknown channel), filters READY and guild events, and
+  `authorizeGatewayClient()` plays the OAuth callback. `KIMAKI_TEST_GATEWAY=1` runs every
+  e2e file in gateway mode; it found no unscoped REST call in cli2.
+- **Programmatic onboarding.** Non-TTY events use V1's SSE framing
+  (`data: {...}\n\n`: `install_url`, `authorized`, `ready`, `error`), the documented public
+  format. The fixed 2s wait for the proxy is replaced by polling `GET /gateway/bot` with
+  the new client token. A gateway client in no server exits with an `error` event that
+  carries the install URL.
+- **Categories** are `Kimaki <machine>` (`--machine-name`, default hostname without
+  `.local`). A channel name already used outside this machine's category gets a
+  `-<machine>` suffix. A stored V1 category ID is still used first.
+- **Analytics.** All six V1 events stay (`bot_started`, `project_registered`,
+  `session_created`, `turn_started`, `turn_completed`, `tokens_used`). `tokens_used` sums
+  `step.ended` and `step.failed` usage of one execution (`step.failed` is billed and
+  carries tokens); `session.usage.updated` is cumulative and live-only, so it has no
+  baseline after a restart. `tokens_total` = input + output + cache read + cache write;
+  whether V2 `output` already contains `reasoning` is not verified. Zero-token executions
+  are skipped like V1. `turn_started` has no `source` prop yet.
 
 ---
 
@@ -3159,7 +3197,7 @@ one opencode server process (HTTP + SSE, Basic auth user "opencode")
 | server not running | `Service.ensure()` **without** a version option. It starts `opencode serve --service` with the user's `opencode` binary |
 | auth | `Authorization: Basic base64("opencode:" + password)` from the registration file |
 | client | `@opencode/client` `OpenCode.make({ baseUrl, headers })` |
-| register the Kimaki plugin | onboarding adds it to `plugins` in `~/.config/opencode/opencode.json` (asks first), then `POST /api/location/reload` |
+| register the Kimaki plugin | every bot start writes `<config dir>/plugins/kimaki/index.js`, a one-line re-export of the running install's plugin, only when its content differs. OpenCode auto-loads `plugins/` folders and its watcher reloads them. No `opencode.json` edit, no consent prompt, no explicit reload |
 | version | read `version` from the registration; below the minimum Kimaki supports → exit with `run: opencode upgrade`. Never pass a version to `ensure()`: it **replaces** a server with a different version, which would kill the user's running TUI sessions |
 | service restarted or upgraded by the user | the event stream ends; reconnect with backoff, re-read the registration (new port/password), post `-# reconnected` in busy threads, re-seed views (27) |
 
@@ -3875,7 +3913,8 @@ await discord.waitForThread(...)
   `Kimaki <machine>`, project channels, default channel
 - gateway mode through the proxy (REST safety rules unchanged)
 - legacy compatibility: V2 starts on a V1 `discord-sessions.db` fixture and V1 starts on
-  a database last written by V2 (downgrade)
+  a database last written by V2 (downgrade). **Changed:** V2 imports the V1 file into
+  its own `kimaki.db`; no downgrade (section 17)
 - analytics subscriber (`tokens_used` from `session.usage.updated`), `kimaki status`,
   `kimaki logs`
 

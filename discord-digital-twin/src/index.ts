@@ -130,6 +130,11 @@ export interface DigitalDiscordOptions {
   // Override the gateway URL returned by GET /gateway/bot.
   // Useful when a proxy sits between the client and this server.
   gatewayUrlOverride?: string
+  // Act as kimaki's gateway-proxy: only `clientId:secret` tokens registered
+  // with authorizeGatewayClient() connect, READY and events are filtered to
+  // their guilds, and REST routes follow rest_proxy.rs (fail closed). A
+  // botToken containing ':' is authorized for every seeded guild.
+  gatewayProxy?: boolean
 }
 
 export type DigitalDiscordCommandOption = {
@@ -187,6 +192,8 @@ export class DigitalDiscord {
 
   private server: ServerComponents | null = null
   private options: DigitalDiscordOptions
+  // gatewayProxy mode: client token -> authorized guild IDs.
+  private gatewayClients = new Map<string, Set<string>>()
   private seeded = false
   private interactionEvents: DigitalDiscordInteractionEvent[] = []
 
@@ -230,10 +237,17 @@ export class DigitalDiscord {
       this.seeded = true
     }
 
+    if (this.options.gatewayProxy && this.botToken.includes(':')) {
+      this.authorizeGatewayClient({ token: this.botToken, guildIds: this.guildIds })
+    }
     this.server = createServer({
       prisma: this.prisma,
       botUserId: this.botUserId,
-      botToken: this.botToken,
+      gatewayProxy: Boolean(this.options.gatewayProxy),
+      authorize: (token) => {
+        if (!this.options.gatewayProxy) return token === this.botToken ? null : false
+        return this.gatewayClients.get(token) ?? false
+      },
       loadGatewayState: () => this.loadGatewayState(),
       gatewayUrlOverride: this.options.gatewayUrlOverride,
     })
@@ -247,6 +261,14 @@ export class DigitalDiscord {
       await stopServer(this.server)
       this.server = null
     }
+  }
+
+  // gatewayProxy mode: what the website's OAuth callback does (a
+  // gateway_clients row). The client can connect from now on.
+  authorizeGatewayClient({ token, guildIds }: { token: string; guildIds: readonly string[] }): void {
+    const guilds = this.gatewayClients.get(token) ?? new Set<string>()
+    for (const guildId of guildIds) guilds.add(guildId)
+    this.gatewayClients.set(token, guilds)
   }
 
   // --- Scoped accessors ---
@@ -1665,3 +1687,5 @@ export class ScopedUserActor {
 export { DiscordGateway } from './gateway.js'
 export { generateSnowflake } from './snowflake.js'
 export type { GatewayState } from './gateway.js'
+export { resolveRouteScope } from './server.js'
+export type { RouteScope } from './server.js'

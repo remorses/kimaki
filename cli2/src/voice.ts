@@ -18,7 +18,7 @@ import * as errore from 'errore'
 import prism from 'prism-media'
 import dedent from 'string-dedent'
 
-import { credentialsFromRow, WEBSITE_URL } from './credentials.ts'
+import { credentialsFromRow, gatewayUrlsFromEnv } from './credentials.ts'
 import type { KimakiDb } from './db.ts'
 import { DbError } from './errors.ts'
 import { createLogger } from './logger.ts'
@@ -409,7 +409,7 @@ async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret }
   clientId: string
   clientSecret: string
 }): Promise<TranscriptionFailure | TranscriptionResult> {
-  const response = await fetch(new URL('/api/transcribe', WEBSITE_URL), {
+  const response = await fetch(new URL('/api/transcribe', gatewayUrlsFromEnv().website), {
     method: 'POST',
     headers: { authorization: `Bearer ${clientId}:${clientSecret}`, 'content-type': mediaType },
     body: new Uint8Array(audio),

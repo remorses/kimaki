@@ -17,6 +17,7 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import type { SessionMetadata } from '@opencode/client'
+import type { Analytics } from './analytics.ts'
 import { ChannelType, Events, type Client, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
 import * as errore from 'errore'
 import * as orm from 'drizzle-orm'
@@ -143,6 +144,7 @@ export function createActions({
   opencode,
   eventLoop,
   store,
+  analytics,
   cliContext,
 }: {
   discord: Client
@@ -150,6 +152,7 @@ export function createActions({
   opencode: OpencodeConnection
   eventLoop: EventLoop
   store: BotStore
+  analytics: Analytics
   cliContext: { dataDir: string; lockPort: number }
 }) {
   function client() {
@@ -684,6 +687,47 @@ export function createActions({
     }
   }
 
+  // The plugin and the agent's `kimaki` calls read metadata.kimaki. Sessions
+  // from V1 (imported thread_sessions) have no marker and no instructions
+  // entry; sessions of an older bot run point at its old lock port. Checked
+  // on each input instead of for every binding at startup (a V1 install has
+  // thousands of bindings).
+  async function ensureSessionMarker({
+    sessionId,
+    thread,
+    channelId,
+    directory,
+    userId,
+  }: {
+    sessionId: string
+    thread: ThreadChannel
+    channelId: string
+    directory: string
+    userId: string
+  }): Promise<OpenCodeUnavailableError | OpenCodeError | DiscordError | void> {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const info = await opencodeClient.session
+      .get({ sessionID: sessionId })
+      .catch((e) => new OpenCodeError({ operation: `get session ${sessionId}`, cause: e }))
+    if (info instanceof Error) return info
+    const previous = info.metadata?.['kimaki']
+    const marker = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : null
+    if (marker && marker['dataDir'] === cliContext.dataDir && marker['lockPort'] === cliContext.lockPort) return
+    const updated = await opencodeClient.session
+      .update({
+        sessionID: sessionId,
+        metadata: { ...info.metadata, kimaki: { ...marker, source: 'discord', ...cliContext, threadId: thread.id, channelId } },
+      })
+      .catch((e) => new OpenCodeError({ operation: 'session.update', cause: e }))
+    if (updated instanceof Error) return updated
+    if (marker) return
+    logger.log(`adopting legacy session ${sessionId} of thread ${thread.id}`)
+    const channel = await textChannel(channelId)
+    if (channel instanceof Error) return channel
+    return putInstructions({ sessionId, thread, channel, directory, userId })
+  }
+
   // One entry point for thread input of every source (spec 9.4).
   async function dispatch({
     thread,
@@ -702,6 +746,8 @@ export function createActions({
     if (sessionId instanceof Error) return sessionId
     const project = await threadProject(thread)
     if (project instanceof Error) return project
+    const marked = await ensureSessionMarker({ sessionId, thread, channelId: project.channelId, directory: project.directory, userId: author.id })
+    if (marked instanceof Error) return marked
     switch (route.kind) {
       case 'btw':
         return forkBtw({ sourceThread: thread, text: route.text, author, messageId, files, agent: route.agent })
@@ -808,14 +854,9 @@ export function createActions({
       })
       .catch((e) => new OpenCodeError({ operation: 'session.create', cause: e }))
     if (session instanceof Error) return session
+    analytics.track('session_created', { has_worktree: false, source: 'discord' })
 
-    const instructions = await opencodeClient.session.instructions.entry
-      .put({
-        sessionID: session.id,
-        key: INSTRUCTION_KEY,
-        value: baseInstructions({ sessionId: session.id, threadId: thread.id, channelId, guildId: channel.guildId }),
-      })
-      .catch((e) => new OpenCodeError({ operation: 'instructions.entry.put', cause: e }))
+    const instructions = await putInstructions({ sessionId: session.id, thread, channel, directory, userId: author.id, parentSessionId })
     if (instructions instanceof Error) return instructions
 
     const bound = await bindThread({ threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
@@ -1464,10 +1505,15 @@ export function createActions({
     return { uploaded: files.map((file) => file.name) }
   }
 
+  // Running sessions of an older bot run point at its lock port; their agent
+  // can call `kimaki` before the next user input (ensureSessionMarker).
   async function refreshCliContext() {
     const api = client()
     if (api instanceof Error) return api
-    for (const sessionId of Object.keys(store.getState().sessionThreads)) {
+    const active = await api.session.active().catch((cause) => new OpenCodeError({ operation: 'session.active', cause }))
+    if (active instanceof Error) return active
+    const { sessionThreads } = store.getState()
+    for (const sessionId of Object.keys(active).filter((id) => sessionThreads[id])) {
       const info = await api.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'get bound session', cause }))
       if (info instanceof Error) { logger.warn(info.message); continue }
       const marker = info.metadata?.['kimaki']
