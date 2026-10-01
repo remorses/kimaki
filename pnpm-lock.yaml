@@ -265,6 +265,9 @@ importers:
       string-dedent:
         specifier: ^3.0.2
         version: 3.0.2
+      traforo:
+        specifier: workspace:^
+        version: link:../traforo
       zustand:
         specifier: ^5.0.14
         version: 5.0.15(@types/react@19.2.17)(react@19.2.8)

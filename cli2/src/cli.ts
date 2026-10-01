@@ -35,6 +35,7 @@ import {
 import { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate } from './onboarding.ts'
 import { createAnalytics } from './analytics.ts'
 import { listTasks } from './scheduler.ts'
+import { generateSpeech } from './voice.ts'
 import { addProjectChannel, canonicalPath, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from './project.ts'
 
 const logger = createLogger('CLI')
@@ -714,6 +715,57 @@ cli.command('upload-to-discord <...files>', 'Attach local files to a session thr
     const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/upload', input: { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) } })
     if (result instanceof Error) fail(result)
     process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.section('Tools')
+
+cli.command('tunnel', 'Run a command and expose its local port with a public URL. The child gets TRAFORO_URL')
+  .option('-p, --port <port>', 'Local port (default: read from the command output)')
+  .option('-t, --tunnel-id <id>', 'Fixed tunnel ID (default: random). Only for public-safe services')
+  .option('--host <host>', 'Local host (default: localhost)')
+  .option('-k, --kill', 'Kill the process on --port first')
+  .example('kimaki tunnel -- pnpm dev')
+  .action(async (options) => {
+    const command = options['--'] ?? []
+    const port = options.port ? Number(options.port) : undefined
+    if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65_535)) fail(new Error(`Invalid --port ${options.port}`))
+    if (!port && command.length === 0) fail(new Error('Pass a command after --, or --port <port>. Example: kimaki tunnel -- pnpm dev'))
+    const { runTunnel } = await import('traforo/run-tunnel')
+    await runTunnel({ port, command: command.length > 0 ? command : undefined, tunnelId: options.tunnelId, localHost: options.host, baseDomain: 'kimaki.dev', kill: options.kill })
+  })
+
+cli.command('tts [text]', 'Text to speech with OpenAI or Gemini. Reads stdin if no text is given')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-o, --output <path>', 'Output file (default: speech.mp3 or speech.wav)')
+  .option('-p, --provider <name>', 'openai | gemini (default: from the stored key)')
+  .option('-v, --voice <voice>', 'Voice ID (default: alloy for OpenAI, Kore for Gemini)')
+  .option('-i, --instructions <text>', 'Style instructions (OpenAI only)')
+  .option('--speed <n>', '0.25 to 4.0 (OpenAI only, default: 1.25)')
+  .action(async (text, options) => {
+    const chunks: Buffer[] = []
+    if (!text && !process.stdin.isTTY) for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+    const input = text ?? Buffer.concat(chunks).toString('utf8').trim()
+    if (!input) fail(new Error('Pass the text as an argument or pipe it via stdin'))
+    if (options.provider && options.provider !== 'openai' && options.provider !== 'gemini') fail(new Error('--provider must be openai or gemini'))
+    const speed = options.speed ? Number(options.speed) : 1.25
+    if (!(speed >= 0.25 && speed <= 4)) fail(new Error('--speed must be between 0.25 and 4'))
+    // Keys stored in kimaki.db first (imported from V1 /transcription-key), then env, in V1 order.
+    const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
+    const stored = opened instanceof Error ? null : await opened.db.query.bot_api_keys.findFirst().catch(() => null)
+    if (!(opened instanceof Error)) opened.close()
+    const candidates = [
+      { provider: 'openai' as const, apiKey: stored?.openai_api_key },
+      { provider: 'gemini' as const, apiKey: stored?.gemini_api_key },
+      { provider: 'openai' as const, apiKey: process.env['OPENAI_API_KEY'] },
+      { provider: 'gemini' as const, apiKey: process.env['GEMINI_API_KEY'] },
+    ].filter((candidate) => candidate.apiKey && (!options.provider || candidate.provider === options.provider))
+    const key = candidates[0]
+    if (!key?.apiKey) fail(new Error('No OpenAI or Gemini key. Set OPENAI_API_KEY or GEMINI_API_KEY'))
+    const result = await generateSpeech({ text: input, apiKey: key.apiKey, provider: key.provider, voice: options.voice, instructions: options.instructions, speed })
+    if (result instanceof Error) fail(result)
+    const output = path.resolve(options.output ?? `speech.${result.mediaType === 'audio/mp3' ? 'mp3' : 'wav'}`)
+    await fs.promises.writeFile(output, result.audio)
+    process.stdout.write(`${output}\n`)
   })
 
 cli.section('Bot')

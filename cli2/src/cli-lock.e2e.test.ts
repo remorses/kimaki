@@ -285,6 +285,21 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
 
+      Tools:
+      tunnel                            Run a command and expose its local port with a public URL. The child gets TRAFORO_URL
+        -p, --port <port>               Local port (default: read from the command output)
+        -t, --tunnel-id <id>            Fixed tunnel ID (default: random). Only for public-safe services
+        --host <host>                   Local host (default: localhost)
+        -k, --kill                      Kill the process on --port first
+
+      tts [text]                        Text to speech with OpenAI or Gemini. Reads stdin if no text is given
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -o, --output <path>             Output file (default: speech.mp3 or speech.wav)
+        -p, --provider <name>           openai | gemini (default: from the stored key)
+        -v, --voice <voice>             Voice ID (default: alloy for OpenAI, Kore for Gemini)
+        -i, --instructions <text>       Style instructions (OpenAI only)
+        --speed <n>                     0.25 to 4.0 (OpenAI only, default: 1.25)
+
       Bot:
       status                            Bot health: running, pid, uptime, OpenCode URL and version, guilds
         --data-dir <path>               Data directory (default: ~/.kimaki)

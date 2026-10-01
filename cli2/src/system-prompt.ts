@@ -110,6 +110,22 @@ export function baseInstructions({
 
       NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`kimaki upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
 
+      ## generating audio from text
+
+      When the user asks you to generate audio of some text so they can listen instead of reading, use \`kimaki tts\` to create a speech file and \`kimaki upload-to-discord\` to send it to the thread. Only use this when the user explicitly asks for audio. \`kimaki tts\` prints the path of the file it wrote.
+
+      \`\`\`bash
+      # generate audio from inline text
+      kimaki tts 'Your summary goes here' -o /tmp/summary.mp3
+      kimaki upload-to-discord --session ${sessionId} /tmp/summary.mp3
+
+      # generate audio from a file (pipe via stdin)
+      cat docs/explanation.md | kimaki tts -o /tmp/explanation.mp3
+      kimaki upload-to-discord --session ${sessionId} /tmp/explanation.mp3
+      \`\`\`
+
+      See \`kimaki tts --help\` for options like voice, speed, and style instructions.
+
       ## requesting files from the user
 
       To ask the user to upload files from their device, write all visible text first, then run \`kimaki upload-request --prompt 'Send the files' --max-files 5\`. This shows a native file picker in Discord. Set the shell timeout to 600000 ms.
@@ -447,6 +463,34 @@ export function baseInstructions({
       Users can leave line comments on a diff page (Agentation widget, bottom right). When they say they did, read them with \`curl https://critique.work/v/<id>/annotations\` (or WebFetch). It returns markdown with file, line, and comment text.
 
       critique is open source (MIT, https://github.com/remorses/critique). Diff URLs are unique, unguessable, not indexed, and ephemeral. If the user is worried about uploading code, tell them this.
+
+      ## running dev servers with tunnel access
+
+      Localhost URLs are useless from Discord. When the user should open a local dev server in a browser, wrap it in \`kimaki tunnel\` to get a public URL, and run it in a named background \`tuistory\` session so you can wait for output, read logs, and stop it later. Name it descriptively (e.g. \`projectname-dev\`) so you can reuse it. Run \`bunx tuistory --help\` first. Invoke \`kimaki\` directly, not via \`npx\` or \`bunx\`.
+
+      - Use random tunnel IDs by default. Pass \`-t <id>\` only for services that are safe to be publicly discoverable.
+      - \`kimaki tunnel\` detects the local port from the child output. Pass \`--port\` only when the server prints no detectable localhost URL or port line.
+      - \`kimaki tunnel\` injects \`TRAFORO_URL\` into the child process. Wire the app to it so OAuth callbacks, webhook URLs, and absolute links use the public URL.
+
+      \`\`\`bash
+      # start in a named background session, wait for output, then read the tunnel URL
+      bunx tuistory launch "kimaki tunnel -- pnpm dev" -s myapp-dev
+      bunx tuistory -s myapp-dev wait "/ready|local|tunnel/i" --timeout 30000
+      bunx tuistory read -s myapp-dev
+
+      # pass the public URL to the app (better-auth, Next.js, Vite; node can read process.env.TRAFORO_URL)
+      bunx tuistory launch "kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
+      bunx tuistory launch "kimaki tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
+      bunx tuistory launch "kimaki tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
+
+      # custom tunnel ID (only for intentionally public-safe services)
+      bunx tuistory launch "kimaki tunnel -t holocron -- pnpm dev" -s holocron-dev
+
+      # list sessions; stop with Ctrl+C, then close
+      bunx tuistory sessions
+      bunx tuistory -s myapp-dev press ctrl c
+      bunx tuistory -s myapp-dev close
+      \`\`\`
 
       ## markdown formatting
 

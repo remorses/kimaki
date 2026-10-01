@@ -498,3 +498,90 @@ export function createTranscriber({
 }
 
 export type Transcriber = ReturnType<typeof createTranscriber>
+
+// --- text to speech (`kimaki tts`)
+//
+//   OpenAI: POST /audio/speech, mp3 bytes.
+//     https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create
+//   Gemini: generateContent with responseModalities ['AUDIO'], base64 PCM
+//     (audio/L16, 24 kHz mono), wrapped in a WAV header here.
+//     https://ai.google.dev/gemini-api/docs/speech-generation
+
+export class SpeechError extends errore.createTaggedError({
+  name: 'SpeechError',
+  message: 'Speech generation failed: $reason',
+}) {}
+
+export type SpeechProvider = 'openai' | 'gemini'
+
+const DEFAULT_VOICES: Record<SpeechProvider, string> = { openai: 'alloy', gemini: 'Kore' }
+const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts'
+const GEMINI_TTS_MODEL = 'gemini-2.5-flash-preview-tts'
+
+async function postSpeech({ url, headers, body }: { url: string; headers: Record<string, string>; body: string }): Promise<SpeechError | Response> {
+  const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body })
+    .catch((cause) => new SpeechError({ reason: `request to ${url} failed`, cause }))
+  if (response instanceof Error) return response
+  if (response.ok) return response
+  const text = await response.text().catch(() => '')
+  return new SpeechError({ reason: `HTTP ${response.status}: ${text.slice(0, 500)}` })
+}
+
+// The provider follows the key: sk-* is OpenAI, anything else Gemini.
+export async function generateSpeech({
+  text,
+  apiKey,
+  provider = apiKey.startsWith('sk-') ? 'openai' : 'gemini',
+  voice,
+  instructions,
+  speed,
+  baseUrls = {},
+}: {
+  text: string
+  apiKey: string
+  provider?: SpeechProvider
+  // OpenAI: alloy, echo, nova, ... Gemini: Kore, Puck, Charon, ...
+  voice?: string
+  // OpenAI only: style, e.g. "Speak calmly".
+  instructions?: string
+  // OpenAI only: 0.25 to 4.0.
+  speed?: number
+  baseUrls?: TranscriptionBaseUrls
+}): Promise<SpeechError | { audio: Buffer; mediaType: 'audio/mp3' | 'audio/wav' | (string & {}) }> {
+  if (provider === 'openai') {
+    const response = await postSpeech({
+      url: `${baseUrls.openai ?? OPENAI_BASE_URL}/audio/speech`,
+      headers: { authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: OPENAI_TTS_MODEL, input: text, voice: voice || DEFAULT_VOICES.openai, response_format: 'mp3', ...(instructions && { instructions }), ...(speed && { speed }) }),
+    })
+    if (response instanceof Error) return response
+    const audio = await response.arrayBuffer().then((buffer) => Buffer.from(buffer), (cause) => new SpeechError({ reason: 'reading OpenAI audio failed', cause }))
+    if (audio instanceof Error) return audio
+    if (audio.length === 0) return new SpeechError({ reason: 'OpenAI returned empty audio' })
+    return { audio, mediaType: 'audio/mp3' }
+  }
+  // Fields: https://ai.google.dev/api/generate-content#SpeechConfig
+  const response = await postSpeech({
+    url: `${baseUrls.gemini ?? GEMINI_BASE_URL}/models/${GEMINI_TTS_MODEL}:generateContent`,
+    headers: { 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text }] }],
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice || DEFAULT_VOICES.gemini } } } },
+    }),
+  })
+  if (response instanceof Error) return response
+  const raw = await response.text().catch((cause) => new SpeechError({ reason: 'reading Gemini response failed', cause }))
+  if (raw instanceof Error) return raw
+  const parsed = parseJsonObject(raw)
+  if (parsed instanceof Error) return new SpeechError({ reason: parsed.message, cause: parsed })
+  const candidate = (Array.isArray(parsed['candidates']) ? parsed['candidates'] : []).find(isRecord)
+  const content = isRecord(candidate?.['content']) ? candidate['content'] : {}
+  const inline = (Array.isArray(content['parts']) ? content['parts'] : []).filter(isRecord).map((part) => part['inlineData']).find(isRecord)
+  const data = typeof inline?.['data'] === 'string' ? Buffer.from(inline['data'], 'base64') : null
+  if (!data?.length) return new SpeechError({ reason: `Gemini returned no audio: ${raw.slice(0, 300)}` })
+  const mediaType = (typeof inline?.['mimeType'] === 'string' ? inline['mimeType'] : 'audio/wav').toLowerCase()
+  // Raw PCM plays nowhere; a WAV header makes it a normal audio file.
+  if (!mediaType.startsWith('audio/l16') && !mediaType.startsWith('audio/pcm')) return { audio: data, mediaType }
+  const sampleRate = Number(/rate=(\d+)/.exec(mediaType)?.[1] ?? 24_000)
+  return { audio: Buffer.concat([wavHeader({ dataLength: data.length, sampleRate, channels: 1 }), data]), mediaType: 'audio/wav' }
+}
