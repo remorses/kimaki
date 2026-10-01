@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 
-import { recordToolEdits } from '../file-edit-log.ts'
+import { fileEditTool, recordToolEdits } from '../file-edit-log.ts'
 
 const exec = promisify(execFile)
 
@@ -47,7 +47,7 @@ export default Plugin.define({
     })
     // File edits feed `kimaki session editors` (v1-compatible JSONL index).
     await ctx.tool.hook('execute.after', async (event) => {
-      if (event.status !== 'completed') return
+      if (event.status !== 'completed' || !fileEditTool(event.tool)) return
       const dataDir = (await marker(event.sessionID))?.get('dataDir')
       if (typeof dataDir !== 'string') return
       // Plugins stay silent: a failed append only loses one index entry.

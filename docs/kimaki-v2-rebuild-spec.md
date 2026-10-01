@@ -1568,7 +1568,7 @@ command; they run as `/server:prompt args` messages or from `/queue-command`.
 | `/diff` | critique upload of git diff | unchanged |
 | `/undo` `/redo` | revert / unrevert | `session.revert.stage / clear / commit` |
 | `/context-usage` | tokens, %, cost | derive from `step.ended` + `session.usage.updated` |
-| `/session-id` | IDs + `opencode attach` command | unchanged |
+| `/session-id` | IDs + `opencode attach` command | IDs + `opencode2 <directory> --session <id>` |
 
 ### Queue
 
@@ -1934,7 +1934,7 @@ for await (const event of client.event.subscribe({ signal })) {
   --json` cannot replace `export-events-jsonl`. cli2 appends every event folded into a
   thread to `<dataDir>/session-events/<threadId>.jsonl` (no deltas, strings cut at 10k,
   file restarted past 20 MB). `kimaki session events <id>` prints it; `session read <id>`
-  prints `message.list` as markdown; `/session-id` shows both commands.
+  prints `message.list` as markdown (the CLI help lists both; `/session-id` does not).
 - **`Service.ensure()` binary.** Its default command is `opencode` from `PATH`, which is
   often V1 while V2 installs as `opencode2`. cli2 picks the first of `opencode2`,
   `opencode` whose `--version` is at least 2.0.19 and passes it as `command`.
@@ -2088,7 +2088,7 @@ for await (const event of client.event.subscribe({ signal })) {
   (`<dataDir>/file-edit-events.jsonl`, `v: 1`), so old v1 data still works. The plugin's
   `tool.execute.after` hook appends one event per file of each completed `edit`/`write`/
   `patch` call (v2 `patch` is stored as v1 `apply_patch`; failed calls are not recorded) and
-  compacts at 5 MB. Only sessions with a Kimaki marker are recorded. The message-history
+  compacts at 5 MB. Paths expand `~` like OpenCode and match through symlinks (also for deleted files). Concurrent compaction by several processes can still drop events (as in v1; needs a cross-process lock). Only sessions with a Kimaki marker are recorded. The message-history
   scan was removed: 3m40s over 20k sessions. `session diff` runs `critique --web` in the
   session folder; tested only for the offline clean-tree path. A successful `patch` call is
   untested end to end (the deterministic model has no `patch` tool); the path parser has a

@@ -4,6 +4,7 @@
 // editors` reads the file. v1 data keeps working. Plugin-safe: no logger import.
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import { FilesystemError } from './errors.ts'
@@ -17,10 +18,16 @@ export type FileEditTool = 'edit' | 'write' | 'apply_patch'
 
 export type FileEditEvent = { v: 1; at: number; sessionId: string; file: string; tool: FileEditTool }
 
-function fileEditTool(tool: string): FileEditTool | undefined {
+export function fileEditTool(tool: string): FileEditTool | undefined {
   if (tool === 'edit' || tool === 'write') return tool
   if (tool === 'patch' || tool === 'apply_patch') return 'apply_patch'
   return undefined
+}
+
+// OpenCode expands `~` and `~/` in tool paths before resolving them.
+function resolveToolPath(directory: string, file: string): string {
+  if (file === '~') return os.homedir()
+  return path.resolve(directory, file.startsWith('~/') ? path.join(os.homedir(), file.slice(2)) : file)
 }
 
 // Absolute paths a tool call wrote. v2 inputs: edit/write `path`, patch `patchText`.
@@ -30,20 +37,31 @@ export function extractEditedFiles({ tool, input, directory }: { tool: string; i
   const name = fileEditTool(tool)
   if (name === 'edit' || name === 'write') {
     const file = fields.get('path')
-    return typeof file === 'string' && file ? [path.resolve(directory, file)] : []
+    return typeof file === 'string' && file ? [resolveToolPath(directory, file)] : []
   }
   const patchText = fields.get('patchText')
   if (name !== 'apply_patch' || typeof patchText !== 'string') return []
   const headers = [...patchText.matchAll(/^\*\*\* (?:Add|Update|Delete) File:\s+(.+)$/gm), ...patchText.matchAll(/^\*\*\* Move to:\s+(.+)$/gm)]
-  return [...new Set(headers.map((match) => match[1]!.trim()).filter(Boolean))].map((file) => path.resolve(directory, file))
+  return [...new Set(headers.map((match) => match[1]!.trim()).filter(Boolean))].map((file) => resolveToolPath(directory, file))
+}
+
+// Real path of the nearest existing ancestor plus the rest, so deleted files still match through symlinks (/var vs /private/var).
+async function canonicalPath(file: string): Promise<string> {
+  const resolved = path.resolve(file)
+  const real = await fs.promises.realpath(resolved).catch(() => undefined)
+  if (real) return real
+  const parent = path.dirname(resolved)
+  return parent === resolved ? resolved : path.join(await canonicalPath(parent), path.basename(resolved))
 }
 
 // Sessions that edited `filePath`, newest edit first.
-export function editorsForFile({ events, filePath, cwd }: { events: FileEditEvent[]; filePath: string; cwd: string }) {
-  const resolved = path.resolve(cwd, filePath)
+export async function editorsForFile({ events, filePath, cwd }: { events: FileEditEvent[]; filePath: string; cwd: string }) {
+  const target = await canonicalPath(path.resolve(cwd, filePath))
   const latest = new Map<string, number>()
   for (const event of events) {
-    if (path.resolve(event.file) !== resolved) continue
+    // Cheap name check first: only real paths of plausible matches are resolved.
+    if (path.basename(event.file) !== path.basename(target)) continue
+    if ((await canonicalPath(event.file)) !== target) continue
     const previous = latest.get(event.sessionId)
     if (previous === undefined || event.at > previous) latest.set(event.sessionId, event.at)
   }

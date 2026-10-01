@@ -21,7 +21,7 @@ beforeAll(async () => {
     startOpencodeTestServer({
       matchers: [
         ...scriptedTurn({ marker: 'editor-marker', steps: [{ id: 'edit-write-1', tool: 'write', input: { path: 'edited.txt', content: 'by the agent\n' } }], finalText: 'wrote edited.txt' }),
-        ...scriptedTurn({ marker: 'patch-marker', steps: [{ id: 'patch-1', tool: 'patch', input: { patchText: '*** Begin Patch\n*** Add File: patched.txt\n+hello\n*** End Patch' } }], finalText: 'patched' }),
+        ...scriptedTurn({ marker: 'fail-marker', steps: [{ id: 'fail-edit-1', tool: 'edit', input: { path: 'missing.txt', oldString: 'a', newString: 'b' } }], finalText: 'edit failed' }),
       ],
     }),
     startTwin(),
@@ -60,10 +60,10 @@ test('session diff prints critique output for the session folder', async () => {
 
 test('session editors lists sessions that wrote a file, skips failed tool calls; search accepts a channel', async () => {
   const writer = await newSession('editor-marker write')
-  // The deterministic model has no patch tool: this call fails and must not count.
-  await newSession('patch-marker patch')
+  // An edit of a missing file fails and must not be recorded.
+  await newSession('fail-marker edit')
   const written = await cli(['session', 'editors', 'edited.txt', '--json'])
-  const failed = await cli(['session', 'editors', path.join(server.projectDirectory, 'patched.txt')]).catch((error: Error & { code: number }) => error)
+  const failed = await cli(['session', 'editors', path.join(server.projectDirectory, 'missing.txt')]).catch((error: Error & { code: number }) => error)
   const searched = await cli(['session', 'search', 'editor-marker', '--channel', twin.channelId])
   expect(JSON.parse(written.stdout).map((row: { sessionId: string }) => row.sessionId)).toEqual([writer.sessionId])
   expect(failed instanceof Error && failed.code).toBe(1)

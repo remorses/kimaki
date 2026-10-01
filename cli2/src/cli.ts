@@ -268,7 +268,7 @@ cli.command('session editors <file>', 'List sessions that last edited a file, ne
     if (!Number.isInteger(limit) || limit < 1) fail(new Error('--limit must be a positive integer'))
     const events = await loadFileEditEvents({ dataDir: dataDirOrDefault(options.dataDir) })
     if (events instanceof Error) fail(events)
-    const editors = editorsForFile({ events, filePath: file, cwd: process.cwd() }).slice(0, limit)
+    const editors = (await editorsForFile({ events, filePath: file, cwd: process.cwd() })).slice(0, limit)
     if (editors.length === 0) fail(new Error(`No recorded editors for ${path.resolve(file)}`))
     const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
     const titles = new Map<string, string>()
