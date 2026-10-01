@@ -1994,8 +1994,12 @@ for await (const event of client.event.subscribe({ signal })) {
   `guildCreate`. Dynamic commands are the union of the catalogs of the guild's project
   directories (first project wins a name). The Discord name → OpenCode ID map is kept
   in memory (no V1 `[agent:x]` description marker). Catalog changes need a bot restart.
-- **`/<agent>-agent` has no `variant` option** (listed in section 14): `/model-variant`
-  covers it.
+- **`/<agent>-agent prompt? variant?`.** `variant` (autocomplete) is a thinking level of
+  the model in use: the session model, else the channel model, else `model.default`
+  (V2 runs the session model; an agent's configured model only picks titles). In a
+  thread it calls `switchModel` before the prompt or agent switch; in a channel without
+  a prompt it saves `channel_models` with the agent; with a prompt it is used for that
+  new session only. An unknown variant replies with the available ones.
 - **`/model` scopes are session and channel.** Session = `switchModel`, applied from the
   next step, no restart of the running turn. Channel = `channel_models` for new
   sessions only (V1 also switched the current session). No global scope: that is
@@ -2036,6 +2040,55 @@ for await (const event of client.event.subscribe({ signal })) {
   and prism caches its ffmpeg lookup.
 - **`/diff`** is tested only for "No changes to show"; the critique.work upload needs
   the network.
+
+### Findings from implementing cli2 P7 (in progress, OpenCode 2.0.19)
+
+**P7 is not complete yet.** The working implementation and its tested flows are below;
+the remaining surface and coverage must be finished before committing the phase.
+
+- **Login API:** API-key login is `integration.connect.key`, not `credential.create`
+  (which the installed client does not expose). OAuth uses native attempts through
+  `integration.oauth.connect/status/complete/cancel`; credential activation, removal,
+  and labels use `credential.*`. Tests cover Discord key login, provider availability
+  in `/model`, CLI key login, and a real test integration's OAuth-code callback.
+- **Login context:** user-bound wizard IDs have a 10-minute TTL. Provider and credential
+  menus page at 23 real options plus navigation. Credentials stay in OpenCode; Discord
+  login requires the guild owner or an administrator. Pagination, automatic OAuth,
+  credential operations, method forms, and command-based connections still need their
+  complete end-to-end coverage; form/command login support is not complete.
+- **Plugin loading:** configured standalone plugin files are silently ignored by
+  2.0.19. Configure the **directory** with `index.ts`/`index.js`, not its file path.
+  The harness loads the directory; session creation now fails clearly if `kimaki` is
+  not active. Consent-based installation remains the P9 onboarding responsibility.
+- **Shell context:** `shell.hook('create.before')` has no session ID, and native
+  `OPENCODE_SESSION_ID` is set after that hook. The current implementation uses the
+  session-aware `tool.execute.before` hook to prefix POSIX environment exports.
+  This needs design review before the phase is complete; Windows shells are untested.
+- **Ordering:** UI HTTP requests include the exact native `messageID:toolID` from
+  `KIMAKI_TOOL_CALL`. They wait for that call in the reduced view, then enqueue UI through
+  the same event loop and effects FIFO as text. No independent Discord output writer.
+- **Uploads:** modal file fields need resolved attachment payloads. The digital twin
+  now supports them and multipart bot-message uploads, with primitive tests. Agent
+  upload paths live under the session directory's `uploads/<requestID>/`. Cancellation
+  aborts downloads and prevents a late success reply. The in-flight cancellation race
+  still needs its held-download end-to-end regression test.
+- **UI cancellation:** only a genuine native user inbox item cancels UI for that
+  session. Synthetic shell/subagent items must not remove unrelated buttons/uploads.
+  A real user-shell flow tests that action buttons remain usable.
+- **Remote files:** source-machine `file://` paths cannot cross the envelope. The
+  sender posts Discord attachments; the owner downloads them and sends local URIs.
+  A two-bot test proves delivery and ownership. Remote protocol acknowledgments can
+  race with model output; the snapshot normalizes only the generated thread ID.
+- **Native wait:** `session.wait()` does not return for a pending question. The CLI
+  subscribes before hydration and stops on idle, forms, or permissions. A real pending
+  question regression covers this, plus exit 64 for active-list discovery failures.
+- **Restart metadata:** session adoption and bot startup refresh durable CLI routing
+  fields. Child hooks resolve an inherited thread marker through the native parent
+  chain, so a bot restart's new lock port does not leave running children on the old one.
+- **Remaining CLI work:** `session editors`, `session diff`, search by channel,
+  `session command <name> [args]`, named forks, and directory-derived resume targets.
+  The HTTP action adapter also needs its final typed-registry cleanup and full CLI
+  parity coverage. Worktrees, scheduling, and onboarding remain P10/P8/P9 respectively.
 
 ---
 
