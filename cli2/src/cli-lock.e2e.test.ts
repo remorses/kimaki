@@ -100,13 +100,10 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --timeout <duration>            Timeout, for example 30m or 2h
 
-      session editors <file>            List sessions that edited a file, newest first
+      session editors <file>            List sessions that last edited a file, newest first
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        --project <path>                Project (default: current directory)
-        -c, --channel <id>              Project of this Discord channel
-        --all                           All projects
-        --days <n>                      Recent days (default: 14; 0 = all)
         --json                          Output as JSON
+        --limit <n>                     Max sessions to show (default: 20)
 
       session diff                      Upload the git diff of the session folder to critique.work and print the URL
         --data-dir <path>               Data directory (default: ~/.kimaki)

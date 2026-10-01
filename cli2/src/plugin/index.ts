@@ -3,6 +3,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 
+import { recordToolEdits } from '../file-edit-log.ts'
+
 const exec = promisify(execFile)
 
 export default Plugin.define({
@@ -42,6 +44,15 @@ export default Plugin.define({
       if (!('command' in event.input) || typeof event.input.command !== 'string') return
       const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
       event.input.command = `export PATH=${quote(path.join(dataDir, 'bin'))}:"$PATH" KIMAKI_DATA_DIR=${quote(dataDir)} KIMAKI_LOCK_PORT=${quote(String(lockPort))} KIMAKI_TOOL_CALL=${quote(`${event.messageID}:${event.id}`)}; ${event.input.command}`
+    })
+    // File edits feed `kimaki session editors` (v1-compatible JSONL index).
+    await ctx.tool.hook('execute.after', async (event) => {
+      if (event.status !== 'completed') return
+      const dataDir = (await marker(event.sessionID))?.get('dataDir')
+      if (typeof dataDir !== 'string') return
+      // Plugins stay silent: a failed append only loses one index entry.
+      const recorded = await recordToolEdits({ dataDir, directory: ctx.location.directory, sessionId: event.sessionID, tool: event.tool, input: event.input })
+      if (recorded instanceof Error) return
     })
   },
 })

@@ -63,7 +63,7 @@ test('session editors lists sessions that wrote a file, skips failed tool calls;
   // The deterministic model has no patch tool: this call fails and must not count.
   await newSession('patch-marker patch')
   const written = await cli(['session', 'editors', 'edited.txt', '--json'])
-  const failed = await cli(['session', 'editors', path.join(server.projectDirectory, 'patched.txt'), '--channel', twin.channelId]).catch((error: Error & { code: number }) => error)
+  const failed = await cli(['session', 'editors', path.join(server.projectDirectory, 'patched.txt')]).catch((error: Error & { code: number }) => error)
   const searched = await cli(['session', 'search', 'editor-marker', '--channel', twin.channelId])
   expect(JSON.parse(written.stdout).map((row: { sessionId: string }) => row.sessionId)).toEqual([writer.sessionId])
   expect(failed instanceof Error && failed.code).toBe(1)

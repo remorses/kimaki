@@ -41,3 +41,8 @@ export class LockPortError extends errore.createTaggedError({
   name: 'LockPortError',
   message: 'Could not take lock port $port: $reason',
 }) {}
+
+export class FilesystemError extends errore.createTaggedError({
+  name: 'FilesystemError',
+  message: 'Filesystem $operation failed',
+}) {}

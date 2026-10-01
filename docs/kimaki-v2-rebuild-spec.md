@@ -2084,13 +2084,15 @@ for await (const event of client.event.subscribe({ signal })) {
 - **Restart metadata:** session adoption and bot startup refresh durable CLI routing
   fields. Child hooks resolve an inherited thread marker through the native parent
   chain, so a bot restart's new lock port does not leave running children on the old one.
-- **Editors and diff:** `session editors <file>` derives editors from the `edit`/`write`/
-  `patch` tool inputs in message history (`session.log` has no history, finding 10).
-  Failed tool calls do not count. It scans sessions updated within `--days` (default 14),
-  so cost grows with history. `session diff` runs `critique --web` in the session folder;
-  tested only for the offline clean-tree path. The online upload is not tested.
-  A successful `patch` call is untested end to end: the deterministic model has no
-  `patch` tool, so the path parser has a pure test instead.
+- **Editors and diff:** `session editors <file>` reads the same v1 JSONL index
+  (`<dataDir>/file-edit-events.jsonl`, `v: 1`), so old v1 data still works. The plugin's
+  `tool.execute.after` hook appends one event per file of each completed `edit`/`write`/
+  `patch` call (v2 `patch` is stored as v1 `apply_patch`; failed calls are not recorded) and
+  compacts at 5 MB. Only sessions with a Kimaki marker are recorded. The message-history
+  scan was removed: 3m40s over 20k sessions. `session diff` runs `critique --web` in the
+  session folder; tested only for the offline clean-tree path. A successful `patch` call is
+  untested end to end (the deterministic model has no `patch` tool); the path parser has a
+  pure test.
 - **Command, fork, resume:** `session command <name> [args]`, `session fork --name`, and
   `session resume <id>` without `--channel` (the channel whose directory holds the session)
   are covered by `cli-sessions.e2e.test.ts`. `session search --channel` resolves the

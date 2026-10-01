@@ -15,10 +15,11 @@ import { ChannelType } from 'discord.js'
 
 import { openDb } from './db.ts'
 import { callBot, DEFAULT_LOCK_PORT } from './lock-server.ts'
+import { editorsForFile, loadFileEditEvents } from './file-edit-log.ts'
 import { createLogger } from './logger.ts'
 import { startBot } from './main.ts'
 import { resolveOpencode } from './opencode-server.ts'
-import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEditors, sessionEventsFile, waitForSessionReady } from './session-events.ts'
+import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEventsFile, waitForSessionReady } from './session-events.ts'
 import { readSavedCredentials, resolveCredentials, restApiUrl } from './credentials.ts'
 import { chooseGuild, kimakiShellCommand, runOnboarding } from './onboarding.ts'
 import {
@@ -258,25 +259,26 @@ cli.command('session wait <id>', 'Wait until idle or waiting for input, then pri
     process.stdout.write(`${markdown}\n`)
   })
 
-cli.command('session editors <file>', 'List sessions that edited a file, newest first')
+cli.command('session editors <file>', 'List sessions that last edited a file, newest first')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
-  .option('--project <path>', 'Project (default: current directory)')
-  .option('-c, --channel <id>', 'Project of this Discord channel')
-  .option('--all', 'All projects')
-  .option('--days <n>', 'Recent days (default: 14; 0 = all)')
   .option('--json', 'Output as JSON')
+  .option('--limit <n>', 'Max sessions to show (default: 20)')
   .action(async (file, options) => {
-    const days = Number(options.days ?? 14)
-    if (!Number.isFinite(days) || days < 0) fail(new Error('--days must be a non-negative number'))
-    const client = await readClient()
-    const editors = await sessionEditors({
-      client, file: path.resolve(file), sinceMs: days ? Date.now() - days * 86400000 : 0,
-      directory: options.all ? undefined : await projectDirectory({ project: options.project, channel: options.channel, dataDir: options.dataDir }),
-    })
-    if (editors instanceof Error) fail(editors)
+    const limit = Number(options.limit ?? 20)
+    if (!Number.isInteger(limit) || limit < 1) fail(new Error('--limit must be a positive integer'))
+    const events = await loadFileEditEvents({ dataDir: dataDirOrDefault(options.dataDir) })
+    if (events instanceof Error) fail(events)
+    const editors = editorsForFile({ events, filePath: file, cwd: process.cwd() }).slice(0, limit)
     if (editors.length === 0) fail(new Error(`No recorded editors for ${path.resolve(file)}`))
-    const rows = editors.map((editor) => ({ ...editor, editedAt: new Date(editor.editedAt).toISOString() }))
-    process.stdout.write(options.json ? `${JSON.stringify(rows, null, 2)}\n` : rows.map((row) => `${row.sessionId} | ${row.title || '-'} | ${row.editedAt}\n`).join(''))
+    const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
+    const titles = new Map<string, string>()
+    if (!(opened instanceof Error)) {
+      const rows = await opened.db.query.thread_sessions.findMany({ where: { session_id: { in: editors.map((editor) => editor.sessionId) } }, orderBy: { updated_at: 'desc' } }).catch(() => [])
+      for (const row of rows) if (!titles.has(row.session_id) && row.last_synced_name) titles.set(row.session_id, row.last_synced_name)
+      opened.close()
+    }
+    const rows = editors.map((editor) => ({ sessionId: editor.sessionId, title: titles.get(editor.sessionId) ?? '-', editedAt: new Date(editor.at).toISOString() }))
+    process.stdout.write(options.json ? `${JSON.stringify(rows, null, 2)}\n` : rows.map((row) => `${row.sessionId} | ${row.title} | ${row.editedAt}\n`).join(''))
   })
 
 cli.command('session diff', 'Upload the git diff of the session folder to critique.work and print the URL')
