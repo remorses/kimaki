@@ -178,6 +178,7 @@ export function createActions({
     files = [],
     skills = [],
     id = promptIdForMessage(messageId),
+    echo,
   }: {
     sessionId: string
     threadId: string
@@ -191,6 +192,9 @@ export function createActions({
     // Skill IDs attached to the prompt (`/<skill>-skill`).
     skills?: readonly string[]
     id?: string
+    // Line the thread shows when OpenCode takes the prompt (queue.ts), for
+    // inputs that have no Discord message: wakes, scheduled runs.
+    echo?: string
   }): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
@@ -203,7 +207,7 @@ export function createActions({
         files: files.map((file) => ({ uri: file.uri, name: file.name })),
         ...(skills.length > 0 && { skills: skills.map((skill) => ({ id: skill })) }),
         delivery,
-        metadata: { discord: { userId: author.id, username: author.username, messageId, threadId } },
+        metadata: { discord: { userId: author.id, username: author.username, messageId, threadId, ...(echo && { echo }) } },
       })
       .catch((e) => new OpenCodeError({ operation: 'session.prompt', cause: e }))
     if (result instanceof Error) return result
@@ -276,6 +280,7 @@ export function createActions({
     messageId: string
     files?: readonly PromptFile[]
     skills?: readonly string[]
+    echo?: string
   }): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
     const cancelled = await cancelPendingUi(input.threadId)
     if (cancelled instanceof Error) return cancelled
@@ -452,6 +457,7 @@ export function createActions({
   async function abort({ threadId }: { threadId: string }) {
     const sessionId = rootSession(threadId)
     if (sessionId instanceof Error) return sessionId
+    await cancelSleep(sessionId)
     const cleared = await clearQueue({ threadId })
     if (cleared instanceof Error) return cleared
     const cancelled = await cancelPendingUi(threadId)
@@ -657,6 +663,7 @@ export function createActions({
     author,
     messageId,
     files,
+    echo,
   }: {
     sessionId: string
     threadId: string
@@ -666,8 +673,9 @@ export function createActions({
     author: Author
     messageId: string
     files: readonly PromptFile[]
+    echo?: string
   }) {
-    const base = { sessionId, threadId, threadName, author, messageId, files }
+    const base = { sessionId, threadId, threadName, author, messageId, files, echo }
     switch (route.kind) {
       case 'shell':
         return shell({ threadId, sessionId, command: route.command })
@@ -767,15 +775,19 @@ export function createActions({
     author,
     messageId,
     files = [],
+    echo,
   }: {
     thread: ThreadChannel
     route: Route
     author: Author
     messageId: string
     files?: readonly PromptFile[]
+    echo?: string
   }) {
     const sessionId = rootSession(thread.id)
     if (sessionId instanceof Error) return sessionId
+    // New input supersedes a pending `kimaki sleep` of this session.
+    await cancelSleep(sessionId)
     const project = await threadProject(thread)
     if (project instanceof Error) return project
     const marked = await ensureSessionMarker({ sessionId, thread, channelId: project.channelId, directory: project.directory, userId: author.id })
@@ -805,6 +817,7 @@ export function createActions({
           author,
           messageId,
           files,
+          echo,
         })
     }
   }
@@ -822,6 +835,7 @@ export function createActions({
     model: explicitModel,
     permissions,
     parentSessionId,
+    taskId,
   }: {
     channelId: string
     directory: string
@@ -842,6 +856,8 @@ export function createActions({
     model?: ModelChoice
     permissions?: NonNullable<Parameters<OpenCodeClient['session']['create']>[0]>['permissions']
     parentSessionId?: string
+    // A scheduled run (scheduler.ts): marks the session as started by this task.
+    taskId?: number
   }): Promise<
     ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }
   > {
@@ -876,7 +892,16 @@ export function createActions({
         ...(model && { model }),
         ...(agent && { agent }),
         ...(permissions && { permissions }),
-        metadata: { kimaki: { threadId: thread.id, channelId, source: 'discord', ...cliContext, ...(parentSessionId && { parentSessionId }) } },
+        metadata: {
+          kimaki: {
+            threadId: thread.id,
+            channelId,
+            source: taskId === undefined ? 'discord' : 'task',
+            ...(taskId !== undefined && { taskId }),
+            ...cliContext,
+            ...(parentSessionId && { parentSessionId }),
+          },
+        },
       })
       .catch((e) => new OpenCodeError({ operation: 'session.create', cause: e }))
     if (session instanceof Error) return session
@@ -1281,8 +1306,10 @@ export function createActions({
     })
   }
 
-  async function send(input: SendInput, localOnly = false) {
-    const author = { id: input.user?.replace(/[<@!>]/g, '') ?? discord.user!.id, username: 'CLI' }
+  // `localOnly`: never forward to another machine (remote envelopes, scheduled runs).
+  // `taskId`: a scheduled run; its input shows as "» task #N: prompt".
+  async function send(input: SendInput, { localOnly = false, taskId }: { localOnly?: boolean; taskId?: number } = {}) {
+    const author = { id: input.user?.replace(/[<@!>]/g, '') ?? discord.user!.id, username: taskId === undefined ? 'CLI' : `task #${taskId}` }
     const messageId = crypto.randomUUID()
     const route = parseTextMessage({ content: input.prompt })
     if (!route) return new ConfigError({ reason: 'Prompt is empty' })
@@ -1297,7 +1324,15 @@ export function createActions({
         const project = thread.parentId ? await db.query.channel_directories.findFirst({ where: { channel_id: thread.parentId } }) : null
         return !project && !localOnly ? remoteSend(input) : new ConfigError({ reason: 'No local session for this thread' })
       }
-      const result = await dispatch({ thread, route, author, messageId, files: input.files })
+      if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add thread member: ${error.message}`))
+      if (input.model) {
+        const model = parseModel(input.model, null)
+        if (!model) return new ConfigError({ reason: 'Use --model provider/model' })
+        const switched = await switchModel({ sessionId: store.getState().roots[thread.id]!, model: { ...model, variant: null } })
+        if (switched instanceof Error) return switched
+      }
+      const echo = taskId === undefined ? undefined : formatEcho({ username: author.username, text: routeText(route) })
+      const result = await dispatch({ thread, route, author, messageId, files: input.files, echo })
       if (result instanceof Error) return result
       return result ?? { threadId, sessionId: store.getState().roots[threadId]! }
     }
@@ -1332,7 +1367,7 @@ export function createActions({
     if (input.model && !model) return new ConfigError({ reason: 'Use --model provider/model' })
     const first = route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' ? route : { kind: 'steer' as const, text: route.text, agent: input.agent }
     const started = await startSession({ channelId: project.channel_id, directory, route: first, author, messageId, startMessageId: null,
-      threadName: input.name, files: input.files, permissions, parentSessionId: input.parentSessionId, ...(model && { model: { ...model, variant: null } }) })
+      threadName: input.name, files: input.files, permissions, parentSessionId: input.parentSessionId, taskId, ...(model && { model: { ...model, variant: null } }) })
     if (started instanceof Error) return started
     if (input.user) {
       const thread = await discord.channels.fetch(started.threadId).catch((cause) => new DiscordError({ operation: 'fetch send thread', cause }))
@@ -1535,6 +1570,114 @@ export function createActions({
     return { uploaded: files.map((file) => file.name) }
   }
 
+  // --- `kimaki sleep` rows (session_sleeps). Writing a sleep, cancelling it
+  // on new input and delivering its wake run one at a time per session, so a
+  // wake never goes out after the input that cancelled it.
+  const sleepLocks = new Map<string, Promise<unknown>>()
+
+  function withSleepLock<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    const previous = sleepLocks.get(sessionId) ?? Promise.resolve()
+    const next = previous.then(run, run)
+    const settled = next.then(() => undefined, () => undefined)
+    sleepLocks.set(sessionId, settled)
+    void settled.then(() => {
+      if (sleepLocks.get(sessionId) === settled) sleepLocks.delete(sessionId)
+    })
+    return next
+  }
+
+  function sleepRow(sessionId: string, deliveryId: string) {
+    return orm.and(orm.eq(schema.session_sleeps.session_id, sessionId), orm.eq(schema.session_sleeps.delivery_id, deliveryId), orm.eq(schema.session_sleeps.status, 'planned'))
+  }
+
+  async function cancelSleep(sessionId: string): Promise<void> {
+    const cancelled = await withSleepLock(sessionId, () => db.update(schema.session_sleeps).set({ status: 'cancelled' })
+      .where(orm.and(orm.eq(schema.session_sleeps.session_id, sessionId), orm.eq(schema.session_sleeps.status, 'planned')))
+      .returning({ sessionId: schema.session_sleeps.session_id })
+      .catch((cause) => new DbError({ operation: 'cancel sleep', cause })))
+    if (cancelled instanceof Error) return logger.warn(cancelled.message)
+    if (cancelled.length > 0) logger.log(`sleep of session ${sessionId} cancelled by new input`)
+  }
+
+  // One planned sleep per session; a new one replaces the old (new delivery ID).
+  async function planSleep({ sessionId, wakeAt, reason, now }: { sessionId: string; wakeAt: number; reason: string | null; now: number }): Promise<DbError | void> {
+    const values = {
+      wake_at: new Date(wakeAt),
+      reason,
+      status: 'planned' as const,
+      delivery_id: crypto.randomUUID(),
+      attempts: 0,
+      last_attempt_at: null,
+      created_at: new Date(now),
+    }
+    const saved = await withSleepLock(sessionId, () => db.insert(schema.session_sleeps).values({ session_id: sessionId, ...values })
+      .onConflictDoUpdate({ target: schema.session_sleeps.session_id, set: values })
+      .then(() => undefined)
+      .catch((cause) => new DbError({ operation: 'write session_sleeps', cause })))
+    if (saved instanceof Error) return saved
+  }
+
+  // Delivers a due wake (scheduler.ts) if it is still the planned sleep and
+  // its retry delay passed. The prompt ID comes from the delivery ID, so a
+  // retried wake cannot deliver twice: OpenCode returns the existing inbox
+  // item for a repeated ID (sleep.e2e.test.ts checks this). No interrupt: a
+  // wake joins a running turn at its next step.
+  async function wake({
+    sessionId,
+    deliveryId,
+    now,
+    retryBefore,
+    maxAttempts,
+    text,
+    echo,
+  }: {
+    sessionId: string
+    deliveryId: string
+    now: number
+    retryBefore: number
+    maxAttempts: number
+    text: string
+    echo: string
+  }): Promise<Error | 'woke' | 'stale' | 'retry' | 'failed'> {
+    return withSleepLock(sessionId, async () => {
+      const claimed = await db.update(schema.session_sleeps)
+        .set({ attempts: orm.sql`${schema.session_sleeps.attempts} + 1`, last_attempt_at: new Date(now) })
+        .where(orm.and(
+          sleepRow(sessionId, deliveryId),
+          orm.or(orm.isNull(schema.session_sleeps.last_attempt_at), orm.lte(schema.session_sleeps.last_attempt_at, new Date(retryBefore))),
+        ))
+        .returning({ attempts: schema.session_sleeps.attempts })
+        .catch((cause) => new DbError({ operation: `claim wake of ${sessionId}`, cause }))
+      if (claimed instanceof Error) return claimed
+      const attempt = claimed[0]
+      if (!attempt) return 'stale'
+      const settle = async (status: 'consumed' | 'failed') => {
+        const settled = await db.update(schema.session_sleeps).set({ status }).where(sleepRow(sessionId, deliveryId))
+          .catch((cause) => new DbError({ operation: `settle wake of ${sessionId}`, cause }))
+        return settled instanceof Error ? settled : status === 'consumed' ? 'woke' as const : 'failed' as const
+      }
+      // Resolved now, not at sleep time: /resume may have moved the session.
+      const threadId = Object.entries(store.getState().roots).find(([, id]) => id === sessionId)?.[0]
+      if (!threadId) {
+        logger.warn(`no thread owns session ${sessionId}, dropping its wake`)
+        return settle('failed')
+      }
+      const sent = await (async () => {
+        const thread = await discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: 'fetch wake thread', cause }))
+        if (thread instanceof Error) return thread
+        if (!thread?.isThread()) return new ConfigError({ reason: `Wake target ${threadId} is not a thread` })
+        return prompt({
+          sessionId, threadId, threadName: thread.name, text, echo, delivery: 'steer',
+          author: { id: discord.user!.id, username: 'kimaki' }, messageId: deliveryId, id: `msg_sleep_${deliveryId}`,
+        })
+      })()
+      if (!(sent instanceof Error)) return settle('consumed')
+      logger.warn(`wake of ${sessionId} failed (attempt ${attempt.attempts}): ${sent.message}`)
+      if (attempt.attempts >= maxAttempts) return settle('failed')
+      return 'retry'
+    })
+  }
+
   // Running sessions of an older bot run point at its lock port; their agent
   // can call `kimaki` before the next user input (ensureSessionMarker).
   async function refreshCliContext() {
@@ -1567,6 +1710,8 @@ export function createActions({
     runCli,
     upload,
     refreshCliContext,
+    planSleep,
+    wake,
     resume,
     fork,
     switchAgent,

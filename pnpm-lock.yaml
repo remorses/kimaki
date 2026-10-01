@@ -232,6 +232,9 @@ importers:
       '@strada.sh/sdk':
         specifier: ^0.8.0
         version: 0.8.0(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.0)(better-auth@1.6.19(@cloudflare/workers-types@4.20260619.1)(@opentelemetry/api@1.9.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@1.0.0-beta.22)(drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5))(mysql2@3.15.3)(pg@8.22.0)(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))
+      cron-parser:
+        specifier: ^5.5.0
+        version: 5.5.0
       discord.js:
         specifier: ^14.26.3
         version: 14.26.4

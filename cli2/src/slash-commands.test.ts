@@ -46,6 +46,7 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
       "redo",
       "diff",
       "context-usage",
+      "tasks",
       "session-id",
       "gpt5-4-agent",
       "a-very-long-command-name-tha-cmd",
@@ -70,6 +71,6 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
     }
   `)
   expect(dynamic.has(names[names.length - 1]!)).toBe(true)
-  // 20 static commands, the rest dynamic: skills past the cap are dropped.
-  expect(dynamic.size).toBe(100 - 20)
+  // 21 static commands, the rest dynamic: skills past the cap are dropped.
+  expect(dynamic.size).toBe(100 - 21)
 })

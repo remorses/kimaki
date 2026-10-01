@@ -34,6 +34,7 @@ import {
 } from './credentials.ts'
 import { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate } from './onboarding.ts'
 import { createAnalytics } from './analytics.ts'
+import { listTasks } from './scheduler.ts'
 import { addProjectChannel, canonicalPath, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from './project.ts'
 
 const logger = createLogger('CLI')
@@ -518,12 +519,17 @@ cli
   .option('--permission <rule>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Repeatable: tool[:pattern]:allow|deny|ask' }))
   .option('--notify-only', 'Post a notification thread without a model turn')
   .option('--wait', 'Wait until idle or input is needed, then print the session')
+  .option('--send-at <when>', 'Schedule: UTC ISO date ending in Z, or cron expression (UTC)')
+  .option('--pre-run <command>', 'Scheduled only: run first in the project. Exit 0 starts, stdout is appended')
+  .option('--allow-concurrency', 'Scheduled only: allow overlapping runs of this task')
   .action(async (options) => {
+    if (options.wait && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the task runs later'))
     const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/send', input: {
       channelId: options.channel, project: options.project, threadId: options.thread, sessionId: options.session,
       prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
       cwd: options.cwd, parentSessionId: options.parentSession, permissions: options.permission, notifyOnly: options.notifyOnly,
       files: (options.file ?? []).map((file) => ({ uri: pathToFileURL(path.resolve(file)).href, name: path.basename(file) })),
+      sendAt: options.sendAt, preRun: options.preRun, allowConcurrency: options.allowConcurrency,
     } })
     if (result instanceof Error) fail(result)
     process.stdout.write(`${JSON.stringify(result.data)}\n`)
@@ -580,6 +586,78 @@ cli
     const markdown = await readSessionMarkdown({ client: endpoint.client, sessionId, thinking: options.thinking, verbose: options.verbose })
     if (markdown instanceof Error) fail(markdown)
     process.stdout.write(`${markdown}\n`)
+  })
+
+cli.section('Schedule')
+
+cli.command('task list', 'List scheduled tasks (planned, running, failed)')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
+    if (opened instanceof Error) fail(opened)
+    const tasks = await listTasks({ db: opened.db })
+    opened.close()
+    if (tasks instanceof Error) fail(tasks)
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(tasks, null, 2)}\n`)
+      return
+    }
+    if (tasks.length === 0) {
+      process.stdout.write('No scheduled tasks\n')
+      return
+    }
+    const header = 'id | status | schedule | nextRunAt | channel | thread | user | agent | model | preRun | allowConcurrency | prompt'
+    const rows = tasks.map((task) => [task.id, task.status, task.schedule, task.nextRunAt, task.channelId, task.threadId, task.userId, task.agent, task.model, task.preRun, task.allowConcurrency, task.prompt].map((value) => value ?? '-').join(' | '))
+    process.stdout.write(`${[header, ...rows].join('\n')}\n`)
+  })
+
+cli.command('task edit <taskId>', 'Change a planned task. An empty string clears a value')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--prompt <text>', 'New prompt')
+  .option('--send-at <when>', 'New schedule: UTC ISO date ending in Z, or cron (UTC)')
+  .option('--agent <name>', 'Agent for the scheduled session')
+  .option('--model <provider/model>', 'Model for the scheduled session')
+  .option('-u, --user <id>', 'Discord user ID added to each run\'s thread')
+  .option('--pre-run <command>', 'Command to run before each run')
+  .option('--allow-concurrency <bool>', 'true | false')
+  .action(async (taskId, options) => {
+    const flag = options.allowConcurrency
+    if (flag && flag !== 'true' && flag !== 'false') fail(new Error('--allow-concurrency must be true or false'))
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/task/edit', input: {
+      id: Number(taskId), prompt: options.prompt, sendAt: options.sendAt, agent: options.agent, model: options.model,
+      user: options.user, preRun: options.preRun, allowConcurrency: flag ? flag === 'true' : undefined,
+    } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+for (const [name, description] of [['delete', 'Delete a scheduled task'], ['run', 'Run a scheduled task now']] as const) {
+  cli.command(`task ${name} <taskId>`, description)
+    .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+    .action(async (taskId, options) => {
+      // A run waits for its pre-run command (up to 10 minutes) and the session start.
+      const signal = name === 'run' ? AbortSignal.timeout(12 * 60_000) : undefined
+      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: `/kimaki/task/${name}`, input: { id: Number(taskId) }, signal })
+      if (result instanceof Error) fail(result)
+      process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    })
+}
+
+cli.command('sleep', 'Wake this session later with a new message in the same thread. Run it last, after your text')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--duration <duration>', 'Relative wait, e.g. 30m, 2h, 1d')
+  .option('--until <date>', 'UTC ISO date ending in Z')
+  .option('--reason <text>', 'Shown in Discord and in the wake message')
+  .option('-s, --session <id>', 'Session to wake (default: OPENCODE_SESSION_ID)')
+  .action(async (options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/sleep', input: {
+      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], duration: options.duration, until: options.until, reason: options.reason,
+    } })
+    if (result instanceof Error) fail(result)
+    const data = result.data
+    const output = data && typeof data === 'object' ? new Map(Object.entries(data)).get('output') : undefined
+    process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(data)}\n`)
   })
 
 cli.section('Discord')

@@ -23,6 +23,7 @@ import {
   type OpencodeConnection,
   type OpencodeEndpoint,
 } from './opencode-server.ts'
+import { createScheduler, parseScheduleOptions, parseTaskEdit, systemClock, type Clock, type Scheduler } from './scheduler.ts'
 import { createBotStore, type BotStore } from './store.ts'
 import { createTranscriber, type TranscriptionBaseUrls } from './voice.ts'
 
@@ -48,6 +49,10 @@ export type StartBotOptions = {
   analytics: Analytics
   // Voice transcription API base URLs; tests point Gemini at a local fake.
   transcriptionBaseUrls?: TranscriptionBaseUrls
+  // The scheduler's only source of time. Tests pass a manual clock.
+  clock?: Clock
+  // How often due tasks and wakes run; null: never (tests call scheduler.runDueTasks).
+  schedulerIntervalMs?: number | null
 }
 
 export type BotHandle = {
@@ -58,6 +63,7 @@ export type BotHandle = {
   store: BotStore
   actions: Actions
   analytics: Analytics
+  scheduler: Pick<Scheduler, 'runDueTasks'>
   stop: () => Promise<void>
 }
 
@@ -128,6 +134,15 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     return shim
   }
   const actions = createActions({ discord, db: db.db, opencode, eventLoop, store, analytics: options.analytics, cliContext: { dataDir: options.dataDir, lockPort: lock.port } })
+  const scheduler = createScheduler({
+    clock: options.clock ?? systemClock,
+    discord,
+    db: db.db,
+    actions,
+    store,
+    opencode,
+    intervalMs: options.schedulerIntervalMs === undefined ? 5_000 : options.schedulerIntervalMs,
+  })
   const agentUi = createAgentUi({ store, eventLoop, actions, directoryFor: async (sessionId) => {
     const client = opencode.endpoint?.client
     if (!client) return new ConfigError({ reason: 'OpenCode is disconnected' })
@@ -178,16 +193,40 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
         },
       }
     }
+    if (route === '/kimaki/sleep') {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) return new ConfigError({ reason: 'Expected a sleep object' })
+      const fields = new Map(Object.entries(input))
+      const [sessionId, duration, until, reason] = ['sessionId', 'duration', 'until', 'reason'].map((key) => fields.get(key))
+      if (typeof sessionId !== 'string' || !sessionId) return new ConfigError({ reason: 'Use --session or run kimaki sleep inside an OpenCode session' })
+      if ([duration, until, reason].some((value) => value !== undefined && typeof value !== 'string')) return new ConfigError({ reason: 'Sleep fields must be strings' })
+      const result = await scheduler.createSleep({ sessionId, duration: typeof duration === 'string' ? duration : undefined, until: typeof until === 'string' ? until : undefined, reason: typeof reason === 'string' ? reason : undefined })
+      return result instanceof Error ? result : { data: result }
+    }
+    if (route === '/kimaki/task/edit') {
+      const edit = parseTaskEdit(input)
+      if (edit instanceof Error) return edit
+      const result = await scheduler.editTask(edit)
+      return result instanceof Error ? result : { data: result }
+    }
+    if (route === '/kimaki/task/delete' || route === '/kimaki/task/run') {
+      const id = input && typeof input === 'object' ? new Map(Object.entries(input)).get('id') : undefined
+      if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) return new ConfigError({ reason: 'Task ID must be a positive integer' })
+      const result = route === '/kimaki/task/delete' ? await scheduler.deleteTask(id) : await scheduler.runTaskNow(id)
+      return result instanceof Error ? result : { data: result }
+    }
     if (route !== '/kimaki/send') return new ConfigError({ reason: 'Unknown bot action' })
     const parsed = parseSendInput(input)
     if (parsed instanceof Error) return parsed
-    const result = await actions.send(parsed)
+    const schedule = parseScheduleOptions(input)
+    if (schedule instanceof Error) return schedule
+    const result = schedule ? await scheduler.createTask({ send: parsed, options: schedule }) : await actions.send(parsed)
     return result instanceof Error ? result : { data: result }
   })
   const transcriber = createTranscriber({ db: db.db, token: options.token, baseUrls: options.transcriptionBaseUrls })
   registerIngress({ discord, db: db.db, store, actions, transcriber, dataDir: options.dataDir })
 
   const stop = async () => {
+    await scheduler.stop()
     await slash.commands?.stop()
     agentUi.stop()
     opencode.stop()
@@ -222,10 +261,13 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   }
   const refreshed = await actions.refreshCliContext()
   if (refreshed instanceof Error) { await stop(); return refreshed }
-  const commands = registerSlashCommands({ discord, db: db.db, store, actions, opencode, agentUi })
+  const commands = registerSlashCommands({ discord, db: db.db, store, actions, opencode, agentUi, scheduler })
   slash.commands = commands
   // Awaited so the handle is only returned once every guild has its commands.
   await commands.registerAll()
+  // After Discord and OpenCode are ready: a due task needs both.
+  const scheduling = await scheduler.start()
+  if (scheduling instanceof Error) { await stop(); return scheduling }
   logger.log(`bot ready as ${discord.user?.tag}`)
   const projects = await countUserProjects({ db: db.db, dataDir: options.dataDir })
   if (projects instanceof Error) logger.warn(projects.message)
@@ -233,5 +275,5 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     guild_count: discord.guilds.cache.size,
     ...(!(projects instanceof Error) && { user_project_count: projects }),
   })
-  return { discord, opencode, db, lock, store, actions, analytics: options.analytics, stop }
+  return { discord, opencode, db, lock, store, actions, analytics: options.analytics, scheduler, stop }
 }

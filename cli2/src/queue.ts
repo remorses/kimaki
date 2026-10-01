@@ -3,6 +3,7 @@
 // the root session to render them:
 //
 //   inbox.enqueued (queue, while busy) ─▶ "Queued at position N" ack
+//   inbox.enqueued (steer, metadata echo) ─▶ the echo line (wakes, scheduled runs)
 //   inbox.delivered                    ─▶ "» user: text" echo, ack says "Queued message sent"
 //   inbox.cancelled                    ─▶ ack says "Removed from queue"
 //
@@ -33,6 +34,8 @@ export type QueuedItem = {
   messageId: string | null
   // An ack was posted; only acked items get an echo when they start.
   acked: boolean
+  // Line from the prompt metadata (scheduled runs); shown on delivery even without an ack.
+  echo: string | null
 }
 
 type Result = { view: ThreadView; effects: Effect[] }
@@ -43,12 +46,16 @@ function ackKey(inboxID: string): string {
 
 function discordMetadata(metadata: { readonly [key: string]: JsonValue } | undefined) {
   const discord = metadata?.['discord']
-  if (!discord || typeof discord !== 'object' || Array.isArray(discord)) return { username: null, messageId: null }
+  if (!discord || typeof discord !== 'object' || Array.isArray(discord)) return { username: null, messageId: null, echo: null }
   const username = discord['username']
   const messageId = discord['messageId']
+  const echo = discord['echo']
   return {
     username: typeof username === 'string' ? username : null,
-    messageId: typeof messageId === 'string' ? messageId : null,
+    // CLI and scheduled prompts carry a UUID, not a Discord message to reply to.
+    messageId: typeof messageId === 'string' && /^\d+$/.test(messageId) ? messageId : null,
+    // Shown when a prompt without a Discord message is taken (wake, scheduled run).
+    echo: typeof echo === 'string' ? echo : null,
   }
 }
 
@@ -77,10 +84,13 @@ export function reduceQueue({ view, event, busy }: { view: ThreadView; event: V2
       const { item, inboxID } = event.data
       if (item.type !== 'user' || view.inputs.includes(inboxID)) return { view, effects: [] }
       const inputs = [...view.inputs, inboxID]
-      if (item.delivery !== 'queue') return { view: { ...view, inputs }, effects: [] }
+      const meta = discordMetadata(item.payload.metadata)
+      if (item.delivery !== 'queue') {
+        if (!meta.echo) return { view: { ...view, inputs }, effects: [] }
+        return { view: { ...view, inputs, lastKind: null }, effects: [{ type: 'send', text: meta.echo }] }
+      }
       // Idle with nothing pending: OpenCode runs it at once, like a normal message.
       const acked = busy || view.inputs.length > 0
-      const meta = discordMetadata(item.payload.metadata)
       const queued: QueuedItem = { inboxID, text: stripTurnContext(item.payload.text), ...meta, acked }
       const next = { ...view, inputs, queue: [...view.queue, queued] }
       if (!acked) return { view: next, effects: [] }
@@ -90,11 +100,11 @@ export function reduceQueue({ view, event, busy }: { view: ThreadView; event: V2
     case 'session.inbox.delivered': {
       const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)
       const next = removeItem(view, event.data.inboxID)
-      if (!item?.acked) return { view: next, effects: [] }
+      if (!item || (!item.acked && !item.echo)) return { view: next, effects: [] }
       const settled = closeAck({ view: next, item, content: 'Queued message sent' })
       return {
         view: { ...settled.view, lastKind: null },
-        effects: [...settled.effects, { type: 'send', text: formatEcho(item) }],
+        effects: [...settled.effects, { type: 'send', text: item.echo ?? formatEcho(item) }],
       }
     }
     case 'session.inbox.cancelled': {

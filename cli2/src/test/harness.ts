@@ -4,7 +4,8 @@
 // through Service.discover() exactly like production. The bot runs in-process
 // against discord-digital-twin.
 
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process'
+import { promisify } from 'node:util'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -29,6 +30,8 @@ import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
 import type { ToolInput } from '../format-parts.ts'
 import * as schema from '../schema.ts'
 import { startBot, type BotHandle } from '../main.ts'
+import type { SendInput } from '../actions.ts'
+import { listTasks, type Clock, type ScheduleOptions } from '../scheduler.ts'
 
 export const TEST_MODEL = 'deterministic-v2'
 
@@ -282,6 +285,8 @@ export async function startTestBot({
   lockPort,
   saveTwinCredentials = true,
   analytics,
+  clock,
+  schedulerIntervalMs,
 }: {
   dataDir: string
   twin: TestTwin
@@ -294,6 +299,9 @@ export async function startTestBot({
   saveTwinCredentials?: boolean
   // Default: off. Tests pass createAnalytics() with a local OTLP endpoint.
   analytics?: Analytics
+  // Scheduling tests pass manualClock() and null, then call bot.scheduler.runDueTasks().
+  clock?: Clock
+  schedulerIntervalMs?: number | null
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -316,6 +324,8 @@ export async function startTestBot({
     opencodeConfigDir: server.configDir,
     ensureOpencode: false,
     analytics: analytics ?? disabledAnalytics,
+    ...(clock && { clock }),
+    ...(schedulerIntervalMs !== undefined && { schedulerIntervalMs }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),
@@ -323,6 +333,68 @@ export async function startTestBot({
   })
   if (bot instanceof Error) throw bot
   return bot
+}
+
+// Time as a test input (spec 30, Phase 8): never vi.useFakeTimers(), it would
+// also freeze discord.js, the twin and HTTP timeouts in this process.
+export function manualClock(start: number): Clock & { set: (ms: number) => void; advance: (ms: number) => void } {
+  const state = { now: start }
+  return {
+    now: () => state.now,
+    set: (ms) => { state.now = ms },
+    advance: (ms) => { state.now += ms },
+  }
+}
+
+// Scheduling e2e helpers. `request` is the lock-server call the CLI makes,
+// without paying a CLI process start; `cli` runs the real command.
+export function schedulingKit({ suite, dataDir, clock }: {
+  suite: () => { bot: BotHandle; twin: TestTwin; server: OpencodeTestServer }
+  dataDir: string
+  clock: ReturnType<typeof manualClock>
+}) {
+  async function request<T>(route: string, input: Partial<SendInput & ScheduleOptions> | { id: number }): Promise<T> {
+    const { bot } = suite()
+    const token = fs.readFileSync(path.join(dataDir, 'lock-token'), 'utf8')
+    const response = await fetch(`http://127.0.0.1:${bot.lock.port}${route}`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(input) })
+    const body = (await response.json()) as T
+    if (!response.ok) throw new Error(`${route} failed: ${JSON.stringify(body)}`)
+    return body
+  }
+  async function threadIds(): Promise<Set<string>> {
+    const { twin } = suite()
+    return new Set((await twin.discord.channel(twin.channelId).getThreads()).map((thread) => thread.id))
+  }
+  return {
+    request,
+    threadIds,
+    async cli(args: string[]): Promise<string> {
+      const { bot, server } = suite()
+      const result = await promisify(execFile)(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), ...args, '--data-dir', dataDir], {
+        env: { ...process.env, KIMAKI_LOCK_PORT: String(bot.lock.port), KIMAKI_OPENCODE_SERVICE_FILE: server.serviceFile },
+      })
+      return result.stdout
+    },
+    // `kimaki send --channel <project> --send-at …`
+    schedule(input: Partial<SendInput & ScheduleOptions>) {
+      return request<{ taskId: number; nextRunAt: string }>('/kimaki/send', { channelId: suite().twin.channelId, ...input })
+    },
+    async listTasks() {
+      const opened = await openDb({ dataDir, migrate: false })
+      if (opened instanceof Error) throw opened
+      const tasks = await listTasks({ db: opened.db })
+      opened.close()
+      if (tasks instanceof Error) throw tasks
+      return tasks
+    },
+    // Moves the clock, runs the due tasks once, and returns the threads they created.
+    async tick(iso: string): Promise<string[]> {
+      const before = await threadIds()
+      clock.set(Date.parse(iso))
+      await suite().bot.scheduler.runDueTasks()
+      return [...(await threadIds())].filter((id) => !before.has(id))
+    },
+  }
 }
 
 export type FakeTranscription = { transcription: string; route?: string; agent?: string }

@@ -164,7 +164,7 @@ export function registerIngress({
       if (!value || typeof value !== 'object' || !('requestId' in value) || typeof value.requestId !== 'string' || !/^[0-9a-f]{16}$/.test(value.requestId) || !('options' in value) || !value.options || typeof value.options !== 'object' || Array.isArray(value.options)) return
       const input = parseSendInput({ ...value.options, ...(thread ? { threadId: thread.id } : { channelId }), prompt: message.content })
       const files = await saveAttachments({ dataDir, messageId: message.id, attachments: [...message.attachments.values()] })
-      const result = input instanceof Error ? input : files instanceof Error ? files : await actions.send({ ...input, files }, true)
+      const result = input instanceof Error ? input : files instanceof Error ? files : await actions.send({ ...input, files }, { localOnly: true })
       await message.reply({ content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`, embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${JSON.stringify(result instanceof Error ? { error: result.message } : result)}` } }], allowedMentions: { parse: [] } }).catch((error: Error) => logger.warn(`remote acknowledgment: ${error.message}`))
       return
     }

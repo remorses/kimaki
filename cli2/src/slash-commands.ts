@@ -59,6 +59,7 @@ import { createQuestionHandlers, FORM_OTHER_PREFIX, FORM_SELECT_PREFIX } from '.
 import { formatEcho } from './queue.ts'
 import type { Route } from './routes.ts'
 import { resolveSession } from './session-events.ts'
+import { TASK_DELETE_PREFIX, TASK_RUN_PREFIX, type Scheduler } from './scheduler.ts'
 import type { BotStore } from './store.ts'
 
 const logger = createLogger('COMMANDS')
@@ -127,6 +128,7 @@ const STATIC_COMMANDS = [
   new SlashCommandBuilder().setName('redo').setDescription('Redo previously undone changes'),
   new SlashCommandBuilder().setName('diff').setDescription('Show the git diff as a shareable URL'),
   new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage and context window percentage'),
+  new SlashCommandBuilder().setName('tasks').setDescription('List scheduled tasks, run one now, or delete it'),
   new SlashCommandBuilder()
     .setName('session-id')
     .setDescription('Show the OpenCode session ID of this thread and how to open it in OpenCode'),
@@ -275,6 +277,7 @@ export function registerSlashCommands({
   actions,
   opencode,
   agentUi,
+  scheduler,
 }: {
   discord: Client
   db: KimakiDb
@@ -282,6 +285,7 @@ export function registerSlashCommands({
   actions: Actions
   opencode: OpencodeConnection
   agentUi: AgentUi
+  scheduler: Pick<Scheduler, 'tasksCommand' | 'tasksClick'>
 }) {
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
@@ -632,6 +636,7 @@ export function registerSlashCommands({
     if (name === 'login') return login.handle(interaction)
     if (name === 'session-id') return handleSessionId(interaction)
     if (name === 'diff') return handleDiff(interaction)
+    if (name === 'tasks') return scheduler.tasksCommand(interaction)
     if (sessions.commands.has(name)) return sessions.handle(interaction)
     if (preferences.commands.has(name)) return preferences.handle(interaction)
     const target = interaction.guildId ? dynamic.get(interaction.guildId)?.get(name) : undefined
@@ -690,6 +695,7 @@ export function registerSlashCommands({
     if (interaction.isAutocomplete()) return handleAutocomplete(interaction)
     if (interaction.isButton() && interaction.customId.startsWith('login_')) return login.click(interaction)
     if (interaction.isButton() && /^(action_button|file_upload_btn):/.test(interaction.customId)) return agentUi.click(interaction)
+    if (interaction.isButton() && (interaction.customId.startsWith(TASK_RUN_PREFIX) || interaction.customId.startsWith(TASK_DELETE_PREFIX))) return scheduler.tasksClick(interaction)
     if (interaction.isModalSubmit() && interaction.customId.startsWith('file_upload_modal:')) return agentUi.modal(interaction)
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('login_')) return login.select(interaction)
     if (interaction.isModalSubmit() && interaction.customId.startsWith('login_')) return login.modal(interaction)
