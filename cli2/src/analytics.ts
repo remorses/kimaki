@@ -116,7 +116,8 @@ export function foldAnalytics({
       const next = without(state, event.data.sessionID)
       // Not seen from the start (bot restarted mid-run), or no model step (compaction).
       if (!usage || usage.steps === 0) return { state: next, events: [] }
-      const total = usage.input + usage.output + usage.cacheRead + usage.cacheWrite
+      // OpenCode reports output without reasoning, but bills both.
+      const total = usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
       const tokensUsed: AnalyticsEvent = {
         name: 'tokens_used',
         properties: {
@@ -125,7 +126,6 @@ export function foldAnalytics({
           tokens_reasoning: usage.reasoning,
           tokens_cache_read: usage.cacheRead,
           tokens_cache_write: usage.cacheWrite,
-          // Reasoning is reported apart from output, so it is not added twice.
           tokens_total: total,
           cost: usage.cost,
           assistant_message_count: usage.steps,
@@ -149,6 +149,8 @@ export function foldAnalytics({
 // --- sink ---
 
 export type Analytics = {
+  // false: --no-analytics, KIMAKI_STRADA_ENABLED=0 or tests. `kimaki status` reports it.
+  enabled: boolean
   track: (name: AnalyticsEventName, properties?: AnalyticsProps) => void
   // An OpenCode event of a Kimaki thread (event loop).
   observe: (event: V2Event, isRoot: boolean) => void
@@ -156,6 +158,7 @@ export type Analytics = {
 }
 
 export const disabledAnalytics: Analytics = {
+  enabled: false,
   track: () => {},
   observe: () => {},
   flush: async () => {},
@@ -228,6 +231,7 @@ export function createAnalytics({
   }
   const usage: { state: UsageState } = { state: {} }
   return {
+    enabled: true,
     track: send,
     observe: (event, isRoot) => {
       const folded = foldAnalytics({ state: usage.state, event, isRoot })

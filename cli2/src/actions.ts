@@ -16,6 +16,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
 import type { SessionMetadata } from '@opencode/client'
 import type { Analytics } from './analytics.ts'
 import { ChannelType, Events, type Client, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
@@ -688,6 +689,31 @@ export function createActions({
     }
   }
 
+  // Directories where the Kimaki plugin was seen active (it stays loaded).
+  const pluginActive = new Set<string>()
+
+  // The bot writes plugins/kimaki/ on start (opencode-server.ts), but
+  // OpenCode's watcher picks it up a moment later: wait for it, bounded.
+  async function waitForPlugin(directory: string): Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | void> {
+    if (pluginActive.has(directory)) return
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      // The integration catalog waits for activations OpenCode already started; plugin.list does not.
+      const activated = await opencodeClient.integration.list({ location: { directory } }).catch((cause) => new OpenCodeError({ operation: 'integration.list', cause }))
+      if (activated instanceof Error) return activated
+      const plugins = await opencodeClient.plugin.list({ location: { directory } }).catch((cause) => new OpenCodeError({ operation: 'plugin.list', cause }))
+      if (plugins instanceof Error) return plugins
+      if (plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) {
+        pluginActive.add(directory)
+        return
+      }
+      await sleep(200)
+    }
+    return new ConfigError({ reason: `Kimaki plugin is not active in OpenCode for ${directory}. Kimaki writes it to <OpenCode config dir>/plugins/kimaki/ on start; check \`opencode plugin list\` and the OpenCode logs` })
+  }
+
   // The plugin and the agent's `kimaki` calls read metadata.kimaki. Sessions
   // from V1 (imported thread_sessions) have no marker and no instructions
   // entry; sessions of an older bot run point at its old lock port. Checked
@@ -705,9 +731,11 @@ export function createActions({
     channelId: string
     directory: string
     userId: string
-  }): Promise<OpenCodeUnavailableError | OpenCodeError | DiscordError | void> {
+  }): Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | void> {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
+    const plugin = await waitForPlugin(directory)
+    if (plugin instanceof Error) return plugin
     const info = await opencodeClient.session
       .get({ sessionID: sessionId })
       .catch((e) => new OpenCodeError({ operation: `get session ${sessionId}`, cause: e }))
@@ -715,6 +743,14 @@ export function createActions({
     const previous = info.metadata?.['kimaki']
     const marker = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : null
     if (marker && marker['dataDir'] === cliContext.dataDir && marker['lockPort'] === cliContext.lockPort) return
+    // Instructions first: the marker means "set up", so a failure here is retried on the next input.
+    if (!marker) {
+      logger.log(`adopting legacy session ${sessionId} of thread ${thread.id}`)
+      const channel = await textChannel(channelId)
+      if (channel instanceof Error) return channel
+      const instructions = await putInstructions({ sessionId, thread, channel, directory, userId })
+      if (instructions instanceof Error) return instructions
+    }
     const updated = await opencodeClient.session
       .update({
         sessionID: sessionId,
@@ -722,11 +758,6 @@ export function createActions({
       })
       .catch((e) => new OpenCodeError({ operation: 'session.update', cause: e }))
     if (updated instanceof Error) return updated
-    if (marker) return
-    logger.log(`adopting legacy session ${sessionId} of thread ${thread.id}`)
-    const channel = await textChannel(channelId)
-    if (channel instanceof Error) return channel
-    return putInstructions({ sessionId, thread, channel, directory, userId })
   }
 
   // One entry point for thread input of every source (spec 9.4).
@@ -817,14 +848,8 @@ export function createActions({
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
 
-    // The integration catalog waits for native plugin activation; plugin.list does not.
-    const activated = await opencodeClient.integration.list({ location: { directory } }).catch((cause) => new OpenCodeError({ operation: 'integration.list', cause }))
-    if (activated instanceof Error) return activated
-    const plugins = await opencodeClient.plugin.list({ location: { directory } }).catch((cause) => new OpenCodeError({ operation: 'plugin.list', cause }))
-    if (plugins instanceof Error) return plugins
-    if (!plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) {
-      return new ConfigError({ reason: `Kimaki plugin is not active. Add ${fileURLToPath(new URL('./plugin', import.meta.url))} to plugins in your OpenCode config, then reload OpenCode when no prompts are pending.` })
-    }
+    const plugin = await waitForPlugin(directory)
+    if (plugin instanceof Error) return plugin
 
     const channel = await textChannel(channelId)
     if (channel instanceof Error) return channel

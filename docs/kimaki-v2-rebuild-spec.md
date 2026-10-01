@@ -2118,7 +2118,9 @@ for await (const event of client.event.subscribe({ signal })) {
   `<config dir>/plugins/kimaki/index.js` (`OPENCODE_CONFIG_DIR`, else
   `$XDG_CONFIG_HOME/opencode`), and an already loaded location activates it through the
   watcher. `Host.resolve` tries `server`, then `index`, so other files in the folder are
-  removed. The harness no longer lists the plugin in `OPENCODE_CONFIG_CONTENT`.
+  removed. The harness no longer lists the plugin in `OPENCODE_CONFIG_CONTENT`. The
+  watcher sees the new file a moment after the write, so session start and legacy input
+  wait (10s max) until `plugin.list` shows `kimaki` active.
 - **Gateway proxy in the twin.** `DigitalDiscord({ gatewayProxy: true })` ports
   `rest_proxy.rs` route scoping (401 unknown client, 403 outside the authorized guilds,
   404 + 10003 unknown channel), filters READY and guild events, and
@@ -2128,7 +2130,10 @@ for await (const event of client.event.subscribe({ signal })) {
   (`data: {...}\n\n`: `install_url`, `authorized`, `ready`, `error`), the documented public
   format. The fixed 2s wait for the proxy is replaced by polling `GET /gateway/bot` with
   the new client token. A gateway client in no server exits with an `error` event that
-  carries the install URL.
+  carries the install URL. Onboarding counts as done once the default channel has a
+  message; a failed session start deletes the welcome, so the next start retries in the
+  same channel, and the CLI emits `error` instead of `ready`. Waits use elapsed-time
+  deadlines (install 5 min, proxy 30s).
 - **Categories** are `Kimaki <machine>` (`--machine-name`, default hostname without
   `.local`). A channel name already used outside this machine's category gets a
   `-<machine>` suffix. A stored V1 category ID is still used first.
@@ -2136,8 +2141,8 @@ for await (const event of client.event.subscribe({ signal })) {
   `session_created`, `turn_started`, `turn_completed`, `tokens_used`). `tokens_used` sums
   `step.ended` and `step.failed` usage of one execution (`step.failed` is billed and
   carries tokens); `session.usage.updated` is cumulative and live-only, so it has no
-  baseline after a restart. `tokens_total` = input + output + cache read + cache write;
-  whether V2 `output` already contains `reasoning` is not verified. Zero-token executions
+  baseline after a restart. `tokens_total` = input + output + reasoning + cache read +
+  cache write: OpenCode 2.0.19 reports `output` without reasoning but bills both. Zero-token executions
   are skipped like V1. `turn_started` has no `source` prop yet.
 
 ---

@@ -175,7 +175,17 @@ export async function runOnboarding({
     .findFirst({ where: { directory } })
     .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
   if (mapped instanceof Error) return mapped
-  if (mapped) return null
+  // Done once the default channel has a message (the welcome). An empty channel
+  // means an earlier onboarding failed: retry in it. A deleted one stays deleted.
+  if (mapped) {
+    const existing = await bot.discord.channels.fetch(mapped.channel_id).catch(() => null)
+    if (existing?.type !== ChannelType.GuildText) return null
+    const messages = await existing.messages
+      .fetch({ limit: 1 })
+      .catch((e) => new DiscordError({ operation: 'read default channel', cause: e }))
+    if (messages instanceof Error) return messages
+    if (messages.size > 0) return null
+  }
 
   const directoryReady = await createDefaultDirectory(directory)
   if (directoryReady instanceof Error) return directoryReady
@@ -190,7 +200,7 @@ export async function runOnboarding({
     machine,
   })
   if (channel instanceof Error) return channel
-  bot.analytics.track('project_registered', { project_kind: 'default', source: 'onboarding' })
+  if (channel.created) bot.analytics.track('project_registered', { project_kind: 'default', source: 'onboarding' })
 
   const textChannel = await bot.discord.channels
     .fetch(channel.channelId)
@@ -222,7 +232,11 @@ export async function runOnboarding({
     messageId: welcome.id,
     threadName: 'Kimaki onboarding',
   })
-  if (session instanceof Error) return session
+  if (session instanceof Error) {
+    // Leaves the channel empty, so the next start onboards again.
+    await welcome.delete().catch((e) => logger.warn(`delete welcome message: ${e instanceof Error ? e.message : String(e)}`))
+    return session
+  }
   logger.log(`onboarding thread ${session.threadId} in channel ${channel.channelId}`)
   return { channelId: channel.channelId, threadId: session.threadId }
 }

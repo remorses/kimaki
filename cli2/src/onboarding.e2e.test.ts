@@ -9,6 +9,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { API } from '@discordjs/core/http-only'
+import { ChannelType } from 'discord.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
@@ -145,4 +146,15 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
   // Second start: nothing is created again.
   expect(await runOnboarding({ bot, dataDir, guild, kimaki, gateway: true, machine: 'test-machine' })).toBe(null)
   await waitFor({ label: 'no extra channels', check: async () => (await guildChannels()).length === 6 })
+
+  // An empty default channel means an earlier onboarding failed: retry in the same channel.
+  const defaultChannel = rows.find((row) => row.directory !== otherProject)!
+  const channel = await bot.discord.channels.fetch(defaultChannel.channel_id)
+  if (channel?.type !== ChannelType.GuildText) throw new Error('default channel is not a text channel')
+  for (const message of (await channel.messages.fetch()).values()) await message.delete()
+  const retried = await runOnboarding({ bot, dataDir, guild, kimaki, gateway: true, installerId: TEST_USER_ID, machine: 'test-machine' })
+  if (retried instanceof Error || !retried) throw new Error(`expected a retried onboarding, got ${retried}`)
+  expect(retried.channelId).toBe(defaultChannel.channel_id)
+  await waitForFooter({ discord, threadId: retried.threadId })
+  expect((await guildChannels()).length).toBe(6)
 }, 30_000)

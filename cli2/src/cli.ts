@@ -194,10 +194,13 @@ cli
       failStartup(guild, installUrl)
     }
     const onboarded = await runOnboarding({ bot, dataDir, guild, kimaki, gateway, installerId: install?.installerId, machine })
-    if (onboarded instanceof Error) logger.error(`onboarding failed: ${onboarded.message}`)
-    if (onboarded && !(onboarded instanceof Error)) {
-      process.stderr.write(`Onboarding thread: https://discord.com/channels/${guild.id}/${onboarded.threadId}\n`)
+    // The bot keeps running; the next start retries onboarding.
+    if (onboarded instanceof Error) {
+      logger.error(`onboarding failed: ${onboarded.message}`)
+      if (!process.stdin.isTTY) emitEvent({ type: 'error', message: `Onboarding failed: ${onboarded.message}. The bot is running; restart kimaki to retry.` })
+      return
     }
+    if (onboarded) process.stderr.write(`Onboarding thread: https://discord.com/channels/${guild.id}/${onboarded.threadId}\n`)
     if (!process.stdin.isTTY) emitEvent({ type: 'ready', app_id: credentials.appId, guild_ids: [...bot.discord.guilds.cache.keys()] })
   })
 
@@ -239,7 +242,10 @@ cli
       const api = createApi({ token: credentials.token, restUrl: restApiUrl(credentials) })
       const added = await addProjectChannel({ api, db: opened.db, guildId, directory: projectDirectory, machine: options.machineName ?? defaultMachineName() })
       if (added instanceof Error || !added.created) return added
-      const analytics = createAnalytics({ dataDir: dataDirOrDefault(options.dataDir), botMode: credentials.mode, enabled: true })
+      // Agents run this while the bot runs: follow the bot's --no-analytics.
+      const status = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/status', input: {} })
+      const botAnalytics = status instanceof Error || !status.data || typeof status.data !== 'object' ? null : Reflect.get(status.data, 'analytics')
+      const analytics = createAnalytics({ dataDir: dataDirOrDefault(options.dataDir), botMode: credentials.mode, enabled: botAnalytics !== false })
       const projects = await countUserProjects({ db: opened.db, dataDir: dataDirOrDefault(options.dataDir) })
       analytics.track('project_registered', { project_kind: 'user', source: 'cli', ...(!(projects instanceof Error) && { user_project_count: projects }) })
       await analytics.flush()

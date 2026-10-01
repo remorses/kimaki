@@ -16,7 +16,6 @@ import {
   startTwin,
   tempDataDir,
   TEST_USER_ID,
-  waitFor,
   waitForFooter,
   warmUp,
   type OpencodeTestServer,
@@ -58,11 +57,11 @@ test('bot start writes the plugin shim, OpenCode loads it, a restart does not re
     export { default } from "file:///<cli2>/src/plugin/index.ts"
     "
   `)
-  await waitFor({ label: 'kimaki plugin active', check: async () => (await kimakiStatus()) === 'active' })
-
+  // No wait here: the first session must itself wait until OpenCode's watcher loads the shim.
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'plugin shim turn' })
   const thread = await twin.discord.channel(twin.channelId).waitForThread({ timeout: 8_000 })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
+  expect(await kimakiStatus()).toBe('active')
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     plugin shim turn

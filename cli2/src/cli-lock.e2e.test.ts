@@ -339,6 +339,7 @@ test('status reports the running bot, logs prints and follows the log file', asy
   const opencode = running['opencode'] as { url: string; version: string; connected: boolean }
   expect({ ...running, mode: running['mode'] === (twin.discord.botToken.includes(':') ? 'gateway' : 'self_hosted'), guilds: (running['guilds'] as Array<{ id: string; name: string }>).map((guild) => ({ ...guild, id: guild.id === twin.discord.guildId })), pid: typeof running['pid'], uptimeSec: typeof running['uptimeSec'], dataDir: running['dataDir'] === dataDir, opencode: { ...opencode, url: opencode.url === bot.opencode.endpoint?.url, version: typeof opencode.version } }).toMatchInlineSnapshot(`
     {
+      "analytics": false,
       "dataDir": true,
       "guilds": [
         {

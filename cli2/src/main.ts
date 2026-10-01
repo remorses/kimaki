@@ -172,6 +172,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
           uptimeSec: Math.round(process.uptime()),
           dataDir: options.dataDir,
           mode: options.token.includes(':') ? 'gateway' : 'self_hosted',
+          analytics: options.analytics.enabled,
           opencode: { connected: opencode.connected, url: opencode.endpoint?.url ?? null, version: opencode.endpoint?.version ?? null },
           guilds: [...discord.guilds.cache.values()].map((guild) => ({ id: guild.id, name: guild.name })),
         },
