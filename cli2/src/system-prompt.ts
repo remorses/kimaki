@@ -201,7 +201,7 @@ export function baseInstructions({
       - \`--user\` accepts a Discord user ID or raw mention only and adds that user to the thread. Resolve names to IDs with \`kimaki user list\` first.
       - Use single quotes around \`--prompt\`, \`--user\`, \`--send-at\`, and other literal arguments so backticks inside prompts are not executed by the shell.
       - The new session has no memory of this conversation. Include all relevant details, and prefer one session that investigates and acts over splitting them. Use **bold**, \`code\`, lists, and > quotes for readability.
-      - Prompts for another machine's channel are limited to 2000 chars. Put long task text in a file in the project and reference it.
+      - Prompts over 2000 chars for another machine's channel are sent as a file attachment automatically.
 
       Choose the destination:
       - Default to this channel unless the user explicitly asks for another place.

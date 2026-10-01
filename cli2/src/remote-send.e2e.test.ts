@@ -56,3 +56,13 @@ test('CLI remote envelope runs only on the owning bot and returns its IDs', asyn
   const first = messages.data.find((message) => message.type === 'user' && message.text.startsWith('Remote first'))
   expect(first?.type === 'user' && first.files?.length).toBe(1)
 })
+
+test('CLI remote prompt over 2000 chars arrives whole, not as a file part', async () => {
+  const prompt = `Remote long ${'x'.repeat(2500)} end`
+  const ids = JSON.parse((await cli(['send', '--channel', twin.quietChannelId, '-p', prompt])).stdout) as { threadId: string; sessionId: string }
+  await waitForFooter({ discord: twin.discord, threadId: ids.threadId })
+  const messages = await (await server.client()).message.list({ sessionID: ids.sessionId })
+  const first = messages.data.find((message) => message.type === 'user' && message.text.startsWith('Remote long'))
+  // The bot appends per-turn context after the prompt.
+  expect(first?.type === 'user' && { whole: first.text.startsWith(prompt), files: first.files?.length ?? 0 }).toEqual({ whole: true, files: 0 })
+})

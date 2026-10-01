@@ -301,14 +301,30 @@ cli.command('session search <query>', 'Search titles, then real message content'
     const matches = (text: string) => { if (!expression) return text.toLowerCase().includes(query.toLowerCase()); expression.lastIndex = 0; return expression.test(text) }
     const days = Number(options.days ?? 14)
     if (!Number.isFinite(days) || days < 0) fail(new Error('--days must be a non-negative number'))
-    const found: typeof sessions = []
-    for (const session of sessions) {
-      if (days && session.time.updated < Date.now() - days * 86400000) continue
-      if (matches(session.title ?? '')) { found.push(session); continue }
-      const messages = await allMessages({ client, sessionId: session.id })
-      if (messages instanceof Error) fail(messages)
-      if (messages.some((message) => matches(message.type === 'user' ? message.text : JSON.stringify(message)))) found.push(session)
+    const recent = sessions.filter((session) => !days || session.time.updated >= Date.now() - days * 86400000)
+    // OpenCode has no content search API: scan pages newest first, stop at the first hit, 8 sessions at a time.
+    const hit = async (session: (typeof sessions)[number]) => {
+      if (matches(session.title ?? '')) return true
+      const scan = async (cursor: string | undefined): Promise<OpenCodeError | boolean> => {
+        const page = await client.message.list({ sessionID: session.id, limit: 200, ...(cursor ? { cursor } : { order: 'desc' as const }) })
+          .catch((cause) => new OpenCodeError({ operation: 'message.list', cause }))
+        if (page instanceof Error) return page
+        if (page.data.some((message) => matches(message.type === 'user' ? message.text : JSON.stringify(message)))) return true
+        return page.cursor.next ? scan(page.cursor.next) : false
+      }
+      return scan(undefined)
     }
+    const results: Array<Error | boolean> = new Array(recent.length)
+    const next = { index: 0 }
+    await Promise.all(Array.from({ length: Math.min(8, recent.length) }, async () => {
+      while (next.index < recent.length) {
+        const index = next.index++
+        results[index] = await hit(recent[index]!)
+      }
+    }))
+    const failed = results.find((result) => result instanceof Error)
+    if (failed instanceof Error) fail(failed)
+    const found = recent.filter((_, index) => results[index] === true)
     process.stdout.write(options.json ? `${JSON.stringify(found, null, 2)}\n` : found.map((session) => `${session.id} ${session.title}\n`).join(''))
   })
 

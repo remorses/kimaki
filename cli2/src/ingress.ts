@@ -20,7 +20,7 @@ import {
 } from 'discord.js'
 import * as errore from 'errore'
 
-import { parseSendInput, REMOTE_SEND_PREFIX, REMOTE_RESULT_PREFIX, type Actions, type PromptFile } from './actions.ts'
+import { parseSendInput, REMOTE_PROMPT_FILE, REMOTE_SEND_PREFIX, REMOTE_RESULT_PREFIX, type Actions, type PromptFile } from './actions.ts'
 import type { KimakiDb } from './db.ts'
 import { formatError } from './format-parts.ts'
 import { createLogger } from './logger.ts'
@@ -80,6 +80,13 @@ class AttachmentError extends errore.createTaggedError({
   name: 'AttachmentError',
   message: 'Could not download attachment $file',
 }) {}
+
+async function remotePromptText(url: string) {
+  const response = await fetch(url).catch((cause) => new AttachmentError({ file: REMOTE_PROMPT_FILE, cause }))
+  if (response instanceof Error) return response
+  if (!response.ok) return new AttachmentError({ file: REMOTE_PROMPT_FILE, cause: new Error(`HTTP ${response.status}`) })
+  return response.text().catch((cause) => new AttachmentError({ file: REMOTE_PROMPT_FILE, cause }))
+}
 
 async function download(url: string): Promise<AttachmentError | Buffer> {
   const response = await fetch(url).catch((e) => new AttachmentError({ file: url, cause: e }))
@@ -162,8 +169,10 @@ export function registerIngress({
       if (decoded instanceof Error) return
       const value = decoded.value
       if (!value || typeof value !== 'object' || !('requestId' in value) || typeof value.requestId !== 'string' || !/^[0-9a-f]{16}$/.test(value.requestId) || !('options' in value) || !value.options || typeof value.options !== 'object' || Array.isArray(value.options)) return
-      const input = parseSendInput({ ...value.options, ...(thread ? { threadId: thread.id } : { channelId }), prompt: message.content })
-      const files = await saveAttachments({ dataDir, messageId: message.id, attachments: [...message.attachments.values()] })
+      const promptAttachment = 'promptFile' in value && value.promptFile === REMOTE_PROMPT_FILE ? message.attachments.find((attachment) => attachment.name === REMOTE_PROMPT_FILE) : undefined
+      const prompt = promptAttachment ? await remotePromptText(promptAttachment.url) : message.content
+      const input = prompt instanceof Error ? prompt : parseSendInput({ ...value.options, ...(thread ? { threadId: thread.id } : { channelId }), prompt })
+      const files = await saveAttachments({ dataDir, messageId: message.id, attachments: [...message.attachments.values()].filter((attachment) => attachment !== promptAttachment) })
       const result = input instanceof Error ? input : files instanceof Error ? files : await actions.send({ ...input, files }, { localOnly: true })
       await message.reply({ content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`, embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${JSON.stringify(result instanceof Error ? { error: result.message } : result)}` } }], allowedMentions: { parse: [] } }).catch((error: Error) => logger.warn(`remote acknowledgment: ${error.message}`))
       return

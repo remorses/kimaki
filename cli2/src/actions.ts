@@ -64,6 +64,7 @@ export type SendInput = {
 }
 
 export const REMOTE_SEND_PREFIX = 'kimaki-send-v2:'
+export const REMOTE_PROMPT_FILE = 'kimaki-prompt.md'
 export const REMOTE_RESULT_PREFIX = 'kimaki-result-v2:'
 
 export function parseSendInput(value: unknown): ConfigError | SendInput {
@@ -1305,8 +1306,14 @@ export function createActions({
     if (!target?.isSendable()) return new ConfigError({ reason: 'Remote target is not sendable' })
     const requestId = crypto.randomBytes(8).toString('hex')
     const { files, prompt, ...options } = input
-    const footer = `${REMOTE_SEND_PREFIX}${JSON.stringify({ requestId, options })}`
-    if (footer.length > 2048 || prompt.length > 2000) return new ConfigError({ reason: 'Remote prompt or options exceed Discord message limits. Send shorter input.' })
+    // A prompt over the message limit travels as an attachment; the content keeps a preview.
+    const long = prompt.length > 2000
+    const footer = `${REMOTE_SEND_PREFIX}${JSON.stringify({ requestId, options, ...(long && { promptFile: REMOTE_PROMPT_FILE }) })}`
+    if (footer.length > 2048) return new ConfigError({ reason: 'Remote send options exceed the Discord embed limit. Send fewer options.' })
+    const attachments = [
+      ...(files ?? []).map((file) => ({ name: file.name, attachment: file.uri.startsWith('file:') ? fileURLToPath(file.uri) : file.uri })),
+      ...(long ? [{ name: REMOTE_PROMPT_FILE, attachment: Buffer.from(prompt) }] : []),
+    ]
     return new Promise<Error | { threadId: string; sessionId: string | null }>((resolve) => {
       const finish = (result: Error | { threadId: string; sessionId: string | null }) => { clearTimeout(timer); discord.off(Events.MessageCreate, receive); resolve(result) }
       const receive = (message: Message) => {
@@ -1322,7 +1329,7 @@ export function createActions({
       }
       const timer = setTimeout(() => finish(new ConfigError({ reason: 'No owning Kimaki bot answered this remote send. Start Kimaki on that machine.' })), 20_000)
       discord.on(Events.MessageCreate, receive)
-      void target.send({ content: prompt, embeds: [{ footer: { text: footer } }], files: files?.map((file) => ({ name: file.name, attachment: file.uri.startsWith('file:') ? fileURLToPath(file.uri) : file.uri })), allowedMentions: { parse: [] } })
+      void target.send({ content: long ? `${prompt.slice(0, 1990)}…` : prompt, embeds: [{ footer: { text: footer } }], files: attachments, allowedMentions: { parse: [] } })
         .catch((cause) => finish(new DiscordError({ operation: 'send remote envelope', cause })))
     })
   }
