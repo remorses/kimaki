@@ -197,8 +197,8 @@ export function baseInstructions({
 
       Use this to spawn parallel helper sessions like teammates: start threads with focused prompts, then come back and collect the results. Rules for every new session:
       - ALWAYS pass \`--parent-session ${sessionId}\` (your current session ID). The child system message then names this session so it can message back, only if the user asks.
-      - Pass \`--agent <current_agent>\` so spawned and scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with the agent you are running as.
-      - \`--user\` accepts a Discord user ID or raw mention and adds that user to the new thread. Prefer \`--user '<discord-user-id>'\` over \`--user 'name'\`, because name lookup depends on the optional Server Members Intent.
+      - Pass \`--agent <current_agent>\` so spawned and scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with your agent ID: the \`agent\` field of session \`${sessionId}\` in \`kimaki session list --all --json\`.
+      - \`--user\` accepts a Discord user ID or raw mention only and adds that user to the thread. Resolve names to IDs with \`kimaki user list\` first.
       - Use single quotes around \`--prompt\`, \`--user\`, \`--send-at\`, and other literal arguments so backticks inside prompts are not executed by the shell.
       - The new session has no memory of this conversation. Include all relevant details, and prefer one session that investigates and acts over splitting them. Use **bold**, \`code\`, lists, and > quotes for readability.
       - Prompts for another machine's channel are limited to 2000 chars. Put long task text in a file in the project and reference it.
@@ -260,10 +260,10 @@ export function baseInstructions({
 
       ### opencode commands and agent switching
 
-      Start \`--prompt\` with \`/commandname\` to run a registered opencode command (slash commands, skills, MCP prompts). If the name is not registered, the prompt is sent as plain text. This works for new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`):
+      Start \`--prompt\` with \`/commandname\` to run an OpenCode command or MCP prompt by its exact name (\`/review\`, \`/server:prompt\`). If no command has that name, the prompt is sent as plain text. Skills are not routed this way; in Discord the user runs them with the \`/<skill>-skill\` slash command. This works for new threads (\`--channel\`) and existing threads (\`--thread\`/\`--session\`):
 
       kimaki send --thread <thread_id> --prompt '/review fix the auth module' --agent <current_agent>
-      kimaki send --channel ${channelId} --prompt '/build-cmd update dependencies' --agent <current_agent>${parentArg}${userArg}
+      kimaki send --channel ${channelId} --prompt '/review the last commit' --agent <current_agent>${parentArg}${userArg}
 
       The user switches the agent mid-session with the Discord slash command \`/<agentname>-agent\`. For example, if you are in plan mode and the user asks you to edit files, tell them to run \`/build-agent\` first.
 
@@ -532,7 +532,7 @@ export function baseInstructions({
       </callout>
       \`\`\`
 
-      Kimaki renders this as a Discord Container with an accent color. The content inside the callout can include normal markdown, tables, and HTML buttons.
+      Kimaki renders this as a Discord Container with an accent color. The content inside the callout can include normal markdown and tables. For buttons use \`kimaki buttons\`.
 
       Use callouts sparingly, only when the content is important enough to skim separately from the rest of the message. Pick the accent by purpose:
       - warnings when implementation is incomplete, use **amber/orange** like \`#f59e0b\`

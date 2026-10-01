@@ -72,6 +72,11 @@ test('a one-shot task starts a thread at its time, then is gone', async () => {
     "
   `)
   expect((await listTasks()).filter((row) => row.id === task.taskId)).toEqual([])
+  // /resume rebuilds the instruction entry: the task section and marker stay, though the row is gone.
+  await request('/kimaki/action/session.resume', { sessionId, channelId: twin.channelId })
+  const resumed = await (await server.client()).session.instructions.entry.list({ sessionID: sessionId })
+  expect(resumed.map((entry) => String(entry.value)).join('\n')).toContain('started automatically by kimaki scheduled task #1.')
+  expect((await (await server.client()).session.get({ sessionID: sessionId })).metadata?.['kimaki']).toMatchObject({ source: 'task', taskId: task.taskId })
 })
 
 test('a cron task fires once per occurrence, in a new thread each time', async () => {

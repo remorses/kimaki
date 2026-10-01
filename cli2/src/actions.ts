@@ -595,6 +595,19 @@ export function createActions({
       .map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
   }
 
+  // The scheduled run stored at session.create, so /resume keeps the same instruction section.
+  function storedScheduledRun(metadata: SessionMetadata | undefined): ScheduledRun | null {
+    const marker = metadata?.['kimaki']
+    if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null
+    const task = marker['task']
+    if (!task || typeof task !== 'object' || Array.isArray(task)) return null
+    const id = task['id']
+    const cronExpr = task['cronExpr']
+    const timezone = task['timezone']
+    if (typeof id !== 'number') return null
+    return { id, cronExpr: typeof cronExpr === 'string' ? cronExpr : null, timezone: typeof timezone === 'string' ? timezone : null }
+  }
+
   function storedParentSessionId(metadata: SessionMetadata | undefined): string | null {
     const marker = metadata?.['kimaki']
     if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null
@@ -900,7 +913,7 @@ export function createActions({
             threadId: thread.id,
             channelId,
             source: task ? 'task' : 'discord',
-            ...(task && { taskId: task.id }),
+            ...(task && { taskId: task.id, task }),
             ...cliContext,
             ...(parentSessionId && { parentSessionId }),
           },
@@ -958,6 +971,7 @@ export function createActions({
     note,
     author,
     parentSessionId = null,
+    scheduledTask = null,
     discard,
   }: {
     channel: TextChannel
@@ -968,6 +982,8 @@ export function createActions({
     author: Author
     // Explicit `kimaki send --parent-session` of a resumed session; never a fork's OpenCode parent.
     parentSessionId?: string | null
+    // A resumed task session keeps its task; a fork is a new user session.
+    scheduledTask?: ScheduledRun | null
     // Cleanup of a session created only for this thread (a fork).
     discard?: () => Promise<void>
   }): Promise<OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }> {
@@ -984,20 +1000,21 @@ export function createActions({
         .send({ content: intro.slice(0, 2_000), allowedMentions: { parse: [] } })
         .catch((e) => new DiscordError({ operation: 'send intro', cause: e }))
       if (posted instanceof Error) return posted
-      // Merge: other metadata (and task fields of the marker) stay.
+      // Merge: other metadata stays. Task fields stay only for a resumed task session.
       const previous = session.metadata?.['kimaki']
-      const marker = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : {}
+      const { task: _task, taskId: _taskId, ...rest } = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : {}
+      const marker = scheduledTask ? { ...rest, taskId: scheduledTask.id, task: scheduledTask } : rest
       const marked = await opencodeClient.session
         .update({
           sessionID: sessionId,
           metadata: {
             ...session.metadata,
-            kimaki: { ...marker, source: 'discord', ...cliContext, threadId: thread.id, channelId: channel.id },
+            kimaki: { ...marker, source: scheduledTask ? 'task' : 'discord', ...cliContext, threadId: thread.id, channelId: channel.id },
           },
         })
         .catch((e) => new OpenCodeError({ operation: 'session.update', cause: e }))
       if (marked instanceof Error) return marked
-      const instructions = await putInstructions({ sessionId, thread, channel, directory: session.location.directory, userId: author.id, parentSessionId })
+      const instructions = await putInstructions({ sessionId, thread, channel, directory: session.location.directory, userId: author.id, parentSessionId, scheduledTask })
       if (instructions instanceof Error) return instructions
       const messages = await opencodeClient.message
         .list({ sessionID: sessionId, order: 'desc', limit: 100 })
@@ -1086,6 +1103,7 @@ export function createActions({
       channel,
       session: info,
       parentSessionId: storedParentSessionId(info.metadata),
+      scheduledTask: storedScheduledRun(info.metadata),
       threadName: `Resume: ${title}`,
       intro: `**Resumed session:** ${title}\n**Created:** <t:${Math.floor(info.time.created / 1_000)}:f>`,
       note: '**Session resumed!** You can now continue the conversation by sending messages in this thread.',
