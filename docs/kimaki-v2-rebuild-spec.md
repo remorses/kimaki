@@ -674,8 +674,8 @@ Principles:
 | `session.execution.succeeded` | stop typing, footer |
 | `session.execution.failed` | stop typing, `✗ error message` (max 400 chars), no footer |
 | `session.execution.interrupted` | stop typing, no footer, no error |
-| `session.inbox.enqueued` (queue) | reply `Queued (position N)` + Remove button on the source message |
-| `session.inbox.delivered` | queued item: post `» Tommy: prompt preview`; remove its Remove button |
+| `session.inbox.enqueued` (queue) | reply `Queued (position N)` on the source message, no button |
+| `session.inbox.delivered` | queued item: post `» Tommy: prompt preview`; the ack says `Queued message sent` |
 | `session.inbox.cancelled` | remove queued ack |
 | `form.created` (question) | stop typing, dropdowns after preceding text is rendered |
 | `form.replied` / `.cancelled` | disable dropdowns |
@@ -747,7 +747,7 @@ Event handling table (everything not listed is ignored):
 | `session.tool.failed` | error line | |
 | `session.tool.progress` (task tool, `metadata.sessionID`) | fast path to register a child | `children`, store `sessionThreads` |
 | any event of an **unknown** session | hold its events, `session.get` → follow `parentID` up; if it reaches a bound session, register it as a child and apply the held events | `children`, store `sessionThreads` |
-| `session.inbox.enqueued` / `.delivered` / `.cancelled` | queue ack, `» user` echo, Remove | `queued` |
+| `session.inbox.enqueued` / `.delivered` / `.cancelled` | queue ack, `» user` echo | `queued` |
 | `session.shell.started` / `.ended` | `!cmd` output | |
 | `form.created` / `.replied` / `.cancelled` | question UI (root **and children**) | `ui.forms` |
 | `permission.asked` / `.replied` | permission UI (root **and children**) | `ui.permissions` |
@@ -1070,7 +1070,7 @@ edits/deletes of the Discord message update the row.
 |---|---|
 | queue a prompt | `session.prompt({ …, delivery: 'queue', metadata: { discord: {...} } })` |
 | show position | derive `pendingQueue(view)` from `inbox.enqueued − delivered − cancelled` |
-| Remove button | `session.inbox.cancel({ sessionID, inboxID })`; customId `queue_remove:<inboxID>` (fits 100 chars) |
+| delete the source Discord message | `session.inbox.cancel({ sessionID, inboxID: msg_discord_<messageId> })`; the ack has no button |
 | `/clear-queue [position]` | cancel one or all pending inbox IDs |
 | edit queued Discord message | see 9.2.2 |
 | delete queued Discord message | `inbox.cancel({ inboxID: msg_discord_<messageId> })` |
@@ -1965,8 +1965,8 @@ for await (const event of client.event.subscribe({ signal })) {
 - **A `!cmd` while busy wakes the model.** Its synthetic output item is a steer item, so
   after the current step the model gets another step and answers it.
 - **Restart re-renders pending questions and permissions** (the old message IDs are
-  unknown): the old message stays and still works. Old queue acks keep their Remove
-  button, which also still works (custom ID = inbox ID). **Decided (P6): accept the
+  unknown): the old message stays and still works. Old queue acks stay as
+  posted; deleting the source message still cancels the item. **Decided (P6): accept the
   duplicates.** Both messages answer the same form or request; storing message IDs
   would add persisted state only to hide a rare restart artifact.
 - **`. btw queue` forks at once**: a queued fork is not native (9.2).
@@ -2193,7 +2193,7 @@ kimaki tunnel, tts, user list      voice routing  queued !cmd   external sync   
 | Feature | Where it hooks into the core | Why remove |
 |---|---|---|
 | **`!cmd. queue` and `. btw queue`** | local queue with `queuedAction`, drain logic | the only reason to keep a Kimaki queue beside the native inbox. Plain `!cmd` stays: native `session.shell` runs it without interrupting and puts output in context (see 9.2.1), so queueing it is pointless |
-| **edit / delete a queued Discord message updates the queue** | `messageUpdate` / `messageDelete` handlers → queue mutation | Remove button already covers it |
+| **edit / delete a queued Discord message updates the queue** | `messageUpdate` / `messageDelete` handlers → queue mutation | `/clear-queue` covers items without a source message |
 | **external session sync** (`--enable-sync`, TUI sessions mirrored to `Sync:` threads) | second renderer path (`collectSessionChunks`, batching), ownership rules (`<discord-user>` detection), typing for foreign sessions, 5s polling | a whole second event→Discord pipeline; replace with `/resume` or `kimaki session read` |
 | **context-only messages** (leading `@otheruser` in a thread → `noReply` synthetic) | extra admission kind (`synthetic resume:false`), skip UI dismissal, skip typing | ignore these messages, like in channels |
 | **question queue handoff** (queued prompt answers a pending question) | special path between queue and forms | native: a new message cancels the form, then steers |
@@ -2595,7 +2595,7 @@ kimaki CLI ──POST /kimaki/action/<name> { args, sessionID? }──┘
 | message in channel, `/new-session` | `send --channel` | `send` |
 | message in thread | `send --thread` | `send` |
 | `. queue`, `/queue` | `send --thread … -p '… . queue'` or `session queue add <text>` | `send` (delivery queue) |
-| queue Remove button, `/clear-queue` | `session queue list`, `session queue remove <inboxId>`, `session queue clear` | `queue.list/remove/clear` |
+| delete queued message, `/clear-queue` | `session queue list`, `session queue remove <inboxId>`, `session queue clear` | `queue.list/remove/clear` |
 | `/queue-command` | `session command <name> [args] --queue` | `command` |
 | `/<cmd>-cmd`, `/<skill>-skill`, `/<prompt>-mcp-prompt` | `session command <name> [args]` | `command` |
 | `. btw`, `/btw` | `session btw <text>` | `btw` |
@@ -2818,7 +2818,7 @@ plugin, scheduler, sleeps. The agent→bot transport stays the local lock port
 | external session sync (`--enable-sync`) | TUI sessions mirrored into `Sync:` threads | gone | `kimaki session read`, `/resume` |
 | queued shell `!cmd. queue` | runs after the turn | gone until [opencode#52274](https://github.com/anomalyco/opencode/issues/52274) | `!cmd` runs in parallel via `session.shell`, output joins context |
 | `. btw queue` | fork after the turn | gone | `. btw` (fork now) |
-| edit/delete a queued Discord message | updates/removes the queue item | gone | Remove button, `session queue remove` |
+| edit/delete a queued Discord message | updates/removes the queue item | gone | `/clear-queue`, `session queue remove` |
 | thread rename from OpenCode title | automatic | gone | `kimaki session title` |
 | footer mentions (`--enable-footer-mentions`) | `<@user>` in footer | gone | Discord thread notifications |
 | cache-clear notice, cache drift patches | debug notices | gone | logs |
@@ -2910,7 +2910,7 @@ optionally `file-edit-events.jsonl`.
 | block → Discord message ID map | last text of an in-progress turn is not re-edited; mid-turn gap (Q5) | accept, post `-# kimaki restarted` in busy threads |
 | typing timers | restarted from the next busy event | none needed |
 | pending question dropdowns, permission buttons | re-rendered from `form.list` / `permission.list` at startup; custom IDs carry native IDs, so old buttons still work | built in |
-| queue Remove buttons | custom ID carries `inboxID`: still works | built in |
+| queue acks | source message ID maps to the inbox item (`msg_discord_<id>`): delete still works | built in |
 | **action buttons** (`kimaki buttons`) | today stored in memory with a 24h TTL and `action_button:<hash>:<i>`; after a restart clicks fail | encode the button in the custom ID when it fits (`ab:<sessionId>:<i>`) and read label/command back from the rendered message's components, so no store is needed |
 | upload requests | the waiting CLI call is dropped with the connection | the CLI prints an error; the agent can ask again |
 | slash command wizards (`/model`, `/login`) | user reruns the command | none needed |
@@ -3071,7 +3071,7 @@ The core reducer composes feature reducers.
 | `format-parts.ts` | pure formatting: tool lines per tool, footer line, banner, verbosity filter |
 | `questions.ts` | form events slice, dropdown rendering, `Other` modal, select handler → `actions.answerForm` |
 | `permissions.ts` | permission events slice, Accept / Always / Deny buttons, timeout, handler → `actions.replyPermission` |
-| `queue.ts` | inbox events slice, "Queued (position N)" ack, Remove button handler, edit/delete of Discord messages → `actions.queue*` |
+| `queue.ts` | inbox events slice, "Queued (position N)" ack (no button), edit/delete of Discord messages → `actions.queue*` |
 | `agent-ui.ts` | `kimaki buttons`, `kimaki upload-request`: lock-server handlers, rendering, click/upload handlers |
 | `ingress.ts` | gates (bots, ownership, permission, mentions), attachments → files |
 | `routes.ts` | `parseTextMessage`, `parseVoiceMessage` → `Route` (pure, tested) |
@@ -3288,7 +3288,7 @@ Client method names follow the OpenAPI identifier (`session.prompt` → `client.
 | `session.shell` | `POST /api/session/:id/shell` `{ id?, command }` | `!cmd` |
 | `session.synthetic` | `POST /api/session/:id/synthetic` | optional notes into context |
 | `session.interrupt` | `POST /api/session/:id/interrupt?resume=` | interrupt + steer, `/abort` |
-| `session.inbox.list / cancel / update` | `/api/session/:id/inbox[/:inboxID]` | queue list, Remove, promote |
+| `session.inbox.list / cancel / update` | `/api/session/:id/inbox[/:inboxID]` | queue list, cancel, promote |
 | `session.fork` | `POST /api/session/:id/fork` | btw, `/fork` |
 | `session.switchAgent / switchModel` | `POST /api/session/:id/agent`, `/model` | `/agent`, `/model` |
 | `session.compact` | `POST /api/session/:id/compact` | `/compact` |
@@ -3747,8 +3747,8 @@ commands.
 - `routes.ts`: `. queue` suffix, `/queue`
 - `actions.send`: `steer` + `interrupt({ resume: true })` when `view.busy`; `queue` →
   `delivery: 'queue'` with `id: msg_discord_<messageId>`
-- `queue.ts` feature file: `inbox.*` reducer slice, "Queued (position N)" ack, Remove
-  button (`inbox.cancel`), `» user: text` echo on `inbox.delivered`, Discord message
+- `queue.ts` feature file: `inbox.*` reducer slice, "Queued (position N)" ack (no
+  button; delete the source message = `inbox.cancel`), `» user: text` echo on `inbox.delivered`, Discord message
   delete → cancel, edit → cancel + re-enqueue
 - `/abort`, `/clear-queue`, `/queue`
 - startup seeding: `session.active`, `inbox.list`

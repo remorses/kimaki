@@ -2,8 +2,6 @@
 // footer appear, and follow-ups continue the same session.
 
 import fs from 'node:fs'
-import path from 'node:path'
-import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
@@ -134,7 +132,7 @@ test('message in a channel without a project creates no thread', async () => {
   await expectNoNewThread({ channelId: unregisteredChannelId, before: 0 })
 })
 
-test('/session-id shows the session and debug commands; events are recorded per thread', async () => {
+test('/session-id shows the session, thread and attach command; events are recorded per thread', async () => {
   const { discord } = twin
   const [binding] = await bot.db.db.query.thread_sessions.findMany({ where: { thread_id: helloThreadId } })
   const { id: interactionId } = await discord.thread(helloThreadId).user(TEST_USER_ID).runSlashCommand({ name: 'session-id' })
@@ -144,17 +142,14 @@ test('/session-id shows the session and debug commands; events are recorded per 
   const redacted = content
     .replaceAll(binding!.session_id, 'ses_X')
     .replaceAll(helloThreadId, 'THREAD')
-    .replaceAll(dataDir, 'DATA')
     .replaceAll(server.projectDirectory, 'PROJECT')
-    .replaceAll(process.execPath, 'NODE')
-    .replaceAll(createRequire(import.meta.url).resolve('tsx'), 'TSX')
-    .replaceAll(path.resolve('src/cli.ts'), 'CLI')
   expect(redacted).toMatchInlineSnapshot(`
-    "**Session:** \`ses_X\`
-    **Thread:** \`THREAD\`
-    Messages: \`'NODE' --import 'TSX' 'CLI' --data-dir 'DATA' session read ses_X\`
-    Events (retries, errors, order): \`'NODE' --import 'TSX' 'CLI' --data-dir 'DATA' session events ses_X\`
-    Open in the OpenCode TUI: \`opencode2 PROJECT --session ses_X\`"
+    "**Session ID:** \`ses_X\`
+    **Thread ID:** \`THREAD\`
+    **Attach command:**
+    \`\`\`bash
+    opencode2 PROJECT --session ses_X
+    \`\`\`"
   `)
 
   const lines = fs.readFileSync(sessionEventsFile({ dataDir, threadId: helloThreadId }), 'utf8').trim().split('\n')

@@ -142,7 +142,7 @@ test('a restarted bot still echoes and runs the queue it did not see', async () 
     --- from: user (tommy)
     Survives restart queued-one. queue
     --- from: assistant (TestBot)
-    -# Queued at position 1. Edit or delete your message to update the queue
+    -# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1
     slow-done
     » **tommy:** Survives restart queued-one
     queued one ok

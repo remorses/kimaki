@@ -96,7 +96,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/report-skill: Use when the user wants to report an opencode issue or bug. Collect standard diagnostics, add user-s",
       "/resume: Resume an existing OpenCode session in a new thread",
       "/review-cmd: review changes [commit|branch|pr], defaults to uncommitted",
-      "/session-id: Show the OpenCode session ID of this thread and how to debug it",
+      "/session-id: Show the OpenCode session ID of this thread and how to open it in OpenCode",
       "/undo: Undo the last turn and revert its file changes",
       "/verbosity: Set what the bot shows in this channel",
     ]

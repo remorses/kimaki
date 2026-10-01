@@ -2,20 +2,15 @@
 // Kimaki keeps no queue of its own; this slice only mirrors inbox events of
 // the root session to render them:
 //
-//   inbox.enqueued (queue, while busy) ─▶ "Queued at position N" + Remove
-//   inbox.delivered                    ─▶ "» user: text" echo, ack loses its button
+//   inbox.enqueued (queue, while busy) ─▶ "Queued at position N" ack
+//   inbox.delivered                    ─▶ "» user: text" echo, ack says "Queued message sent"
 //   inbox.cancelled                    ─▶ ack says "Removed from queue"
 //
 // A queued prompt's inbox ID is msg_discord_<messageId> (actions.ts), so a
-// Remove click, a message delete or an edit maps to the item by ID alone.
+// message delete or an edit maps to the item by ID alone. Items without a
+// Discord source message (/queue, CLI, commands) are removed with /clear-queue.
 
-import {
-  ButtonStyle,
-  MessageFlags,
-  type ButtonInteraction,
-  type Message,
-  type PartialMessage,
-} from 'discord.js'
+import type { Message, PartialMessage } from 'discord.js'
 import type { JsonValue, SessionInboxInfo, V2Event } from '@opencode/client'
 
 import type { Actions, PromptFile } from './actions.ts'
@@ -24,11 +19,9 @@ import { createLogger } from './logger.ts'
 import type { BotStore } from './store.ts'
 import { stripTurnContext } from './system-prompt.ts'
 import type { Effect, ThreadView } from './thread-reducer.ts'
-import { button, buttonRow, textOnly, type UiMessage } from './effects.ts'
+import { textOnly } from './effects.ts'
 
 const logger = createLogger('QUEUE')
-
-export const QUEUE_REMOVE_PREFIX = 'queue_remove:'
 
 const ECHO_LIMIT = 1_900
 
@@ -46,15 +39,6 @@ type Result = { view: ThreadView; effects: Effect[] }
 
 function ackKey(inboxID: string): string {
   return `queue:${inboxID}`
-}
-
-function ackMessage({ inboxID, position }: { inboxID: string; position: number }): UiMessage {
-  return {
-    content: asSubtext(`Queued at position ${position}. Edit or delete your message to update the queue`),
-    components: [
-      buttonRow([button({ customId: `${QUEUE_REMOVE_PREFIX}${inboxID}`, label: 'Remove from queue', style: ButtonStyle.Secondary })]),
-    ],
-  }
 }
 
 function discordMetadata(metadata: { readonly [key: string]: JsonValue } | undefined) {
@@ -100,7 +84,7 @@ export function reduceQueue({ view, event, busy }: { view: ThreadView; event: V2
       const queued: QueuedItem = { inboxID, text: stripTurnContext(item.payload.text), ...meta, acked }
       const next = { ...view, inputs, queue: [...view.queue, queued] }
       if (!acked) return { view: next, effects: [] }
-      const ack = ackMessage({ inboxID, position: next.queue.length })
+      const ack = textOnly(asSubtext(`Queued at position ${next.queue.length}. Delete the original message to remove it, or use /clear-queue position:${next.queue.length}`))
       return { view: next, effects: [{ type: 'show', key: ackKey(inboxID), messages: [ack], replyTo: meta.messageId }] }
     }
     case 'session.inbox.delivered': {
@@ -154,23 +138,6 @@ export function hydrateQueue({ view, inbox }: { view: ThreadView; inbox: readonl
 }
 
 // --- Discord handlers (writers side): they call actions, never render session output.
-
-export async function handleQueueRemove({
-  interaction,
-  actions,
-}: {
-  interaction: ButtonInteraction
-  actions: Actions
-}): Promise<void> {
-  const inboxID = interaction.customId.slice(QUEUE_REMOVE_PREFIX.length)
-  await interaction.deferUpdate()
-  const result = await actions.cancelQueued({ threadId: interaction.channelId, inboxID })
-  if (!(result instanceof Error)) return
-  logger.warn(`remove ${inboxID} failed: ${result.message}`)
-  await interaction
-    .followUp({ content: 'This message is no longer in the queue', flags: MessageFlags.Ephemeral })
-    .catch(() => undefined)
-}
 
 export function queuedItemFor({ store, threadId, messageId }: { store: BotStore; threadId: string; messageId: string }) {
   return store.getState().threads[threadId]?.queue.find((item) => item.messageId === messageId) ?? null

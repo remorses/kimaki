@@ -1,9 +1,8 @@
 // Phase 3: the queue on the native OpenCode inbox. `. queue` waits for the run,
-// the Remove button, message delete/edit and /clear-queue change the inbox.
+// message delete/edit and /clear-queue change the inbox.
 
 import fs from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
-import type { APIMessage } from 'discord.js'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
@@ -75,16 +74,6 @@ async function startSlowThread(content: string) {
   return thread
 }
 
-function removeButton(message: APIMessage): string | null {
-  for (const row of message.components ?? []) {
-    if (!('components' in row)) continue
-    for (const component of row.components) {
-      if ('custom_id' in component && component.custom_id.startsWith('queue_remove:')) return component.custom_id
-    }
-  }
-  return null
-}
-
 // The queue ack is a reply to the queued message.
 async function waitForAck({ threadId, messageId }: { threadId: string; messageId: string }) {
   return waitFor({
@@ -135,15 +124,20 @@ test('. queue waits for the run, acks with position, echoes when it starts', asy
   `)
 })
 
-test('Remove button and message delete take items out of the queue, edit re-queues', async () => {
+test('message delete takes items out of the queue, edit re-queues', async () => {
   const thread = await startSlowThread('Queue edits')
   const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
   const removed = await user.sendMessage({ content: 'Remove me queued-one. queue' })
-  const ack = await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'position 1' })
-  const customId = removeButton(ack)
-  expect(customId).toBeTruthy()
-  await user.clickButton({ messageId: ack.id, customId: customId! })
-  await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'Removed from queue' })
+  const ack = await waitForAck({ threadId: thread.id, messageId: removed.id })
+  expect(ack.components ?? []).toEqual([])
+  await user.deleteMessage({ messageId: removed.id })
+  await waitFor({
+    label: 'ack of the deleted message settles',
+    check: async () => {
+      const messages = await twin.discord.thread(thread.id).getMessages()
+      return messages.find((message) => message.id === ack.id && message.content.includes('Removed from queue'))
+    },
+  })
 
   const deleted = await user.sendMessage({ content: 'Delete me queued-two. queue' })
   await waitForAck({ threadId: thread.id, messageId: deleted.id })
@@ -167,15 +161,11 @@ test('Remove button and message delete take items out of the queue, edit re-queu
 
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'edited ok' })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
-  expect(removed.id).toBeTruthy()
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     Queue edits slow-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    --- from: user (tommy)
-    Remove me queued-one. queue
-    --- from: assistant (TestBot)
     -# Removed from queue
     -# Removed from queue
     --- from: user (tommy)

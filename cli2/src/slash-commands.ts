@@ -45,6 +45,7 @@ import dedent from 'string-dedent'
 import type { Actions, Author, ModelChoice } from './actions.ts'
 import type { AgentUi } from './agent-ui.ts'
 import { createPreferenceCommands } from './commands/preference-commands.ts'
+import { shellQuote } from './onboarding.ts'
 import { createSessionCommands } from './commands/session-commands.ts'
 import { createLoginCommands } from './commands/login-commands.ts'
 import type { KimakiDb } from './db.ts'
@@ -52,10 +53,10 @@ import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableE
 import { formatError } from './format-parts.ts'
 import { canUseKimaki } from './ingress.ts'
 import { createLogger } from './logger.ts'
-import type { OpenCodeClient, OpencodeConnection } from './opencode-server.ts'
+import type { OpenCodeClient, OpencodeConnection, V2Event } from './opencode-server.ts'
 import { handlePermissionButton, PERMISSION_PREFIX } from './permissions.ts'
 import { createQuestionHandlers, FORM_OTHER_PREFIX, FORM_SELECT_PREFIX } from './questions.ts'
-import { formatEcho, handleQueueRemove, QUEUE_REMOVE_PREFIX } from './queue.ts'
+import { formatEcho } from './queue.ts'
 import type { Route } from './routes.ts'
 import { resolveSession } from './session-events.ts'
 import type { BotStore } from './store.ts'
@@ -65,6 +66,15 @@ const execFileAsync = promisify(execFile)
 
 const MAX_COMMANDS = 100
 const NAME_LIMIT = 32
+const CATALOG_REFRESH_MS = 1_000
+
+// Global OpenCode events after which agent.list or command.list may differ.
+// Not skill.updated: every skill.list call makes OpenCode emit it for all
+// locations, so reacting to it would refresh in a loop. skill.list waits for
+// the skill scan, so the read in a pass is already complete.
+export function isCatalogEvent(event: V2Event): boolean {
+  return event.type === 'agent.updated' || event.type === 'command.updated'
+}
 // Built-in OpenCode command that only makes sense in the TUI (V1 skipped it too).
 const SKIPPED_COMMANDS = new Set(['init'])
 
@@ -119,7 +129,7 @@ const STATIC_COMMANDS = [
   new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage and context window percentage'),
   new SlashCommandBuilder()
     .setName('session-id')
-    .setDescription('Show the OpenCode session ID of this thread and how to debug it'),
+    .setDescription('Show the OpenCode session ID of this thread and how to open it in OpenCode'),
 ].map((command) => command.setDMPermission(false).toJSON())
 
 export type DynamicCommand =
@@ -148,6 +158,8 @@ export function discordCommandName(name: string, suffix: string): string | null 
 export function buildCommands(catalog: Catalog): {
   commands: RESTPostAPIChatInputApplicationCommandsJSONBody[]
   dynamic: Map<string, DynamicCommand>
+  // Commands past the Discord limit that were left out.
+  dropped: number
 } {
   const taken = new Set(STATIC_COMMANDS.map((command) => command.name))
   const dynamic = new Map<string, DynamicCommand>()
@@ -196,31 +208,27 @@ export function buildCommands(catalog: Catalog): {
       text: skill.description || `Use the ${skill.id} skill`,
     })
   }
-  if (commands.length > MAX_COMMANDS) {
-    logger.warn(`${commands.length} commands exceed the Discord limit of ${MAX_COMMANDS}; the last ones are dropped`)
-    for (const dropped of commands.slice(MAX_COMMANDS)) dynamic.delete(dropped.name)
-  }
-  return { commands: commands.slice(0, MAX_COMMANDS), dynamic }
+  for (const dropped of commands.slice(MAX_COMMANDS)) dynamic.delete(dropped.name)
+  return { commands: commands.slice(0, MAX_COMMANDS), dynamic, dropped: Math.max(0, commands.length - MAX_COMMANDS) }
 }
 
 export function sessionIdReply({
   sessionId,
   threadId,
   directory,
-  kimaki,
 }: {
   sessionId: string
   threadId: string
   directory: string | null
-  kimaki: string
 }): string {
-  const attach = directory ? `opencode2 ${directory} --session ${sessionId}` : `opencode2 --session ${sessionId}`
+  const attach = directory ? `opencode2 ${shellQuote(directory)} --session ${sessionId}` : `opencode2 --session ${sessionId}`
   return dedent`
-    **Session:** \`${sessionId}\`
-    **Thread:** \`${threadId}\`
-    Messages: \`${kimaki} session read ${sessionId}\`
-    Events (retries, errors, order): \`${kimaki} session events ${sessionId}\`
-    Open in the OpenCode TUI: \`${attach}\`
+    **Session ID:** \`${sessionId}\`
+    **Thread ID:** \`${threadId}\`
+    **Attach command:**
+    \`\`\`bash
+    ${attach}
+    \`\`\`
   `
 }
 
@@ -263,7 +271,6 @@ export async function respondChoices(
 export function registerSlashCommands({
   discord,
   db,
-  kimaki,
   store,
   actions,
   opencode,
@@ -271,7 +278,6 @@ export function registerSlashCommands({
 }: {
   discord: Client
   db: KimakiDb
-  kimaki: string
   store: BotStore
   actions: Actions
   opencode: OpencodeConnection
@@ -310,6 +316,10 @@ export function registerSlashCommands({
     return catalog
   }
 
+  // Last commands set per guild: an unchanged list is not sent again (Discord
+  // limits command creates to 200 per day per guild).
+  const registered = new Map<string, string>()
+
   async function registerGuild(guild: Guild): Promise<void> {
     const rows = await db.query.channel_directories
       .findMany({ where: { channel_type: 'text' } })
@@ -321,6 +331,15 @@ export function registerSlashCommands({
     // Rows from before guild_id was stored belong to any guild.
     const directories = [...new Set(rows.filter((row) => !row.guild_id || row.guild_id === guild.id).map((row) => row.directory))]
     const built = buildCommands(await catalogFor(directories))
+    if (refresh.closed) return
+    const signature = JSON.stringify(built.commands)
+    if (registered.get(guild.id) === signature) {
+      dynamic.set(guild.id, built.dynamic)
+      return
+    }
+    if (built.dropped > 0) {
+      logger.warn(`${built.commands.length + built.dropped} commands exceed the Discord limit of ${MAX_COMMANDS}; ${built.dropped} dropped`)
+    }
     const result = await discord.application?.commands
       .set(built.commands, guild.id)
       .catch((e) => new DiscordError({ operation: `register commands in ${guild.id}`, cause: e }))
@@ -328,6 +347,7 @@ export function registerSlashCommands({
       logger.warn(result.message)
       return
     }
+    registered.set(guild.id, signature)
     dynamic.set(guild.id, built.dynamic)
     logger.log(`registered ${built.commands.length} commands in guild ${guild.id}`)
   }
@@ -460,7 +480,7 @@ export function registerSlashCommands({
     const parent = channel?.isThread() ? channel.parentId : null
     const project = parent ? await db.query.channel_directories.findFirst({ where: { channel_id: parent } }) : null
     await interaction.reply({
-      content: sessionIdReply({ ...resolved, directory: project?.directory ?? null, kimaki }),
+      content: sessionIdReply({ ...resolved, directory: project?.directory ?? null }),
       flags: MessageFlags.Ephemeral,
     })
   }
@@ -673,9 +693,6 @@ export function registerSlashCommands({
     if (interaction.isModalSubmit() && interaction.customId.startsWith('file_upload_modal:')) return agentUi.modal(interaction)
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('login_')) return login.select(interaction)
     if (interaction.isModalSubmit() && interaction.customId.startsWith('login_')) return login.modal(interaction)
-    if (interaction.isButton() && interaction.customId.startsWith(QUEUE_REMOVE_PREFIX)) {
-      return handleQueueRemove({ interaction, actions })
-    }
     if (interaction.isButton() && interaction.customId.startsWith(PERMISSION_PREFIX)) {
       return handlePermissionButton({ interaction, store, actions })
     }
@@ -692,12 +709,55 @@ export function registerSlashCommands({
   discord.on(Events.InteractionCreate, (interaction) => {
     handle(interaction).catch((error: Error) => logger.error(`interaction failed: ${error.message}`))
   })
-  discord.on(Events.GuildCreate, (guild) => void registerGuild(guild))
+  // OpenCode loads agents, commands and skills lazily (config, plugins, files),
+  // so the catalog read at startup can be incomplete. Every registration goes
+  // through register(): one pass at a time, and a request made during a pass
+  // runs one more pass, so an older catalog read never overwrites a newer one.
+  const refresh: { timer: ReturnType<typeof setTimeout> | null; active: Promise<void> | null; dirty: boolean; closed: boolean } = {
+    timer: null,
+    active: null,
+    dirty: false,
+    closed: false,
+  }
+
+  // Bulk overwrite of every guild's commands from the current OpenCode catalog.
+  function register(): Promise<void> {
+    refresh.dirty = true
+    if (refresh.active) return refresh.active
+    const pass = (async () => {
+      try {
+        while (refresh.dirty && !refresh.closed) {
+          refresh.dirty = false
+          await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild)))
+        }
+      } finally {
+        refresh.active = null
+      }
+    })()
+    refresh.active = pass
+    return pass
+  }
+
+  discord.on(Events.GuildCreate, () => void register())
 
   return {
-    // Bulk overwrite of every guild's commands from the current OpenCode catalog.
-    async registerAll(): Promise<void> {
-      await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild)))
+    registerAll: register,
+    // The catalog may have changed: register again soon (one trailing pass per window).
+    // `force` also resends lists that look unchanged, to repair commands removed in Discord.
+    scheduleRefresh({ force }: { force: boolean }): void {
+      if (force) registered.clear()
+      if (refresh.closed || refresh.timer) return
+      refresh.timer = setTimeout(() => {
+        refresh.timer = null
+        register().catch((e: Error) => logger.warn(`command refresh failed: ${e.message}`))
+      }, CATALOG_REFRESH_MS)
+    },
+    // Waits for a running pass so nothing writes after Discord is destroyed.
+    async stop(): Promise<void> {
+      refresh.closed = true
+      if (refresh.timer) clearTimeout(refresh.timer)
+      refresh.timer = null
+      await refresh.active?.catch(() => undefined)
     },
   }
 }
