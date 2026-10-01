@@ -1,0 +1,309 @@
+import { execFile } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { afterAll, beforeAll, expect, test } from 'vitest'
+import type { BotHandle } from './main.ts'
+import { seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitForFooter, warmUp, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
+
+const exec = promisify(execFile)
+const dataDir = tempDataDir()
+let server: OpencodeTestServer
+let twin: TestTwin
+let bot: BotHandle
+
+beforeAll(async () => {
+  ;[server, twin] = await Promise.all([startOpencodeTestServer(), startTwin()])
+  await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
+  bot = await startTestBot({ dataDir, twin, server })
+  await warmUp({ server })
+}, 60_000)
+afterAll(async () => {
+  await bot?.stop()
+  await Promise.all([server?.stop(), twin?.stop()])
+  fs.rmSync(dataDir, { recursive: true, force: true })
+})
+
+function cli(args: string[]) {
+  return exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), ...args, '--data-dir', dataDir], {
+    env: { ...process.env, KIMAKI_LOCK_PORT: String(bot.lock.port), KIMAKI_OPENCODE_SERVICE_FILE: server.serviceFile },
+  })
+}
+
+test('CLI send starts and continues a session through the authenticated bot API', async () => {
+  const first = await cli(['send', '--channel', twin.channelId, '--prompt', 'CLI first'])
+  const ids = JSON.parse(first.stdout) as { threadId: string; sessionId: string }
+  await waitForFooter({ discord: twin.discord, threadId: ids.threadId })
+  await cli(['send', '--thread', ids.threadId, '--prompt', 'CLI second. queue'])
+  await waitForFooter({ discord: twin.discord, threadId: ids.threadId, count: 2 })
+  expect(await twin.discord.thread(ids.threadId).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    » **CLI:** CLI first
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+  `)
+  expect(ids.sessionId).toMatch(/^ses_/)
+  const tokenFile = path.join(dataDir, 'lock-token')
+  expect(fs.statSync(tokenFile).mode & 0o777).toBe(0o600)
+  const unauthorized = await fetch(`http://127.0.0.1:${bot.lock.port}/kimaki/send`, { method: 'POST', body: '{}' })
+  expect(unauthorized.status).toBe(401)
+  const token = fs.readFileSync(tokenFile, 'utf8')
+  const invalid = await fetch(`http://127.0.0.1:${bot.lock.port}/kimaki/send`, {
+    method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ channelId: { gt: '0' }, prompt: 'unsafe' }),
+  })
+  expect(invalid.status).toBe(400)
+})
+
+test('CLI help documents the supported P7 commands', async () => {
+  const output = await cli(['--help'])
+  expect(output.stdout).toContain('send')
+  expect(output.stdout).toContain('upload-request')
+  expect(output.stdout).toMatchInlineSnapshot(`
+    "kimaki2
+
+    Usage:
+      $ kimaki2 [options]
+
+    Commands:
+      kimaki2                       Start the bot. Runs onboarding on first start
+
+      Project:
+      project list                  List project directories and their channels
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --json                      Output as JSON
+
+      project add [directory]       Create a channel for a directory (default: current directory)
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -g, --guild <guildId>       Server (default: the one with Kimaki channels)
+
+      Session:
+      session list                  List sessions with native status and token counts
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --project <path>            Project (default: current directory)
+        --all                       All projects
+        --active                    Only busy sessions; exit 1 when none remain, 64 on errors
+        --exclude <id>              Exclude session (repeatable)
+        --json                      Output as JSON
+
+      session search <query>        Search titles, then real message content
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --project <path>            Project (default: current directory)
+        --all                       All projects
+        --days <n>                  Recent days (default: 14; 0 = all)
+        --json                      Output as JSON
+
+      session wait <id>             Wait until idle or waiting for input, then print the session
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --timeout <duration>        Timeout, for example 30m or 2h
+
+      session url <id>              Print the Discord URL of a session or thread
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+
+      channel agent [value]         Set channel agent through the running bot
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -c, --channel <id>          Target channel (default: current project)
+        --variant <name>            Thinking variant for model
+        --clear                     Clear a saved agent or model
+
+      channel model [value]         Set channel model through the running bot
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -c, --channel <id>          Target channel (default: current project)
+        --variant <name>            Thinking variant for model
+        --clear                     Clear a saved agent or model
+
+      channel verbosity [value]     Set channel verbosity through the running bot
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -c, --channel <id>          Target channel (default: current project)
+        --variant <name>            Thinking variant for model
+        --clear                     Clear a saved agent or model
+
+      session abort [id]            Stop the running turn and clear its queue
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+
+      session archive [threadId]    Archive a session thread
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+
+      session title <title>         Rename the session and its Discord thread
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+
+      session queue add <value>     add native queued prompts
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        --json                      Output as JSON
+
+      session queue remove <value>  remove native queued prompts
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        --json                      Output as JSON
+
+      session queue list            list native queued prompts
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        --json                      Output as JSON
+
+      session queue clear           clear native queued prompts
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        --json                      Output as JSON
+
+      session shell <text>          Run shell through the shared session action
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        --queue                     Queue an OpenCode command
+
+      session btw <text>            Run btw through the shared session action
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        --queue                     Queue an OpenCode command
+
+      session command <text>        Run command through the shared session action
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        --queue                     Queue an OpenCode command
+
+      session fork [id]             Fork a root or child session into a new thread
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --before <messageId>        Fork before this user message
+
+      session resume <id>           Bind an existing session to a new thread
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -c, --channel <id>          Destination channel
+
+      buttons                       Show 1-3 action buttons. Call last, after visible text
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        -b, --button <spec>         Repeatable: Label[=command][:white|blue|green|red]
+
+      upload-request                Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+        -p, --prompt <text>         Text above the upload button
+        --max-files <n>             1 to 10 (default: 5)
+
+      login <provider>              Connect a provider using OpenCode integration credentials
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --key <key>                 API key to store in OpenCode
+        --method <id>               OAuth method ID; without flags, list login methods
+        --attempt <id>              Check or complete this native OAuth attempt
+        --code <code>               Authorization code for the attempt
+        --cancel                    Cancel the native OAuth attempt
+
+      login credential <id>         Activate, remove, or label an OpenCode credential
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --operation <name>          activate | remove | label
+        --label <text>              Credential label
+
+      send                          Start a session in a channel, or continue a thread
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -c, --channel <id>          New thread in this channel
+        -d, --project <path>        Project directory of the new thread
+        --thread <id>               Continue this thread
+        -s, --session <id>          Continue this local session
+        -p, --prompt <text>         Prompt; thread suffixes . queue and . btw are supported
+        -f, --file <path>           Attach a local file (repeatable)
+        -n, --name <text>           Thread name
+        --agent <name>              Agent ID
+        --model <provider/model>    Model for the new session
+        -u, --user <id>             Add this Discord user to the thread
+        --cwd <path>                Existing subfolder of the target project
+        --parent-session <id>       Record the parent session in session metadata
+        --permission <rule>         Repeatable: tool[:pattern]:allow|deny|ask
+        --notify-only               Post a notification thread without a model turn
+        --wait                      Wait until idle or input is needed, then print the session
+
+      session events <id>           Print the recorded OpenCode events of a thread as JSONL (root + subagents)
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+
+      session read <id>             Print the messages of a session from OpenCode as markdown
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        --thinking                  Include reasoning
+        --verbose                   Include full tool inputs and outputs
+        --json                      Print raw OpenCode messages
+
+      Discord:
+      thread list                   List active and optionally archived threads in a channel
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -c, --channel <id>          Channel to list
+        --archived                  Include archived threads
+        --json                      Output as JSON
+
+      user list                     Find Discord users for mentions
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -g, --guild <id>            Guild to search
+        -q, --query <text>          Name filter
+        --json                      Output as JSON
+
+      upload-to-discord <...files>  Attach local files to a session thread
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+
+      bot token                     Print saved bot credentials for automation
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+
+      bot install-url               Print the Discord bot install URL
+        --data-dir <path>           Data directory (default: ~/.kimaki)
+
+    Options:
+      --data-dir <path>      Data directory (default: ~/.kimaki)
+      -g, --guild <guildId>  Server to onboard when the bot is in several
+      --gateway              Use the shared Kimaki bot, no Discord app needed
+      --restart-onboarding   Choose credentials again
+      -h, --help             Display this message
+    "
+  `)
+})
+
+test('CLI registry shares thread actions, preferences, title and archive', async () => {
+  const started = JSON.parse((await cli(['send', '--channel', twin.channelId, '-p', 'Registry first'])).stdout) as { threadId: string; sessionId: string }
+  await waitForFooter({ discord: twin.discord, threadId: started.threadId })
+  await cli(['channel', 'agent', 'plan', '--channel', twin.channelId])
+  await cli(['channel', 'model', 'deterministic-provider/deterministic-v2', '--channel', twin.channelId])
+  await cli(['channel', 'verbosity', 'text', '--channel', twin.channelId])
+  await cli(['session', 'title', 'CLI renamed', '--session', started.sessionId])
+  await cli(['session', 'queue', 'add', 'Registry queued', '--session', started.sessionId])
+  await waitForFooter({ discord: twin.discord, threadId: started.threadId, count: 2 })
+  await cli(['session', 'abort', started.sessionId])
+  await cli(['session', 'archive', started.threadId])
+  expect(await twin.discord.thread(started.threadId).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    » **CLI:** Registry first
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+  `)
+  expect((await twin.discord.channel(twin.channelId).getThreads()).find((thread) => thread.id === started.threadId)?.name).toBe('CLI renamed')
+})
+
+test('send settings reach native session creation; notifications create no session', async () => {
+  const subdir = path.join(server.projectDirectory, 'subfolder')
+  fs.mkdirSync(subdir)
+  const result = await cli(['send', '--channel', twin.channelId, '-p', 'Send settings', '--cwd', subdir, '--permission', 'shell:deny', '--parent-session', 'ses_parent', '--agent', 'build', '--wait'])
+  const ids = JSON.parse(result.stdout.split('\n')[0]!) as { threadId: string; sessionId: string }
+  await waitForFooter({ discord: twin.discord, threadId: ids.threadId })
+  expect(await twin.discord.thread(ids.threadId).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    » **CLI:** Send settings
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *subfolder ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+  `)
+  const info = await (await server.client()).session.get({ sessionID: ids.sessionId })
+  expect(info.location.directory).toBe(subdir)
+  expect(info.permissions).toContainEqual({ action: 'shell', resource: '*', effect: 'deny' })
+  expect(info.metadata?.['kimaki']).toMatchObject({ parentSessionId: 'ses_parent' })
+  expect(result.stdout).toContain('# Send settings')
+  const notice = JSON.parse((await cli(['send', '--channel', twin.channelId, '-p', 'Notification only', '--notify-only'])).stdout) as { threadId: string; sessionId: null }
+  expect(await twin.discord.thread(notice.threadId).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    Notification only"
+  `)
+  expect(notice.sessionId).toBe(null)
+  expect(bot.store.getState().roots[notice.threadId]).toBeUndefined()
+})

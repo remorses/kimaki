@@ -6,15 +6,17 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { pipeline } from 'node:stream/promises'
-import { goke } from 'goke'
+import { goke, wrapJsonSchema } from 'goke'
+import { ChannelType } from 'discord.js'
 
 import { openDb } from './db.ts'
-import { DEFAULT_LOCK_PORT } from './lock-server.ts'
+import { callBot, DEFAULT_LOCK_PORT } from './lock-server.ts'
 import { createLogger } from './logger.ts'
 import { startBot } from './main.ts'
 import { resolveOpencode } from './opencode-server.ts'
-import { readSessionMarkdown, resolveSession, sessionEventsFile } from './session-events.ts'
+import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEventsFile, waitForSessionReady } from './session-events.ts'
 import { readSavedCredentials, resolveCredentials, restApiUrl } from './credentials.ts'
 import { chooseGuild, kimakiShellCommand, runOnboarding } from './onboarding.ts'
 import {
@@ -29,16 +31,42 @@ const logger = createLogger('CLI')
 
 const cli = goke('kimaki2')
 
+async function readClient(errorCode = 1) {
+  const endpoint = await resolveOpencode({ ensure: false, serviceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'] })
+  if (endpoint instanceof Error) fail(endpoint, errorCode)
+  return endpoint.client
+}
+
+async function sessionIdFor(id: string, dataDir: string | undefined) {
+  if (id.startsWith('ses_')) return id
+  const opened = await openDb({ dataDir: dataDirOrDefault(dataDir), migrate: false })
+  if (opened instanceof Error) fail(opened)
+  const result = await resolveSession({ db: opened.db, id })
+  opened.close()
+  if (result instanceof Error) fail(result)
+  return result.sessionId
+}
+
+async function discordApi(dataDir: string | undefined) {
+  const opened = await openDb({ dataDir: dataDirOrDefault(dataDir), migrate: false })
+  if (opened instanceof Error) fail(opened)
+  const credentials = await readSavedCredentials({ db: opened.db })
+  opened.close()
+  if (credentials instanceof Error) fail(credentials)
+  if (!credentials) fail(new Error('No saved bot credentials. Start Kimaki first.'))
+  return { credentials, api: createApi({ token: credentials.token, restUrl: process.env['KIMAKI_DISCORD_REST_URL'] ?? restApiUrl(credentials) }) }
+}
+
 function dataDirOrDefault(dataDir: string | undefined): string {
-  return path.resolve(dataDir ?? path.join(os.homedir(), '.kimaki'))
+  return path.resolve(dataDir ?? process.env['KIMAKI_DATA_DIR'] ?? path.join(os.homedir(), '.kimaki'))
 }
 
 // Prints the error and its cause chain: "Discord login failed" alone hides why.
-function fail(error: Error): never {
+function fail(error: Error, code = 1): never {
   const lines = [error.message]
   for (let cause = error.cause; cause instanceof Error; cause = cause.cause) lines.push(`  caused by: ${cause.message}`)
   process.stderr.write(`${lines.join('\n')}\n`)
-  process.exit(1)
+  process.exit(code)
 }
 
 cli
@@ -147,6 +175,241 @@ cli
 
 cli.section('Session')
 
+cli.command('session list', 'List sessions with native status and token counts')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--project <path>', 'Project (default: current directory)')
+  .option('--all', 'All projects')
+  .option('--active', 'Only busy sessions; exit 1 when none remain, 64 on errors')
+  .option('--exclude <id>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Exclude session (repeatable)' }))
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const client = await readClient(options.active ? 64 : 1)
+    const [sessions, active, forms, permissions] = await Promise.all([
+      allSessions({ client, directory: options.all ? undefined : path.resolve(options.project ?? process.cwd()) }),
+      client.session.active().catch((error: Error) => error), client.form.list().catch((error: Error) => error),
+      client.permission.request.list().catch((error: Error) => error),
+    ])
+    if (sessions instanceof Error) fail(sessions, options.active ? 64 : 1)
+    if (active instanceof Error) fail(active, options.active ? 64 : 1)
+    if (forms instanceof Error) fail(forms, options.active ? 64 : 1)
+    if (permissions instanceof Error) fail(permissions, options.active ? 64 : 1)
+    const rows = sessions.filter((session) => !(options.exclude ?? []).includes(session.id) && (!options.active || session.id in active))
+      .map((session) => ({ ...session, status: forms.data.some((form) => form.sessionID === session.id) || permissions.data.some((permission) => permission.sessionID === session.id) ? 'waiting' : session.id in active ? 'busy' : 'idle' }))
+    process.stdout.write(options.json ? `${JSON.stringify(rows, null, 2)}\n` : rows.map((row) => `${row.id} ${row.status} ${row.title ?? ''} tokens: ${row.tokens.input + row.tokens.output}\n`).join(''))
+    if (options.active && rows.length === 0) process.exitCode = 1
+  })
+
+cli.command('session search <query>', 'Search titles, then real message content')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--project <path>', 'Project (default: current directory)')
+  .option('--all', 'All projects')
+  .option('--days <n>', 'Recent days (default: 14; 0 = all)')
+  .option('--json', 'Output as JSON')
+  .action(async (query, options) => {
+    const client = await readClient()
+    const sessions = await allSessions({ client, directory: options.all ? undefined : path.resolve(options.project ?? process.cwd()) })
+    if (sessions instanceof Error) fail(sessions)
+    const pattern = query.match(/^\/(.*)\/([dgimsuvy]*)$/)
+    const expression = pattern ? new RegExp(pattern[1]!, pattern[2]) : null
+    const matches = (text: string) => { if (!expression) return text.toLowerCase().includes(query.toLowerCase()); expression.lastIndex = 0; return expression.test(text) }
+    const days = Number(options.days ?? 14)
+    if (!Number.isFinite(days) || days < 0) fail(new Error('--days must be a non-negative number'))
+    const found: typeof sessions = []
+    for (const session of sessions) {
+      if (days && session.time.updated < Date.now() - days * 86400000) continue
+      if (matches(session.title ?? '')) { found.push(session); continue }
+      const messages = await allMessages({ client, sessionId: session.id })
+      if (messages instanceof Error) fail(messages)
+      if (messages.some((message) => matches(message.type === 'user' ? message.text : JSON.stringify(message)))) found.push(session)
+    }
+    process.stdout.write(options.json ? `${JSON.stringify(found, null, 2)}\n` : found.map((session) => `${session.id} ${session.title}\n`).join(''))
+  })
+
+cli.command('session wait <id>', 'Wait until idle or waiting for input, then print the session')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--timeout <duration>', 'Timeout, for example 30m or 2h')
+  .action(async (id, options) => {
+    const sessionId = await sessionIdFor(id, options.dataDir)
+    const duration = options.timeout?.match(/^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/)
+    if (options.timeout && !duration) fail(new Error('Use --timeout 30m, 2h, or another positive duration'))
+    const units: Record<string, number> = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 }
+    const signal = duration ? AbortSignal.timeout(Number(duration[1]) * units[duration[2]!]!) : undefined
+    const client = await readClient()
+    const result = await waitForSessionReady({ client, sessionId, signal })
+    if (result instanceof Error) fail(result)
+    const markdown = await readSessionMarkdown({ client, sessionId })
+    if (markdown instanceof Error) fail(markdown)
+    process.stdout.write(`${markdown}\n`)
+  })
+
+cli.command('session url <id>', 'Print the Discord URL of a session or thread')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .action(async (id, options) => {
+    const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
+    if (opened instanceof Error) fail(opened)
+    const result = await resolveSession({ db: opened.db, id })
+    if (result instanceof Error) fail(result)
+    opened.close()
+    const { api } = await discordApi(options.dataDir)
+    const thread = await api.channels.get(result.threadId).catch((error: Error) => error)
+    if (thread instanceof Error) fail(thread)
+    if (thread.type !== ChannelType.PublicThread && thread.type !== ChannelType.PrivateThread && thread.type !== ChannelType.AnnouncementThread) fail(new Error('Target is not a Discord thread'))
+    if (!thread.guild_id) fail(new Error('Thread has no guild'))
+    process.stdout.write(`https://discord.com/channels/${thread.guild_id}/${result.threadId}\n`)
+  })
+
+async function action(name: string, dataDir: string | undefined, input: unknown) {
+  const result = await callBot({ dataDir: dataDirOrDefault(dataDir), route: `/kimaki/action/${name}`, input })
+  if (result instanceof Error) fail(result)
+  process.stdout.write(`${JSON.stringify(result.data)}\n`)
+}
+
+for (const command of ['agent', 'model', 'verbosity'] as const) {
+  cli.command(`channel ${command} [value]`, `Set channel ${command} through the running bot`)
+    .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+    .option('-c, --channel <id>', 'Target channel (default: current project)')
+    .option('--variant <name>', 'Thinking variant for model')
+    .option('--clear', 'Clear a saved agent or model')
+    .action(async (value, options) => action(`channel.${command}`, options.dataDir, {
+      channelId: options.channel, directory: process.cwd(), clear: options.clear, variant: options.variant,
+      ...(command === 'verbosity' ? { text: value } : { [command]: value }),
+    }))
+}
+
+cli.command('session abort [id]', 'Stop the running turn and clear its queue')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .action(async (id, options) => action('session.abort', options.dataDir, { sessionId: id ?? process.env['OPENCODE_SESSION_ID'] }))
+
+cli.command('session archive [threadId]', 'Archive a session thread')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .action(async (threadId, options) => action('session.archive', options.dataDir, { threadId, sessionId: threadId ? undefined : options.session ?? process.env['OPENCODE_SESSION_ID'] }))
+
+cli.command('session title <title>', 'Rename the session and its Discord thread')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .action(async (title, options) => action('session.title', options.dataDir, { text: title, sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] }))
+
+for (const name of ['add', 'remove'] as const) {
+  cli.command(`session queue ${name} <value>`, `${name} native queued prompts`)
+    .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+    .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+    .option('--json', 'Output as JSON')
+    .action(async (value, options) => action(`queue.${name}`, options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], ...(name === 'add' ? { text: value } : { inboxId: value }) }))
+}
+for (const name of ['list', 'clear'] as const) {
+  cli.command(`session queue ${name}`, `${name} native queued prompts`)
+    .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+    .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+    .option('--json', 'Output as JSON')
+    .action(async (options) => action(`queue.${name}`, options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] }))
+}
+
+for (const name of ['shell', 'btw', 'command'] as const) {
+  cli.command(`session ${name} <text>`, `Run ${name} through the shared session action`)
+    .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+    .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+    .option('--queue', 'Queue an OpenCode command')
+    .action(async (text, options) => action(`session.${name}`, options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text, queue: options.queue }))
+}
+
+cli.command('session fork [id]', 'Fork a root or child session into a new thread')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--before <messageId>', 'Fork before this user message')
+  .action(async (id, options) => action('session.fork', options.dataDir, { sessionId: id ?? process.env['OPENCODE_SESSION_ID'], before: options.before }))
+
+cli.command('session resume <id>', 'Bind an existing session to a new thread')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-c, --channel <id>', 'Destination channel')
+  .action(async (id, options) => action('session.resume', options.dataDir, { sessionId: id, channelId: options.channel }))
+
+cli.command('buttons', 'Show 1-3 action buttons. Call last, after visible text')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[=command][:white|blue|green|red]" }))
+  .action(async (options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/buttons', input: {
+      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], buttons: options.button, fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'],
+    } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.command('upload-request', 'Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .option('-p, --prompt <text>', 'Text above the upload button')
+  .option('--max-files <n>', '1 to 10 (default: 5)')
+  .action(async (options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/upload-request', signal: AbortSignal.timeout(7 * 60_000), input: {
+      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], prompt: options.prompt, maxFiles: Number(options.maxFiles ?? 5), fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'],
+    } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.command('login <provider>', 'Connect a provider using OpenCode integration credentials')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--key <key>', 'API key to store in OpenCode')
+  .option('--method <id>', 'OAuth method ID; without flags, list login methods')
+  .option('--attempt <id>', 'Check or complete this native OAuth attempt')
+  .option('--code <code>', 'Authorization code for the attempt')
+  .option('--cancel', 'Cancel the native OAuth attempt')
+  .action(async (provider, options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/login', input: { provider, key: options.key, method: options.method, attempt: options.attempt, code: options.code, ...(options.cancel && { operation: 'cancel' }) } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.command('login credential <id>', 'Activate, remove, or label an OpenCode credential')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--operation <name>', 'activate | remove | label')
+  .option('--label <text>', 'Credential label')
+  .action(async (id, options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/credential', input: { id, operation: options.operation ?? 'activate', label: options.label } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli
+  .command('send', 'Start a session in a channel, or continue a thread')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-c, --channel <id>', 'New thread in this channel')
+  .option('-d, --project <path>', 'Project directory of the new thread')
+  .option('--thread <id>', 'Continue this thread')
+  .option('-s, --session <id>', 'Continue this local session')
+  .option('-p, --prompt <text>', 'Prompt; thread suffixes . queue and . btw are supported')
+  .option('-f, --file <path>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Attach a local file (repeatable)' }))
+  .option('-n, --name <text>', 'Thread name')
+  .option('--agent <name>', 'Agent ID')
+  .option('--model <provider/model>', 'Model for the new session')
+  .option('-u, --user <id>', 'Add this Discord user to the thread')
+  .option('--cwd <path>', 'Existing subfolder of the target project')
+  .option('--parent-session <id>', 'Record the parent session in session metadata')
+  .option('--permission <rule>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Repeatable: tool[:pattern]:allow|deny|ask' }))
+  .option('--notify-only', 'Post a notification thread without a model turn')
+  .option('--wait', 'Wait until idle or input is needed, then print the session')
+  .action(async (options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/send', input: {
+      channelId: options.channel, project: options.project, threadId: options.thread, sessionId: options.session,
+      prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
+      cwd: options.cwd, parentSessionId: options.parentSession, permissions: options.permission, notifyOnly: options.notifyOnly,
+      files: (options.file ?? []).map((file) => ({ uri: pathToFileURL(path.resolve(file)).href, name: path.basename(file) })),
+    } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    if (options.wait) {
+      const data = result.data
+      if (!data || typeof data !== 'object' || !('sessionId' in data) || typeof data.sessionId !== 'string') fail(new Error('--wait requires an AI session, not --notify-only'))
+      const client = await readClient()
+      const waited = await waitForSessionReady({ client, sessionId: data.sessionId })
+      if (waited instanceof Error) fail(waited)
+      const transcript = await readSessionMarkdown({ client, sessionId: data.sessionId })
+      if (transcript instanceof Error) fail(transcript)
+      process.stdout.write(`${transcript}\n`)
+    }
+  })
+
 cli
   .command('session events <id>', 'Print the recorded OpenCode events of a thread as JSONL (root + subagents)')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
@@ -167,6 +430,9 @@ cli
 cli
   .command('session read <id>', 'Print the messages of a session from OpenCode as markdown')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--thinking', 'Include reasoning')
+  .option('--verbose', 'Include full tool inputs and outputs')
+  .option('--json', 'Print raw OpenCode messages')
   .action(async (id, options) => {
     const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
     if (opened instanceof Error) fail(opened)
@@ -174,11 +440,84 @@ cli
     opened.close()
     // Subagent sessions are not in SQLite: read them directly.
     const sessionId = resolved instanceof Error ? id : resolved.sessionId
-    const endpoint = await resolveOpencode({ ensure: false })
+    const endpoint = await resolveOpencode({ ensure: false, serviceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'] })
     if (endpoint instanceof Error) fail(endpoint)
-    const markdown = await readSessionMarkdown({ client: endpoint.client, sessionId })
+    if (options.json) {
+      const messages = await allMessages({ client: endpoint.client, sessionId })
+      if (messages instanceof Error) fail(messages)
+      process.stdout.write(`${JSON.stringify(messages, null, 2)}\n`)
+      return
+    }
+    const markdown = await readSessionMarkdown({ client: endpoint.client, sessionId, thinking: options.thinking, verbose: options.verbose })
     if (markdown instanceof Error) fail(markdown)
     process.stdout.write(`${markdown}\n`)
+  })
+
+cli.section('Discord')
+
+cli.command('thread list', 'List active and optionally archived threads in a channel')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-c, --channel <id>', 'Channel to list')
+  .option('--archived', 'Include archived threads')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    if (!options.channel) fail(new Error('Pass --channel <id>'))
+    const { api } = await discordApi(options.dataDir)
+    const channel = await api.channels.get(options.channel).catch((error: Error) => error)
+    if (channel instanceof Error) fail(channel)
+    if (channel.type !== ChannelType.GuildText || !channel.guild_id) fail(new Error('Use a guild text channel'))
+    const active = await api.guilds.getActiveThreads(channel.guild_id).catch((error: Error) => error)
+    if (active instanceof Error) fail(active)
+    const threads = active.threads.filter((thread) => (thread.type === ChannelType.PublicThread || thread.type === ChannelType.PrivateThread || thread.type === ChannelType.AnnouncementThread) && thread.parent_id === options.channel)
+    if (options.archived) {
+      let before: string | undefined
+      do {
+        const archived = await api.channels.getArchivedThreads(options.channel, 'public', { limit: 100, before }).catch((error: Error) => error)
+        if (archived instanceof Error) fail(archived)
+        threads.push(...archived.threads)
+        const last = archived.threads.at(-1)
+        before = archived.has_more && last && (last.type === ChannelType.PublicThread || last.type === ChannelType.PrivateThread || last.type === ChannelType.AnnouncementThread) ? last.thread_metadata?.archive_timestamp : undefined
+      } while (before)
+    }
+    process.stdout.write(options.json ? `${JSON.stringify(threads, null, 2)}\n` : threads.map((thread) => `${thread.id} ${thread.name}\n`).join(''))
+  })
+
+cli.command('user list', 'Find Discord users for mentions')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-g, --guild <id>', 'Guild to search')
+  .option('-q, --query <text>', 'Name filter')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    if (!options.guild) fail(new Error('Pass --guild <id>'))
+    const { api } = await discordApi(options.dataDir)
+    const members = options.query
+      ? await api.guilds.searchForMembers(options.guild, { query: options.query, limit: 1000 }).catch((error: Error) => error)
+      : await api.guilds.getMembers(options.guild, { limit: 1000 }).catch((error: Error) => error)
+    if (members instanceof Error) fail(members)
+    const users = members.map((member) => ({ id: member.user.id, username: member.user.username, name: member.nick ?? member.user.global_name }))
+    process.stdout.write(options.json ? `${JSON.stringify(users, null, 2)}\n` : users.map((user) => `${user.id} ${user.username}${user.name ? ` (${user.name})` : ''}\n`).join(''))
+  })
+
+cli.command('upload-to-discord <...files>', 'Attach local files to a session thread')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .action(async (files, options) => {
+    const id = options.session ?? process.env['OPENCODE_SESSION_ID']
+    if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/upload', input: { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.command('bot token', 'Print saved bot credentials for automation')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .action(async (options) => process.stdout.write(`${(await discordApi(options.dataDir)).credentials.token}\n`))
+
+cli.command('bot install-url', 'Print the Discord bot install URL')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .action(async (options) => {
+    const { credentials } = await discordApi(options.dataDir)
+    process.stdout.write(`https://discord.com/oauth2/authorize?client_id=${credentials.appId}&scope=bot%20applications.commands&permissions=397284576336\n`)
   })
 
 cli.help()

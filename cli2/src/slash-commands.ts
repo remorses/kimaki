@@ -9,12 +9,15 @@
 // Dynamic commands come from the OpenCode catalog of the guild's projects:
 //
 //   agent.list    primary agents  ─▶ /<agent>-agent prompt?
-//   command.list  config commands ─▶ /<cmd>-cmd arguments?
-//                 MCP prompts     ─▶ /<server>-<prompt>-mcp-prompt arguments?   (name "server:prompt")
+//   command.list  commands        ─▶ /<cmd>-cmd arguments?
 //   skill.list    skills          ─▶ /<skill>-skill arguments?
 //
-// Discord allows 100 commands per guild; lower priority dynamic commands
-// (skills, then MCP prompts) are cut first.
+// Commands with a colon get no slash command. OpenCode names MCP prompts
+// "server:prompt" and command.list has no source field, so the colon is the
+// only way to leave them out. They still run as `/server:prompt args`
+// messages and from /queue-command.
+//
+// Discord allows 100 commands per guild; skills are cut first.
 
 import { execFile } from 'node:child_process'
 import path from 'node:path'
@@ -24,6 +27,7 @@ import {
   EmbedBuilder,
   Events,
   MessageFlags,
+  PermissionFlagsBits,
   SlashCommandBuilder,
   type AutocompleteInteraction,
   type ChatInputCommandInteraction,
@@ -38,9 +42,11 @@ import {
 import * as errore from 'errore'
 import dedent from 'string-dedent'
 
-import type { Actions, Author } from './actions.ts'
+import type { Actions, Author, ModelChoice } from './actions.ts'
+import type { AgentUi } from './agent-ui.ts'
 import { createPreferenceCommands } from './commands/preference-commands.ts'
 import { createSessionCommands } from './commands/session-commands.ts'
+import { createLoginCommands } from './commands/login-commands.ts'
 import type { KimakiDb } from './db.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import { formatError } from './format-parts.ts'
@@ -63,6 +69,7 @@ const NAME_LIMIT = 32
 const SKIPPED_COMMANDS = new Set(['init'])
 
 const STATIC_COMMANDS = [
+  new SlashCommandBuilder().setName('login').setDescription('Connect an OpenCode provider'),
   new SlashCommandBuilder()
     .setName('new-session')
     .setDescription('Start a new OpenCode session')
@@ -150,18 +157,20 @@ export function buildCommands(catalog: Catalog): {
     if (!name || taken.has(name)) return
     taken.add(name)
     dynamic.set(name, target)
-    const option =
-      target.kind === 'agent'
-        ? { name: 'prompt', description: 'Send a prompt with this agent' }
-        : { name: 'arguments', description: 'Arguments to pass to the command' }
-    commands.push(
-      new SlashCommandBuilder()
-        .setName(name)
-        .setDescription(text.replace(/\s+/g, ' ').trim().slice(0, 100) || '-')
-        .setDMPermission(false)
-        .addStringOption((builder) => builder.setName(option.name).setDescription(option.description))
-        .toJSON(),
-    )
+    const builder = new SlashCommandBuilder()
+      .setName(name)
+      .setDescription(text.replace(/\s+/g, ' ').trim().slice(0, 100) || '-')
+      .setDMPermission(false)
+    if (target.kind === 'agent') {
+      builder
+        .addStringOption((option) => option.setName('prompt').setDescription('Send a prompt with this agent'))
+        .addStringOption((option) =>
+          option.setName('variant').setDescription('Thinking level of the current model').setAutocomplete(true),
+        )
+    } else {
+      builder.addStringOption((option) => option.setName('arguments').setDescription('Arguments to pass to the command'))
+    }
+    commands.push(builder.toJSON())
   }
 
   for (const agent of catalog.agents) {
@@ -172,14 +181,10 @@ export function buildCommands(catalog: Catalog): {
       text: agent.description || `Switch to the ${agent.name} agent`,
     })
   }
-  // MCP prompts are commands named "server:prompt" (OpenCode sanitizes both parts, so only they have a colon).
-  const isMcp = (name: string) => name.includes(':')
-  const ordered = [...catalog.commands.filter((command) => !isMcp(command.name)), ...catalog.commands.filter((command) => isMcp(command.name))]
-  for (const command of ordered) {
-    if (SKIPPED_COMMANDS.has(command.name)) continue
-    const suffix = isMcp(command.name) ? '-mcp-prompt' : '-cmd'
+  for (const command of catalog.commands) {
+    if (SKIPPED_COMMANDS.has(command.name) || command.name.includes(':')) continue
     add({
-      name: discordCommandName(command.name, suffix),
+      name: discordCommandName(command.name, '-cmd'),
       target: { kind: 'command', name: command.name },
       text: command.description || `Run /${command.name}`,
     })
@@ -262,6 +267,7 @@ export function registerSlashCommands({
   store,
   actions,
   opencode,
+  agentUi,
 }: {
   discord: Client
   db: KimakiDb
@@ -269,6 +275,7 @@ export function registerSlashCommands({
   store: BotStore
   actions: Actions
   opencode: OpencodeConnection
+  agentUi: AgentUi
 }) {
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
@@ -358,6 +365,7 @@ export function registerSlashCommands({
   const sessions = createSessionCommands(context)
   const preferences = createPreferenceCommands(context)
   const questions = createQuestionHandlers({ store, actions })
+  const login = createLoginCommands(context)
 
   // The session thread of a command, or a reply saying where it works.
   async function sessionTarget(interaction: ChatInputCommandInteraction) {
@@ -378,10 +386,13 @@ export function registerSlashCommands({
     interaction,
     route,
     echo,
+    model = null,
   }: {
     interaction: ChatInputCommandInteraction
     route: Exclude<Route, { kind: 'btw' | 'new-session' | 'queue' }>
     echo: string
+    // A model for this session only (`/<agent>-agent variant:`).
+    model?: ModelChoice | null
   }) {
     const target = await resolveTarget(interaction.channelId)
     if (target instanceof Error) return replyError(interaction, target)
@@ -391,6 +402,10 @@ export function registerSlashCommands({
       await interaction.reply({ content: formatEcho({ username: author.username, text: echo }), allowedMentions: { parse: [] } })
       const reply = await interaction.fetchReply().catch((e: Error) => e)
       if (reply instanceof Error) return replyError(interaction, reply)
+      if (model) {
+        const switched = await actions.switchModel({ sessionId: target.sessionId, model })
+        if (switched instanceof Error) return replyError(interaction, switched)
+      }
       const result = await actions.dispatch({ thread: target.thread, route, author, messageId: reply.id })
       if (result instanceof Error) return replyError(interaction, result)
       return
@@ -407,6 +422,7 @@ export function registerSlashCommands({
       author,
       messageId: interaction.id,
       startMessageId: null,
+      ...(model && { model }),
     })
     if (started instanceof Error) return replyError(interaction, started)
     await interaction.editReply({ content: `Started a new session in <#${started.threadId}>` })
@@ -415,8 +431,14 @@ export function registerSlashCommands({
   async function handleDynamic(interaction: ChatInputCommandInteraction, target: DynamicCommand) {
     const text = (interaction.options.getString(target.kind === 'agent' ? 'prompt' : 'arguments') ?? '').trim()
     if (target.kind === 'agent') {
-      if (!text) return preferences.applyAgent({ interaction, agent: target.name })
-      return sendInput({ interaction, route: { kind: 'steer', text, agent: target.name }, echo: `(${target.name}) ${text}` })
+      const variant = interaction.options.getString('variant')?.trim()
+      const where = await resolveTarget(interaction.channelId)
+      if (where instanceof Error) return replyError(interaction, where)
+      const model = variant ? await preferences.variantModel({ target: where, variant }) : null
+      if (model instanceof Error) return replyError(interaction, model)
+      if (!text) return preferences.applyAgent({ interaction, target: where, agent: target.name, model })
+      const label = model ? `${target.name}, ${model.variant}` : target.name
+      return sendInput({ interaction, route: { kind: 'steer', text, agent: target.name }, echo: `(${label}) ${text}`, model })
     }
     if (target.kind === 'skill') {
       return sendInput({ interaction, route: { kind: 'skill', id: target.id, arguments: text }, echo: `/${target.id} ${text}`.trim() })
@@ -587,6 +609,7 @@ export function registerSlashCommands({
 
   async function handleCommand(interaction: ChatInputCommandInteraction) {
     const name = interaction.commandName
+    if (name === 'login') return login.handle(interaction)
     if (name === 'session-id') return handleSessionId(interaction)
     if (name === 'diff') return handleDiff(interaction)
     if (sessions.commands.has(name)) return sessions.handle(interaction)
@@ -598,6 +621,12 @@ export function registerSlashCommands({
 
   async function handleAutocomplete(interaction: AutocompleteInteraction) {
     if (sessions.commands.has(interaction.commandName)) return sessions.autocomplete(interaction)
+    const agentCommand = interaction.guildId ? dynamic.get(interaction.guildId)?.get(interaction.commandName) : undefined
+    if (agentCommand?.kind === 'agent') {
+      const where = await resolveTarget(interaction.channelId)
+      if (where instanceof Error) return respondChoices(interaction, where)
+      return respondChoices(interaction, await preferences.variantChoices(where, interaction.options.getFocused()))
+    }
     if (interaction.commandName !== 'queue-command') return respondChoices(interaction, [])
     const target = await resolveTarget(interaction.channelId)
     if (target instanceof Error) return respondChoices(interaction, target)
@@ -618,6 +647,9 @@ export function registerSlashCommands({
 
   async function handle(interaction: Interaction) {
     if (!interaction.guildId) return
+    const channel = interaction.channel ?? (interaction.channelId ? await discord.channels.fetch(interaction.channelId).catch(() => null) : null)
+    const projectId = channel?.isThread() ? channel.parentId : channel?.id
+    if (!projectId || !(await db.query.channel_directories.findFirst({ where: { channel_id: projectId } }))) return
     const guild = interaction.guild ?? (await discord.guilds.fetch(interaction.guildId).catch(() => null))
     if (!guild || !(await canUseKimaki({ guild, userId: interaction.user.id }))) {
       if (interaction.isAutocomplete()) return respondChoices(interaction, [])
@@ -626,8 +658,21 @@ export function registerSlashCommands({
       }
       return
     }
+    const credentialCommand = (interaction.isChatInputCommand() && interaction.commandName === 'login') || ('customId' in interaction && interaction.customId.startsWith('login_'))
+    if (credentialCommand && guild.ownerId !== interaction.user.id) {
+      const member = await guild.members.fetch(interaction.user.id).catch(() => null)
+      if (!member?.permissions.has(PermissionFlagsBits.Administrator)) {
+        if (interaction.isRepliable()) await interaction.reply({ content: 'Provider login requires the server owner or an administrator', flags: MessageFlags.Ephemeral })
+        return
+      }
+    }
     if (interaction.isChatInputCommand()) return handleCommand(interaction)
     if (interaction.isAutocomplete()) return handleAutocomplete(interaction)
+    if (interaction.isButton() && interaction.customId.startsWith('login_')) return login.click(interaction)
+    if (interaction.isButton() && /^(action_button|file_upload_btn):/.test(interaction.customId)) return agentUi.click(interaction)
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('file_upload_modal:')) return agentUi.modal(interaction)
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('login_')) return login.select(interaction)
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('login_')) return login.modal(interaction)
     if (interaction.isButton() && interaction.customId.startsWith(QUEUE_REMOVE_PREFIX)) {
       return handleQueueRemove({ interaction, actions })
     }

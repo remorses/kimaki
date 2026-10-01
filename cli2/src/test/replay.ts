@@ -72,6 +72,7 @@ function uiLine(message: UiMessage): string {
 export function effectLines(effects: Effect[]): string[] {
   return effects.map((effect) => {
     if (effect.type === 'typing') return `[typing ${effect.on ? 'on' : 'off'}]`
+    if (effect.type === 'attachments') return `[attachments ${effect.files.map((file) => file.name).join(', ')}]`
     if (effect.type === 'markdown') return `${effect.blankLineBefore ? '\\n' : ''}${effect.text}`
     if (effect.type === 'show') {
       const reply = effect.replyTo ? ` reply to ${effect.replyTo}` : ''

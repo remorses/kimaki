@@ -11,6 +11,7 @@ import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { OpenCode, type OpenCodeClient } from '@opencode/client'
@@ -69,6 +70,7 @@ export async function startOpencodeTestServer({
   models = {},
   agents = {},
   mcp,
+  plugins = [],
 }: {
   matchers?: DeterministicMatcher[]
   // OpenCode commands (`/name args` in Discord), e.g. { review: { template: 'Review: $ARGUMENTS' } }.
@@ -81,6 +83,7 @@ export async function startOpencodeTestServer({
   agents?: Record<string, { description?: string; mode?: 'primary' | 'subagent' | 'all'; hidden?: boolean }>
   // MCP servers (config `mcp.servers`).
   mcp?: { servers: Record<string, { type: 'local'; command: string[] }> }
+  plugins?: string[]
 } = {}): Promise<OpencodeTestServer> {
   // realpath: macOS tmpdir is /var/... but OpenCode resolves /private/var/...
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-e2e-')))
@@ -116,6 +119,7 @@ export async function startOpencodeTestServer({
       ),
       commands,
       agents,
+      plugins: [pathToFileURL(path.resolve('src/plugin')).href, ...plugins],
       ...(mcp && { mcp }),
     }),
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
@@ -265,6 +269,7 @@ export async function startTestBot({
   server,
   geminiBaseUrl,
   openaiBaseUrl,
+  lockPort,
 }: {
   dataDir: string
   twin: TestTwin
@@ -272,6 +277,7 @@ export async function startTestBot({
   // Voice transcription against startFakeGemini() / startFakeOpenAI().
   geminiBaseUrl?: string
   openaiBaseUrl?: string
+  lockPort?: number
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -284,9 +290,9 @@ export async function startTestBot({
   if (saved instanceof Error) throw saved
   const bot = await startBot({
     dataDir,
-    kimakiCommand: `kimaki --data-dir ${dataDir}`,
+    kimakiCommand: `'${process.execPath}' --import '${createRequire(import.meta.url).resolve('tsx')}' '${path.resolve('src/cli.ts')}' --data-dir '${dataDir}'`,
     token: credentials.token,
-    lockPort: await freePort(),
+    lockPort: lockPort ?? await freePort(),
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,
     ensureOpencode: false,

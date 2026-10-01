@@ -43,6 +43,7 @@ import { hydratePermissions, reducePermissions, type PendingPermission } from '.
 import { hydrateForms, reduceForms, type PendingForm } from './questions.ts'
 import { hydrateQueue, reduceQueue, type QueuedItem } from './queue.ts'
 import type { UiEffect } from './effects.ts'
+import { reduceAgentUi, type AgentPrompt, type AgentUiEvent } from './agent-ui.ts'
 
 export type Turn = {
   startedAt: number
@@ -70,6 +71,8 @@ export type ThreadView = {
   turn: Turn | null
   // Tool names by "assistantMessageID:toolID": session.tool.called has none.
   toolNames: Readonly<Record<string, string>>
+  shellCalls: Readonly<Record<string, { sessionId: string }>>
+  agentUi: readonly AgentPrompt[]
   // Parent subagent calls whose child session is not known yet.
   subagentCalls: Readonly<Record<string, { agent: string; description: string; background: boolean }>>
   children: Readonly<Record<string, Child>>
@@ -90,10 +93,12 @@ export type Effect =
   // Model markdown, rendered and split by the executor.
   | { type: 'markdown'; text: string; blankLineBefore: boolean }
   | { type: 'typing'; on: boolean }
+  | { type: 'attachments'; files: readonly { path: string; name: string }[] }
   | UiEffect
 
 // Internal events produced by the event loop, folded through the same path.
-export type KimakiEvent =
+export type KimakiEvent = AgentUiEvent
+  | { type: 'kimaki.upload'; files: readonly { path: string; name: string }[] }
   | { type: 'kimaki.branch'; branch: string | null }
   // After a (re)connect: which sessions of this thread run right now.
   | { type: 'kimaki.synced'; activeSessionIds: readonly string[]; at: number }
@@ -122,6 +127,9 @@ const KIMAKI_EVENT_TYPES: ReadonlySet<string> = new Set<KimakiEvent['type']>([
   'kimaki.hydrated',
   'kimaki.error',
   'kimaki.replay',
+  'kimaki.agent-ui',
+  'kimaki.agent-ui-dismiss',
+  'kimaki.upload',
 ])
 
 function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
@@ -155,6 +163,8 @@ export function emptyView({
     bannerPending: isNew,
     turn: null,
     toolNames: {},
+    shellCalls: {},
+    agentUi: [],
     subagentCalls: {},
     children: {},
     lastKind: null,
@@ -237,6 +247,7 @@ function reduceTool({
     case 'session.tool.called': {
       const name = view.toolNames[toolKey(event.data)] ?? 'tool'
       const input = event.data.input
+      view = name === 'shell' ? { ...view, shellCalls: { ...view.shellCalls, [toolKey(event.data)]: { sessionId: event.data.sessionID } } } : view
       const next =
         name === 'subagent' && typeof input['sessionID'] !== 'string'
           ? {
@@ -290,6 +301,7 @@ function reduceTool({
         view: {
           ...view,
           toolNames: withoutKey(view.toolNames, toolKey(event.data)),
+          shellCalls: withoutKey(view.shellCalls, toolKey(event.data)),
           subagentCalls: withoutKey(view.subagentCalls, toolKey(event.data)),
         },
         effects: [],
@@ -299,6 +311,7 @@ function reduceTool({
       const next = {
         ...view,
         toolNames: withoutKey(view.toolNames, toolKey(event.data)),
+        shellCalls: withoutKey(view.shellCalls, toolKey(event.data)),
         subagentCalls: withoutKey(view.subagentCalls, toolKey(event.data)),
       }
       if (event.data.error.type === 'aborted' || name === 'question' || name.startsWith('kimaki_')) {
@@ -479,6 +492,11 @@ export function replayEffects({
 
 function reduceKimaki({ view, event, prefs }: { view: ThreadView; event: KimakiEvent; prefs: Prefs }): Result {
   switch (event.type) {
+    case 'kimaki.upload':
+      return { view, effects: [{ type: 'attachments', files: event.files }] }
+    case 'kimaki.agent-ui':
+    case 'kimaki.agent-ui-dismiss':
+      return reduceAgentUi(view, event) ?? { view, effects: [] }
     case 'kimaki.replay':
       return { view: { ...view, lastKind: null }, effects: replayEffects({ messages: event.messages, prefs, note: event.note }) }
     case 'kimaki.error':
@@ -546,7 +564,9 @@ function reduceEvent({ view, event, prefs }: { view: ThreadView; event: ThreadEv
 }
 
 export function reduce({ view, event, prefs }: { view: ThreadView; event: ThreadEvent; prefs: Prefs }): Result {
-  const result = reduceEvent({ view, event, prefs })
+  const ui = event.type === 'session.inbox.enqueued' ? reduceAgentUi(view, event) : null
+  const folded = reduceEvent({ view: ui?.view ?? view, event, prefs })
+  const result = { view: folded.view, effects: [...(ui?.effects ?? []), ...folded.effects] }
   const wasTyping = isTyping(view)
   const typing = isTyping(result.view)
   if (wasTyping === typing) return result

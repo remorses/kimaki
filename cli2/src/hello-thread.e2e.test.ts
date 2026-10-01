@@ -2,6 +2,8 @@
 // footer appear, and follow-ups continue the same session.
 
 import fs from 'node:fs'
+import path from 'node:path'
+import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
@@ -144,11 +146,14 @@ test('/session-id shows the session and debug commands; events are recorded per 
     .replaceAll(helloThreadId, 'THREAD')
     .replaceAll(dataDir, 'DATA')
     .replaceAll(server.projectDirectory, 'PROJECT')
+    .replaceAll(process.execPath, 'NODE')
+    .replaceAll(createRequire(import.meta.url).resolve('tsx'), 'TSX')
+    .replaceAll(path.resolve('src/cli.ts'), 'CLI')
   expect(redacted).toMatchInlineSnapshot(`
     "**Session:** \`ses_X\`
     **Thread:** \`THREAD\`
-    Messages: \`kimaki --data-dir DATA session read ses_X\`
-    Events (retries, errors, order): \`kimaki --data-dir DATA session events ses_X\`
+    Messages: \`'NODE' --import 'TSX' 'CLI' --data-dir 'DATA' session read ses_X\`
+    Events (retries, errors, order): \`'NODE' --import 'TSX' 'CLI' --data-dir 'DATA' session events ses_X\`
     Open in the OpenCode TUI: \`opencode2 PROJECT --session ses_X\`"
   `)
 

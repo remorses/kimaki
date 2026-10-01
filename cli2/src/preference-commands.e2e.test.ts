@@ -41,7 +41,11 @@ beforeAll(async () => {
   ;[server, twin] = await Promise.all([
     startOpencodeTestServer({
       matchers,
-      models: { 'deterministic-thinker': { name: 'Thinker', variants: [{ id: 'low' }, { id: 'high' }] } },
+      models: {
+        'deterministic-thinker': { name: 'Thinker', variants: [{ id: 'low' }, { id: 'high' }] },
+        // The default model gets thinking levels too, for `/<agent>-agent variant:`.
+        'deterministic-v2': { name: 'deterministic-v2', variants: [{ id: 'fast' }, { id: 'deep' }] },
+      },
     }),
     startTwin(),
   ])
@@ -279,5 +283,79 @@ test('/verbosity applies to running sessions of the channel at once', async () =
     Verbosity set to \`text\` for this channel.
     Text, file edits and errors. Hides the other tools.
     Applies immediately, including active sessions."
+  `)
+})
+
+test('/<agent>-agent variant: sets the thinking level with the agent, per session or channel', async () => {
+  const { discord } = twin
+  const channelId = twin.channelId
+  const thread = await newThread(channelId, 'Variant thread')
+  const user = discord.thread(thread.id).user(TEST_USER_ID)
+  expect(await user.autocomplete({ name: 'plan-agent', options: [{ name: 'variant', type: 3, value: 'de' }], focused: 'variant' }))
+    .toMatchInlineSnapshot(`
+      [
+        {
+          "name": "deep (deterministic-provider/deterministic-v2)",
+          "value": "deep",
+        },
+      ]
+    `)
+  await user.runSlashCommand({
+    name: 'plan-agent',
+    options: [
+      { name: 'prompt', type: 3, value: 'Think hard' },
+      { name: 'variant', type: 3, value: 'deep' },
+    ],
+  })
+  await waitForFooter({ discord, threadId: thread.id, count: 2 })
+  expect(await sessionModel(thread.id)).toMatchInlineSnapshot(`
+    {
+      "agent": "plan",
+      "model": {
+        "id": "deterministic-v2",
+        "providerID": "deterministic-provider",
+        "variant": "deep",
+      },
+    }
+  `)
+
+  const { id } = await user.runSlashCommand({ name: 'build-agent', options: [{ name: 'variant', type: 3, value: 'nope' }] })
+  await discord.thread(thread.id).waitForInteractionAck({ interactionId: id })
+  await waitFor({ label: 'variant error', check: async () => (await discord.thread(thread.id).text()).includes('no thinking level') })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Variant thread
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    » **tommy:** (plan, deep) Think hard
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ plan*
+    \`deterministic-provider/deterministic-v2\` has no thinking level \`nope\`. Available: \`fast\`, \`deep\`"
+  `)
+
+  // Channel without a prompt: agent and thinking level for new sessions.
+  const ack = await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({
+    name: 'build-agent',
+    options: [{ name: 'variant', type: 3, value: 'fast' }],
+  })
+  await discord.channel(channelId).waitForInteractionAck({ interactionId: ack.id })
+  const fresh = await newThread(channelId, 'Uses the channel variant')
+  expect(await sessionModel(fresh.id)).toMatchInlineSnapshot(`
+    {
+      "agent": "build",
+      "model": {
+        "id": "deterministic-v2",
+        "providerID": "deterministic-provider",
+        "variant": "fast",
+      },
+    }
+  `)
+  const messages = await discord.channel(channelId).getMessages()
+  expect(messages.at(-2)?.content).toMatchInlineSnapshot(`
+    "Switched to **build** agent for this channel
+    All new sessions will use this agent.
+    Thinking level: **fast** (\`deterministic-provider/deterministic-v2 (fast)\`)"
   `)
 })

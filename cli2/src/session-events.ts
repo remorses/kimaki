@@ -107,20 +107,22 @@ export async function resolveSession({
 
 type Message = Awaited<ReturnType<OpenCodeClient['message']['list']>>['data'][number]
 
-function renderMessage(message: Message): string {
+function renderMessage(message: Message, options: { thinking?: boolean; verbose?: boolean }): string {
   const time = new Date(message.time.created).toISOString()
   if (message.type === 'user') return `## user ${time}\n\n${message.text}`
   if (message.type !== 'assistant') return `## ${message.type} ${time}\n\n${JSON.stringify(message)}`
   const header = `## assistant ${time} (${message.agent}, ${message.model.providerID}/${message.model.id})`
   const parts = message.content.map((part) => {
     if (part.type === 'text') return part.text
+    if (part.type === 'reasoning') return options.thinking ? part.text : ''
     if (part.type === 'tool') {
       const state = part.state
-      const input = JSON.stringify(state.input ?? {}).slice(0, 500)
+      const input = options.verbose ? JSON.stringify(state.input ?? {}) : JSON.stringify(state.input ?? {}).slice(0, 500)
       const error = state.status === 'error' ? `\nerror: ${JSON.stringify(state).slice(0, 500)}` : ''
-      return `tool ${part.name} [${state.status}] ${input}${error}`
+      const output = options.verbose && state.status === 'completed' ? `\n${JSON.stringify(state.content)}` : ''
+      return `tool ${part.name} [${state.status}] ${input}${error}${output}`
     }
-    return `[${part.type}]`
+    return ''
   })
   const finish = message.finish ? `\n\nfinish: ${message.finish}` : ''
   return `${header}\n\n${parts.join('\n\n')}${finish}`
@@ -130,18 +132,79 @@ function renderMessage(message: Message): string {
 export async function readSessionMarkdown({
   client,
   sessionId,
+  thinking,
+  verbose,
 }: {
   client: OpenCodeClient
   sessionId: string
+  thinking?: boolean
+  verbose?: boolean
 }): Promise<OpenCodeError | string> {
   const session = await client.session
     .get({ sessionID: sessionId })
     .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
   if (session instanceof Error) return session
-  const messages = await client.message
-    .list({ sessionID: sessionId })
-    .catch((e) => new OpenCodeError({ operation: 'message.list', cause: e }))
+  const messages = await allMessages({ client, sessionId })
   if (messages instanceof Error) return messages
   const title = `# ${session.title} (${session.id})\n\ndirectory: ${session.location.directory}`
-  return [title, ...[...messages.data].reverse().map(renderMessage)].join('\n\n')
+  return [title, ...messages.map((message) => renderMessage(message, { thinking, verbose }))].join('\n\n')
+}
+
+export async function allMessages({ client, sessionId }: { client: OpenCodeClient; sessionId: string }): Promise<OpenCodeError | Message[]> {
+  const messages: Message[] = []
+  let cursor: string | undefined
+  do {
+    const page = await client.message.list({ sessionID: sessionId, limit: 200, ...(cursor ? { cursor } : { order: 'asc' as const }) })
+      .catch((cause) => new OpenCodeError({ operation: 'message.list', cause }))
+    if (page instanceof Error) return page
+    messages.push(...page.data)
+    cursor = page.cursor.next ?? undefined
+  } while (cursor)
+  return messages
+}
+
+export async function allSessions({ client, directory }: { client: OpenCodeClient; directory?: string }) {
+  const sessions: Awaited<ReturnType<OpenCodeClient['session']['list']>>['data'] = []
+  let cursor: string | undefined
+  do {
+    const page = await client.session.list({ directory, limit: 200, ...(cursor ? { cursor } : { order: 'desc' as const }) })
+      .catch((cause) => new OpenCodeError({ operation: 'session.list', cause }))
+    if (page instanceof Error) return page
+    sessions.push(...page.data)
+    cursor = page.cursor.next ?? undefined
+  } while (cursor)
+  return sessions
+}
+
+export async function waitForSessionReady({ client, sessionId, signal }: { client: OpenCodeClient; sessionId: string; signal?: AbortSignal }): Promise<OpenCodeError | void> {
+  const controller = new AbortController()
+  const subscriptionSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+  const iterator = client.event.subscribe({ signal: subscriptionSignal })[Symbol.asyncIterator]()
+  const result = await (async () => {
+    const first = await iterator.next().catch((cause) => new OpenCodeError({ operation: 'event.subscribe', cause }))
+    if (first instanceof Error) return first
+    if (first.done || first.value.type !== 'server.connected') return new OpenCodeError({ operation: 'connect session wait stream' })
+    const consume = (async () => {
+      while (!subscriptionSignal.aborted) {
+        const next = await iterator.next().catch((cause) => new OpenCodeError({ operation: 'event.subscribe', cause }))
+        if (next instanceof Error) return next
+        if (next.done) return new OpenCodeError({ operation: 'session wait stream ended' })
+        const event = next.value
+        if (event.type === 'form.created' && event.data.form.sessionID === sessionId) return
+        if (event.type === 'permission.asked' && event.data.sessionID === sessionId) return
+        if ((event.type === 'session.execution.succeeded' || event.type === 'session.execution.failed' || event.type === 'session.execution.interrupted') && event.data.sessionID === sessionId) return
+      }
+      return new OpenCodeError({ operation: 'session wait cancelled' })
+    })()
+    const hydrated = await Promise.all([
+      client.session.active(), client.session.form.list({ sessionID: sessionId }), client.permission.list({ sessionID: sessionId }),
+    ]).catch((cause) => new OpenCodeError({ operation: 'hydrate session wait', cause }))
+    if (hydrated instanceof Error) return hydrated
+    const [active, forms, permissions] = hydrated
+    if (!(sessionId in active) || forms.length > 0 || permissions.length > 0) return
+    return consume
+  })()
+  controller.abort()
+  await iterator.return?.(undefined).catch(() => undefined)
+  return result
 }

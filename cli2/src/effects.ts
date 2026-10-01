@@ -151,6 +151,12 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
 
   async function runOne(threadId: string, effect: Effect) {
     const thread = worker(threadId)
+    if (effect.type === 'attachments') {
+      for (let offset = 0; offset < effect.files.length; offset += 10) {
+        await post({ threadId, options: { files: effect.files.slice(offset, offset + 10).map((file) => ({ attachment: file.path, name: file.name })) } })
+      }
+      return
+    }
     if (effect.type === 'typing') {
       if (!effect.on) {
         stopTyping(threadId)

@@ -20,7 +20,7 @@ import {
 } from 'discord.js'
 import * as errore from 'errore'
 
-import type { Actions, PromptFile } from './actions.ts'
+import { parseSendInput, REMOTE_SEND_PREFIX, REMOTE_RESULT_PREFIX, type Actions, type PromptFile } from './actions.ts'
 import type { KimakiDb } from './db.ts'
 import { formatError } from './format-parts.ts'
 import { createLogger } from './logger.ts'
@@ -154,6 +154,20 @@ export function registerIngress({
 
     const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } })
     if (!project || project.channel_type !== 'text') return
+    if (message.author.bot) {
+      if (message.author.id !== discord.user?.id) return
+      const footer = message.embeds[0]?.footer?.text
+      if (!footer?.startsWith(REMOTE_SEND_PREFIX)) return
+      const decoded = errore.try(() => ({ value: JSON.parse(footer.slice(REMOTE_SEND_PREFIX.length)) as unknown }), (cause) => new AttachmentError({ file: 'remote envelope', cause }))
+      if (decoded instanceof Error) return
+      const value = decoded.value
+      if (!value || typeof value !== 'object' || !('requestId' in value) || typeof value.requestId !== 'string' || !/^[0-9a-f]{16}$/.test(value.requestId) || !('options' in value) || !value.options || typeof value.options !== 'object' || Array.isArray(value.options)) return
+      const input = parseSendInput({ ...value.options, ...(thread ? { threadId: thread.id } : { channelId }), prompt: message.content })
+      const files = await saveAttachments({ dataDir, messageId: message.id, attachments: [...message.attachments.values()] })
+      const result = input instanceof Error ? input : files instanceof Error ? files : await actions.send({ ...input, files }, true)
+      await message.reply({ content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`, embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${JSON.stringify(result instanceof Error ? { error: result.message } : result)}` } }], allowedMentions: { parse: [] } }).catch((error: Error) => logger.warn(`remote acknowledgment: ${error.message}`))
+      return
+    }
     if (!(await canUseKimaki({ guild: message.guild, userId: message.author.id }))) {
       logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
       return
@@ -216,7 +230,7 @@ export function registerIngress({
   }
 
   discord.on(Events.MessageCreate, (message) => {
-    if (message.author.bot) return
+    if (message.author.bot && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
     serialize(message.channelId, () => handle(message))
   })
   discord.on(Events.MessageDelete, (message) => {

@@ -1,6 +1,6 @@
 // Slash command registration and the dynamic commands built from the
-// OpenCode catalog: /<agent>-agent, /<cmd>-cmd, /<skill>-skill,
-// /<prompt>-mcp-prompt, and /queue-command.
+// OpenCode catalog: /<agent>-agent, /<cmd>-cmd, /<skill>-skill, and
+// /queue-command. MCP prompts get no slash command; they run as messages.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -80,11 +80,11 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/compact: Compact the session context by summarizing the history",
       "/context-usage: Show token usage and context window percentage",
       "/diff: Show the git diff as a shareable URL",
-      "/fake-greet-mcp-prompt: Greet someone",
       "/fork: Fork the session from a past user message",
       "/fork-subagent: Fork a subagent task session into a new thread",
       "/hello-cmd: Say hello",
       "/later-cmd: Runs later",
+      "/login: Connect an OpenCode provider",
       "/model: Set the model for this session or channel",
       "/model-variant: Change the thinking level of the current model",
       "/new-session: Start a new OpenCode session",
@@ -153,7 +153,7 @@ test('/<agent>-agent sets the channel agent, or starts a session with a prompt',
   `)
 })
 
-test('/<cmd>-cmd, /<skill>-skill and /<prompt>-mcp-prompt run in the thread session', async () => {
+test('/<cmd>-cmd, /<skill>-skill and a `/server:prompt` message run in the thread session', async () => {
   const { discord, channelId } = twin
   const thread = await newThread(() => discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Commands thread' }))
   await waitForFooter({ discord, threadId: thread.id })
@@ -162,7 +162,7 @@ test('/<cmd>-cmd, /<skill>-skill and /<prompt>-mcp-prompt run in the thread sess
   await waitForFooter({ discord, threadId: thread.id, count: 2 })
   await user.runSlashCommand({ name: 'opencode-skill', options: [{ name: 'arguments', type: 3, value: 'explain skill-marker' }] })
   await waitForFooter({ discord, threadId: thread.id, count: 3 })
-  await user.runSlashCommand({ name: 'fake-greet-mcp-prompt', options: [{ name: 'arguments', type: 3, value: 'World' }] })
+  await user.sendMessage({ content: '/fake:greet World' })
   await waitForFooter({ discord, threadId: thread.id, count: 4 })
   expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
@@ -177,7 +177,9 @@ test('/<cmd>-cmd, /<skill>-skill and /<prompt>-mcp-prompt run in the thread sess
     » **tommy:** /opencode explain skill-marker
     skill reply
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
-    » **tommy:** /fake:greet World
+    --- from: user (tommy)
+    /fake:greet World
+    --- from: assistant (TestBot)
     mcp reply
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)

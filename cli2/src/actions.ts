@@ -13,15 +13,19 @@
 // order (prompt, then interrupt with resume) parks queued items for good.
 
 import path from 'node:path'
+import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+import fs from 'node:fs'
 import type { SessionMetadata } from '@opencode/client'
-import { ChannelType, type Client, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
+import { ChannelType, Events, type Client, type Message, type TextChannel, type ThreadChannel } from 'discord.js'
+import * as errore from 'errore'
 import * as orm from 'drizzle-orm'
 
 import { verbosityToV1, type KimakiDb, type Verbosity } from './db.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import type { EventLoop } from './event-loop.ts'
 import { createLogger } from './logger.ts'
-import type { OpencodeConnection } from './opencode-server.ts'
+import type { OpenCodeClient, OpencodeConnection } from './opencode-server.ts'
 import type { PermissionDecision } from './permissions.ts'
 import type { FormAnswer } from './questions.ts'
 import { formatEcho } from './queue.ts'
@@ -38,6 +42,49 @@ export type Author = { id: string; username: string }
 export type PromptFile = { uri: string; name: string }
 
 export type ModelChoice = { providerID: string; id: string; variant: string | null }
+
+export type SendInput = {
+  channelId?: string
+  threadId?: string
+  sessionId?: string
+  project?: string
+  prompt: string
+  name?: string
+  agent?: string
+  model?: string
+  user?: string
+  files?: PromptFile[]
+  cwd?: string
+  parentSessionId?: string
+  permissions?: string[]
+  notifyOnly?: boolean
+}
+
+export const REMOTE_SEND_PREFIX = 'kimaki-send-v2:'
+export const REMOTE_RESULT_PREFIX = 'kimaki-result-v2:'
+
+export function parseSendInput(value: unknown): ConfigError | SendInput {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return new ConfigError({ reason: 'Expected a send object' })
+  const fields = new Map(Object.entries(value))
+  for (const key of ['channelId', 'threadId', 'sessionId', 'project', 'name', 'agent', 'model', 'user', 'cwd', 'parentSessionId']) {
+    const field = fields.get(key)
+    if (field !== undefined && (typeof field !== 'string' || !field.trim())) return new ConfigError({ reason: `${key} must be a non-empty string` })
+  }
+  if (fields.has('notifyOnly') && typeof fields.get('notifyOnly') !== 'boolean') return new ConfigError({ reason: 'notifyOnly must be boolean' })
+  const permissions = fields.get('permissions')
+  if (permissions !== undefined && (!Array.isArray(permissions) || permissions.some((permission) => typeof permission !== 'string'))) return new ConfigError({ reason: 'Permission rules must be strings' })
+  const prompt = fields.get('prompt')
+  if (typeof prompt !== 'string' || !prompt.trim()) return new ConfigError({ reason: 'prompt must be a non-empty string' })
+  if (['channelId', 'threadId', 'sessionId', 'project'].filter((key) => fields.has(key)).length !== 1) {
+    return new ConfigError({ reason: 'Use exactly one of --channel, --thread, --session, --project' })
+  }
+  const files = fields.get('files')
+  if (files !== undefined && (!Array.isArray(files) || files.some((file) => !file || typeof file !== 'object' || typeof file.uri !== 'string' || typeof file.name !== 'string'))) {
+    return new ConfigError({ reason: 'files must contain uri and name strings' })
+  }
+  // The wire shape is checked before relational queries.
+  return value as SendInput
+}
 
 // Prompt IDs map a Discord message to its inbox item without stored state (spec 9.2.2).
 export function promptIdForMessage(messageId: string): string {
@@ -96,12 +143,14 @@ export function createActions({
   opencode,
   eventLoop,
   store,
+  cliContext,
 }: {
   discord: Client
   db: KimakiDb
   opencode: OpencodeConnection
   eventLoop: EventLoop
   store: BotStore
+  cliContext: { dataDir: string; lockPort: number }
 }) {
   function client() {
     const endpoint = opencode.endpoint
@@ -643,6 +692,9 @@ export function createActions({
     showInput = startMessageId === null,
     threadName: explicitName,
     files = [],
+    model: explicitModel,
+    permissions,
+    parentSessionId,
   }: {
     channelId: string
     directory: string
@@ -659,11 +711,24 @@ export function createActions({
     // Default: the input text, flattened and cut to 80 chars.
     threadName?: string
     files?: readonly PromptFile[]
+    // Overrides the channel model for this session.
+    model?: ModelChoice
+    permissions?: NonNullable<Parameters<OpenCodeClient['session']['create']>[0]>['permissions']
+    parentSessionId?: string
   }): Promise<
-    OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }
+    ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }
   > {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
+
+    // The integration catalog waits for native plugin activation; plugin.list does not.
+    const activated = await opencodeClient.integration.list({ location: { directory } }).catch((cause) => new OpenCodeError({ operation: 'integration.list', cause }))
+    if (activated instanceof Error) return activated
+    const plugins = await opencodeClient.plugin.list({ location: { directory } }).catch((cause) => new OpenCodeError({ operation: 'plugin.list', cause }))
+    if (plugins instanceof Error) return plugins
+    if (!plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) {
+      return new ConfigError({ reason: `Kimaki plugin is not active. Add ${fileURLToPath(new URL('./plugin', import.meta.url))} to plugins in your OpenCode config, then reload OpenCode when no prompts are pending.` })
+    }
 
     const channel = await textChannel(channelId)
     if (channel instanceof Error) return channel
@@ -678,7 +743,9 @@ export function createActions({
       .findFirst({ where: { channel_id: channelId }, with: { channel_model: true, channel_agent: true } })
       .catch((e) => new DbError({ operation: 'read channel defaults', cause: e }))
     if (defaults instanceof Error) return defaults
-    const model = parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant)
+    const model = explicitModel
+      ? { providerID: explicitModel.providerID, id: explicitModel.id, ...(explicitModel.variant && { variant: explicitModel.variant }) }
+      : parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant)
     const agent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
 
     const session = await opencodeClient.session
@@ -687,7 +754,8 @@ export function createActions({
         location: { directory },
         ...(model && { model }),
         ...(agent && { agent }),
-        metadata: { kimaki: { threadId: thread.id, channelId, source: 'discord' } },
+        ...(permissions && { permissions }),
+        metadata: { kimaki: { threadId: thread.id, channelId, source: 'discord', ...cliContext, ...(parentSessionId && { parentSessionId }) } },
       })
       .catch((e) => new OpenCodeError({ operation: 'session.create', cause: e }))
     if (session instanceof Error) return session
@@ -779,7 +847,7 @@ export function createActions({
           sessionID: sessionId,
           metadata: {
             ...session.metadata,
-            kimaki: { source: 'discord', ...marker, threadId: thread.id, channelId: channel.id },
+            kimaki: { ...marker, source: 'discord', ...cliContext, threadId: thread.id, channelId: channel.id },
           },
         })
         .catch((e) => new OpenCodeError({ operation: 'session.update', cause: e }))
@@ -1050,7 +1118,315 @@ export function createActions({
     return { restored: 'step' as const }
   }
 
+  async function remoteSend(input: SendInput) {
+    const targetId = input.threadId ?? input.channelId
+    if (!targetId) return new ConfigError({ reason: 'Remote sends require --channel or --thread' })
+    const target = await discord.channels.fetch(targetId).catch((cause) => new DiscordError({ operation: 'fetch remote target', cause }))
+    if (target instanceof Error) return target
+    if (!target?.isSendable()) return new ConfigError({ reason: 'Remote target is not sendable' })
+    const requestId = crypto.randomBytes(8).toString('hex')
+    const { files, prompt, ...options } = input
+    const footer = `${REMOTE_SEND_PREFIX}${JSON.stringify({ requestId, options })}`
+    if (footer.length > 2048 || prompt.length > 2000) return new ConfigError({ reason: 'Remote prompt or options exceed Discord message limits. Send shorter input.' })
+    return new Promise<Error | { threadId: string; sessionId: string | null }>((resolve) => {
+      const finish = (result: Error | { threadId: string; sessionId: string | null }) => { clearTimeout(timer); discord.off(Events.MessageCreate, receive); resolve(result) }
+      const receive = (message: Message) => {
+        if (message.author.id !== discord.user?.id || message.channelId !== targetId) return
+        const footer = message.embeds[0]?.footer?.text
+        const prefix = `${REMOTE_RESULT_PREFIX}${requestId}:`
+        if (!footer?.startsWith(prefix)) return
+        const parsed = errore.try(() => ({ value: JSON.parse(footer.slice(prefix.length)) as unknown }), (cause) => new ConfigError({ reason: 'Invalid remote response', cause }))
+        if (parsed instanceof Error) return finish(parsed)
+        const result = parsed.value
+        if (result && typeof result === 'object' && 'threadId' in result && typeof result.threadId === 'string' && 'sessionId' in result && (typeof result.sessionId === 'string' || result.sessionId === null)) return finish({ threadId: result.threadId, sessionId: result.sessionId })
+        finish(new ConfigError({ reason: result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' ? result.error : 'Remote send failed' }))
+      }
+      const timer = setTimeout(() => finish(new ConfigError({ reason: 'No owning Kimaki bot answered this remote send. Start Kimaki on that machine.' })), 20_000)
+      discord.on(Events.MessageCreate, receive)
+      void target.send({ content: prompt, embeds: [{ footer: { text: footer } }], files: files?.map((file) => ({ name: file.name, attachment: file.uri.startsWith('file:') ? fileURLToPath(file.uri) : file.uri })), allowedMentions: { parse: [] } })
+        .catch((cause) => finish(new DiscordError({ operation: 'send remote envelope', cause })))
+    })
+  }
+
+  async function send(input: SendInput, localOnly = false) {
+    const author = { id: input.user?.replace(/[<@!>]/g, '') ?? discord.user!.id, username: 'CLI' }
+    const messageId = crypto.randomUUID()
+    const route = parseTextMessage({ content: input.prompt })
+    if (!route) return new ConfigError({ reason: 'Prompt is empty' })
+    if (input.agent && (route.kind === 'steer' || route.kind === 'btw')) route.agent = input.agent
+    if (input.sessionId || input.threadId) {
+      const threadId = input.threadId ?? Object.entries(store.getState().roots).find(([, id]) => id === input.sessionId)?.[0]
+      if (!threadId) return new ConfigError({ reason: 'No local thread for this session. Use --thread on its owning machine.' })
+      const thread = await discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: 'fetch send thread', cause }))
+      if (thread instanceof Error) return thread
+      if (!thread?.isThread()) return new ConfigError({ reason: 'Target is not a thread' })
+      if (!store.getState().roots[thread.id]) {
+        const project = thread.parentId ? await db.query.channel_directories.findFirst({ where: { channel_id: thread.parentId } }) : null
+        return !project && !localOnly ? remoteSend(input) : new ConfigError({ reason: 'No local session for this thread' })
+      }
+      const result = await dispatch({ thread, route, author, messageId, files: input.files })
+      if (result instanceof Error) return result
+      return result ?? { threadId, sessionId: store.getState().roots[threadId]! }
+    }
+    const project = await db.query.channel_directories.findFirst({ where: input.channelId ? { channel_id: input.channelId } : { directory: path.resolve(input.project!) } })
+      .catch((cause) => new DbError({ operation: 'resolve send project', cause }))
+    if (project instanceof Error) return project
+    if (!project) return input.channelId && !localOnly ? remoteSend(input) : new ConfigError({ reason: 'No local project channel for this target' })
+    if (input.notifyOnly) {
+      const channel = await textChannel(project.channel_id)
+      if (channel instanceof Error) return channel
+      const thread = await channel.threads.create({ name: (input.name ?? input.prompt).replace(/\s+/g, ' ').slice(0, 100), autoArchiveDuration: 1440 }).catch((cause) => new DiscordError({ operation: 'create notification thread', cause }))
+      if (thread instanceof Error) return thread
+      const shown = await thread.send({ content: input.prompt, files: input.files?.map((file) => ({ attachment: file.uri.startsWith('file:') ? fileURLToPath(file.uri) : file.uri, name: file.name })), allowedMentions: { parse: [] } }).catch((cause) => new DiscordError({ operation: 'post notification', cause }))
+      if (shown instanceof Error) return shown
+      if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add notification member: ${error.message}`))
+      return { threadId: thread.id, sessionId: null }
+    }
+    const directory = await fs.promises.realpath(input.cwd ?? project.directory).catch((cause) => new ConfigError({ reason: 'Send directory does not exist', cause }))
+    if (directory instanceof Error) return directory
+    const base = await fs.promises.realpath(project.directory).catch((cause) => new ConfigError({ reason: 'Project directory does not exist', cause }))
+    if (base instanceof Error) return base
+    if (directory !== base && !directory.startsWith(`${base}${path.sep}`)) return new ConfigError({ reason: '--cwd must be inside the project; worktrees arrive in P10' })
+    const permissions: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }> = []
+    for (const rule of input.permissions ?? []) {
+      const parts = rule.split(':')
+      const action = parts.shift()
+      const effect = parts.pop()
+      if (!action || (effect !== 'allow' && effect !== 'deny' && effect !== 'ask')) return new ConfigError({ reason: 'Use --permission tool[:pattern]:allow|deny|ask' })
+      permissions.push({ action, resource: parts.join(':') || '*', effect })
+    }
+    const model = input.model ? parseModel(input.model, null) : null
+    if (input.model && !model) return new ConfigError({ reason: 'Use --model provider/model' })
+    const first = route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' ? route : { kind: 'steer' as const, text: route.text, agent: input.agent }
+    const started = await startSession({ channelId: project.channel_id, directory, route: first, author, messageId, startMessageId: null,
+      threadName: input.name, files: input.files, permissions, parentSessionId: input.parentSessionId, ...(model && { model: { ...model, variant: null } }) })
+    if (started instanceof Error) return started
+    if (input.user) {
+      const thread = await discord.channels.fetch(started.threadId).catch((cause) => new DiscordError({ operation: 'fetch send thread', cause }))
+      if (thread instanceof Error) return thread
+      if (thread?.isThread()) {
+        const added = await thread.members.add(author.id).catch((cause) => new DiscordError({ operation: 'add thread member', cause }))
+        if (added instanceof Error) return added
+      }
+    }
+    return started
+  }
+
+  async function loginKey(input: { provider: string; key: string; directory?: string; label?: string }) {
+    const api = client()
+    if (api instanceof Error) return api
+    const project = input.directory ? null : await db.query.channel_directories.findFirst().catch((cause) => new DbError({ operation: 'find login directory', cause }))
+    if (project instanceof Error) return project
+    const directory = input.directory ?? project?.directory
+    const result = await api.integration.connect.key({ integrationID: input.provider, key: input.key, label: input.label,
+      ...(directory && { location: { directory } }) })
+      .catch((cause) => new OpenCodeError({ operation: 'integration.connect.key', cause }))
+    if (result instanceof Error) return result
+    return { message: `Connected ${input.provider}` }
+  }
+
+  async function credential(input: { id: string; operation: 'activate' | 'remove' | 'label'; label?: string }) {
+    const api = client()
+    if (api instanceof Error) return api
+    const result = await (input.operation === 'label'
+      ? api.credential.update({ credentialID: input.id, label: input.label ?? '' })
+      : api.credential[input.operation]({ credentialID: input.id }))
+      .catch((cause) => new OpenCodeError({ operation: `credential.${input.operation}`, cause }))
+    if (result instanceof Error) return result
+    return { message: `Credential ${input.operation} complete` }
+  }
+
+  async function startOAuth(input: { provider: string; method: string; directory: string }) {
+    const api = client()
+    if (api instanceof Error) return api
+    return api.integration.oauth.connect({ integrationID: input.provider, methodID: input.method, location: { directory: input.directory } })
+      .catch((cause) => new OpenCodeError({ operation: 'integration.oauth.connect', cause }))
+  }
+  async function completeOAuth(input: { provider: string; attempt: string; directory: string; code?: string }) {
+    const api = client()
+    if (api instanceof Error) return api
+    return api.integration.oauth.complete({ integrationID: input.provider, attemptID: input.attempt, code: input.code, location: { directory: input.directory } })
+      .catch((cause) => new OpenCodeError({ operation: 'integration.oauth.complete', cause }))
+  }
+  async function oauthStatus(input: { provider: string; attempt: string; directory: string }) {
+    const api = client()
+    if (api instanceof Error) return api
+    return api.integration.oauth.status({ integrationID: input.provider, attemptID: input.attempt, location: { directory: input.directory } })
+      .catch((cause) => new OpenCodeError({ operation: 'integration.oauth.status', cause }))
+  }
+  async function cancelOAuth(input: { provider: string; attempt: string; directory: string }) {
+    const api = client()
+    if (api instanceof Error) return api
+    return api.integration.oauth.cancel({ integrationID: input.provider, attemptID: input.attempt, location: { directory: input.directory } })
+      .catch((cause) => new OpenCodeError({ operation: 'integration.oauth.cancel', cause }))
+  }
+
+  async function loginCli(input: { provider: string; method?: string; attempt?: string; code?: string; key?: string; operation?: string; directory?: string }): Promise<Error | { data: unknown }> {
+    const api = client()
+    if (api instanceof Error) return api
+    const project = await db.query.channel_directories.findFirst().catch((cause) => new DbError({ operation: 'find login directory', cause }))
+    if (project instanceof Error) return project
+    const directory = input.directory ?? project?.directory
+    if (!directory) return new ConfigError({ reason: 'Pass a login directory or add a project first' })
+    if (input.key) {
+      const result = await loginKey({ provider: input.provider, key: input.key, directory })
+      return result instanceof Error ? result : { data: result }
+    }
+    const base = { provider: input.provider, directory }
+    if (input.attempt) {
+      const args = { ...base, attempt: input.attempt }
+      if (input.operation === 'cancel') {
+        const result = await cancelOAuth(args)
+        return result instanceof Error ? result : { data: { cancelled: true } }
+      }
+      if (input.code) {
+        const result = await completeOAuth({ ...args, code: input.code })
+        return result instanceof Error ? result : { data: { connected: true } }
+      }
+      const result = await oauthStatus(args)
+      return result instanceof Error ? result : { data: result.data }
+    }
+    if (input.method) {
+      const result = await startOAuth({ ...base, method: input.method })
+      return result instanceof Error ? result : { data: result.data }
+    }
+    const info = await api.integration.get({ integrationID: input.provider, location: { directory } }).catch((cause) => new OpenCodeError({ operation: 'integration.get', cause }))
+    return info instanceof Error ? info : { data: { provider: info.data.name, methods: info.data.methods, connections: info.data.connections, instructions: 'Use --key, or --method <oauth method ID>. Complete with --attempt <id> --code <code>; check or cancel with --attempt <id> [--cancel].' } }
+  }
+
+  async function runCli(name: string, input: unknown): Promise<Error | { data: unknown }> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return new ConfigError({ reason: 'Expected action arguments' })
+    const fields = new Map(Object.entries(input))
+    for (const key of ['sessionId', 'threadId', 'channelId', 'directory', 'text', 'agent', 'model', 'variant', 'before', 'inboxId']) {
+      const value = fields.get(key)
+      if (value !== undefined && (typeof value !== 'string' || !value.trim())) return new ConfigError({ reason: `${key} must be a non-empty string` })
+    }
+    const args = input as { sessionId?: string; threadId?: string; channelId?: string; directory?: string; text?: string; agent?: string; model?: string; variant?: string; before?: string; inboxId?: string }
+    if (name.startsWith('channel.')) {
+      const project = await db.query.channel_directories.findFirst({ where: args.channelId ? { channel_id: args.channelId } : { directory: path.resolve(args.directory ?? process.cwd()) } }).catch((cause) => new DbError({ operation: 'find channel', cause }))
+      if (project instanceof Error) return project
+      if (!project) return new ConfigError({ reason: 'No local project channel. Pass --channel.' })
+      const channelId = project.channel_id
+      if (fields.get('clear') === true && (name === 'channel.agent' || name === 'channel.model')) {
+        const result = name === 'channel.agent'
+          ? await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, channelId)).catch((cause) => new DbError({ operation: 'clear agent', cause }))
+          : await db.delete(schema.channel_models).where(orm.eq(schema.channel_models.channel_id, channelId)).catch((cause) => new DbError({ operation: 'clear model', cause }))
+        return result instanceof Error ? result : { data: { cleared: true } }
+      }
+      if (name === 'channel.agent' && args.agent) {
+        const result = await setChannelAgent({ channelId, agent: args.agent })
+        return result instanceof Error ? result : { data: { agent: args.agent } }
+      }
+      if (name === 'channel.model' && args.model) {
+        const model = parseModel(args.model, args.variant)
+        if (!model) return new ConfigError({ reason: 'Use provider/model' })
+        const result = await setChannelModel({ channelId, model: { ...model, variant: args.variant ?? null } })
+        return result instanceof Error ? result : { data: { model } }
+      }
+      if (name === 'channel.verbosity' && (args.text === 'text' || args.text === 'tools')) {
+        const result = await setVerbosity({ channelId, verbosity: args.text })
+        return result instanceof Error ? result : { data: { verbosity: args.text } }
+      }
+      return new ConfigError({ reason: 'Invalid channel action or value' })
+    }
+    if (name === 'session.resume' && args.sessionId && args.channelId) {
+      const result = await resume({ channelId: args.channelId, sessionId: args.sessionId, author: { id: discord.user!.id, username: 'CLI' } })
+      return result instanceof Error ? result : { data: result }
+    }
+    const threadId = args.threadId ?? (args.sessionId ? store.getState().sessionThreads[args.sessionId] : undefined)
+    if (!threadId || !store.getState().roots[threadId]) return new ConfigError({ reason: 'No local session. Use --session or --thread.' })
+    const sessionId = store.getState().roots[threadId]!
+    const api = client()
+    if (api instanceof Error) return api
+    if (name === 'session.title' && args.text) {
+      const renamed = await api.session.update({ sessionID: sessionId, title: args.text }).catch((cause) => new OpenCodeError({ operation: 'session.update', cause }))
+      if (renamed instanceof Error) return renamed
+      const thread = await discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: 'fetch title thread', cause }))
+      if (thread instanceof Error) return thread
+      if (!thread?.isThread()) return new ConfigError({ reason: 'Target is not a thread' })
+      const updated = await thread.setName(args.text.slice(0, 100)).catch((cause) => new DiscordError({ operation: 'rename thread', cause }))
+      return updated instanceof Error ? updated : { data: { title: args.text } }
+    }
+    if (name === 'session.archive') {
+      const thread = await discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: 'fetch archive thread', cause }))
+      if (thread instanceof Error) return thread
+      if (!thread?.isThread()) return new ConfigError({ reason: 'Target is not a thread' })
+      const archived = await thread.setArchived(true).catch((cause) => new DiscordError({ operation: 'archive thread', cause }))
+      return archived instanceof Error ? archived : { data: { archived: true } }
+    }
+    if (name === 'queue.list') {
+      const result = await api.session.inbox.list({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'session.inbox.list', cause }))
+      return result instanceof Error ? result : { data: result.filter((item) => item.delivery === 'queue') }
+    }
+    if (name === 'queue.remove' && args.inboxId) {
+      const result = await cancelQueued({ threadId, inboxID: args.inboxId })
+      return result instanceof Error ? result : { data: { removed: true } }
+    }
+    if (name === 'queue.clear' || name === 'session.abort') {
+      const result = await (name === 'queue.clear' ? clearQueue({ threadId }) : abort({ threadId }))
+      return result instanceof Error ? result : { data: result }
+    }
+    if (name === 'session.fork') {
+      const thread = await discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: 'fetch fork thread', cause }))
+      if (thread instanceof Error) return thread
+      if (!thread?.isThread()) return new ConfigError({ reason: 'Target is not a thread' })
+      const result = await fork({ sourceThread: thread, sessionId: args.sessionId ?? sessionId, before: args.before, author: { id: discord.user!.id, username: 'CLI' } })
+      return result instanceof Error ? result : { data: result }
+    }
+    if (name === 'session.command' && args.text) {
+      const queued = fields.get('queue') === true ? '. queue' : ''
+      const result = await send({ threadId, prompt: `/${args.text}${queued ? ` ${queued}` : ''}` })
+      return result instanceof Error ? result : { data: result }
+    }
+    if (name === 'session.shell' && args.text) {
+      const result = shell({ threadId, sessionId, command: args.text })
+      return result instanceof Error ? result : { data: { started: true } }
+    }
+    if (name === 'session.btw' && args.text) {
+      const result = await send({ threadId, prompt: `${args.text}. btw` })
+      return result instanceof Error ? result : { data: result }
+    }
+    if (name === 'queue.add' && args.text) {
+      const result = await send({ threadId, prompt: `${args.text}. queue` })
+      return result instanceof Error ? result : { data: result }
+    }
+    return new ConfigError({ reason: `Unknown or incomplete action: ${name}` })
+  }
+
+  async function upload({ id, files }: { id: string; files: Array<{ path: string; name: string }> }) {
+    const threadId = store.getState().sessionThreads[id] ?? (store.getState().roots[id] ? id : undefined)
+    if (!threadId) return new ConfigError({ reason: 'No local session thread for this upload' })
+    eventLoop.dispatch(threadId, { type: 'kimaki.upload', files })
+    return { uploaded: files.map((file) => file.name) }
+  }
+
+  async function refreshCliContext() {
+    const api = client()
+    if (api instanceof Error) return api
+    for (const sessionId of Object.keys(store.getState().sessionThreads)) {
+      const info = await api.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'get bound session', cause }))
+      if (info instanceof Error) { logger.warn(info.message); continue }
+      const marker = info.metadata?.['kimaki']
+      if (!marker || typeof marker !== 'object' || Array.isArray(marker)) continue
+      if (marker['dataDir'] === cliContext.dataDir && marker['lockPort'] === cliContext.lockPort) continue
+      const result = await api.session.update({ sessionID: sessionId, metadata: { ...info.metadata, kimaki: { ...marker, ...cliContext } } })
+        .catch((cause) => new OpenCodeError({ operation: 'refresh Kimaki CLI context', cause }))
+      if (result instanceof Error) return result
+    }
+  }
+
   return {
+    send,
+    loginKey,
+    credential,
+    startOAuth,
+    completeOAuth,
+    oauthStatus,
+    cancelOAuth,
+    loginCli,
+    runCli,
+    upload,
+    refreshCliContext,
     resume,
     fork,
     switchAgent,

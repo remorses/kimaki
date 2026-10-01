@@ -124,6 +124,39 @@ export function createPreferenceCommands({ db, actions, readClient, resolveTarge
       .map((model) => ({ ...model, providerName: names.get(model.providerID) ?? model.providerID }))
   }
 
+  // The model a session or channel runs with: its own, else the OpenCode default.
+  // (V2 runs the session model; an agent's configured model only picks titles.)
+  async function baseModel(target: InteractionTarget) {
+    const client = readClient()
+    if (client instanceof Error) return client
+    const [now, models, fallback] = await Promise.all([
+      current(target),
+      enabledModels(target.directory),
+      client.model
+        .default({ location: { directory: target.directory } })
+        .catch((e) => new OpenCodeError({ operation: 'model.default', cause: e })),
+    ])
+    if (now instanceof Error) return now
+    if (models instanceof Error) return models
+    if (fallback instanceof Error) return fallback
+    const model = now.model ?? (fallback.data ? { providerID: fallback.data.providerID, id: fallback.data.id } : null)
+    const info = model ? models.find((candidate) => candidate.providerID === model.providerID && candidate.id === model.id) : null
+    if (!model || !info) return new ConfigError({ reason: 'No model configured. Use /model to set one first.' })
+    return { model, info }
+  }
+
+  // The base model with thinking level `variant`, for `/<agent>-agent variant:`.
+  async function variantModel({ target, variant }: { target: InteractionTarget; variant: string }): Promise<Error | ModelChoice> {
+    const base = await baseModel(target)
+    if (base instanceof Error) return base
+    const { info } = base
+    if (!info.variants.some((candidate) => candidate.id === variant)) {
+      const known = info.variants.map((candidate) => `\`${candidate.id}\``).join(', ') || 'none'
+      return new ConfigError({ reason: `\`${info.providerID}/${info.id}\` has no thinking level \`${variant}\`. Available: ${known}` })
+    }
+    return { providerID: info.providerID, id: info.id, variant }
+  }
+
   // --- /agent and /<agent>-agent
 
   async function setAgent({ target, agent }: { target: InteractionTarget; agent: string }): Promise<Error | string> {
@@ -242,18 +275,9 @@ export function createPreferenceCommands({ db, actions, readClient, resolveTarge
     const wizard: Wizard = { target, providerID: null, providerName: null, modelID: null, variant: null }
     if (interaction.commandName === 'model') return renderStep({ interaction, hash: remember(wizard), wizard, step: 'provider' })
     // /model-variant: the variants of the model in use now.
-    const [now, models] = await Promise.all([current(target), enabledModels(target.directory)])
-    if (now instanceof Error) return replyError(interaction, now)
-    if (models instanceof Error) return replyError(interaction, models)
-    const client = readClient()
-    if (client instanceof Error) return replyError(interaction, client)
-    const fallback = await client.model
-      .default({ location: { directory: target.directory } })
-      .catch((e) => new OpenCodeError({ operation: 'model.default', cause: e }))
-    if (fallback instanceof Error) return replyError(interaction, fallback)
-    const model = now.model ?? (fallback.data ? { providerID: fallback.data.providerID, id: fallback.data.id } : null)
-    const info = model ? models.find((candidate) => candidate.providerID === model.providerID && candidate.id === model.id) : null
-    if (!model || !info) return replyError(interaction, new ConfigError({ reason: 'No model configured. Use /model to set one first.' }))
+    const base = await baseModel(target)
+    if (base instanceof Error) return replyError(interaction, base)
+    const { model, info } = base
     if (info.variants.length === 0) {
       await interaction.editReply({ content: `**Current model:** \`${modelLabel(model)}\`\nThis model has no thinking level variants.` })
       return
@@ -377,14 +401,38 @@ export function createPreferenceCommands({ db, actions, readClient, resolveTarge
     async handle(interaction: ChatInputCommandInteraction): Promise<void> {
       await handlers[interaction.commandName]?.(interaction)
     },
-    // /<agent>-agent without a prompt.
-    async applyAgent({ interaction, agent }: { interaction: ChatInputCommandInteraction; agent: string }): Promise<void> {
-      const target = await resolveTarget(interaction.channelId)
-      if (target instanceof Error) return replyError(interaction, target)
+    variantModel,
+    // /<agent>-agent without a prompt: agent and thinking level for the session or channel.
+    async applyAgent({
+      interaction,
+      target,
+      agent,
+      model,
+    }: {
+      interaction: ChatInputCommandInteraction
+      target: InteractionTarget
+      agent: string
+      model: ModelChoice | null
+    }): Promise<void> {
       await interaction.deferReply()
+      if (model) {
+        const switched = target.sessionId
+          ? await actions.switchModel({ sessionId: target.sessionId, model })
+          : await actions.setChannelModel({ channelId: target.channelId, model })
+        if (switched instanceof Error) return replyError(interaction, switched)
+      }
       const content = await setAgent({ target, agent })
       if (content instanceof Error) return replyError(interaction, content)
-      await interaction.editReply({ content })
+      const thinking = model ? `\nThinking level: **${model.variant}** (\`${modelLabel(model)}\`)` : ''
+      await interaction.editReply({ content: `${content}${thinking}` })
+    },
+    // Autocomplete of `variant`: the thinking levels of the model in use.
+    async variantChoices(target: InteractionTarget, query: string): Promise<Error | Array<{ name: string; value: string }>> {
+      const base = await baseModel(target)
+      if (base instanceof Error) return base
+      return base.info.variants
+        .filter((variant) => variant.id.includes(query.toLowerCase()))
+        .map((variant) => ({ name: `${variant.id} (${base.info.providerID}/${base.info.id})`, value: variant.id }))
     },
     ownsSelect(customId: string): boolean {
       return [AGENT_PREFIX, MODEL_PREFIX, VERBOSITY_PREFIX].some((prefix) => customId.startsWith(prefix))

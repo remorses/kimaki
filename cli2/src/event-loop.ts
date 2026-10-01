@@ -173,6 +173,7 @@ export function createEventLoop({
       // A root execution starts, or one was found running after a (re)connect.
       const rootStarts =
         (event.type === 'session.execution.started' && eventSessionId(event) === context.sessionId) ||
+        (event.type === 'session.step.started' && event.data.sessionID === context.sessionId && !store.getState().threads[threadId]?.turn) ||
         (event.type === 'kimaki.synced' && event.activeSessionIds.includes(context.sessionId))
       if (rootStarts) {
         apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory) } })
