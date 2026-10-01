@@ -2043,8 +2043,7 @@ for await (const event of client.event.subscribe({ signal })) {
 
 ### Findings from implementing cli2 P7 (in progress, OpenCode 2.0.19)
 
-**P7 is not complete yet.** The working implementation and its tested flows are below;
-the remaining surface and coverage must be finished before committing the phase.
+**P7 is mostly complete.** Open items are listed at the end of this section.
 
 - **Login API:** API-key login is `integration.connect.key`, not `credential.create`
   (which the installed client does not expose). OAuth uses native attempts through
@@ -2085,10 +2084,21 @@ the remaining surface and coverage must be finished before committing the phase.
 - **Restart metadata:** session adoption and bot startup refresh durable CLI routing
   fields. Child hooks resolve an inherited thread marker through the native parent
   chain, so a bot restart's new lock port does not leave running children on the old one.
-- **Remaining CLI work:** `session editors`, `session diff`, search by channel,
-  `session command <name> [args]`, named forks, and directory-derived resume targets.
-  The HTTP action adapter also needs its final typed-registry cleanup and full CLI
-  parity coverage. Worktrees, scheduling, and onboarding remain P10/P8/P9 respectively.
+- **Editors and diff:** `session editors <file>` derives editors from the `edit`/`write`/
+  `patch` tool inputs in message history (`session.log` has no history, finding 10).
+  Failed tool calls do not count. It scans sessions updated within `--days` (default 14),
+  so cost grows with history. `session diff` runs `critique --web` in the session folder;
+  tested only for the offline clean-tree path. The online upload is not tested.
+  A successful `patch` call is untested end to end: the deterministic model has no
+  `patch` tool, so the path parser has a pure test instead.
+- **Command, fork, resume:** `session command <name> [args]`, `session fork --name`, and
+  `session resume <id>` without `--channel` (the channel whose directory holds the session)
+  are covered by `cli-sessions.e2e.test.ts`. `session search --channel` resolves the
+  project directory through SQLite.
+- **Still open:** the HTTP action adapter's final typed-registry cleanup (it validates
+  field by field and casts the input), login forms and command-based connection methods,
+  an in-flight upload-cancellation regression test, and the shell-environment design
+  review (Windows untested). Worktrees, scheduling, and onboarding stay P10/P8/P9.
 
 ---
 

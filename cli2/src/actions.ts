@@ -900,6 +900,22 @@ export function createActions({
     return { threadId: thread.id, sessionId }
   }
 
+  // The project channel whose directory holds this session.
+  async function channelForSession(sessionId: string) {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    const info = await opencodeClient.session
+      .get({ sessionID: sessionId })
+      .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
+    if (info instanceof Error) return info
+    const project = await db.query.channel_directories
+      .findFirst({ where: { directory: path.resolve(info.location.directory) } })
+      .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
+    if (project instanceof Error) return project
+    if (!project) return new ConfigError({ reason: `No project channel for ${info.location.directory}. Pass --channel.` })
+    return project.channel_id
+  }
+
   // Binds an existing session of the channel's project to a new thread.
   async function resume({ channelId, sessionId, author }: { channelId: string; sessionId: string; author: Author }) {
     const opencodeClient = client()
@@ -943,11 +959,14 @@ export function createActions({
     sessionId,
     before,
     subagent,
+    name,
     author,
   }: {
     sourceThread: ThreadChannel
     sessionId: string
     before?: string
+    // Thread name; default is OpenCode's fork title.
+    name?: string
     // Set when forking a subagent session: its agent and task.
     subagent?: { agent: string; description: string }
     author: Author
@@ -973,7 +992,7 @@ export function createActions({
       },
       directory: project.directory,
       // OpenCode titles forks "<title> (fork #1)".
-      threadName: forked.title || `Fork: ${subagent?.description || sourceThread.name}`,
+      threadName: name ?? (forked.title || `Fork: ${subagent?.description || sourceThread.name}`),
       intro,
       note: 'You can now continue the conversation from this point.',
       author,
@@ -1297,11 +1316,11 @@ export function createActions({
   async function runCli(name: string, input: unknown): Promise<Error | { data: unknown }> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return new ConfigError({ reason: 'Expected action arguments' })
     const fields = new Map(Object.entries(input))
-    for (const key of ['sessionId', 'threadId', 'channelId', 'directory', 'text', 'agent', 'model', 'variant', 'before', 'inboxId']) {
+    for (const key of ['sessionId', 'threadId', 'channelId', 'directory', 'text', 'agent', 'model', 'variant', 'before', 'inboxId', 'name']) {
       const value = fields.get(key)
       if (value !== undefined && (typeof value !== 'string' || !value.trim())) return new ConfigError({ reason: `${key} must be a non-empty string` })
     }
-    const args = input as { sessionId?: string; threadId?: string; channelId?: string; directory?: string; text?: string; agent?: string; model?: string; variant?: string; before?: string; inboxId?: string }
+    const args = input as { sessionId?: string; threadId?: string; channelId?: string; directory?: string; text?: string; agent?: string; model?: string; variant?: string; before?: string; inboxId?: string; name?: string }
     if (name.startsWith('channel.')) {
       const project = await db.query.channel_directories.findFirst({ where: args.channelId ? { channel_id: args.channelId } : { directory: path.resolve(args.directory ?? process.cwd()) } }).catch((cause) => new DbError({ operation: 'find channel', cause }))
       if (project instanceof Error) return project
@@ -1329,8 +1348,10 @@ export function createActions({
       }
       return new ConfigError({ reason: 'Invalid channel action or value' })
     }
-    if (name === 'session.resume' && args.sessionId && args.channelId) {
-      const result = await resume({ channelId: args.channelId, sessionId: args.sessionId, author: { id: discord.user!.id, username: 'CLI' } })
+    if (name === 'session.resume' && args.sessionId) {
+      const channelId = args.channelId ?? await channelForSession(args.sessionId)
+      if (channelId instanceof Error) return channelId
+      const result = await resume({ channelId, sessionId: args.sessionId, author: { id: discord.user!.id, username: 'CLI' } })
       return result instanceof Error ? result : { data: result }
     }
     const threadId = args.threadId ?? (args.sessionId ? store.getState().sessionThreads[args.sessionId] : undefined)
@@ -1370,7 +1391,7 @@ export function createActions({
       const thread = await discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: 'fetch fork thread', cause }))
       if (thread instanceof Error) return thread
       if (!thread?.isThread()) return new ConfigError({ reason: 'Target is not a thread' })
-      const result = await fork({ sourceThread: thread, sessionId: args.sessionId ?? sessionId, before: args.before, author: { id: discord.user!.id, username: 'CLI' } })
+      const result = await fork({ sourceThread: thread, sessionId: args.sessionId ?? sessionId, before: args.before, name: args.name, author: { id: discord.user!.id, username: 'CLI' } })
       return result instanceof Error ? result : { data: result }
     }
     if (name === 'session.command' && args.text) {

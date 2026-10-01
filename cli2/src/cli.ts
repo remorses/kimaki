@@ -8,6 +8,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { pipeline } from 'node:stream/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { goke, wrapJsonSchema } from 'goke'
 import { ChannelType } from 'discord.js'
 
@@ -16,7 +18,7 @@ import { callBot, DEFAULT_LOCK_PORT } from './lock-server.ts'
 import { createLogger } from './logger.ts'
 import { startBot } from './main.ts'
 import { resolveOpencode } from './opencode-server.ts'
-import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEventsFile, waitForSessionReady } from './session-events.ts'
+import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEditors, sessionEventsFile, waitForSessionReady } from './session-events.ts'
 import { readSavedCredentials, resolveCredentials, restApiUrl } from './credentials.ts'
 import { chooseGuild, kimakiShellCommand, runOnboarding } from './onboarding.ts'
 import {
@@ -28,6 +30,7 @@ import {
 } from './project.ts'
 
 const logger = createLogger('CLI')
+const execFileAsync = promisify(execFile)
 
 const cli = goke('kimaki2')
 
@@ -59,6 +62,18 @@ async function discordApi(dataDir: string | undefined) {
 
 function dataDirOrDefault(dataDir: string | undefined): string {
   return path.resolve(dataDir ?? process.env['KIMAKI_DATA_DIR'] ?? path.join(os.homedir(), '.kimaki'))
+}
+
+// Project directory: --channel resolves through SQLite, else --project, else the current directory.
+async function projectDirectory({ project, channel, dataDir }: { project: string | undefined; channel: string | undefined; dataDir: string | undefined }) {
+  if (!channel) return path.resolve(project ?? process.cwd())
+  const opened = await openDb({ dataDir: dataDirOrDefault(dataDir), migrate: false })
+  if (opened instanceof Error) fail(opened)
+  const row = await opened.db.query.channel_directories.findFirst({ where: { channel_id: channel } }).catch((error: Error) => error)
+  opened.close()
+  if (row instanceof Error) fail(row)
+  if (!row) fail(new Error(`No project directory for channel ${channel}`))
+  return row.directory
 }
 
 // Prints the error and its cause chain: "Discord login failed" alone hides why.
@@ -202,12 +217,13 @@ cli.command('session list', 'List sessions with native status and token counts')
 cli.command('session search <query>', 'Search titles, then real message content')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('--project <path>', 'Project (default: current directory)')
+  .option('-c, --channel <id>', 'Project of this Discord channel')
   .option('--all', 'All projects')
   .option('--days <n>', 'Recent days (default: 14; 0 = all)')
   .option('--json', 'Output as JSON')
   .action(async (query, options) => {
     const client = await readClient()
-    const sessions = await allSessions({ client, directory: options.all ? undefined : path.resolve(options.project ?? process.cwd()) })
+    const sessions = await allSessions({ client, directory: options.all ? undefined : await projectDirectory({ project: options.project, channel: options.channel, dataDir: options.dataDir }) })
     if (sessions instanceof Error) fail(sessions)
     const pattern = query.match(/^\/(.*)\/([dgimsuvy]*)$/)
     const expression = pattern ? new RegExp(pattern[1]!, pattern[2]) : null
@@ -240,6 +256,41 @@ cli.command('session wait <id>', 'Wait until idle or waiting for input, then pri
     const markdown = await readSessionMarkdown({ client, sessionId })
     if (markdown instanceof Error) fail(markdown)
     process.stdout.write(`${markdown}\n`)
+  })
+
+cli.command('session editors <file>', 'List sessions that edited a file, newest first')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--project <path>', 'Project (default: current directory)')
+  .option('-c, --channel <id>', 'Project of this Discord channel')
+  .option('--all', 'All projects')
+  .option('--days <n>', 'Recent days (default: 14; 0 = all)')
+  .option('--json', 'Output as JSON')
+  .action(async (file, options) => {
+    const days = Number(options.days ?? 14)
+    if (!Number.isFinite(days) || days < 0) fail(new Error('--days must be a non-negative number'))
+    const client = await readClient()
+    const editors = await sessionEditors({
+      client, file: path.resolve(file), sinceMs: days ? Date.now() - days * 86400000 : 0,
+      directory: options.all ? undefined : await projectDirectory({ project: options.project, channel: options.channel, dataDir: options.dataDir }),
+    })
+    if (editors instanceof Error) fail(editors)
+    if (editors.length === 0) fail(new Error(`No recorded editors for ${path.resolve(file)}`))
+    const rows = editors.map((editor) => ({ ...editor, editedAt: new Date(editor.editedAt).toISOString() }))
+    process.stdout.write(options.json ? `${JSON.stringify(rows, null, 2)}\n` : rows.map((row) => `${row.sessionId} | ${row.title || '-'} | ${row.editedAt}\n`).join(''))
+  })
+
+cli.command('session diff', 'Upload the git diff of the session folder to critique.work and print the URL')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .action(async (options) => {
+    const id = options.session ?? process.env['OPENCODE_SESSION_ID']
+    if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
+    const client = await readClient()
+    const session = await client.session.get({ sessionID: await sessionIdFor(id, options.dataDir) }).catch((error: Error) => error)
+    if (session instanceof Error) fail(session)
+    const { stdout } = await execFileAsync('critique', ['--web', session.title ?? 'Session diff'], { cwd: session.location.directory })
+      .catch((error: Error & { stderr?: string }) => fail(new Error(`critique failed: ${error.stderr?.trim() || error.message}`)))
+    process.stdout.write(stdout)
   })
 
 cli.command('session url <id>', 'Print the Discord URL of a session or thread')
@@ -305,7 +356,13 @@ for (const name of ['list', 'clear'] as const) {
     .action(async (options) => action(`queue.${name}`, options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] }))
 }
 
-for (const name of ['shell', 'btw', 'command'] as const) {
+cli.command('session command <name> [...args]', 'Run an OpenCode command, skill, or MCP prompt')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .option('--queue', 'Run after the current turn instead of interrupting')
+  .action(async (name, args, options) => action('session.command', options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text: [name, ...args].join(' '), queue: options.queue }))
+
+for (const name of ['shell', 'btw'] as const) {
   cli.command(`session ${name} <text>`, `Run ${name} through the shared session action`)
     .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
     .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
@@ -316,11 +373,12 @@ for (const name of ['shell', 'btw', 'command'] as const) {
 cli.command('session fork [id]', 'Fork a root or child session into a new thread')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('--before <messageId>', 'Fork before this user message')
-  .action(async (id, options) => action('session.fork', options.dataDir, { sessionId: id ?? process.env['OPENCODE_SESSION_ID'], before: options.before }))
+  .option('-n, --name <name>', 'Thread name')
+  .action(async (id, options) => action('session.fork', options.dataDir, { sessionId: id ?? process.env['OPENCODE_SESSION_ID'], before: options.before, name: options.name }))
 
-cli.command('session resume <id>', 'Bind an existing session to a new thread')
+cli.command('session resume <id>', 'Bind an existing session to a new thread in its project channel')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
-  .option('-c, --channel <id>', 'Destination channel')
+  .option('-c, --channel <id>', 'Destination channel (default: channel of the session folder)')
   .action(async (id, options) => action('session.resume', options.dataDir, { sessionId: id, channelId: options.channel }))
 
 cli.command('buttons', 'Show 1-3 action buttons. Call last, after visible text')

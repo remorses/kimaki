@@ -208,3 +208,48 @@ export async function waitForSessionReady({ client, sessionId, signal }: { clien
   await iterator.return?.(undefined).catch(() => undefined)
   return result
 }
+
+// File paths written by a tool call. Inputs: edit/write use `path`, patch uses patchText headers.
+export function editedPaths({ name, input }: { name: string; input: Record<string, unknown> | undefined }): string[] {
+  if (!input) return []
+  if (name === 'edit' || name === 'write') return typeof input['path'] === 'string' ? [input['path']] : []
+  if (name !== 'patch' || typeof input['patchText'] !== 'string') return []
+  const headers = [...input['patchText'].matchAll(/^\*\*\* (?:Add|Update|Delete) File:\s+(.+)$/gm), ...input['patchText'].matchAll(/^\*\*\* Move to:\s+(.+)$/gm)]
+  return headers.map((match) => match[1]!.trim())
+}
+
+export type FileEditor = { sessionId: string; title: string; editedAt: number }
+
+// Sessions that edited `file`, newest first. Derived from tool inputs in message history.
+export async function sessionEditors({
+  client,
+  directory,
+  file,
+  sinceMs,
+}: {
+  client: OpenCodeClient
+  directory: string | undefined
+  file: string
+  sinceMs: number
+}): Promise<OpenCodeError | FileEditor[]> {
+  const sessions = await allSessions({ client, directory })
+  if (sessions instanceof Error) return sessions
+  const editors: FileEditor[] = []
+  for (const session of sessions) {
+    if (session.time.updated < sinceMs) continue
+    const messages = await allMessages({ client, sessionId: session.id })
+    if (messages instanceof Error) return messages
+    let editedAt = 0
+    for (const message of messages) {
+      if (message.type !== 'assistant') continue
+      for (const part of message.content) {
+        if (part.type !== 'tool' || part.state.status === 'error') continue
+        const input = part.state.input
+        const paths = editedPaths({ name: part.name, input: input && typeof input === 'object' ? { ...input } : undefined })
+        if (paths.some((edited) => path.resolve(session.location.directory, edited) === file)) editedAt = Math.max(editedAt, message.time.created)
+      }
+    }
+    if (editedAt) editors.push({ sessionId: session.id, title: session.title ?? '', editedAt })
+  }
+  return editors.sort((left, right) => right.editedAt - left.editedAt)
+}

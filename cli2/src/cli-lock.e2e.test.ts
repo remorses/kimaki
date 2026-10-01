@@ -68,185 +68,199 @@ test('CLI help documents the supported P7 commands', async () => {
       $ kimaki2 [options]
 
     Commands:
-      kimaki2                       Start the bot. Runs onboarding on first start
+      kimaki2                           Start the bot. Runs onboarding on first start
 
       Project:
-      project list                  List project directories and their channels
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --json                      Output as JSON
+      project list                      List project directories and their channels
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --json                          Output as JSON
 
-      project add [directory]       Create a channel for a directory (default: current directory)
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -g, --guild <guildId>       Server (default: the one with Kimaki channels)
+      project add [directory]           Create a channel for a directory (default: current directory)
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -g, --guild <guildId>           Server (default: the one with Kimaki channels)
 
       Session:
-      session list                  List sessions with native status and token counts
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --project <path>            Project (default: current directory)
-        --all                       All projects
-        --active                    Only busy sessions; exit 1 when none remain, 64 on errors
-        --exclude <id>              Exclude session (repeatable)
-        --json                      Output as JSON
+      session list                      List sessions with native status and token counts
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --project <path>                Project (default: current directory)
+        --all                           All projects
+        --active                        Only busy sessions; exit 1 when none remain, 64 on errors
+        --exclude <id>                  Exclude session (repeatable)
+        --json                          Output as JSON
 
-      session search <query>        Search titles, then real message content
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --project <path>            Project (default: current directory)
-        --all                       All projects
-        --days <n>                  Recent days (default: 14; 0 = all)
-        --json                      Output as JSON
+      session search <query>            Search titles, then real message content
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --project <path>                Project (default: current directory)
+        -c, --channel <id>              Project of this Discord channel
+        --all                           All projects
+        --days <n>                      Recent days (default: 14; 0 = all)
+        --json                          Output as JSON
 
-      session wait <id>             Wait until idle or waiting for input, then print the session
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --timeout <duration>        Timeout, for example 30m or 2h
+      session wait <id>                 Wait until idle or waiting for input, then print the session
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --timeout <duration>            Timeout, for example 30m or 2h
 
-      session url <id>              Print the Discord URL of a session or thread
-        --data-dir <path>           Data directory (default: ~/.kimaki)
+      session editors <file>            List sessions that edited a file, newest first
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --project <path>                Project (default: current directory)
+        -c, --channel <id>              Project of this Discord channel
+        --all                           All projects
+        --days <n>                      Recent days (default: 14; 0 = all)
+        --json                          Output as JSON
 
-      channel agent [value]         Set channel agent through the running bot
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -c, --channel <id>          Target channel (default: current project)
-        --variant <name>            Thinking variant for model
-        --clear                     Clear a saved agent or model
+      session diff                      Upload the git diff of the session folder to critique.work and print the URL
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
 
-      channel model [value]         Set channel model through the running bot
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -c, --channel <id>          Target channel (default: current project)
-        --variant <name>            Thinking variant for model
-        --clear                     Clear a saved agent or model
+      session url <id>                  Print the Discord URL of a session or thread
+        --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      channel verbosity [value]     Set channel verbosity through the running bot
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -c, --channel <id>          Target channel (default: current project)
-        --variant <name>            Thinking variant for model
-        --clear                     Clear a saved agent or model
+      channel agent [value]             Set channel agent through the running bot
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Target channel (default: current project)
+        --variant <name>                Thinking variant for model
+        --clear                         Clear a saved agent or model
 
-      session abort [id]            Stop the running turn and clear its queue
-        --data-dir <path>           Data directory (default: ~/.kimaki)
+      channel model [value]             Set channel model through the running bot
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Target channel (default: current project)
+        --variant <name>                Thinking variant for model
+        --clear                         Clear a saved agent or model
 
-      session archive [threadId]    Archive a session thread
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+      channel verbosity [value]         Set channel verbosity through the running bot
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Target channel (default: current project)
+        --variant <name>                Thinking variant for model
+        --clear                         Clear a saved agent or model
 
-      session title <title>         Rename the session and its Discord thread
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+      session abort [id]                Stop the running turn and clear its queue
+        --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      session queue add <value>     add native queued prompts
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        --json                      Output as JSON
+      session archive [threadId]        Archive a session thread
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
 
-      session queue remove <value>  remove native queued prompts
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        --json                      Output as JSON
+      session title <title>             Rename the session and its Discord thread
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
 
-      session queue list            list native queued prompts
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        --json                      Output as JSON
+      session queue add <value>         add native queued prompts
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --json                          Output as JSON
 
-      session queue clear           clear native queued prompts
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        --json                      Output as JSON
+      session queue remove <value>      remove native queued prompts
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --json                          Output as JSON
 
-      session shell <text>          Run shell through the shared session action
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        --queue                     Queue an OpenCode command
+      session queue list                list native queued prompts
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --json                          Output as JSON
 
-      session btw <text>            Run btw through the shared session action
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        --queue                     Queue an OpenCode command
+      session queue clear               clear native queued prompts
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --json                          Output as JSON
 
-      session command <text>        Run command through the shared session action
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        --queue                     Queue an OpenCode command
+      session command <name> [...args]  Run an OpenCode command, skill, or MCP prompt
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --queue                         Run after the current turn instead of interrupting
 
-      session fork [id]             Fork a root or child session into a new thread
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --before <messageId>        Fork before this user message
+      session shell <text>              Run shell through the shared session action
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --queue                         Queue an OpenCode command
 
-      session resume <id>           Bind an existing session to a new thread
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -c, --channel <id>          Destination channel
+      session btw <text>                Run btw through the shared session action
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --queue                         Queue an OpenCode command
 
-      buttons                       Show 1-3 action buttons. Call last, after visible text
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        -b, --button <spec>         Repeatable: Label[=command][:white|blue|green|red]
+      session fork [id]                 Fork a root or child session into a new thread
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --before <messageId>            Fork before this user message
+        -n, --name <name>               Thread name
 
-      upload-request                Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
-        -p, --prompt <text>         Text above the upload button
-        --max-files <n>             1 to 10 (default: 5)
+      session resume <id>               Bind an existing session to a new thread in its project channel
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Destination channel (default: channel of the session folder)
 
-      login <provider>              Connect a provider using OpenCode integration credentials
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --key <key>                 API key to store in OpenCode
-        --method <id>               OAuth method ID; without flags, list login methods
-        --attempt <id>              Check or complete this native OAuth attempt
-        --code <code>               Authorization code for the attempt
-        --cancel                    Cancel the native OAuth attempt
+      buttons                           Show 1-3 action buttons. Call last, after visible text
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -b, --button <spec>             Repeatable: Label[=command][:white|blue|green|red]
 
-      login credential <id>         Activate, remove, or label an OpenCode credential
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --operation <name>          activate | remove | label
-        --label <text>              Credential label
+      upload-request                    Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -p, --prompt <text>             Text above the upload button
+        --max-files <n>                 1 to 10 (default: 5)
 
-      send                          Start a session in a channel, or continue a thread
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -c, --channel <id>          New thread in this channel
-        -d, --project <path>        Project directory of the new thread
-        --thread <id>               Continue this thread
-        -s, --session <id>          Continue this local session
-        -p, --prompt <text>         Prompt; thread suffixes . queue and . btw are supported
-        -f, --file <path>           Attach a local file (repeatable)
-        -n, --name <text>           Thread name
-        --agent <name>              Agent ID
-        --model <provider/model>    Model for the new session
-        -u, --user <id>             Add this Discord user to the thread
-        --cwd <path>                Existing subfolder of the target project
-        --parent-session <id>       Record the parent session in session metadata
-        --permission <rule>         Repeatable: tool[:pattern]:allow|deny|ask
-        --notify-only               Post a notification thread without a model turn
-        --wait                      Wait until idle or input is needed, then print the session
+      login <provider>                  Connect a provider using OpenCode integration credentials
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --key <key>                     API key to store in OpenCode
+        --method <id>                   OAuth method ID; without flags, list login methods
+        --attempt <id>                  Check or complete this native OAuth attempt
+        --code <code>                   Authorization code for the attempt
+        --cancel                        Cancel the native OAuth attempt
 
-      session events <id>           Print the recorded OpenCode events of a thread as JSONL (root + subagents)
-        --data-dir <path>           Data directory (default: ~/.kimaki)
+      login credential <id>             Activate, remove, or label an OpenCode credential
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --operation <name>              activate | remove | label
+        --label <text>                  Credential label
 
-      session read <id>             Print the messages of a session from OpenCode as markdown
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        --thinking                  Include reasoning
-        --verbose                   Include full tool inputs and outputs
-        --json                      Print raw OpenCode messages
+      send                              Start a session in a channel, or continue a thread
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              New thread in this channel
+        -d, --project <path>            Project directory of the new thread
+        --thread <id>                   Continue this thread
+        -s, --session <id>              Continue this local session
+        -p, --prompt <text>             Prompt; thread suffixes . queue and . btw are supported
+        -f, --file <path>               Attach a local file (repeatable)
+        -n, --name <text>               Thread name
+        --agent <name>                  Agent ID
+        --model <provider/model>        Model for the new session
+        -u, --user <id>                 Add this Discord user to the thread
+        --cwd <path>                    Existing subfolder of the target project
+        --parent-session <id>           Record the parent session in session metadata
+        --permission <rule>             Repeatable: tool[:pattern]:allow|deny|ask
+        --notify-only                   Post a notification thread without a model turn
+        --wait                          Wait until idle or input is needed, then print the session
+
+      session events <id>               Print the recorded OpenCode events of a thread as JSONL (root + subagents)
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+
+      session read <id>                 Print the messages of a session from OpenCode as markdown
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --thinking                      Include reasoning
+        --verbose                       Include full tool inputs and outputs
+        --json                          Print raw OpenCode messages
 
       Discord:
-      thread list                   List active and optionally archived threads in a channel
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -c, --channel <id>          Channel to list
-        --archived                  Include archived threads
-        --json                      Output as JSON
+      thread list                       List active and optionally archived threads in a channel
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Channel to list
+        --archived                      Include archived threads
+        --json                          Output as JSON
 
-      user list                     Find Discord users for mentions
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -g, --guild <id>            Guild to search
-        -q, --query <text>          Name filter
-        --json                      Output as JSON
+      user list                         Find Discord users for mentions
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -g, --guild <id>                Guild to search
+        -q, --query <text>              Name filter
+        --json                          Output as JSON
 
-      upload-to-discord <...files>  Attach local files to a session thread
-        --data-dir <path>           Data directory (default: ~/.kimaki)
-        -s, --session <id>          Session (default: OPENCODE_SESSION_ID)
+      upload-to-discord <...files>      Attach local files to a session thread
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
 
-      bot token                     Print saved bot credentials for automation
-        --data-dir <path>           Data directory (default: ~/.kimaki)
+      bot token                         Print saved bot credentials for automation
+        --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      bot install-url               Print the Discord bot install URL
-        --data-dir <path>           Data directory (default: ~/.kimaki)
+      bot install-url                   Print the Discord bot install URL
+        --data-dir <path>               Data directory (default: ~/.kimaki)
 
     Options:
       --data-dir <path>      Data directory (default: ~/.kimaki)
