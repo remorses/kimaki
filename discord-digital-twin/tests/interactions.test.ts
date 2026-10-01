@@ -71,6 +71,40 @@ describe('interactions', () => {
     await discord?.stop()
   })
 
+  test('modal file fields hydrate uploaded attachments in discord.js', async () => {
+    const received = new Promise<Interaction>((resolve) => client.once('interactionCreate', resolve))
+    await discord.channel(channelId).user(testUserId).submitModal({
+      customId: 'upload-modal', fields: [], files: [{ customId: 'files', attachments: [{
+        id: '200000000000000999', filename: 'logo.txt', size: 4, url: 'data:text/plain;base64,bG9nbw==', proxy_url: 'data:text/plain;base64,bG9nbw==',
+      }] }],
+    })
+    const interaction = await received
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`""`)
+    if (!interaction.isModalSubmit()) throw new Error('Expected a modal')
+    expect(interaction.fields.getUploadedFiles('files', true).map((file) => ({ name: file.name, size: file.size }))).toMatchInlineSnapshot(`
+      [
+        {
+          "name": "logo.txt",
+          "size": 4,
+        },
+      ]
+    `)
+  })
+
+  test('bot multipart message uploads preserve attachment bytes', async () => {
+    const channel = await client.channels.fetch(channelId)
+    if (!channel?.isSendable()) throw new Error('Expected a sendable channel')
+    const message = await channel.send({ files: [{ attachment: Buffer.from('report'), name: 'report.txt' }] })
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      [attachment: report.txt]"
+    `)
+    const file = message.attachments.first()
+    expect(file?.name).toBe('report.txt')
+    expect(await (await fetch(file!.url)).text()).toBe('report')
+    await message.delete()
+  })
+
   test('simulateInteraction dispatches interactionCreate to client', async () => {
     const received = new Promise<Interaction>((resolve) => {
       client.once('interactionCreate', (i) => {

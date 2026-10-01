@@ -840,6 +840,7 @@ export class DigitalDiscord {
     fields,
     guildId,
     messageId,
+    files = [],
   }: {
     channelId: string
     userId: string
@@ -849,8 +850,9 @@ export class DigitalDiscord {
     // Set when the modal was opened from a message component: Discord then
     // includes that message, so the bot can update it.
     messageId?: string
+    files?: Array<{ customId: string; attachments: APIAttachment[] }>
   }): Promise<{ id: string; token: string }> {
-    const components = fields.map((field) => {
+    const components: unknown[] = fields.map((field) => {
       return {
         type: 1,
         components: [
@@ -862,6 +864,9 @@ export class DigitalDiscord {
         ],
       }
     })
+    components.push(...files.map((field) => ({ type: ComponentType.Label, component: {
+      type: ComponentType.FileUpload, custom_id: field.customId, values: field.attachments.map((attachment) => attachment.id),
+    } })))
 
     return this.simulateInteraction({
       type: InteractionType.ModalSubmit,
@@ -872,6 +877,7 @@ export class DigitalDiscord {
       data: {
         custom_id: customId,
         components,
+        resolved: { attachments: Object.fromEntries(files.flatMap((field) => field.attachments.map((attachment) => [attachment.id, attachment]))) },
       },
     })
   }
@@ -1636,11 +1642,13 @@ export class ScopedUserActor {
     fields,
     guildId,
     messageId,
+    files,
   }: {
     customId: string
     fields: DigitalDiscordModalField[]
     guildId?: string
     messageId?: string
+    files?: Array<{ customId: string; attachments: APIAttachment[] }>
   }) {
     return this.discord.simulateModalSubmit({
       channelId: this.channelId,
@@ -1649,6 +1657,7 @@ export class ScopedUserActor {
       fields,
       guildId,
       messageId,
+      files,
     })
   }
 }

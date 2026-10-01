@@ -15,6 +15,7 @@ import {
   MessageType,
 } from 'discord-api-types/v10'
 import type {
+  APIAttachment,
   APIUser,
   APIApplication,
   APIApplicationCommand,
@@ -95,6 +96,23 @@ type GuildChannelCreateBody = RESTPostAPIGuildChannelJSONBody & {
   topic?: string
   position?: number
   rate_limit_per_user?: number
+}
+
+async function readMessageBody(request: Request): Promise<RESTPostAPIChannelMessageJSONBody & { uploadedAttachments: APIAttachment[] }> {
+  if (!request.headers.get('content-type')?.startsWith('multipart/form-data')) {
+    const body = await request.json() as RESTPostAPIChannelMessageJSONBody
+    return { ...body, uploadedAttachments: [] }
+  }
+  const form = await request.formData()
+  const payload = form.get('payload_json')
+  const body = typeof payload === 'string' ? JSON.parse(payload) as RESTPostAPIChannelMessageJSONBody : {}
+  const uploadedAttachments: APIAttachment[] = []
+  for (const [key, file] of form.entries()) {
+    if (!/^files\[\d+\]$/.test(key) || typeof file === 'string') continue
+    const uri = `data:${file.type || 'application/octet-stream'};base64,${Buffer.from(await file.arrayBuffer()).toString('base64')}`
+    uploadedAttachments.push({ id: generateSnowflake(), filename: file.name, size: file.size, content_type: file.type, url: uri, proxy_url: uri })
+  }
+  return { ...body, uploadedAttachments }
 }
 
 export interface ServerComponents {
@@ -393,8 +411,7 @@ export function createServer({
       method: 'POST',
       path: '/channels/:channel_id/messages',
       async handler({ params, request }): Promise<APIMessage> {
-        // JSON.parse of unknown request body -- `as` is the only option
-        const body = (await request.json()) as RESTPostAPIChannelMessageJSONBody
+        const body = await readMessageBody(request)
         const channel = await prisma.channel.findUnique({
           where: { id: params.channel_id },
         })
@@ -420,6 +437,7 @@ export function createServer({
             flags: body.flags ?? 0,
             embeds: JSON.stringify(body.embeds ?? []),
             components: JSON.stringify(body.components ?? []),
+            attachments: JSON.stringify(body.uploadedAttachments),
             messageReference: body.message_reference
               ? JSON.stringify(body.message_reference)
               : null,
