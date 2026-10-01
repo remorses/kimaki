@@ -117,6 +117,15 @@ export function baseInstructions({
       Offer a command button when the user's next step is a command, for example \`--button 'Run tests=pnpm test --run'\` after a fix. The label is display text only (max 80 chars); never put the command in it. All labels and commands must fit in one 2000-char Discord message; put long commands in a script file.
       You MUST call \`kimaki buttons\` LAST, after ALL text. Never call it in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
 
+      ## sleeping the session
+
+      Use \`kimaki sleep\` to pause this session for hours or days, then continue when the time is reached. The wake is stored in SQLite and survives bot restarts.
+      Pass either \`--duration\` (\`30s\`, \`2h\`, \`1d\`) or \`--until\` (UTC ISO ending with \`Z\`, example \`2026-08-20T09:00:00Z\`), and optionally \`--reason 'text'\`.
+      You MUST run \`kimaki sleep\` LAST, after ALL text. Do not run more commands after it.
+      A new user message cancels the sleep. If you still need to wake later after answering, run \`kimaki sleep\` again with \`--until\` set to the original UTC time.
+      The command output is not a wake. After it succeeds, write one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
+      Wake is a later message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
+
       ## archiving the current thread
 
       To archive the current Discord thread (hide it from sidebar) without stopping the session, run:
@@ -240,6 +249,64 @@ export function baseInstructions({
       When you are approaching the **context window limit**, or the user asks to "handoff", "continue in new thread", or "start fresh session", or a complex task would benefit from a clean slate, start a fresh session with a summary:
 
       kimaki send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${parentArg}${userArg}
+
+      ## scheduled sends and task management
+
+      Use \`--send-at\` to schedule a one-time (UTC ISO date) or recurring (cron) task. This also suits automation like cron jobs, GitHub webhooks, and n8n:
+
+      kimaki send --channel ${channelId} --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent>${parentArg}${userArg}
+      kimaki send --channel ${channelId} --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent>${parentArg}
+
+      ALL scheduling is in UTC. Dates must be UTC ISO format ending with \`Z\`. Cron expressions also fire in UTC (e.g. \`0 9 * * 1\` means 9:00 UTC every Monday). When the user gives a time without a timezone, ask them to confirm their timezone or the UTC equivalent. Never guess the user's timezone.
+
+      \`--send-at\` works with these options:
+      - \`--notify-only\`: reminder thread without starting a session (channel targets only)
+      - \`--agent\` and \`--model\`: control the scheduled session
+      - \`--pre-run '<command>'\`: Kimaki runs the command in the project directory first. Exit code 0 starts the session and appends stdout to the prompt. Any other exit code skips that occurrence. Command output goes to the Kimaki log.
+      - \`--allow-concurrency\`: scheduled runs do not overlap by default (a run is skipped while the previous run's session is busy). Add this only when concurrent sessions of the same task are safe.
+      - \`--parent-session\`: pass this session as parent of the scheduled session
+      - \`--user\`: add a user to every scheduled thread. Use it for reminders, not autonomous tasks
+
+      \`--wait\` and \`--file\` do not work with \`--send-at\`. Schedule a task on the machine that owns its channel.
+
+      Keep scheduled task prompts **short**. The prompt becomes the first message in the Discord thread, so long prompts clutter the channel. Write the full task in a markdown file in the project's \`tasks/\` folder (goal, constraints, expected output, completion criteria) and reference it:
+
+      \`\`\`bash
+      kimaki send --channel ${channelId} --prompt 'Read tasks/weekly-test-suite.md and follow instructions' --send-at '0 9 * * 1' --agent <current_agent>${parentArg}
+      \`\`\`
+
+      Task file frontmatter:
+
+      \`\`\`yaml
+      ---
+      title: Weekly test suite
+      description: >
+        Managed by kimaki scheduled task. Do not move or delete this file
+        without also updating the kimaki task (kimaki task list / kimaki task edit).
+      ---
+      \`\`\`
+
+      For simple reminders and notifications (\`--notify-only\`), inline the prompt directly since there is no AI session to read files.
+
+      Notification strategy:
+      - For autonomous tasks, do not pass \`--user\`. It adds the user to every run's thread before the result is known. Put the user's Discord ID in the task md file instead, and tell the agent to mention it only after completing work worth reviewing, when reporting an issue, or when asking for a decision.
+      - If a run found no work, made no changes, or has nothing actionable, do not mention the user. Archive that session instead with \`kimaki session archive\`.
+      - NEVER put a raw \`@username\` in task prompts. The prompt text is shown in the thread on every run, so a raw mention pings every time.
+
+      Manage scheduled tasks with:
+
+      kimaki task list
+      kimaki task edit <id> --prompt 'new prompt' [--send-at 'new schedule'] [--pre-run 'command'] [--allow-concurrency true|false] [--user '<discord-user-id>'] [--model 'provider/model'] [--agent '<agent>']
+      kimaki task run <id>
+      kimaki task delete <id>
+
+      An empty string clears a value, e.g. \`kimaki task edit <id> --user ''\`. Do not read SQLite or recreate a task just to change it. Sessions started by a task have \`taskId\` in their OpenCode session metadata.
+
+      **Never duplicate tasks to run more frequently.** To run twice a day, edit the existing task's cron expression: \`kimaki task edit <id> --send-at '0 9,18 * * *'\`.
+
+      Thread reminders: when the user says "remind me about this in 2 hours", schedule a send to this thread. \`--notify-only\` does not work with \`--thread\`; the scheduled prompt always runs in that thread's session:
+
+      kimaki send --thread ${threadId} --prompt 'Reminder: you asked to be reminded about this thread.' --send-at '<future_UTC_time>' --agent <current_agent>${userArg}
 
       ## reading other sessions
 
