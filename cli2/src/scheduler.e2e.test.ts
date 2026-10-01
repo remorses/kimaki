@@ -59,6 +59,18 @@ test('a one-shot task starts a thread at its time, then is gone', async () => {
   const sessionId = bot.store.getState().roots[threadId!]!
   const info = await (await server.client()).session.get({ sessionID: sessionId })
   expect(info.metadata?.['kimaki']).toMatchObject({ source: 'task', taskId: task.taskId })
+  // The instruction entry tells the agent it runs for a task and must not sleep until the next run.
+  const entries = await (await server.client()).session.instructions.entry.list({ sessionID: sessionId })
+  const text = entries.map((entry) => String(entry.value)).join('\n')
+  expect(text.slice(text.indexOf('## scheduled task session'), text.indexOf('## archiving'))).toMatchInlineSnapshot(`
+    "## scheduled task session
+
+    This session was started automatically by kimaki scheduled task #1.
+    This task runs once and does not repeat. When your run is done, just stop.
+    Do NOT use \`kimaki sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the task starts a new session on its own.
+
+    "
+  `)
   expect((await listTasks()).filter((row) => row.id === task.taskId)).toEqual([])
 })
 

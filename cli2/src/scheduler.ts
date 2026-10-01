@@ -420,7 +420,8 @@ export function createScheduler({
           ...(payload.permissions?.length && { permissions: payload.permissions }),
           ...(payload.notifyOnly && { notifyOnly: true }),
         }
-    const sent = await actions.send(input, { localOnly: true, taskId: row.id })
+    const task = { id: row.id, cronExpr: row.schedule_kind === 'cron' ? row.cron_expr : null, timezone: row.timezone }
+    const sent = await actions.send(input, { localOnly: true, task })
     if (sent instanceof Error) return sent
     return { kind: 'ran', threadId: sent.threadId, sessionId: sent.sessionId }
   }

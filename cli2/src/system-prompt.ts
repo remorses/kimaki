@@ -8,6 +8,10 @@ export const INSTRUCTION_KEY = 'kimaki'
 
 export type InstructionAgent = { name: string; description: string }
 
+// The scheduled task that started a session (scheduler.ts). Set once at
+// session.create, so the instruction entry stays stable across turns.
+export type ScheduledRun = { id: number; cronExpr: string | null; timezone: string | null }
+
 const PARENT_SESSION_LINE = 'Your parent OpenCode session ID is: '
 
 // Every system-level instruction of Kimaki is built in this file. Sections
@@ -22,6 +26,7 @@ export function baseInstructions({
   channelTopic,
   agents,
   parentSessionId,
+  scheduledTask = null,
 }: {
   sessionId: string
   threadId: string
@@ -34,6 +39,7 @@ export function baseInstructions({
   agents: readonly InstructionAgent[]
   // Only from an explicit `kimaki send --parent-session`.
   parentSessionId: string | null
+  scheduledTask?: ScheduledRun | null
 }): string {
   const userArg = ` --user '${userId}'`
   const parentArg = ` --parent-session ${sessionId}`
@@ -48,7 +54,7 @@ export function baseInstructions({
       Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
       Do not restart the bot unless the user explicitly asks you to.
       Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
-      Exceptions: when a command or tool needs user-visible text first (\`question\`, \`kimaki buttons\`, \`kimaki upload-request\`), write that required text, then call it.
+      Exceptions: when a command or tool needs user-visible text first (\`question\`, \`kimaki buttons\`, \`kimaki upload-request\`, \`kimaki sleep\`), write that required text, then call it.
 
       ## shell tool
 
@@ -125,6 +131,7 @@ export function baseInstructions({
       A new user message cancels the sleep. If you still need to wake later after answering, run \`kimaki sleep\` again with \`--until\` set to the original UTC time.
       The command output is not a wake. After it succeeds, write one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
       Wake is a later message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
+      ${scheduledTask ? scheduledTaskSection(scheduledTask) : ''}
 
       ## archiving the current thread
 
@@ -174,9 +181,9 @@ export function baseInstructions({
 
       Use this to spawn parallel helper sessions like teammates: start threads with focused prompts, then come back and collect the results. Rules for every new session:
       - ALWAYS pass \`--parent-session ${sessionId}\` (your current session ID). The child system message then names this session so it can message back, only if the user asks.
-      - Pass \`--agent <current_agent>\` so spawned sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with the agent you are running as.
+      - Pass \`--agent <current_agent>\` so spawned and scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with the agent you are running as.
       - \`--user\` accepts a Discord user ID or raw mention and adds that user to the new thread. Prefer \`--user '<discord-user-id>'\` over \`--user 'name'\`, because name lookup depends on the optional Server Members Intent.
-      - Use single quotes around \`--prompt\`, \`--user\`, and other literal arguments so backticks inside prompts are not executed by the shell.
+      - Use single quotes around \`--prompt\`, \`--user\`, \`--send-at\`, and other literal arguments so backticks inside prompts are not executed by the shell.
       - The new session has no memory of this conversation. Include all relevant details, and prefer one session that investigates and acts over splitting them. Use **bold**, \`code\`, lists, and > quotes for readability.
       - Prompts for another machine's channel are limited to 2000 chars. Put long task text in a file in the project and reference it.
 
@@ -325,6 +332,8 @@ export function baseInstructions({
       \`\`\`bash
       kimaki session search "auth timeout"
       kimaki session search "auth timeout" --days 0
+      kimaki session search "/error\\s+42/i"
+      kimaki session search "rate limit" --project /path/to/project
       kimaki session search "/panic|crash/i" --channel <channel_id>
       kimaki session search "auth timeout" --all
       \`\`\`
@@ -504,7 +513,7 @@ export function baseInstructions({
       You MUST call \`question\` LAST, after ALL text parts.
       NEVER call \`question\` before your text. Discord will hide the message.
 
-      The same rule applies to \`kimaki buttons\` and \`kimaki upload-request\`.
+      The same rule applies to \`kimaki buttons\`, \`kimaki upload-request\`, and \`kimaki sleep\`.
       You MUST call them LAST, after ALL text.
 
       Never call \`kimaki buttons\` or \`question\` in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
@@ -519,6 +528,20 @@ export function baseInstructions({
     ...(topic ? [`<channel-topic>\n${topic}\n</channel-topic>`] : []),
   ]
   return sections.join('\n\n')
+}
+
+function scheduledTaskSection(task: ScheduledRun): string {
+  const schedule = task.cronExpr
+    ? `Schedule: cron \`${task.cronExpr}\` in ${task.timezone || 'UTC'}. When your run is done, just stop: the task fires again on its schedule and starts a fresh session automatically.`
+    : 'This task runs once and does not repeat. When your run is done, just stop.'
+  return dedent`
+
+    ## scheduled task session
+
+    This session was started automatically by kimaki scheduled task #${task.id}.
+    ${schedule}
+    Do NOT use \`kimaki sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the task starts a new session on its own.
+  `
 }
 
 function escapeAttribute(value: string): string {

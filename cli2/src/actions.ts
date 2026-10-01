@@ -35,7 +35,7 @@ import { formatEcho } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import * as schema from './schema.ts'
 import type { BotStore } from './store.ts'
-import { baseInstructions, INSTRUCTION_KEY, turnContext, withTurnContext } from './system-prompt.ts'
+import { baseInstructions, INSTRUCTION_KEY, turnContext, withTurnContext, type ScheduledRun } from './system-prompt.ts'
 import { isBusy } from './thread-reducer.ts'
 
 const logger = createLogger('ACTIONS')
@@ -610,6 +610,7 @@ export function createActions({
     directory,
     userId,
     parentSessionId = null,
+    scheduledTask = null,
   }: {
     sessionId: string
     thread: ThreadChannel
@@ -617,6 +618,7 @@ export function createActions({
     directory: string
     userId: string
     parentSessionId?: string | null
+    scheduledTask?: ScheduledRun | null
   }): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
@@ -638,6 +640,7 @@ export function createActions({
           channelTopic: channel.topic,
           agents,
           parentSessionId,
+          scheduledTask,
         }),
       })
       .catch((e) => new OpenCodeError({ operation: 'instructions.entry.put', cause: e }))
@@ -835,7 +838,7 @@ export function createActions({
     model: explicitModel,
     permissions,
     parentSessionId,
-    taskId,
+    task,
   }: {
     channelId: string
     directory: string
@@ -857,7 +860,7 @@ export function createActions({
     permissions?: NonNullable<Parameters<OpenCodeClient['session']['create']>[0]>['permissions']
     parentSessionId?: string
     // A scheduled run (scheduler.ts): marks the session as started by this task.
-    taskId?: number
+    task?: ScheduledRun
   }): Promise<
     ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }
   > {
@@ -896,8 +899,8 @@ export function createActions({
           kimaki: {
             threadId: thread.id,
             channelId,
-            source: taskId === undefined ? 'discord' : 'task',
-            ...(taskId !== undefined && { taskId }),
+            source: task ? 'task' : 'discord',
+            ...(task && { taskId: task.id }),
             ...cliContext,
             ...(parentSessionId && { parentSessionId }),
           },
@@ -907,7 +910,7 @@ export function createActions({
     if (session instanceof Error) return session
     analytics.track('session_created', { has_worktree: false, source: 'discord' })
 
-    const instructions = await putInstructions({ sessionId: session.id, thread, channel, directory, userId: author.id, parentSessionId })
+    const instructions = await putInstructions({ sessionId: session.id, thread, channel, directory, userId: author.id, parentSessionId, scheduledTask: task ?? null })
     if (instructions instanceof Error) return instructions
 
     const bound = await bindThread({ threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
@@ -1307,9 +1310,9 @@ export function createActions({
   }
 
   // `localOnly`: never forward to another machine (remote envelopes, scheduled runs).
-  // `taskId`: a scheduled run; its input shows as "» task #N: prompt".
-  async function send(input: SendInput, { localOnly = false, taskId }: { localOnly?: boolean; taskId?: number } = {}) {
-    const author = { id: input.user?.replace(/[<@!>]/g, '') ?? discord.user!.id, username: taskId === undefined ? 'CLI' : `task #${taskId}` }
+  // `task`: a scheduled run; its input shows as "» task #N: prompt".
+  async function send(input: SendInput, { localOnly = false, task }: { localOnly?: boolean; task?: ScheduledRun } = {}) {
+    const author = { id: input.user?.replace(/[<@!>]/g, '') ?? discord.user!.id, username: task ? `task #${task.id}` : 'CLI' }
     const messageId = crypto.randomUUID()
     const route = parseTextMessage({ content: input.prompt })
     if (!route) return new ConfigError({ reason: 'Prompt is empty' })
@@ -1331,7 +1334,7 @@ export function createActions({
         const switched = await switchModel({ sessionId: store.getState().roots[thread.id]!, model: { ...model, variant: null } })
         if (switched instanceof Error) return switched
       }
-      const echo = taskId === undefined ? undefined : formatEcho({ username: author.username, text: routeText(route) })
+      const echo = task ? formatEcho({ username: author.username, text: routeText(route) }) : undefined
       const result = await dispatch({ thread, route, author, messageId, files: input.files, echo })
       if (result instanceof Error) return result
       return result ?? { threadId, sessionId: store.getState().roots[threadId]! }
@@ -1367,7 +1370,7 @@ export function createActions({
     if (input.model && !model) return new ConfigError({ reason: 'Use --model provider/model' })
     const first = route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' ? route : { kind: 'steer' as const, text: route.text, agent: input.agent }
     const started = await startSession({ channelId: project.channel_id, directory, route: first, author, messageId, startMessageId: null,
-      threadName: input.name, files: input.files, permissions, parentSessionId: input.parentSessionId, taskId, ...(model && { model: { ...model, variant: null } }) })
+      threadName: input.name, files: input.files, permissions, parentSessionId: input.parentSessionId, task, ...(model && { model: { ...model, variant: null } }) })
     if (started instanceof Error) return started
     if (input.user) {
       const thread = await discord.channels.fetch(started.threadId).catch((cause) => new DiscordError({ operation: 'fetch send thread', cause }))
