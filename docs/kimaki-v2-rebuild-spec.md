@@ -1884,8 +1884,8 @@ for await (const event of client.event.subscribe({ signal })) {
    a delivery boundary. Decide: move in place, or keep "new thread per worktree".
 9. **Image optimizer / task_id bug.** Check if V2 still needs them before porting.
 10. **Subrouter port** happens in its own repo and blocks provider auth.
-11. **Prompt ID idempotency.** Sleep wake relies on `session.prompt` with a repeated `id`
-    returning `ConflictError`. Verify in `packages/core/src/session/session.ts`.
+11. ~~Prompt ID idempotency.~~ Verified in P8: a repeated `id` returns the existing inbox
+    item (no `ConflictError`, no new turn), so a retried wake cannot deliver twice.
 12. ~~Remote sends.~~ Decided: option B in 9.5 (embed envelope only for channels owned
     by another machine). See section 24.
 13. ~~`/resume` binding.~~ Decided: `/resume` moves the session to the new thread; the
@@ -2144,6 +2144,56 @@ for await (const event of client.event.subscribe({ signal })) {
   baseline after a restart. `tokens_total` = input + output + reasoning + cache read +
   cache write: OpenCode 2.0.19 reports `output` without reasoning but bills both. Zero-token executions
   are skipped like V1. `turn_started` has no `source` prop yet.
+
+### Findings from building cli2 P8 (OpenCode 2.0.19)
+
+- **Fake clock.** `scheduler.ts` reads time only from `Clock.now()`. `dueTasks` and
+  `nextRunOf` are pure; `runDueTasks` has no timers; the 5s loop runs only when
+  `schedulerIntervalMs` is not null. Tests use `manualClock()` and `schedulingKit()` from
+  the harness. Missed cron occurrences fire once (the next run counts from the tick
+  time). V1 rows keep their stored cron timezone; new tasks are UTC.
+- **Prompt ID idempotency (open question 11): resolved.** A repeated `session.prompt`
+  `id` returns the existing inbox item. There is no `ConflictError` and no new turn
+  (`sleep.e2e.test.ts` checks it). A retried wake (`msg_sleep_<delivery_id>`) cannot
+  deliver twice.
+- **Sleep keeps `session_sleeps`** (section 17), not a `wake` row in `scheduled_tasks`.
+  The same loop runs wakes first, then tasks (a task can wait up to 10 minutes for its
+  pre-run). **Changed:** sleep writes, the cancel on new input, and wake delivery live in
+  `actions.ts` under one per-session lock. So a wake is never sent after the input that
+  cancelled it. The cancel happens in `actions.dispatch` (every thread input) and in
+  `/abort`, not derived from `inbox.enqueued` (10.5).
+- **Echo from the event stream.** A wake or a scheduled thread prompt has no Discord
+  message. `actions.prompt` puts `metadata.discord.echo` on it, and `queue.ts` posts that
+  line on `inbox.enqueued` (steer) or `inbox.delivered` (queue). Queue acks no longer
+  reply to CLI and task message IDs (UUIDs, not snowflakes).
+- **Task runs** call `actions.send(input, { localOnly: true, taskId })`, the same path as
+  `kimaki send`. New sessions get `metadata.kimaki: { source: 'task', taskId }`; the
+  first line is `» task #N: prompt`. Non-overlap checks the row's `session_id` (last
+  run) with `session.active`. `scheduled_task_runs` is not written.
+- **Claims** (`planned → running`) return the current row and require the due time the
+  tick saw. So a task that `task run`, `/tasks`, or `task edit` changed meanwhile runs
+  once, as it is now. After the pre-run, the run checks the row again (deleted → no
+  send). On start, `running` rows go back to `planned`: only the bot runs tasks.
+- **Outcomes** like V1: a one-shot is deleted after it runs or is skipped by its
+  pre-run. A busy one-shot stays due. A busy cron occurrence is skipped. A failed cron
+  task tries again at its next occurrence; a failed one-shot stays `failed` with
+  `last_error`.
+- **Thread tasks:** `--model` is applied with `switchModel` before the prompt (also for
+  `kimaki send --thread --model`). `--permission` is rejected; V1 rows with permissions
+  log a warning and run without them. `--notify-only` needs a channel. Tasks can only be
+  scheduled on the machine that owns the channel or thread (`channel_id` has a foreign
+  key to `channel_directories`).
+- **`/tasks`** shows planned, running, and failed tasks of the interaction's guild (at
+  most 7 rows, Components V2 text + Run now / Delete). Buttons check the guild again.
+  Delete removes the row; V1 completed and cancelled rows stay hidden. No `all` option.
+- **CLI:** `task list` reads SQLite directly (works without the bot); `task edit`,
+  `task delete`, `task run`, `sleep`, and `send --send-at` go through the lock server
+  (`/kimaki/task/*`, `/kimaki/sleep`, `/kimaki/send`), so the bot clock resolves every
+  time. `--user` takes an ID or mention only (no name lookup). `--file` and `--wait`
+  cannot be scheduled.
+- **Not covered by tests:** delete during a running pre-run, wake retry and the
+  five-attempt limit, a busy one-shot, and the guild filter (the twin has one guild).
+  Worktree tasks (V1 `worktreeName`) fail with an error until P10.
 
 ---
 
