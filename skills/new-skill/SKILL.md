@@ -140,6 +140,8 @@ export const skillDiscoveryApp = new Spiceflow()
   })
 ```
 
+**Holocron docs site:** use a [custom entry](https://holocron.so/docs/custom-entry.md). Pass `entry: './src/server.tsx'` to `holocron()`, add the two routes above, then mount the docs last with `.use(holocronApp)` (`import { app as holocronApp } from '@holocron.so/vite/app'`). On Cloudflare, set `"main": "./src/server.tsx"` in wrangler.jsonc and `export default { fetch: (request) => app.handle(request) }`. Add `"types": ["vite/client"]` to tsconfig for `?raw` imports.
+
 Validate end-to-end against a local dev server before deploying:
 
 ```bash
