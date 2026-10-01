@@ -16,6 +16,7 @@ import { goke, wrapJsonSchema } from 'goke'
 import { ChannelType } from 'discord.js'
 
 import { openDb } from './db.ts'
+import { DbError, OpenCodeError } from './errors.ts'
 import { callBot, DEFAULT_LOCK_PORT } from './lock-server.ts'
 import { editorsForFile, loadFileEditEvents } from './file-edit-log.ts'
 import { createLogger } from './logger.ts'
@@ -33,7 +34,7 @@ import {
 } from './credentials.ts'
 import { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate } from './onboarding.ts'
 import { createAnalytics } from './analytics.ts'
-import { addProjectChannel, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from './project.ts'
+import { addProjectChannel, canonicalPath, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from './project.ts'
 
 const logger = createLogger('CLI')
 const execFileAsync = promisify(execFile)
@@ -72,14 +73,14 @@ function dataDirOrDefault(dataDir: string | undefined): string {
 
 // Project directory: --channel resolves through SQLite, else --project, else the current directory.
 async function projectDirectory({ project, channel, dataDir }: { project: string | undefined; channel: string | undefined; dataDir: string | undefined }) {
-  if (!channel) return path.resolve(project ?? process.cwd())
+  if (!channel) return canonicalPath(project ?? process.cwd())
   const opened = await openDb({ dataDir: dataDirOrDefault(dataDir), migrate: false })
   if (opened instanceof Error) fail(opened)
-  const row = await opened.db.query.channel_directories.findFirst({ where: { channel_id: channel } }).catch((error: Error) => error)
+  const row = await opened.db.query.channel_directories.findFirst({ where: { channel_id: channel } }).catch((cause) => new DbError({ operation: 'find channel', cause }))
   opened.close()
   if (row instanceof Error) fail(row)
   if (!row) fail(new Error(`No project directory for channel ${channel}`))
-  return row.directory
+  return canonicalPath(row.directory)
 }
 
 // null when the file vanished meanwhile (bot restart).
@@ -262,7 +263,7 @@ cli.command('session list', 'List sessions with native status and token counts')
   .action(async (options) => {
     const client = await readClient(options.active ? 64 : 1)
     const [sessions, active, forms, permissions] = await Promise.all([
-      allSessions({ client, directory: options.all ? undefined : path.resolve(options.project ?? process.cwd()) }),
+      allSessions({ client, directory: options.all ? undefined : await projectDirectory({ project: options.project, channel: undefined, dataDir: options.dataDir }) }),
       client.session.active().catch((error: Error) => error), client.form.list().catch((error: Error) => error),
       client.permission.request.list().catch((error: Error) => error),
     ])
@@ -349,11 +350,12 @@ cli.command('session diff', 'Upload the git diff of the session folder to critiq
     const id = options.session ?? process.env['OPENCODE_SESSION_ID']
     if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
     const client = await readClient()
-    const session = await client.session.get({ sessionID: await sessionIdFor(id, options.dataDir) }).catch((error: Error) => error)
+    const session = await client.session.get({ sessionID: await sessionIdFor(id, options.dataDir) }).catch((cause) => new OpenCodeError({ operation: 'session.get', cause }))
     if (session instanceof Error) fail(session)
-    const { stdout } = await execFileAsync('critique', ['--web', session.title ?? 'Session diff'], { cwd: session.location.directory })
-      .catch((error: Error & { stderr?: string }) => fail(new Error(`critique failed: ${error.stderr?.trim() || error.message}`)))
-    process.stdout.write(stdout)
+    const result = await execFileAsync('critique', ['--web', session.title ?? 'Session diff'], { cwd: session.location.directory })
+      .catch((cause: Error & { stderr?: string }) => new Error(`critique failed: ${cause.stderr?.trim() || cause.message}`, { cause }))
+    if (result instanceof Error) fail(result)
+    process.stdout.write(result.stdout)
   })
 
 cli.command('session url <id>', 'Print the Discord URL of a session or thread')
@@ -423,7 +425,7 @@ cli.command('session command <name> [...args]', 'Run an OpenCode command, skill,
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
   .option('--queue', 'Run after the current turn instead of interrupting')
-  .action(async (name, args, options) => action('session.command', options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text: [name, ...args].join(' '), queue: options.queue }))
+  .action(async (name, args, options) => action('session.command', options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text: [name, ...args, ...(options['--'] ?? [])].join(' '), queue: options.queue }))
 
 for (const name of ['shell', 'btw'] as const) {
   cli.command(`session ${name} <text>`, `Run ${name} through the shared session action`)

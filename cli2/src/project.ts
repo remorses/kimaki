@@ -7,6 +7,7 @@
 // bot reads channel_directories on every message and the Guilds intent
 // delivers CHANNEL_CREATE, so a new channel works without a restart.
 
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { API } from '@discordjs/core/http-only'
@@ -19,6 +20,17 @@ import * as schema from './schema.ts'
 // Typed Discord REST calls (the discord.js REST client returns unknown).
 export function createApi({ token, restUrl }: { token: string; restUrl?: string | null }): API {
   return new API(new REST({ version: '10', ...(restUrl && { api: restUrl }) }).setToken(token))
+}
+
+// Absolute path with symlinks resolved. A missing tail (deleted file) keeps its
+// name under the real nearest existing ancestor. OpenCode reports real paths.
+export async function canonicalPath(input: string): Promise<string> {
+  const resolved = path.resolve(input)
+  const real = await fs.promises.realpath(resolved).catch(() => null)
+  if (real) return real
+  const parent = path.dirname(resolved)
+  if (parent === resolved) return resolved
+  return path.join(await canonicalPath(parent), path.basename(resolved))
 }
 
 // Discord channel names: lowercase, [a-z0-9-], max 100 chars.

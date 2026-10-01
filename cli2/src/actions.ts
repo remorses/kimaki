@@ -29,6 +29,7 @@ import { createLogger } from './logger.ts'
 import type { OpenCodeClient, OpencodeConnection } from './opencode-server.ts'
 import type { PermissionDecision } from './permissions.ts'
 import type { FormAnswer } from './questions.ts'
+import { canonicalPath } from './project.ts'
 import { formatEcho } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import * as schema from './schema.ts'
@@ -993,10 +994,14 @@ export function createActions({
       .get({ sessionID: sessionId })
       .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
     if (info instanceof Error) return info
-    const project = await db.query.channel_directories
-      .findFirst({ where: { directory: path.resolve(info.location.directory) } })
+    const directory = await canonicalPath(info.location.directory)
+    const projects = await db.query.channel_directories
+      .findMany()
       .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
-    if (project instanceof Error) return project
+    if (projects instanceof Error) return projects
+    // Stored directories may be symlink aliases of the real path.
+    const matches = await Promise.all(projects.map(async (row) => (await canonicalPath(row.directory)) === directory))
+    const project = projects.find((_, index) => matches[index])
     if (!project) return new ConfigError({ reason: `No project channel for ${info.location.directory}. Pass --channel.` })
     return project.channel_id
   }
@@ -1018,7 +1023,7 @@ export function createActions({
       .get({ sessionID: sessionId })
       .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
     if (info instanceof Error) return info
-    if (path.resolve(info.location.directory) !== path.resolve(project.directory)) {
+    if ((await canonicalPath(info.location.directory)) !== (await canonicalPath(project.directory))) {
       return new ConfigError({
         reason: `This session belongs to a different project or worktree: \`${info.location.directory}\`. Run \`/resume\` in the channel for that directory.`,
       })
