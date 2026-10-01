@@ -584,6 +584,55 @@ export function createActions({
       .map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
   }
 
+  function storedParentSessionId(metadata: SessionMetadata | undefined): string | null {
+    const marker = metadata?.['kimaki']
+    if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null
+    const parent = marker['parentSessionId']
+    return typeof parent === 'string' ? parent : null
+  }
+
+  // The one durable system instruction of a session (spec 5.4).
+  async function putInstructions({
+    sessionId,
+    thread,
+    channel,
+    directory,
+    userId,
+    parentSessionId = null,
+  }: {
+    sessionId: string
+    thread: ThreadChannel
+    channel: TextChannel
+    directory: string
+    userId: string
+    parentSessionId?: string | null
+  }): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
+    const opencodeClient = client()
+    if (opencodeClient instanceof Error) return opencodeClient
+    // The agent list is optional prompt context: a failure must not strand the thread.
+    const found = await primaryAgents({ directory })
+    if (found instanceof Error) logger.warn(`agent list for instructions failed: ${found.message}`)
+    const agents = found instanceof Error ? [] : found
+    const put = await opencodeClient.session.instructions.entry
+      .put({
+        sessionID: sessionId,
+        key: INSTRUCTION_KEY,
+        value: baseInstructions({
+          sessionId,
+          threadId: thread.id,
+          channelId: channel.id,
+          guildId: channel.guildId,
+          userId,
+          dataDir: cliContext.dataDir,
+          channelTopic: channel.topic,
+          agents,
+          parentSessionId,
+        }),
+      })
+      .catch((e) => new OpenCodeError({ operation: 'instructions.entry.put', cause: e }))
+    if (put instanceof Error) return put
+  }
+
   async function switchAgent({ sessionId, agent }: { sessionId: string; agent: string }) {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
@@ -809,20 +858,21 @@ export function createActions({
   async function adoptSession({
     channel,
     session,
-    directory,
     threadName,
     intro,
     note,
     author,
+    parentSessionId = null,
     discard,
   }: {
     channel: TextChannel
-    session: { id: string; metadata?: SessionMetadata }
-    directory: string
+    session: { id: string; metadata?: SessionMetadata; location: { directory: string } }
     threadName: string
     intro: string
     note: string
     author: Author
+    // Explicit `kimaki send --parent-session` of a resumed session; never a fork's OpenCode parent.
+    parentSessionId?: string | null
     // Cleanup of a session created only for this thread (a fork).
     discard?: () => Promise<void>
   }): Promise<OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }> {
@@ -852,13 +902,7 @@ export function createActions({
         })
         .catch((e) => new OpenCodeError({ operation: 'session.update', cause: e }))
       if (marked instanceof Error) return marked
-      const instructions = await opencodeClient.session.instructions.entry
-        .put({
-          sessionID: sessionId,
-          key: INSTRUCTION_KEY,
-          value: baseInstructions({ sessionId, threadId: thread.id, channelId: channel.id, guildId: channel.guildId }),
-        })
-        .catch((e) => new OpenCodeError({ operation: 'instructions.entry.put', cause: e }))
+      const instructions = await putInstructions({ sessionId, thread, channel, directory: session.location.directory, userId: author.id, parentSessionId })
       if (instructions instanceof Error) return instructions
       const messages = await opencodeClient.message
         .list({ sessionID: sessionId, order: 'desc', limit: 100 })
@@ -888,7 +932,7 @@ export function createActions({
       threadId: thread.id,
       sessionId,
       channelId: channel.id,
-      directory,
+      directory: session.location.directory,
       isNew: false,
       first: [{ type: 'kimaki.replay', messages: prepared.history, note }],
     })
@@ -942,7 +986,7 @@ export function createActions({
     const adopted = await adoptSession({
       channel,
       session: info,
-      directory: project.directory,
+      parentSessionId: storedParentSessionId(info.metadata),
       threadName: `Resume: ${title}`,
       intro: `**Resumed session:** ${title}\n**Created:** <t:${Math.floor(info.time.created / 1_000)}:f>`,
       note: '**Session resumed!** You can now continue the conversation by sending messages in this thread.',
@@ -990,7 +1034,6 @@ export function createActions({
       discard: async () => {
         await opencodeClient.session.remove({ sessionID: forked.id }).catch(() => undefined)
       },
-      directory: project.directory,
       // OpenCode titles forks "<title> (fork #1)".
       threadName: name ?? (forked.title || `Fork: ${subagent?.description || sourceThread.name}`),
       intro,
