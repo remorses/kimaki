@@ -184,6 +184,8 @@ the opencode plugin (`cli/src/kimaki-opencode-plugin/index.ts`, built to the `di
 
 the plugin has one `export default Plugin.define(...)` entrypoint. keep utilities in separate files (e.g. `condense-memory.ts`) and import them.
 
+**the plugin must only act on Kimaki sessions.** cli2 registers it globally (`<opencode config dir>/plugins/kimaki/`), so OpenCode loads it for every session, including the user's own TUI sessions. every hook must first check the session's `metadata.kimaki` marker (or the parent chain for subagents, see `marker()` in `cli2/src/plugin/index.ts`) and return without changes when it is missing. the bot writes the marker at `session.create` and when it adopts a V1 session. never add a hook that changes prompts, tools, shell commands or files for unmarked sessions.
+
 to pass bot-process state to the plugin, set `KIMAKI_*` env vars in `opencode.ts` when spawning the server and read `process.env.KIMAKI_*` in the plugin. never import config.ts getters in the plugin. current env vars:
 
 - `KIMAKI_DATA_DIR`: data directory path
