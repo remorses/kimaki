@@ -44,7 +44,10 @@ export async function openDb({
   migrate: boolean
 }): Promise<DbError | DbNotMigratedError | OpenedDb> {
   const created = errore.try(
-    () => fs.mkdirSync(dataDir, { recursive: true }),
+    () => {
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+      fs.chmodSync(dataDir, 0o700)
+    },
     (e) => new DbError({ operation: `create ${dataDir}`, cause: e }),
   )
   if (created instanceof Error) return created

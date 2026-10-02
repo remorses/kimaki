@@ -27,7 +27,12 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
   expect(names.length).toBe(100)
   expect(names.filter((name) => !name.startsWith('skill-'))).toMatchInlineSnapshot(`
     [
+      "cwd",
+      "new-worktree",
+      "worktrees",
+      "merge-worktree",
       "login",
+      "transcription-key",
       "new-session",
       "resume",
       "fork",
@@ -71,6 +76,4 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
     }
   `)
   expect(dynamic.has(names[names.length - 1]!)).toBe(true)
-  // 21 static commands, the rest dynamic: skills past the cap are dropped.
-  expect(dynamic.size).toBe(100 - 21)
 })

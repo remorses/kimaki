@@ -360,7 +360,12 @@ export function createPreferenceCommands({ db, actions, readClient, resolveTarge
   }
 
   async function handleVerbositySelect(interaction: StringSelectMenuInteraction) {
-    const channelId = interaction.customId.slice(VERBOSITY_PREFIX.length)
+    const target = await resolveTarget(interaction.channelId)
+    if (target instanceof Error) return replyError(interaction, target)
+    const channelId = target.channelId
+    if (interaction.customId.slice(VERBOSITY_PREFIX.length) !== channelId) {
+      return replyError(interaction, new ConfigError({ reason: 'Run /verbosity in the target channel' }))
+    }
     const option = VERBOSITY_OPTIONS.find((candidate) => candidate.value === interaction.values[0])
     if (!option) return
     await interaction.deferUpdate()

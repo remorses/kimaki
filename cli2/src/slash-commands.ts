@@ -48,6 +48,7 @@ import { createPreferenceCommands } from './commands/preference-commands.ts'
 import { shellQuote } from './onboarding.ts'
 import { createSessionCommands } from './commands/session-commands.ts'
 import { createLoginCommands } from './commands/login-commands.ts'
+import { createWorktreeCommands, WORKTREE_PREFIX } from './commands/worktree-commands.ts'
 import type { KimakiDb } from './db.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import { formatError } from './format-parts.ts'
@@ -61,26 +62,28 @@ import type { Route } from './routes.ts'
 import { resolveSession } from './session-events.ts'
 import { TASK_DELETE_PREFIX, TASK_RUN_PREFIX, type Scheduler } from './scheduler.ts'
 import type { BotStore } from './store.ts'
+import { handleTranscriptionKeyModal, TRANSCRIPTION_KEY_MODAL, transcriptionKeyModal } from './voice.ts'
 
 const logger = createLogger('COMMANDS')
 const execFileAsync = promisify(execFile)
 
 const MAX_COMMANDS = 100
 const NAME_LIMIT = 32
-const CATALOG_REFRESH_MS = 1_000
-
-// Global OpenCode events after which agent.list or command.list may differ.
-// Not skill.updated: every skill.list call makes OpenCode emit it for all
-// locations, so reacting to it would refresh in a loop. skill.list waits for
-// the skill scan, so the read in a pass is already complete.
-export function isCatalogEvent(event: V2Event): boolean {
-  return event.type === 'agent.updated' || event.type === 'command.updated'
-}
 // Built-in OpenCode command that only makes sense in the TUI (V1 skipped it too).
 const SKIPPED_COMMANDS = new Set(['init'])
 
 const STATIC_COMMANDS = [
+  new SlashCommandBuilder().setName('cwd').setDescription('Show or change this session working directory')
+    .addStringOption((option) => option.setName('path').setDescription('Project subfolder or linked worktree; relative to current cwd')),
+  new SlashCommandBuilder().setName('new-worktree').setDescription('Start an isolated Git worktree session; fork context when used in a thread')
+    .addStringOption((option) => option.setName('name').setDescription('Lowercase letters, digits and hyphens'))
+    .addStringOption((option) => option.setName('base-branch').setDescription('Starting Git ref (default: project HEAD)')),
+  new SlashCommandBuilder().setName('worktrees').setDescription('List worktrees, delete a safe checkout, or toggle automatic worktrees'),
+  new SlashCommandBuilder().setName('merge-worktree').setDescription('Merge this worktree into a local branch')
+    .addStringOption((option) => option.setName('strategy').setDescription('Merge strategy').addChoices({ name: 'Rebase', value: 'rebase' }, { name: 'Squash', value: 'squash' }))
+    .addStringOption((option) => option.setName('target-branch').setDescription('Local target branch (default: project checkout branch)')),
   new SlashCommandBuilder().setName('login').setDescription('Connect an OpenCode provider'),
+  new SlashCommandBuilder().setName('transcription-key').setDescription('Set the OpenAI or Gemini API key for voice transcription and speech'),
   new SlashCommandBuilder()
     .setName('new-session')
     .setDescription('Start a new OpenCode session')
@@ -241,6 +244,7 @@ export type InteractionTarget = {
   directory: string
   thread: ThreadChannel | null
   sessionId: string | null
+  projectDirectory: string
 }
 
 export type CommandContext = {
@@ -250,7 +254,7 @@ export type CommandContext = {
   actions: Actions
   // Reads only (catalogs, history); writes go through actions.
   readClient: () => OpenCodeUnavailableError | OpenCodeClient
-  resolveTarget: (channelId: string | null) => Promise<ConfigError | DbError | DiscordError | InteractionTarget>
+  resolveTarget: (channelId: string | null) => Promise<Error | InteractionTarget>
   replyError: (interaction: RepliableInteraction, error: Error) => Promise<void>
 }
 
@@ -335,7 +339,7 @@ export function registerSlashCommands({
     // Rows from before guild_id was stored belong to any guild.
     const directories = [...new Set(rows.filter((row) => !row.guild_id || row.guild_id === guild.id).map((row) => row.directory))]
     const built = buildCommands(await catalogFor(directories))
-    if (refresh.closed) return
+    if (passes.closed) return
     const signature = JSON.stringify(built.commands)
     if (registered.get(guild.id) === signature) {
       dynamic.set(guild.id, built.dynamic)
@@ -356,7 +360,7 @@ export function registerSlashCommands({
     logger.log(`registered ${built.commands.length} commands in guild ${guild.id}`)
   }
 
-  async function resolveTarget(channelId: string | null): Promise<ConfigError | DbError | DiscordError | InteractionTarget> {
+  async function resolveTarget(channelId: string | null): Promise<Error | InteractionTarget> {
     if (!channelId) return new ConfigError({ reason: 'This command can only be used in a channel' })
     const channel = await discord.channels
       .fetch(channelId)
@@ -371,7 +375,9 @@ export function registerSlashCommands({
     if (row instanceof Error) return row
     if (!row) return new ConfigError({ reason: 'This channel is not configured with a project directory' })
     const sessionId = thread ? (store.getState().roots[thread.id] ?? null) : null
-    return { channelId: projectChannelId, directory: row.directory, thread, sessionId }
+    const directory = sessionId ? await actions.workingDirectory(sessionId) : row.directory
+    if (directory instanceof Error) return directory
+    return { channelId: projectChannelId, directory, projectDirectory: row.directory, thread, sessionId }
   }
 
   async function replyError(interaction: RepliableInteraction, error: Error) {
@@ -390,6 +396,7 @@ export function registerSlashCommands({
   const preferences = createPreferenceCommands(context)
   const questions = createQuestionHandlers({ store, actions })
   const login = createLoginCommands(context)
+  const worktrees = createWorktreeCommands(context)
 
   // The session thread of a command, or a reply saying where it works.
   async function sessionTarget(interaction: ChatInputCommandInteraction) {
@@ -475,16 +482,14 @@ export function registerSlashCommands({
   }
 
   async function handleSessionId(interaction: ChatInputCommandInteraction) {
-    const channel = interaction.channel
-    const resolved = channel?.isThread() ? await resolveSession({ db, id: channel.id }) : null
-    if (!resolved || resolved instanceof Error) {
+    const target = await resolveTarget(interaction.channelId)
+    if (target instanceof Error) return replyError(interaction, target)
+    if (!target.thread || !target.sessionId) {
       await interaction.reply({ content: 'Run /session-id inside a Kimaki session thread.', flags: MessageFlags.Ephemeral })
       return
     }
-    const parent = channel?.isThread() ? channel.parentId : null
-    const project = parent ? await db.query.channel_directories.findFirst({ where: { channel_id: parent } }) : null
     await interaction.reply({
-      content: sessionIdReply({ ...resolved, directory: project?.directory ?? null }),
+      content: sessionIdReply({ sessionId: target.sessionId, threadId: target.thread.id, directory: target.directory }),
       flags: MessageFlags.Ephemeral,
     })
   }
@@ -634,9 +639,11 @@ export function registerSlashCommands({
   async function handleCommand(interaction: ChatInputCommandInteraction) {
     const name = interaction.commandName
     if (name === 'login') return login.handle(interaction)
+    if (name === 'transcription-key') return interaction.showModal(transcriptionKeyModal())
     if (name === 'session-id') return handleSessionId(interaction)
     if (name === 'diff') return handleDiff(interaction)
     if (name === 'tasks') return scheduler.tasksCommand(interaction)
+    if (worktrees.commands.has(name)) return worktrees.handle(interaction)
     if (sessions.commands.has(name)) return sessions.handle(interaction)
     if (preferences.commands.has(name)) return preferences.handle(interaction)
     const target = interaction.guildId ? dynamic.get(interaction.guildId)?.get(name) : undefined
@@ -683,7 +690,9 @@ export function registerSlashCommands({
       }
       return
     }
-    const credentialCommand = (interaction.isChatInputCommand() && interaction.commandName === 'login') || ('customId' in interaction && interaction.customId.startsWith('login_'))
+    // Provider logins and audio keys are secrets of the whole bot.
+    const credentialCommand = (interaction.isChatInputCommand() && (interaction.commandName === 'login' || interaction.commandName === 'transcription-key'))
+      || ('customId' in interaction && (interaction.customId.startsWith('login_') || interaction.customId === TRANSCRIPTION_KEY_MODAL))
     if (credentialCommand && guild.ownerId !== interaction.user.id) {
       const member = await guild.members.fetch(interaction.user.id).catch(() => null)
       if (!member?.permissions.has(PermissionFlagsBits.Administrator)) {
@@ -693,12 +702,14 @@ export function registerSlashCommands({
     }
     if (interaction.isChatInputCommand()) return handleCommand(interaction)
     if (interaction.isAutocomplete()) return handleAutocomplete(interaction)
+    if (interaction.isButton() && interaction.customId.startsWith(WORKTREE_PREFIX)) return worktrees.click(interaction)
     if (interaction.isButton() && interaction.customId.startsWith('login_')) return login.click(interaction)
     if (interaction.isButton() && /^(action_button|file_upload_btn):/.test(interaction.customId)) return agentUi.click(interaction)
     if (interaction.isButton() && (interaction.customId.startsWith(TASK_RUN_PREFIX) || interaction.customId.startsWith(TASK_DELETE_PREFIX))) return scheduler.tasksClick(interaction)
     if (interaction.isModalSubmit() && interaction.customId.startsWith('file_upload_modal:')) return agentUi.modal(interaction)
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('login_')) return login.select(interaction)
     if (interaction.isModalSubmit() && interaction.customId.startsWith('login_')) return login.modal(interaction)
+    if (interaction.isModalSubmit() && interaction.customId === TRANSCRIPTION_KEY_MODAL) return handleTranscriptionKeyModal({ interaction, db })
     if (interaction.isButton() && interaction.customId.startsWith(PERMISSION_PREFIX)) {
       return handlePermissionButton({ interaction, store, actions })
     }
@@ -715,55 +726,44 @@ export function registerSlashCommands({
   discord.on(Events.InteractionCreate, (interaction) => {
     handle(interaction).catch((error: Error) => logger.error(`interaction failed: ${error.message}`))
   })
-  // OpenCode loads agents, commands and skills lazily (config, plugins, files),
-  // so the catalog read at startup can be incomplete. Every registration goes
-  // through register(): one pass at a time, and a request made during a pass
-  // runs one more pass, so an older catalog read never overwrites a newer one.
-  const refresh: { timer: ReturnType<typeof setTimeout> | null; active: Promise<void> | null; dirty: boolean; closed: boolean } = {
-    timer: null,
-    active: null,
-    dirty: false,
-    closed: false,
-  }
+  // One registration pass at a time; a request made during a pass runs one more
+  // pass, so an older catalog read never overwrites a newer one.
+  const passes: { active: Promise<void> | null; dirty: boolean; closed: boolean } = { active: null, dirty: false, closed: false }
 
-  // Bulk overwrite of every guild's commands from the current OpenCode catalog.
-  function register(): Promise<void> {
-    refresh.dirty = true
-    if (refresh.active) return refresh.active
+  // Brings every guild's commands in line with the current OpenCode catalog.
+  function registerAll(): Promise<void> {
+    passes.dirty = true
+    if (passes.active) return passes.active
     const pass = (async () => {
       try {
-        while (refresh.dirty && !refresh.closed) {
-          refresh.dirty = false
+        while (passes.dirty && !passes.closed) {
+          passes.dirty = false
           await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild)))
         }
       } finally {
-        refresh.active = null
+        passes.active = null
       }
     })()
-    refresh.active = pass
+    passes.active = pass
     return pass
   }
 
-  discord.on(Events.GuildCreate, () => void register())
+  discord.on(Events.GuildCreate, () => void registerAll())
+  // agent/command/skill.updated are ephemeral hints (no payload). OpenCode sends
+  // them while a location loads (a cold start returns an incomplete catalog) and
+  // when skill files change, so a pass re-reads the lists and Discord is only
+  // written when the resulting commands differ.
+  const unsubscribe = opencode.subscribe((event) => {
+    if (event.type === 'agent.updated' || event.type === 'command.updated' || event.type === 'skill.updated') void registerAll()
+  })
 
   return {
-    registerAll: register,
-    // The catalog may have changed: register again soon (one trailing pass per window).
-    // `force` also resends lists that look unchanged, to repair commands removed in Discord.
-    scheduleRefresh({ force }: { force: boolean }): void {
-      if (force) registered.clear()
-      if (refresh.closed || refresh.timer) return
-      refresh.timer = setTimeout(() => {
-        refresh.timer = null
-        register().catch((e: Error) => logger.warn(`command refresh failed: ${e.message}`))
-      }, CATALOG_REFRESH_MS)
-    },
+    registerAll,
     // Waits for a running pass so nothing writes after Discord is destroyed.
     async stop(): Promise<void> {
-      refresh.closed = true
-      if (refresh.timer) clearTimeout(refresh.timer)
-      refresh.timer = null
-      await refresh.active?.catch(() => undefined)
+      unsubscribe()
+      passes.closed = true
+      await passes.active
     },
   }
 }

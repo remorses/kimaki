@@ -242,6 +242,22 @@ test('/fork forks before a user message into a new thread', async () => {
 test('/fork-subagent forks a subagent session into a new thread', async () => {
   const { discord } = twin
   const source = await sessionThread('Delegate subagent-marker')
+  const client = await server.client()
+  const unrelated = await client.session.create({ location: { directory: server.projectDirectory }, title: 'Unrelated session' })
+  await client.session.prompt({ sessionID: unrelated.id, text: 'Start first-marker' })
+  await client.session.wait({ sessionID: unrelated.id })
+  const threadsBefore = (await discord.channel(twin.channelId).getThreads()).map((thread) => thread.id)
+  const sessionsBefore = (await client.session.list({ directory: server.projectDirectory })).data.map((session) => session.id)
+  await discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork-subagent' })
+  const forged = await waitForSelectMenu({ discord, channelId: source.id, prefix: 'fork_sub:' })
+  await discord.thread(source.id).user(TEST_USER_ID).selectMenu({ messageId: forged.message.id, customId: forged.select.custom_id, values: [unrelated.id] })
+  await waitFor({
+    label: 'fork selection response',
+    check: async () => !(await discord.thread(source.id).getMessages()).find((message) => message.id === forged.message.id)?.content.includes('Select a subagent session'),
+  })
+  expect((await discord.thread(source.id).getMessages()).find((message) => message.id === forged.message.id)?.content).toMatchInlineSnapshot(`"This session is not the thread's root or a direct subagent. Run /fork or /fork-subagent in the session's own thread."`)
+  expect((await discord.channel(twin.channelId).getThreads()).map((thread) => thread.id)).toEqual(threadsBefore)
+  expect((await client.session.list({ directory: server.projectDirectory })).data.map((session) => session.id)).toEqual(sessionsBefore)
   await discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({ name: 'fork-subagent' })
   const { message, select } = await waitForSelectMenu({ discord: twin.discord, channelId: source.id, prefix: 'fork_sub:' })
   expect(select.options.map((option) => option.label)).toMatchInlineSnapshot(`

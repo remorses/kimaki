@@ -104,6 +104,7 @@ test('fresh install gets kimaki.db with the cli2 tables; subcommands never creat
 
 test('first start imports the V1 database once and leaves it unchanged', async () => {
   const dataDir = tempDataDir()
+  fs.chmodSync(dataDir, 0o755)
   const schemaSql = fs.readFileSync(path.join(import.meta.dirname, 'fixtures/v1-schema.sql'), 'utf8')
   // Like a real install: WAL mode, rows still in the -wal file, V1 connection open.
   const legacyFile = path.join(dataDir, LEGACY_DB_FILE)
@@ -115,6 +116,7 @@ test('first start imports the V1 database once and leaves it unchanged', async (
 
   const opened = await openDb({ dataDir, migrate: true })
   if (opened instanceof Error) throw opened
+  expect(fs.statSync(dataDir).mode & 0o777).toBe(0o700)
   // The import opened the V1 file read-only: neither file changed.
   expect({ db: fileHash(legacyFile), wal: fileHash(`${legacyFile}-wal`) }).toEqual(before)
   v1.close()

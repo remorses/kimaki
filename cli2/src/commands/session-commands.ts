@@ -22,6 +22,7 @@ import type { PromptFile } from '../actions.ts'
 import { ConfigError, OpenCodeError } from '../errors.ts'
 import { authorOf, respondChoices, type CommandContext } from '../slash-commands.ts'
 import { stripTurnContext } from '../system-prompt.ts'
+import { resolveWorkingDirectory } from '../worktrees.ts'
 
 const FORK_PREFIX = 'fork:'
 const FORK_SUBAGENT_PREFIX = 'fork_sub:'
@@ -197,13 +198,17 @@ export function createSessionCommands({ actions, readClient, resolveTarget, repl
     if (client instanceof Error) return respondChoices(interaction, client)
     const location = { directory: target.directory }
     if (focused.name === 'session') {
+      const project = await client.location.get({ location: { directory: target.projectDirectory } })
+        .catch((cause) => new OpenCodeError({ operation: 'location.get', cause }))
+      if (project instanceof Error) return respondChoices(interaction, project)
       const sessions = await client.session
-        .list({ directory: target.directory, parentID: null, order: 'desc', limit: MAX_OPTIONS, ...(query && { search: query }) })
+        .list({ project: project.project.id, parentID: null, order: 'desc', limit: 100, ...(query && { search: query }) })
         .catch((e) => new OpenCodeError({ operation: 'session.list', cause: e }))
       if (sessions instanceof Error) return respondChoices(interaction, sessions)
+      const matches = await Promise.all(sessions.data.map(async (session) => !(await resolveWorkingDirectory({ projectDirectory: target.projectDirectory, candidate: session.location.directory }) instanceof Error)))
       return respondChoices(
         interaction,
-        sessions.data.map((session) => {
+        sessions.data.filter((_, index) => matches[index]).slice(0, MAX_OPTIONS).map((session) => {
           const suffix = ` (${shortDate(session.time.updated)})`
           return { name: `${truncate(session.title ?? 'Untitled', 100 - suffix.length)}${suffix}`, value: session.id }
         }),

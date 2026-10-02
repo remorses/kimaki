@@ -3,6 +3,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { Routes } from 'discord.js'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
@@ -72,4 +73,40 @@ test('agents loaded after startup get their slash commands', async () => {
     late reply
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ late*"
   `)
+})
+
+test('a skill change adds its command; catalog events with the same catalog write nothing to Discord', async () => {
+  const skillFile = path.join(server.skillsDirectory, 'demo', 'SKILL.md')
+  const skillText = '---\nname: demo\ndescription: Demo skill\n---\nDemo.\n'
+  const nextCatalogEvent = () =>
+    new Promise<void>((resolve) => {
+      const stop = bot.opencode.subscribe((event) => {
+        if (event.type !== 'skill.updated') return
+        stop()
+        resolve()
+      })
+    })
+  const waitForCommand = async () => {
+    const deadline = Date.now() + 8_000
+    while (Date.now() < deadline && !(await registeredNames()).includes('demo-skill')) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  }
+  fs.mkdirSync(path.dirname(skillFile), { recursive: true })
+  fs.writeFileSync(skillFile, skillText)
+  await waitForCommand()
+  expect(await registeredNames()).toContain('demo-skill')
+
+  // Same file content again: OpenCode rescans and publishes skill.updated, the commands stay the same.
+  const bulkWrites: string[] = []
+  const commandsRoute = Routes.applicationGuildCommands(bot.discord.user!.id, twin.discord.guildId)
+  bot.discord.rest.on('response', (request) => {
+    if (request.method === 'PUT' && request.path === commandsRoute) bulkWrites.push(request.path)
+  })
+  const event = nextCatalogEvent()
+  fs.writeFileSync(skillFile, skillText)
+  await event
+  // Let the pass that the event started finish.
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  expect(bulkWrites).toEqual([])
 })

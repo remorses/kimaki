@@ -35,7 +35,7 @@ import {
 import { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate } from './onboarding.ts'
 import { createAnalytics } from './analytics.ts'
 import { listTasks } from './scheduler.ts'
-import { generateSpeech } from './voice.ts'
+import { generateSpeech, saveAudioKeys } from './voice.ts'
 import { addProjectChannel, canonicalPath, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from './project.ts'
 
 const logger = createLogger('CLI')
@@ -133,6 +133,7 @@ cli
   .option('--install-url', 'Print the install URL and exit (non-interactive onboarding)')
   .option('--machine-name <name>', 'Name in this machine\'s category "Kimaki <name>" (default: hostname)')
   .option('--restart-onboarding', 'Choose credentials again')
+  .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
   .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
   .action(async (options) => {
     const dataDir = dataDirOrDefault(options.dataDir)
@@ -181,6 +182,7 @@ cli
       ensureOpencode: true,
       opencodeConfigDir: opencodeConfigDir(),
       analytics: createAnalytics({ dataDir, botMode: credentials.mode, enabled: !options.noAnalytics }),
+      autoWorktrees: Boolean(options.worktrees),
     })
     if (bot instanceof Error) failStartup(bot)
     const shutdown = () => {
@@ -531,7 +533,9 @@ cli
   .option('--agent <name>', 'Agent ID')
   .option('--model <provider/model>', 'Model for the new session')
   .option('-u, --user <id>', 'Add this Discord user to the thread')
-  .option('--cwd <path>', 'Existing subfolder of the target project')
+  .option('--cwd <path>', 'Existing project subfolder or linked Git worktree')
+  .option('--worktree [name]', 'Create a custom Git worktree (automatic name when omitted)')
+  .option('--base-branch <ref>', 'Starting ref for --worktree (default: project HEAD)')
   .option('--parent-session <id>', 'Record the parent session in session metadata')
   .option('--permission <rule>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Repeatable: tool[:pattern]:allow|deny|ask' }))
   .option('--notify-only', 'Post a notification thread without a model turn')
@@ -541,10 +545,10 @@ cli
   .option('--allow-concurrency', 'Scheduled only: allow overlapping runs of this task')
   .action(async (options) => {
     if (options.wait && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the task runs later'))
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/send', input: {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/send', signal: AbortSignal.timeout(25 * 60_000), input: {
       channelId: options.channel, project: options.project, threadId: options.thread, sessionId: options.session,
       prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
-      cwd: options.cwd, parentSessionId: options.parentSession, permissions: options.permission, notifyOnly: options.notifyOnly,
+      cwd: options.cwd, worktree: options.worktree, baseBranch: options.baseBranch, parentSessionId: options.parentSession, permissions: options.permission, notifyOnly: options.notifyOnly,
       files: (options.file ?? []).map((file) => ({ uri: pathToFileURL(path.resolve(file)).href, name: path.basename(file) })),
       sendAt: options.sendAt, preRun: options.preRun, allowConcurrency: options.allowConcurrency,
     } })
@@ -604,6 +608,63 @@ cli
     if (markdown instanceof Error) fail(markdown)
     process.stdout.write(`${markdown}\n`)
   })
+
+cli.command('session cwd [directory]', 'Show or change the working directory at a native safe boundary').section('Session')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
+  .option('--thread <id>', 'Discord thread')
+  .action(async (directory, options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/session.cwd', input: { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], threadId: options.thread, directory } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.command('channel worktrees <value>', 'Set automatic worktrees: on | off').section('Channel')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-c, --channel <id>', 'Project channel (default: current directory)')
+  .action(async (value, options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/channel.worktrees', input: { channelId: options.channel, directory: process.cwd(), text: value } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.section('Worktree')
+cli.command('worktree list', 'List linked Git worktrees')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-c, --channel <id>', 'Project channel')
+  .option('-p, --project <path>', 'Project directory (default: current directory)')
+  .action(async (options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/worktree.list', input: { channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()) } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+cli.command('worktree create [name]', 'Create an isolated worktree session')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('-c, --channel <id>', 'Project channel')
+  .option('-p, --project <path>', 'Project directory (default: current directory)')
+  .option('--base-branch <ref>', 'Starting Git ref (default: project HEAD)')
+  .action(async (name, options) => {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/worktree.create', signal: AbortSignal.timeout(25 * 60_000), input: { channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()), name, baseBranch: options.baseBranch } })
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+  })
+
+for (const operation of ['remove', 'merge'] as const) {
+  cli.command(`worktree ${operation} <directory>`, operation === 'merge' ? 'Merge into a local target branch' : 'Remove a clean, merged worktree checkout; retain branch refs')
+    .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+    .option('-c, --channel <id>', 'Project channel')
+    .option('-p, --project <path>', 'Project directory (default: current directory)')
+    .option('--target-branch <branch>', 'Local merge target branch')
+    .option('--strategy <name>', 'Merge strategy: rebase | squash')
+    .action(async (directory, options) => {
+      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: `/kimaki/action/worktree.${operation}`, signal: AbortSignal.timeout(25 * 60_000), input: {
+        channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()), text: path.resolve(directory), targetBranch: options.targetBranch, strategy: options.strategy,
+      } })
+      if (result instanceof Error) fail(result)
+      process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    })
+}
 
 cli.section('Schedule')
 
@@ -825,6 +886,24 @@ cli.command('logs', 'Print the log file path. The bot resets the file on every s
 cli.command('bot token', 'Print saved bot credentials for automation')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .action(async (options) => process.stdout.write(`${(await discordApi(options.dataDir)).credentials.token}\n`))
+
+cli.command('bot keys set', 'Store OpenAI or Gemini API keys for voice transcription and kimaki tts')
+  .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
+  .option('--openai <key>', 'OpenAI API key')
+  .option('--gemini <key>', 'Gemini API key')
+  .action(async (options) => {
+    const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
+    if (opened instanceof Error) fail(opened)
+    const result = await (async () => {
+      const credentials = await readSavedCredentials({ db: opened.db })
+      if (credentials instanceof Error) return credentials
+      if (!credentials) return new Error('No saved bot credentials. Start kimaki once to onboard.')
+      return saveAudioKeys({ db: opened.db, token: credentials.token, openai: options.openai, gemini: options.gemini })
+    })()
+    opened.close()
+    if (result instanceof Error) fail(result)
+    process.stdout.write(`Saved ${[options.openai && 'OpenAI', options.gemini && 'Gemini'].filter(Boolean).join(' and ')} API key\n`)
+  })
 
 cli.command('bot install-url', 'Print the Discord bot install URL')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')

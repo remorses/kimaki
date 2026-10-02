@@ -183,7 +183,7 @@ type PayloadBase = {
 
 export type TaskPayload =
   | (PayloadBase & { kind: 'thread'; threadId: string })
-  | (PayloadBase & { kind: 'channel'; channelId: string; name: string | null; notifyOnly: boolean; worktreeName: string | null; cwd: string | null })
+  | (PayloadBase & { kind: 'channel'; channelId: string; name: string | null; notifyOnly: boolean; worktreeName: string | null; cwd: string | null; baseBranch?: string })
 
 export function parsePayload(json: string): ConfigError | TaskPayload {
   const parsed = errore.try(() => ({ value: JSON.parse(json) as unknown }), (cause) => new ConfigError({ reason: 'Task payload is not valid JSON', cause }))
@@ -218,7 +218,7 @@ export function parsePayload(json: string): ConfigError | TaskPayload {
   const channelId = text('channelId')
   if (kind === 'thread' && threadId) return { ...base, kind, threadId }
   if (kind === 'channel' && channelId) {
-    return { ...base, kind, channelId, name: text('name'), notifyOnly: fields.get('notifyOnly') === true, worktreeName: text('worktreeName'), cwd: text('cwd') }
+    return { ...base, kind, channelId, name: text('name'), notifyOnly: fields.get('notifyOnly') === true, worktreeName: text('worktreeName'), cwd: text('cwd'), ...(text('baseBranch') && { baseBranch: text('baseBranch')! }) }
   }
   return new ConfigError({ reason: `Task payload has unknown kind ${kind ?? '(none)'} or no target` })
 }
@@ -386,7 +386,9 @@ export function createScheduler({
   async function execute(row: TaskRow): Promise<Error | RunOutcome> {
     const payload = parsePayload(row.payload_json)
     if (payload instanceof Error) return payload
-    if (payload.kind === 'channel' && payload.worktreeName) return new ConfigError({ reason: `Task ${row.id} wants worktree ${payload.worktreeName}; worktree tasks arrive in P10` })
+    if (payload.permissions?.length && (payload.kind === 'thread' || payload.notifyOnly)) {
+      return new ConfigError({ reason: `Task ${row.id}: --permission applies only to new sessions. Recreate the task for a project channel without --notify-only` })
+    }
     // Non-overlap: the session of the previous run must be idle.
     if (!payload.allowConcurrency && row.session_id) {
       const busy = await isBusy(row.session_id)
@@ -407,8 +409,6 @@ export function createScheduler({
       ...(payload.model && { model: payload.model }),
       ...(payload.userId && { user: payload.userId }),
     }
-    // V1 accepted permissions for thread tasks; an existing session keeps its own.
-    if (payload.kind === 'thread' && payload.permissions?.length) logger.warn(`task ${row.id}: permissions apply only to new sessions, ignoring them`)
     const input: SendInput = payload.kind === 'thread'
       ? { ...common, threadId: payload.threadId }
       : {
@@ -416,6 +416,8 @@ export function createScheduler({
           channelId: payload.channelId,
           ...(payload.name && { name: payload.name }),
           ...(payload.cwd && { cwd: payload.cwd }),
+          ...(payload.worktreeName !== null && { worktree: payload.worktreeName }),
+          ...(payload.baseBranch && { baseBranch: payload.baseBranch }),
           ...(payload.parentSessionId && { parentSessionId: payload.parentSessionId }),
           ...(payload.permissions?.length && { permissions: payload.permissions }),
           ...(payload.notifyOnly && { notifyOnly: true }),
@@ -575,7 +577,7 @@ export function createScheduler({
     }
     const payload: TaskPayload = threadId
       ? { ...base, kind: 'thread', threadId }
-      : { ...base, kind: 'channel', channelId: project.channel_id, name: send.name ?? null, notifyOnly: send.notifyOnly === true, worktreeName: null, cwd: send.cwd ?? null }
+      : { ...base, kind: 'channel', channelId: project.channel_id, name: send.name ?? null, notifyOnly: send.notifyOnly === true, worktreeName: send.worktree ?? null, cwd: send.cwd ?? null, ...(send.baseBranch && { baseBranch: send.baseBranch }) }
     const nextRunAt = when.kind === 'at' ? when.runAt : when.nextRunAt
     const inserted = await db.insert(schema.scheduled_tasks).values({
       status: 'planned',

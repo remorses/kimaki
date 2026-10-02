@@ -37,6 +37,7 @@ import * as schema from './schema.ts'
 import type { BotStore } from './store.ts'
 import { baseInstructions, INSTRUCTION_KEY, turnContext, withTurnContext, type ScheduledRun } from './system-prompt.ts'
 import { isBusy } from './thread-reducer.ts'
+import { createWorktree, deleteWorktree, git, inside, listWorktrees, mergeWorktree, resolveWorkingDirectory, worktreeName } from './worktrees.ts'
 
 const logger = createLogger('ACTIONS')
 
@@ -58,6 +59,8 @@ export type SendInput = {
   user?: string
   files?: PromptFile[]
   cwd?: string
+  worktree?: string
+  baseBranch?: string
   parentSessionId?: string
   permissions?: string[]
   notifyOnly?: boolean
@@ -70,10 +73,18 @@ export const REMOTE_RESULT_PREFIX = 'kimaki-result-v2:'
 export function parseSendInput(value: unknown): ConfigError | SendInput {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return new ConfigError({ reason: 'Expected a send object' })
   const fields = new Map(Object.entries(value))
-  for (const key of ['channelId', 'threadId', 'sessionId', 'project', 'name', 'agent', 'model', 'user', 'cwd', 'parentSessionId']) {
+  for (const key of ['channelId', 'threadId', 'sessionId', 'project', 'name', 'agent', 'model', 'user', 'cwd', 'parentSessionId', 'baseBranch']) {
     const field = fields.get(key)
     if (field !== undefined && (typeof field !== 'string' || !field.trim())) return new ConfigError({ reason: `${key} must be a non-empty string` })
   }
+  const worktree = fields.get('worktree')
+  if (worktree !== undefined && typeof worktree !== 'string') return new ConfigError({ reason: 'worktree must be a name or an empty string for an automatic name' })
+  if (typeof worktree === 'string' && worktree) {
+    const valid = worktreeName(worktree)
+    if (valid instanceof Error) return valid
+  }
+  if (worktree !== undefined && (fields.has('cwd') || fields.has('threadId') || fields.has('sessionId') || fields.get('notifyOnly') === true)) return new ConfigError({ reason: '--worktree requires a new session; do not combine it with --cwd, --thread, --session or --notify-only' })
+  if (fields.has('baseBranch') && worktree === undefined) return new ConfigError({ reason: '--base-branch requires --worktree' })
   if (fields.has('notifyOnly') && typeof fields.get('notifyOnly') !== 'boolean') return new ConfigError({ reason: 'notifyOnly must be boolean' })
   const permissions = fields.get('permissions')
   if (permissions !== undefined && (!Array.isArray(permissions) || permissions.some((permission) => typeof permission !== 'string'))) return new ConfigError({ reason: 'Permission rules must be strings' })
@@ -149,6 +160,7 @@ export function createActions({
   store,
   analytics,
   cliContext,
+  autoWorktrees = false,
 }: {
   discord: Client
   db: KimakiDb
@@ -157,6 +169,7 @@ export function createActions({
   store: BotStore
   analytics: Analytics
   cliContext: { dataDir: string; lockPort: number }
+  autoWorktrees?: boolean
 }) {
   function client() {
     const endpoint = opencode.endpoint
@@ -299,7 +312,15 @@ export function createActions({
     return channel
   }
 
-  async function threadProject(thread: ThreadChannel): Promise<DbError | DiscordError | { channelId: string; directory: string }> {
+  async function workingDirectory(sessionId: string) {
+    const api = client()
+    if (api instanceof Error) return api
+    const info = await api.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'read session directory', cause }))
+    if (info instanceof Error) return info
+    return info.location.directory
+  }
+
+  async function threadProject(thread: ThreadChannel) {
     const channelId = thread.parentId
     if (!channelId) return new DiscordError({ operation: `find the channel of thread ${thread.id}` })
     const row = await db.query.channel_directories
@@ -307,7 +328,32 @@ export function createActions({
       .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
     if (row instanceof Error) return row
     if (!row) return new DiscordError({ operation: `find the project of channel ${channelId}` })
-    return { channelId, directory: row.directory }
+    const sessionId = rootSession(thread.id)
+    if (sessionId instanceof Error) return sessionId
+    const directory = await workingDirectory(sessionId)
+    if (directory instanceof Error) return directory
+    return { channelId, projectDirectory: row.directory, directory }
+  }
+
+  async function sessionCwd({ threadId, directory }: { threadId: string; directory?: string }) {
+    const api = client()
+    if (api instanceof Error) return api
+    const thread = await discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: 'fetch cwd thread', cause }))
+    if (thread instanceof Error) return thread
+    if (!thread?.isThread()) return new ConfigError({ reason: 'Run cwd in a session thread.' })
+    const project = await threadProject(thread)
+    if (project instanceof Error) return project
+    if (!directory) return { directory: project.directory }
+    const destination = await resolveWorkingDirectory({ projectDirectory: project.projectDirectory, candidate: path.resolve(project.directory, directory) })
+    if (destination instanceof Error) return destination
+    const plugin = await waitForPlugin(destination)
+    if (plugin instanceof Error) return plugin
+    const sessionId = rootSession(threadId)
+    if (sessionId instanceof Error) return sessionId
+    const moved = await api.session.move({ sessionID: sessionId, directory: destination, delivery: 'steer' })
+      .catch((cause) => new OpenCodeError({ operation: 'session.move', cause }))
+    if (moved instanceof Error) return moved
+    return { requestedDirectory: destination }
   }
 
   async function bindThread({
@@ -841,7 +887,7 @@ export function createActions({
 
   async function startSession({
     channelId,
-    directory,
+    directory: requestedDirectory,
     route,
     author,
     messageId,
@@ -853,6 +899,9 @@ export function createActions({
     permissions,
     parentSessionId,
     task,
+    worktree,
+    baseBranch,
+    run = true,
   }: {
     channelId: string
     directory: string
@@ -875,28 +924,37 @@ export function createActions({
     parentSessionId?: string
     // A scheduled run (scheduler.ts): marks the session as started by this task.
     task?: ScheduledRun
+    // undefined uses the channel default; false explicitly reuses an existing cwd.
+    worktree?: string | false
+    baseBranch?: string
+    run?: boolean
   }): Promise<
-    ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }
+    Error | { threadId: string; sessionId: string }
   > {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
 
+    const defaults = await db.query.channel_directories
+      .findFirst({ where: { channel_id: channelId }, with: { channel_model: true, channel_agent: true, channel_worktree: true } })
+      .catch((e) => new DbError({ operation: 'read channel defaults', cause: e }))
+    if (defaults instanceof Error) return defaults
+    const text = routeText(route)
+    const useWorktree = typeof worktree === 'string' || (worktree !== false && (defaults?.channel_worktree ? defaults.channel_worktree.enabled === 1 : autoWorktrees))
+    const slug = typeof worktree === 'string' && worktree ? worktree : `${text.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-|-$/g, '') || 'session'}-${crypto.randomBytes(4).toString('hex')}`
+    const checkout = useWorktree ? await createWorktree({ projectDirectory: defaults?.directory ?? requestedDirectory, dataDir: cliContext.dataDir, name: slug, baseBranch }) : null
+    if (checkout instanceof Error) return checkout
+    const directory = checkout?.directory ?? requestedDirectory
     const plugin = await waitForPlugin(directory)
     if (plugin instanceof Error) return plugin
 
     const channel = await textChannel(channelId)
     if (channel instanceof Error) return channel
-    const text = routeText(route)
-    const threadName = explicitName ?? (text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
+    const threadName = explicitName ?? (checkout ? `⬦ ${slug}` : text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
     const thread = await channel.threads
       .create({ name: threadName, autoArchiveDuration: 1440, ...(startMessageId && { startMessage: startMessageId }) })
       .catch((e) => new DiscordError({ operation: 'create thread', cause: e }))
     if (thread instanceof Error) return thread
 
-    const defaults = await db.query.channel_directories
-      .findFirst({ where: { channel_id: channelId }, with: { channel_model: true, channel_agent: true } })
-      .catch((e) => new DbError({ operation: 'read channel defaults', cause: e }))
-    if (defaults instanceof Error) return defaults
     const model = explicitModel
       ? { providerID: explicitModel.providerID, id: explicitModel.id, ...(explicitModel.variant && { variant: explicitModel.variant }) }
       : parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant)
@@ -922,13 +980,19 @@ export function createActions({
       })
       .catch((e) => new OpenCodeError({ operation: 'session.create', cause: e }))
     if (session instanceof Error) return session
-    analytics.track('session_created', { has_worktree: false, source: 'discord' })
+    analytics.track('session_created', { has_worktree: Boolean(checkout), source: 'discord' })
 
     const instructions = await putInstructions({ sessionId: session.id, thread, channel, directory, userId: author.id, parentSessionId, scheduledTask: task ?? null })
     if (instructions instanceof Error) return instructions
 
     const bound = await bindThread({ threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
     if (bound instanceof Error) return bound
+    if (!run) {
+      const posted = await thread.send({ content: `Worktree ready: \`${directory}\`\nBranch: \`${checkout?.branch ?? 'detached'}\`\nSend a message to start working.`, allowedMentions: { parse: [] } })
+        .catch((cause) => new DiscordError({ operation: 'post worktree ready', cause }))
+      if (posted instanceof Error) return posted
+      return { threadId: thread.id, sessionId: session.id }
+    }
     if (showInput) {
       const names = files.map((file) => file.name).join(', ')
       const shown = names ? `${text}\nFiles: ${names}` : text
@@ -1059,21 +1123,21 @@ export function createActions({
 
   // The project channel whose directory holds this session.
   async function channelForSession(sessionId: string) {
-    const opencodeClient = client()
-    if (opencodeClient instanceof Error) return opencodeClient
-    const info = await opencodeClient.session
-      .get({ sessionID: sessionId })
-      .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
-    if (info instanceof Error) return info
-    const directory = await canonicalPath(info.location.directory)
+    const directory = await workingDirectory(sessionId)
+    if (directory instanceof Error) return directory
+    return channelForDirectory(directory)
+  }
+
+  async function channelForDirectory(directory: string) {
     const projects = await db.query.channel_directories
       .findMany()
       .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
     if (projects instanceof Error) return projects
+    projects.sort((a, b) => b.directory.length - a.directory.length)
     // Stored directories may be symlink aliases of the real path.
-    const matches = await Promise.all(projects.map(async (row) => (await canonicalPath(row.directory)) === directory))
+    const matches = await Promise.all(projects.map(async (row) => !(await resolveWorkingDirectory({ projectDirectory: row.directory, candidate: directory }) instanceof Error)))
     const project = projects.find((_, index) => matches[index])
-    if (!project) return new ConfigError({ reason: `No project channel for ${info.location.directory}. Pass --channel.` })
+    if (!project) return new ConfigError({ reason: `No project channel for ${directory}. Pass --channel.` })
     return project.channel_id
   }
 
@@ -1094,7 +1158,7 @@ export function createActions({
       .get({ sessionID: sessionId })
       .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
     if (info instanceof Error) return info
-    if ((await canonicalPath(info.location.directory)) !== (await canonicalPath(project.directory))) {
+    if (await resolveWorkingDirectory({ projectDirectory: project.directory, candidate: info.location.directory }) instanceof Error) {
       return new ConfigError({
         reason: `This session belongs to a different project or worktree: \`${info.location.directory}\`. Run \`/resume\` in the channel for that directory.`,
       })
@@ -1123,6 +1187,7 @@ export function createActions({
     subagent,
     name,
     author,
+    worktree,
   }: {
     sourceThread: ThreadChannel
     sessionId: string
@@ -1132,9 +1197,21 @@ export function createActions({
     // Set when forking a subagent session: its agent and task.
     subagent?: { agent: string; description: string }
     author: Author
+    worktree?: { name: string; baseBranch?: string }
   }) {
     const opencodeClient = client()
     if (opencodeClient instanceof Error) return opencodeClient
+    const root = rootSession(sourceThread.id)
+    if (root instanceof Error) return root
+    if (sessionId !== root) {
+      const info = await opencodeClient.session
+        .get({ sessionID: sessionId })
+        .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
+      if (info instanceof Error) return info
+      if (info.parentID !== root) {
+        return new ConfigError({ reason: "This session is not the thread's root or a direct subagent. Run /fork or /fork-subagent in the session's own thread." })
+      }
+    }
     const project = await threadProject(sourceThread)
     if (project instanceof Error) return project
     const channel = await textChannel(project.channelId)
@@ -1143,12 +1220,32 @@ export function createActions({
       .fork({ sessionID: sessionId, ...(before && { before }) })
       .catch((e) => new OpenCodeError({ operation: 'session.fork', cause: e }))
     if (forked instanceof Error) return forked
+    const relocated = await (async () => {
+      if (!worktree) return forked
+      const checkout = await createWorktree({ projectDirectory: project.projectDirectory, dataDir: cliContext.dataDir, name: worktree.name, baseBranch: worktree.baseBranch })
+      if (checkout instanceof Error) return checkout
+      const plugin = await waitForPlugin(checkout.directory)
+      if (plugin instanceof Error) return plugin
+      const moved = await opencodeClient.session.move({ sessionID: forked.id, directory: checkout.directory })
+        .catch((cause) => new OpenCodeError({ operation: 'move worktree fork', cause }))
+      if (moved instanceof Error) return moved
+      const waited = await opencodeClient.session.wait({ sessionID: forked.id }).catch((cause) => new OpenCodeError({ operation: 'wait for worktree fork move', cause }))
+      if (waited instanceof Error) return waited
+      const info = await opencodeClient.session.get({ sessionID: forked.id }).catch((cause) => new OpenCodeError({ operation: 'confirm worktree fork directory', cause }))
+      if (info instanceof Error) return info
+      if (info.location.directory !== checkout.directory) return new ConfigError({ reason: `Session did not move to ${checkout.directory}. No new thread was bound.` })
+      return info
+    })()
+    if (relocated instanceof Error) {
+      await opencodeClient.session.remove({ sessionID: forked.id }).catch((cause) => logger.warn(`discard failed worktree fork: ${String(cause)}`))
+      return relocated
+    }
     const intro = subagent
       ? `**Forked subagent session created!**\nAgent: \`${subagent.agent}\`\nTask: ${subagent.description || 'No description'}\nFrom: \`${sessionId}\`\nNew session: \`${forked.id}\``
       : `**Forked session created!**\nFrom: <#${sourceThread.id}> (\`${sessionId}\`)\nNew session: \`${forked.id}\``
     return adoptSession({
       channel,
-      session: forked,
+      session: relocated,
       discard: async () => {
         await opencodeClient.session.remove({ sessionID: forked.id }).catch(() => undefined)
       },
@@ -1161,6 +1258,61 @@ export function createActions({
   }
 
   // --- Agent, model and channel preferences.
+
+  async function newWorktree({ channelId, sourceThread, name, baseBranch, author }: { channelId: string; sourceThread?: ThreadChannel; name?: string; baseBranch?: string; author: Author }) {
+    const slug = name || `session-${crypto.randomBytes(4).toString('hex')}`
+    const valid = worktreeName(slug)
+    if (valid instanceof Error) return valid
+    if (sourceThread) {
+      const sessionId = rootSession(sourceThread.id)
+      if (sessionId instanceof Error) return sessionId
+      return fork({ sourceThread, sessionId, author, name: `⬦ ${slug}`, worktree: { name: slug, baseBranch } })
+    }
+    const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } }).catch((cause) => new DbError({ operation: 'find worktree project', cause }))
+    if (project instanceof Error) return project
+    if (!project) return new ConfigError({ reason: 'Use /new-worktree in a project channel.' })
+    return startSession({ channelId, directory: project.directory, route: { kind: 'steer', text: '' }, author, messageId: crypto.randomUUID(), startMessageId: null, showInput: false, worktree: slug, baseBranch, run: false })
+  }
+
+  async function setWorktrees({ channelId, enabled }: { channelId: string; enabled: boolean }) {
+    const values = { enabled: enabled ? 1 : 0 }
+    const saved = await db.insert(schema.channel_worktrees).values({ channel_id: channelId, ...values })
+      .onConflictDoUpdate({ target: schema.channel_worktrees.channel_id, set: values }).catch((cause) => new DbError({ operation: 'save channel worktrees', cause }))
+    if (saved instanceof Error) return saved
+    return { enabled }
+  }
+
+  async function worktrees({ channelId }: { channelId: string }) {
+    const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId }, with: { channel_worktree: true } }).catch((cause) => new DbError({ operation: 'find worktree project', cause }))
+    if (project instanceof Error) return project
+    if (!project) return new ConfigError({ reason: 'Choose a project channel.' })
+    const entries = await listWorktrees({ projectDirectory: project.directory })
+    if (entries instanceof Error) return entries
+    return { entries, enabled: project.channel_worktree ? project.channel_worktree.enabled === 1 : autoWorktrees }
+  }
+
+  async function manageWorktree({ channelId, directory, operation, strategy, targetBranch }: { channelId: string; directory: string; operation: 'remove' | 'merge'; strategy?: 'rebase' | 'squash'; targetBranch?: string }) {
+    const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } }).catch((cause) => new DbError({ operation: 'find worktree project', cause }))
+    if (project instanceof Error) return project
+    if (!project) return new ConfigError({ reason: 'Choose a project channel.' })
+    const api = client()
+    if (api instanceof Error) return api
+    const active = await api.session.active().catch((cause) => new OpenCodeError({ operation: 'check active worktree sessions', cause }))
+    if (active instanceof Error) return active
+    const root = operation === 'merge' ? await git({ directory, args: ['rev-parse', '--show-toplevel'] }) : directory
+    if (root instanceof Error) return root
+    const candidate = await canonicalPath(root)
+    for (const sessionId of Object.keys(active)) {
+      const cwd = await workingDirectory(sessionId)
+      if (cwd instanceof Error) return cwd
+      const affected = inside({ parent: candidate, candidate: await canonicalPath(cwd) }) || (operation === 'merge' && !(await resolveWorkingDirectory({ projectDirectory: project.directory, candidate: cwd }) instanceof Error))
+      if (affected) return new ConfigError({ reason: 'A session is running in this checkout or merge target. Wait for it to finish before modifying the worktree.' })
+    }
+    if (operation === 'merge') return mergeWorktree({ projectDirectory: project.directory, directory: candidate, strategy, targetBranch })
+    const removed = await deleteWorktree({ projectDirectory: project.directory, directory: candidate })
+    if (removed instanceof Error) return removed
+    return { removed: candidate }
+  }
 
   async function switchModel({ sessionId, model }: { sessionId: string; model: ModelChoice }) {
     const opencodeClient = client()
@@ -1338,6 +1490,11 @@ export function createActions({
   // `localOnly`: never forward to another machine (remote envelopes, scheduled runs).
   // `task`: a scheduled run; its input shows as "» task #N: prompt".
   async function send(input: SendInput, { localOnly = false, task }: { localOnly?: boolean; task?: ScheduledRun } = {}) {
+    if (input.worktree !== undefined && (input.cwd || input.threadId || input.sessionId || input.notifyOnly)) return new ConfigError({ reason: '--worktree requires a new session without --cwd or --notify-only.' })
+    if (input.baseBranch && input.worktree === undefined) return new ConfigError({ reason: '--base-branch requires --worktree.' })
+    if (input.permissions?.length && (input.threadId || input.sessionId || input.notifyOnly)) {
+      return new ConfigError({ reason: '--permission applies only to new sessions. Start a new session without --thread, --session, or --notify-only' })
+    }
     const author = { id: input.user?.replace(/[<@!>]/g, '') ?? discord.user!.id, username: task ? `task #${task.id}` : 'CLI' }
     const messageId = crypto.randomUUID()
     const route = parseTextMessage({ content: input.prompt })
@@ -1379,11 +1536,8 @@ export function createActions({
       if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add notification member: ${error.message}`))
       return { threadId: thread.id, sessionId: null }
     }
-    const directory = await fs.promises.realpath(input.cwd ?? project.directory).catch((cause) => new ConfigError({ reason: 'Send directory does not exist', cause }))
+    const directory = await resolveWorkingDirectory({ projectDirectory: project.directory, candidate: input.cwd ?? project.directory })
     if (directory instanceof Error) return directory
-    const base = await fs.promises.realpath(project.directory).catch((cause) => new ConfigError({ reason: 'Project directory does not exist', cause }))
-    if (base instanceof Error) return base
-    if (directory !== base && !directory.startsWith(`${base}${path.sep}`)) return new ConfigError({ reason: '--cwd must be inside the project; worktrees arrive in P10' })
     const permissions: Array<{ action: string; resource: string; effect: 'allow' | 'deny' | 'ask' }> = []
     for (const rule of input.permissions ?? []) {
       const parts = rule.split(':')
@@ -1396,7 +1550,7 @@ export function createActions({
     if (input.model && !model) return new ConfigError({ reason: 'Use --model provider/model' })
     const first = route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' ? route : { kind: 'steer' as const, text: route.text, agent: input.agent }
     const started = await startSession({ channelId: project.channel_id, directory, route: first, author, messageId, startMessageId: null,
-      threadName: input.name, files: input.files, permissions, parentSessionId: input.parentSessionId, task, ...(model && { model: { ...model, variant: null } }) })
+      threadName: input.name, files: input.files, permissions, parentSessionId: input.parentSessionId, task, worktree: input.cwd ? false : task && input.worktree ? `${input.worktree.slice(0, 40)}-${crypto.randomBytes(4).toString('hex')}` : input.worktree, baseBranch: input.baseBranch, ...(model && { model: { ...model, variant: null } }) })
     if (started instanceof Error) return started
     if (input.user) {
       const thread = await discord.channels.fetch(started.threadId).catch((cause) => new DiscordError({ operation: 'fetch send thread', cause }))
@@ -1494,16 +1648,36 @@ export function createActions({
   async function runCli(name: string, input: unknown): Promise<Error | { data: unknown }> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return new ConfigError({ reason: 'Expected action arguments' })
     const fields = new Map(Object.entries(input))
-    for (const key of ['sessionId', 'threadId', 'channelId', 'directory', 'text', 'agent', 'model', 'variant', 'before', 'inboxId', 'name']) {
+    for (const key of ['sessionId', 'threadId', 'channelId', 'directory', 'text', 'agent', 'model', 'variant', 'before', 'inboxId', 'name', 'baseBranch', 'targetBranch']) {
       const value = fields.get(key)
       if (value !== undefined && (typeof value !== 'string' || !value.trim())) return new ConfigError({ reason: `${key} must be a non-empty string` })
     }
-    const args = input as { sessionId?: string; threadId?: string; channelId?: string; directory?: string; text?: string; agent?: string; model?: string; variant?: string; before?: string; inboxId?: string; name?: string }
-    if (name.startsWith('channel.')) {
-      const project = await db.query.channel_directories.findFirst({ where: args.channelId ? { channel_id: args.channelId } : { directory: path.resolve(args.directory ?? process.cwd()) } }).catch((cause) => new DbError({ operation: 'find channel', cause }))
+    const args = input as { sessionId?: string; threadId?: string; channelId?: string; directory?: string; text?: string; agent?: string; model?: string; variant?: string; before?: string; inboxId?: string; name?: string; baseBranch?: string; targetBranch?: string }
+    if (name.startsWith('channel.') || name.startsWith('worktree.')) {
+      const resolvedChannel = args.channelId ?? await channelForDirectory(path.resolve(args.directory ?? process.cwd()))
+      if (resolvedChannel instanceof Error) return resolvedChannel
+      const project = await db.query.channel_directories.findFirst({ where: { channel_id: resolvedChannel } }).catch((cause) => new DbError({ operation: 'find channel', cause }))
       if (project instanceof Error) return project
       if (!project) return new ConfigError({ reason: 'No local project channel. Pass --channel.' })
       const channelId = project.channel_id
+      if (name === 'channel.worktrees' && (args.text === 'on' || args.text === 'off')) {
+        const result = await setWorktrees({ channelId, enabled: args.text === 'on' })
+        return result instanceof Error ? result : { data: result }
+      }
+      if (name === 'worktree.list') {
+        const result = await worktrees({ channelId })
+        return result instanceof Error ? result : { data: result }
+      }
+      if (name === 'worktree.create') {
+        const result = await newWorktree({ channelId, name: args.name, baseBranch: args.baseBranch, author: { id: discord.user!.id, username: 'CLI' } })
+        return result instanceof Error ? result : { data: result }
+      }
+      if ((name === 'worktree.remove' || name === 'worktree.merge') && args.text) {
+        const strategy = fields.get('strategy') ?? 'rebase'
+        if (strategy !== 'rebase' && strategy !== 'squash') return new ConfigError({ reason: 'Use --strategy rebase or squash.' })
+        const result = await manageWorktree({ channelId, directory: args.text, operation: name === 'worktree.remove' ? 'remove' : 'merge', strategy, targetBranch: args.targetBranch })
+        return result instanceof Error ? result : { data: result }
+      }
       if (fields.get('clear') === true && (name === 'channel.agent' || name === 'channel.model')) {
         const result = name === 'channel.agent'
           ? await db.delete(schema.channel_agents).where(orm.eq(schema.channel_agents.channel_id, channelId)).catch((cause) => new DbError({ operation: 'clear agent', cause }))
@@ -1537,6 +1711,10 @@ export function createActions({
     const sessionId = store.getState().roots[threadId]!
     const api = client()
     if (api instanceof Error) return api
+    if (name === 'session.cwd') {
+      const result = await sessionCwd({ threadId, directory: args.directory })
+      return result instanceof Error ? result : { data: result }
+    }
     if (name === 'session.title' && args.text) {
       const renamed = await api.session.update({ sessionID: sessionId, title: args.text }).catch((cause) => new OpenCodeError({ operation: 'session.update', cause }))
       if (renamed instanceof Error) return renamed
@@ -1728,6 +1906,12 @@ export function createActions({
   }
 
   return {
+    newWorktree,
+    worktrees,
+    setWorktrees,
+    manageWorktree,
+    workingDirectory,
+    sessionCwd,
     send,
     loginKey,
     credential,

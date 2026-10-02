@@ -1881,7 +1881,8 @@ for await (const event of client.event.subscribe({ signal })) {
 7. ~~Queued `!cmd` and `btw`.~~ Decided: `!cmd` uses native `session.shell` (no queue
    needed); `. btw queue` is removed.
 8. **Worktree in thread.** V2 `session.move` can move a session to a worktree location at
-   a delivery boundary. Decide: move in place, or keep "new thread per worktree".
+   a delivery boundary. `/cwd` explicitly moves the current session; `/new-worktree`
+   in a thread forks its history and moves only the unbound fork.
 9. **Image optimizer / task_id bug.** Check if V2 still needs them before porting.
 10. **Subrouter port** happens in its own repo and blocks provider auth.
 11. ~~Prompt ID idempotency.~~ Verified in P8: a repeated `id` returns the existing inbox
@@ -2193,7 +2194,7 @@ for await (const event of client.event.subscribe({ signal })) {
   cannot be scheduled.
 - **Not covered by tests:** delete during a running pre-run, wake retry and the
   five-attempt limit, a busy one-shot, and the guild filter (the twin has one guild).
-  Worktree tasks (V1 `worktreeName`) fail with an error until P10.
+  Worktree tasks (V1 `worktreeName`) create a fresh checkout for each occurrence.
 
 ---
 
@@ -2318,7 +2319,7 @@ kimaki tunnel, tts, user list      voice routing  queued !cmd   external sync   
 |---|---|---|
 | **sleep / wake** | plugin writes SQLite, ingress claims wake rows, any real message cancels sleep, footer and quoting check sleep | bot reads `kimaki_sleep` tool.success from events, stores `(sessionId, wakeAt)`; scheduler at wake time calls `session.prompt`; cancel = derived "any user input after the tool call". No ingress hook |
 | **scheduled tasks** | `scheduled_task_runs` status updated from event loop (complete/fail), concurrency check reads run state | scheduler owns its table; concurrency = "is the last session of this task busy" derived from events on demand. Event loop does not know tasks exist |
-| **worktrees** | worktree change reminder in per-turn context, `thread_workspaces` status, cwd-change detection in plugin, `lastPromptWorktreeKey` | a worktree thread is just a session created with `location: { directory: worktreePath }`. Never move a live session between folders. Drop the cwd-change reminder and plugin cwd tracking |
+| **worktrees** | worktree change reminder in per-turn context, `thread_workspaces` status, cwd-change detection in plugin, `lastPromptWorktreeKey` | custom Git worktrees provision directories. OpenCode owns `session.location`; `/cwd` uses native `session.move` and `session.moved` updates the view. No mirrored cwd or worktree lifecycle table |
 | **btw** | copies prefs, system prompt, workspace; runtime binding | `session.fork` + new thread + prompt. No copying (fork inherits) |
 | **subagent rendering** | child session routing, labels `explore-1`, child permission routing | **decided:** keep child **tool lines** in the parent thread with the same verbosity, label = agent name; keep child permissions and questions; no child text |
 | **action buttons** | IPC + ack wait + flush before render | render from `tool.called` input; no IPC |
@@ -3978,9 +3979,18 @@ and answers in an old thread.
 
 ### Phase 10: worktrees and projects
 
-- `/new-worktree`, `send --worktree`, channel auto-worktree: session created with
-  `location: { directory: worktreePath }` via V2 `worktree.*`
+- First-class cwd: `/cwd`, `session cwd`, `send --cwd`; native session location
+  drives input, catalogs, plugin context, forks, resume and restart recovery.
+- `/new-worktree`, `send --worktree`, channel auto-worktree: custom Git creation
+  under the Kimaki data directory, then session creation at that location.
+  This follows `cli/git-worktree-core.ts` without the workspace adaptor/state table.
+- Worktree setup initializes submodules and installs from frozen lockfiles.
+  Default base is the mapped checkout's committed HEAD; no branch resets.
+- Recurring worktree tasks create a fresh checkout per occurrence.
 - `/worktrees` (direct components, no `<button>` markdown), `/merge-worktree`
+- CLI `worktree list/create/remove/merge`, `channel worktrees on|off`.
+  Rebase/squash updates local targets only. Removal refuses dirty/unmerged work;
+  branch refs and session history are retained.
 - `/add-project`, `/create-new-project`, `/remove-project`, `kimaki project *`
 
 E2E: worktree thread edits a file in the worktree, not the project root; merge
@@ -4006,7 +4016,7 @@ worktree; add project creates a channel.
 | P7 | L | CLI surface + lock server + plugin |
 | P8 | S | fake clock design |
 | P9 | L | onboarding flows, legacy import |
-| P10 | M | V2 worktree API |
+| P10 | M | native cwd transitions + custom Git checkout safety |
 | P11 | S | packaging |
 
 If a phase does not fit one session, split it along its feature files (for example P2

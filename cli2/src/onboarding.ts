@@ -167,7 +167,7 @@ export async function runOnboarding({
   // Gateway installs report who installed the bot; else the guild owner.
   installerId?: string | null
 }): Promise<
-  ConfigError | DbError | DiscordError | GitInitError | OpenCodeError | OpenCodeUnavailableError | OnboardingResult
+  Error | OnboardingResult
 > {
   const { db } = bot.db
   const directory = defaultProjectDirectory({ dataDir })
@@ -231,6 +231,7 @@ export async function runOnboarding({
     author: { id: owner.id, username: owner.user.username },
     messageId: welcome.id,
     threadName: 'Kimaki onboarding',
+    worktree: false,
   })
   if (session instanceof Error) {
     // Leaves the channel empty, so the next start onboards again.

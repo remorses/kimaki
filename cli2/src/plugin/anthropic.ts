@@ -65,30 +65,17 @@ const tokenEffect = (body: Record<string, string>) =>
 export function parseAuthorizationInput(input: string) {
   const trimmed = input.trim()
   const url = errore.try(() => new URL(trimmed))
-  if (!(url instanceof Error) && url.searchParams.get('code')) return { code: url.searchParams.get('code') ?? '', state: url.searchParams.get('state') ?? '' }
-  const [code = '', state = ''] = trimmed.split('#', 2)
+  if (!(url instanceof Error) && url.searchParams.get('code')) return { code: url.searchParams.get('code') ?? '', state: url.searchParams.get('state') ?? undefined }
+  const [code = '', state] = trimmed.split('#', 2)
   return { code, state }
-}
-
-function listen(server: http.Server) {
-  return new Promise<Error | null>((resolve) => {
-    server.once('error', (error) => resolve(error))
-    server.listen(CALLBACK_PORT, '127.0.0.1', () => resolve(null))
-  })
 }
 
 // Serves the localhost redirect so the browser shows a real page, and remembers its code.
 // The login still finishes with the pasted URL: Kimaki often runs on another machine than the browser.
-// `/cancel` frees the port from an older attempt, also one in another OpenCode process (same as OpenCode's OpenAI login).
 async function startCallbackServer({ state }: { state: string }) {
   const received: { code: string | null } = { code: null }
   const server = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', REDIRECT_URI)
-    if (url.pathname === '/cancel') {
-      response.writeHead(200).end()
-      server.close()
-      return
-    }
     const code = url.searchParams.get('code')
     if (url.pathname !== '/callback' || !code || url.searchParams.get('state') !== state) {
       response.writeHead(400, { 'content-type': 'text/plain' }).end('Claude login failed: missing code or wrong state. Start the login again.')
@@ -97,18 +84,18 @@ async function startCallbackServer({ state }: { state: string }) {
     received.code = code
     response.writeHead(200, { 'content-type': 'text/plain' }).end('Claude authorized. Copy the URL of this page and paste it where you started the login.')
   })
-  const first = await listen(server)
-  if (first) {
-    await fetch(`http://127.0.0.1:${CALLBACK_PORT}/cancel`, { signal: AbortSignal.timeout(2000) }).catch(() => undefined)
-    // Still busy: only the localhost page is lost, pasting the URL works.
-    await listen(server)
-  }
+  const error = await new Promise<Error | null>((resolve) => {
+    server.once('error', (error) => resolve(error))
+    server.listen(CALLBACK_PORT, '127.0.0.1', () => resolve(null))
+  })
+  if (error) return new AnthropicOAuthError({ reason: `cannot bind callback port ${CALLBACK_PORT}. Cancel any pending Claude login or free the port, then retry.`, cause: error })
   return { received, close: () => server.close() }
 }
 
 const authorize = () =>
   Effect.gen(function* () {
     const verifier = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
+    const state = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
     const challenge = Buffer.from(yield* Effect.promise(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))).toString('base64url')
     const params = new URLSearchParams({
       code: 'true',
@@ -118,9 +105,10 @@ const authorize = () =>
       scope: SCOPES,
       code_challenge: challenge,
       code_challenge_method: 'S256',
-      state: verifier,
+      state,
     })
-    const callbackServer = yield* Effect.promise(() => startCallbackServer({ state: verifier }))
+    const callbackServer = yield* Effect.promise(() => startCallbackServer({ state }))
+    if (callbackServer instanceof Error) return yield* Effect.fail(callbackServer)
     // The attempt scope closes on success, failure, cancel, expiry, and plugin unload.
     yield* Effect.addFinalizer(() => Effect.sync(() => callbackServer.close()))
     return {
@@ -128,13 +116,15 @@ const authorize = () =>
       url: `${AUTHORIZE_URL}?${params}`,
       instructions: 'Authorize in the browser, then copy the full URL of the last page (localhost:53692) and paste it here.',
       callback: (input: string) => {
-        const code = callbackServer.received.code ?? parseAuthorizationInput(input).code
+        const pasted = parseAuthorizationInput(input)
+        if (pasted.state !== undefined && pasted.state !== state) return Effect.fail(new AnthropicOAuthError({ reason: 'wrong state in the pasted text. Start the login again.' }))
+        const code = callbackServer.received.code ?? pasted.code
         if (!code) return Effect.fail(new AnthropicOAuthError({ reason: 'no authorization code in the pasted text' }))
         return tokenEffect({
           grant_type: 'authorization_code',
           client_id: CLIENT_ID,
           code,
-          state: verifier,
+          state,
           redirect_uri: REDIRECT_URI,
           code_verifier: verifier,
         })

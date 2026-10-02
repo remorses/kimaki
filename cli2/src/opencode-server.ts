@@ -170,8 +170,8 @@ export async function resolveOpencode({
     if (!ensure) return new OpenCodeUnavailableError({ reason: 'no running service' })
     const binary = await resolveOpencodeBinary()
     if (binary instanceof Error) return binary
-    logger.log(`no OpenCode service found, starting \`${binary} serve --service\``)
-    return Service.ensure({ file: serviceFile, command: [binary, 'serve', '--service'] }).catch(
+    logger.log(`no OpenCode service found, starting \`${binary} serve --service --hostname 127.0.0.1\``)
+    return Service.ensure({ file: serviceFile, command: [binary, 'serve', '--service', '--hostname', '127.0.0.1'] }).catch(
       (e) => new OpenCodeUnavailableError({ reason: `${binary} serve --service failed: ${errorText(e)}`, cause: e }),
     )
   })()
@@ -199,6 +199,8 @@ export type OpencodeConnection = {
   readonly endpoint: OpencodeEndpoint | null
   // Resolves on the first successful connect, or with the fatal error.
   readonly ready: Promise<Error | OpencodeEndpoint>
+  // Live events after hydration, in addition to the onEvent callback. Returns the unsubscribe.
+  subscribe: (listener: (event: V2Event) => void) => () => void
   stop: () => void
 }
 
@@ -228,6 +230,11 @@ export function watchOpencode({
   const controller = new AbortController()
   const state: { connected: boolean; endpoint: OpencodeEndpoint | null } = { connected: false, endpoint: null }
   const readyDeferred = Promise.withResolvers<Error | OpencodeEndpoint>()
+  const listeners = new Set<(event: V2Event) => void>()
+  const emit = (event: V2Event) => {
+    onEvent(event)
+    for (const listener of listeners) listener(event)
+  }
 
   // One subscription attempt. Its signal aborts on stop() and when the attempt
   // ends, so a stale hydration can never publish into a newer connection.
@@ -254,7 +261,7 @@ export function watchOpencode({
             held.push(next.value)
             continue
           }
-          onEvent(next.value)
+          emit(next.value)
         }
       })()
       hydrating.started = true
@@ -262,7 +269,7 @@ export function watchOpencode({
       if (hydrated instanceof Error) return hydrated
       if (signal.aborted) return new StreamClosedError({ reason: 'stopped' })
       for (const event of held.splice(0)) {
-        onEvent(event)
+        emit(event)
       }
       phase.booting = false
       state.connected = true
@@ -312,6 +319,10 @@ export function watchOpencode({
       return state.endpoint
     },
     ready: readyDeferred.promise,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => void listeners.delete(listener)
+    },
     stop: () => {
       controller.abort()
       readyDeferred.resolve(new OpenCodeUnavailableError({ reason: 'stopped' }))

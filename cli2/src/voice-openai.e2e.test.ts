@@ -2,13 +2,14 @@
 // decoded to WAV (OpenAI accepts only wav and mp3) and sent to a local
 // OpenAI-compatible server that answers with the transcription tool call.
 
+import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
-import * as schema from './schema.ts'
 import {
   TEST_USER_ID,
   seedProjectChannel,
@@ -45,9 +46,9 @@ beforeAll(async () => {
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
   bot = await startTestBot({ dataDir, twin, server, openaiBaseUrl: openai.baseUrl })
-  // The saved bot (self-hosted or gateway): the transcriber reads its keys.
-  const savedBot = await bot.db.db.query.bot_tokens.findFirst()
-  await bot.db.db.insert(schema.bot_api_keys).values({ app_id: savedBot!.app_id, openai_api_key: 'test-openai-key' })
+  // Stored with the CLI, like a user would.
+  const { stdout } = await promisify(execFile)(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'bot', 'keys', 'set', '--openai', 'sk-test-openai-key', '--data-dir', dataDir])
+  expect(stdout).toBe('Saved OpenAI API key\n')
 })
 
 afterAll(async () => {

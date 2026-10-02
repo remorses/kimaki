@@ -13,7 +13,7 @@ import { createEffectsRunner } from './effects.ts'
 import { ConfigError, DiscordError } from './errors.ts'
 import { createEventLoop } from './event-loop.ts'
 import { createEventRecorder } from './session-events.ts'
-import { isCatalogEvent, registerSlashCommands } from './slash-commands.ts'
+import { registerSlashCommands } from './slash-commands.ts'
 import { registerIngress } from './ingress.ts'
 import { createLogger, setLogFile } from './logger.ts'
 import { installShim, startLockServer, type LockServer } from './lock-server.ts'
@@ -53,6 +53,7 @@ export type StartBotOptions = {
   clock?: Clock
   // How often due tasks and wakes run; null: never (tests call scheduler.runDueTasks).
   schedulerIntervalMs?: number | null
+  autoWorktrees?: boolean
 }
 
 export type BotHandle = {
@@ -102,8 +103,6 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     await lock.close()
     return loaded
   }
-  // Slash commands exist once both sides are ready; earlier catalog events are covered by registerAll().
-  const slash: { commands: ReturnType<typeof registerSlashCommands> | null } = { commands: null }
   // Before the service is used, so a service started by ensure() loads it at once.
   const plugin = await installPluginShim({ configDir: options.opencodeConfigDir })
   if (plugin instanceof Error) {
@@ -114,16 +113,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const opencode = watchOpencode({
     serviceFile: options.opencodeServiceFile,
     ensure: options.ensureOpencode,
-    onConnect: async (context) => {
-      const hydrated = await eventLoop.onConnect(context)
-      // Agents, commands and skills may have changed while the bot was away.
-      if (!(hydrated instanceof Error) && context.reconnect) slash.commands?.scheduleRefresh({ force: true })
-      return hydrated
-    },
-    onEvent: (event) => {
-      if (isCatalogEvent(event)) slash.commands?.scheduleRefresh({ force: false })
-      eventLoop.onEvent(event)
-    },
+    onConnect: eventLoop.onConnect,
+    onEvent: eventLoop.onEvent,
     onDisconnect: eventLoop.onDisconnect,
   })
   const shim = await installShim({ dataDir: options.dataDir, command: options.kimakiCommand })
@@ -133,7 +124,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     await lock.close()
     return shim
   }
-  const actions = createActions({ discord, db: db.db, opencode, eventLoop, store, analytics: options.analytics, cliContext: { dataDir: options.dataDir, lockPort: lock.port } })
+  const actions = createActions({ discord, db: db.db, opencode, eventLoop, store, analytics: options.analytics, cliContext: { dataDir: options.dataDir, lockPort: lock.port }, autoWorktrees: options.autoWorktrees })
   const scheduler = createScheduler({
     clock: options.clock ?? systemClock,
     discord,
@@ -225,9 +216,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const transcriber = createTranscriber({ db: db.db, token: options.token, baseUrls: options.transcriptionBaseUrls })
   registerIngress({ discord, db: db.db, store, actions, transcriber, dataDir: options.dataDir })
 
-  const stop = async () => {
+  const shutdown = async () => {
     await scheduler.stop()
-    await slash.commands?.stop()
     agentUi.stop()
     opencode.stop()
     effects.stop()
@@ -256,13 +246,16 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     void loginDiscord({ discord, token: options.token }).then(settle)
   })
   if (failure) {
-    await stop()
+    await shutdown()
     return failure
   }
   const refreshed = await actions.refreshCliContext()
-  if (refreshed instanceof Error) { await stop(); return refreshed }
+  if (refreshed instanceof Error) { await shutdown(); return refreshed }
   const commands = registerSlashCommands({ discord, db: db.db, store, actions, opencode, agentUi, scheduler })
-  slash.commands = commands
+  const stop = async () => {
+    await commands.stop()
+    await shutdown()
+  }
   // Awaited so the handle is only returned once every guild has its commands.
   await commands.registerAll()
   // After Discord and OpenCode are ready: a due task needs both.

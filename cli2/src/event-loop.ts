@@ -100,7 +100,7 @@ export function createEventLoop({
     }
   }
 
-  async function loadContext(threadId: string): Promise<ThreadContext | ThreadGoneError | DbError | DiscordError> {
+  async function loadContext(threadId: string): Promise<ThreadContext | ThreadGoneError | DbError | DiscordError | OpenCodeError> {
     const sessionId = store.getState().roots[threadId]
     if (!sessionId) return new ThreadGoneError({ threadId })
     const base = await (async () => {
@@ -118,7 +118,11 @@ export function createEventLoop({
         .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
       if (row instanceof Error) return row
       if (!row) return new ThreadGoneError({ threadId })
-      return { sessionId, channelId, directory: row.directory }
+      const client = connection.client
+      if (!client) return new OpenCodeError({ operation: 'load session directory while disconnected' })
+      const info = await client.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'read session directory', cause }))
+      if (info instanceof Error) return info
+      return { sessionId, channelId, directory: info.location.directory }
     })()
     if (base instanceof Error) return base
     const verbosity = await readChannelVerbosity({ db, channelId: base.channelId })
@@ -156,7 +160,7 @@ export function createEventLoop({
     if (!queue || queue.running) return
     queue.running = true
     while (queue.events.length > 0) {
-      const context = contexts.get(threadId) ?? (await loadContext(threadId))
+      let context = contexts.get(threadId) ?? (await loadContext(threadId))
       if (!(context instanceof Error)) await loadModelLimits(context.directory)
       if (context instanceof ThreadGoneError || (context instanceof Error && queue.failures >= CONTEXT_RETRIES)) {
         logger.warn(`dropping ${queue.events.length} events of thread ${threadId}: ${context.message}`)
@@ -173,13 +177,19 @@ export function createEventLoop({
       queue.failures = 0
       const event = queue.events.shift()
       if (!event) break
+      if (event.type === 'session.moved' && event.data.sessionID === context.sessionId) {
+        context = { ...context, directory: event.data.location.directory }
+        contexts.set(threadId, context)
+        await loadModelLimits(context.directory)
+        apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory), folder: path.basename(context.directory) } })
+      }
       // A root execution starts, or one was found running after a (re)connect.
       const rootStarts =
         (event.type === 'session.execution.started' && eventSessionId(event) === context.sessionId) ||
         (event.type === 'session.step.started' && event.data.sessionID === context.sessionId && !store.getState().threads[threadId]?.turn) ||
         (event.type === 'kimaki.synced' && event.activeSessionIds.includes(context.sessionId))
       if (rootStarts) {
-        apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory) } })
+        apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory), folder: path.basename(context.directory) } })
       }
       apply({ threadId, context, event })
     }
@@ -392,6 +402,7 @@ export function createEventLoop({
     // adopted through their parentID chain first.
     async onConnect({ client, signal }: ConnectContext): Promise<OpenCodeError | void> {
       connection.client = client
+      contexts.clear()
       // A new connection may bring new providers, and old unrelated sessions are gone.
       limits.directories.clear()
       ignoredSessions.clear()

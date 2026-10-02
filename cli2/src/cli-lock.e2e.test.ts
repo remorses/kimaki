@@ -222,7 +222,9 @@ test('CLI help documents the supported P7 commands', async () => {
         --agent <name>                  Agent ID
         --model <provider/model>        Model for the new session
         -u, --user <id>                 Add this Discord user to the thread
-        --cwd <path>                    Existing subfolder of the target project
+        --cwd <path>                    Existing project subfolder or linked Git worktree
+        --worktree [name]               Create a custom Git worktree (automatic name when omitted)
+        --base-branch <ref>             Starting ref for --worktree (default: project HEAD)
         --parent-session <id>           Record the parent session in session metadata
         --permission <rule>             Repeatable: tool[:pattern]:allow|deny|ask
         --notify-only                   Post a notification thread without a model turn
@@ -239,6 +241,42 @@ test('CLI help documents the supported P7 commands', async () => {
         --thinking                      Include reasoning
         --verbose                       Include full tool inputs and outputs
         --json                          Print raw OpenCode messages
+
+      session cwd [directory]           Show or change the working directory at a native safe boundary
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        --thread <id>                   Discord thread
+
+      Channel:
+      channel worktrees <value>         Set automatic worktrees: on | off
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Project channel (default: current directory)
+
+      Worktree:
+      worktree list                     List linked Git worktrees
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Project channel
+        -p, --project <path>            Project directory (default: current directory)
+
+      worktree create [name]            Create an isolated worktree session
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Project channel
+        -p, --project <path>            Project directory (default: current directory)
+        --base-branch <ref>             Starting Git ref (default: project HEAD)
+
+      worktree remove <directory>       Remove a clean, merged worktree checkout; retain branch refs
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Project channel
+        -p, --project <path>            Project directory (default: current directory)
+        --target-branch <branch>        Local merge target branch
+        --strategy <name>               Merge strategy: rebase | squash
+
+      worktree merge <directory>        Merge into a local target branch
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -c, --channel <id>              Project channel
+        -p, --project <path>            Project directory (default: current directory)
+        --target-branch <branch>        Local merge target branch
+        --strategy <name>               Merge strategy: rebase | squash
 
       Schedule:
       task list                         List scheduled tasks (planned, running, failed)
@@ -312,6 +350,11 @@ test('CLI help documents the supported P7 commands', async () => {
       bot token                         Print saved bot credentials for automation
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
+      bot keys set                      Store OpenAI or Gemini API keys for voice transcription and kimaki tts
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        --openai <key>                  OpenAI API key
+        --gemini <key>                  Gemini API key
+
       bot install-url                   Print the Discord bot install URL
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --gateway-callback-url <url>    Gateway only: redirect here after the install
@@ -324,6 +367,7 @@ test('CLI help documents the supported P7 commands', async () => {
       --install-url                 Print the install URL and exit (non-interactive onboarding)
       --machine-name <name>         Name in this machine's category "Kimaki <name>" (default: hostname)
       --restart-onboarding          Choose credentials again
+      --worktrees                   Use a fresh Git worktree for new sessions unless the channel overrides it
       --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
       -h, --help                    Display this message
     "
@@ -369,6 +413,8 @@ test('send settings reach native session creation; notifications create no sessi
   const info = await (await server.client()).session.get({ sessionID: ids.sessionId })
   expect(info.location.directory).toBe(subdir)
   expect(info.permissions).toContainEqual({ action: 'shell', resource: '*', effect: 'deny' })
+  await expect(cli(['send', '--thread', ids.threadId, '-p', 'Must not run', '--permission', 'shell:deny']))
+    .rejects.toMatchObject({ stderr: expect.stringContaining('--permission applies only to new sessions') })
   expect(info.metadata?.['kimaki']).toMatchObject({ parentSessionId: 'ses_parent' })
   expect(result.stdout).toContain('# Send settings')
   const notice = JSON.parse((await cli(['send', '--channel', twin.channelId, '-p', 'Notification only', '--notify-only'])).stdout) as { threadId: string; sessionId: null }

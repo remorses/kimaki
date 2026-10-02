@@ -23,6 +23,7 @@ export default Plugin.define({
     }
     await ctx.session.hook('context', async (event) => {
       if (!(await marker(event.sessionID))) return
+      event.system.push({ type: 'text', text: `[current working directory is ${ctx.location.directory}]` })
       const branch = await exec('git', ['branch', '--show-current'], { cwd: ctx.location.directory, timeout: 5000 }).catch(() => null)
       if (branch?.stdout.trim()) event.system.push({ type: 'text', text: `[current git branch is ${branch.stdout.trim()}]` })
       const shell = event.tools['shell']

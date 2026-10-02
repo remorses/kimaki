@@ -99,7 +99,7 @@ export type Effect =
 // Internal events produced by the event loop, folded through the same path.
 export type KimakiEvent = AgentUiEvent
   | { type: 'kimaki.upload'; files: readonly { path: string; name: string }[] }
-  | { type: 'kimaki.branch'; branch: string | null }
+  | { type: 'kimaki.branch'; branch: string | null; folder?: string }
   // After a (re)connect: which sessions of this thread run right now.
   | { type: 'kimaki.synced'; activeSessionIds: readonly string[]; at: number }
   // A session found by walking parentID after a bot restart.
@@ -377,6 +377,8 @@ function footerResult({ view, created, prefs }: { view: ThreadView; created: num
 function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; prefs: Prefs }): Result {
   const none = { view, effects: [] }
   switch (event.type) {
+    case 'session.moved':
+      return { view, effects: [{ type: 'send', text: asSubtext(`Working directory changed to ${event.data.location.directory}`) }] }
     case 'session.execution.started':
       return view.turn ? none : { view: { ...view, turn: newTurn(event.created) }, effects: [] }
     case 'session.step.started': {
@@ -515,7 +517,7 @@ function reduceKimaki({ view, event, prefs }: { view: ThreadView; event: KimakiE
       return { view: permissions.view, effects: [...queued.effects, ...forms.effects, ...permissions.effects] }
     }
     case 'kimaki.branch':
-      return { view: { ...view, branch: event.branch }, effects: [] }
+      return { view: { ...view, branch: event.branch, folder: event.folder ?? view.folder }, effects: [] }
     case 'kimaki.child': {
       if (view.children[event.sessionId]) return { view, effects: [] }
       const child = { agent: event.agent, description: '', background: false, running: false }

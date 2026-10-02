@@ -3,6 +3,7 @@
 // OpenCode server. Time is a manual clock; nothing waits for real time.
 
 import fs from 'node:fs'
+import { git } from './worktrees.ts'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
@@ -145,4 +146,36 @@ test('--pre-run: a failing command skips the run, output is appended to the prom
   `)
   // A skipped one-shot is done too, like V1.
   expect((await listTasks()).filter((row) => row.id === skipped.taskId || row.id === ran.taskId)).toEqual([])
+})
+
+test('recurring worktree tasks get a fresh checkout on every run', async () => {
+  for (const args of [['config', 'user.name', 'Test'], ['config', 'user.email', 'test@example.com'], ['commit', '--allow-empty', '-qm', 'initial']]) {
+    const result = await git({ directory: server.projectDirectory, args })
+    if (result instanceof Error) throw result
+  }
+  const task = await schedule({ prompt: 'Isolated recurring report', worktree: 'report', baseBranch: 'main', sendAt: '0 * * * *' })
+  const first = await tick('2030-01-01T17:00:00Z')
+  await waitForFooter({ discord: twin.discord, threadId: first[0]! })
+  const second = await tick('2030-01-01T18:00:00Z')
+  await waitForFooter({ discord: twin.discord, threadId: second[0]! })
+  const normalize = (text: string) => text.replace(/report-[a-f0-9]{8}/g, 'report-ID')
+  expect(normalize(await twin.discord.thread(first[0]!).text())).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    » **task #7:** Isolated recurring report
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *report-ID ⋅ opencode/kimaki-report-ID ⋅ Ns ⋅ deterministic-v2*"
+  `)
+  expect(normalize(await twin.discord.thread(second[0]!).text())).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    » **task #7:** Isolated recurring report
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *report-ID ⋅ opencode/kimaki-report-ID ⋅ Ns ⋅ deterministic-v2*"
+  `)
+  const client = await server.client()
+  const directories = await Promise.all([first[0]!, second[0]!].map(async (threadId) => (await client.session.get({ sessionID: bot.store.getState().roots[threadId]! })).location.directory))
+  expect(new Set(directories).size).toBe(2)
+  expect(directories.every((directory) => directory !== server.projectDirectory)).toBe(true)
+  await request('/kimaki/task/delete', { id: task.taskId })
 })

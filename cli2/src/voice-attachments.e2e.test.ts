@@ -8,7 +8,7 @@ import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
-import * as schema from './schema.ts'
+import { TRANSCRIPTION_KEY_MODAL } from './voice.ts'
 import {
   TEST_USER_ID,
   seedProjectChannel,
@@ -66,9 +66,14 @@ beforeAll(async () => {
   })
   await warmUp({ server })
   bot = await startTestBot({ dataDir, twin, server, geminiBaseUrl: gemini.baseUrl })
-  // The saved bot (self-hosted or gateway): the transcriber reads its keys.
-  const savedBot = await bot.db.db.query.bot_tokens.findFirst()
-  await bot.db.db.insert(schema.bot_api_keys).values({ app_id: savedBot!.app_id, gemini_api_key: 'test-gemini-key' })
+  // The owner stores the key like a user: /transcription-key opens a modal.
+  const user = twin.discord.channel(twin.channelId).user(TEST_USER_ID)
+  const { id } = await user.runSlashCommand({ name: 'transcription-key' })
+  await twin.discord.channel(twin.channelId).waitForInteractionAck({ interactionId: id })
+  await user.submitModal({ customId: TRANSCRIPTION_KEY_MODAL, fields: [{ customId: 'apikey', value: 'AIza-test-gemini-key' }] })
+  await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'Gemini API key saved' })
+  const savedBot = await bot.db.db.query.bot_tokens.findFirst({ with: { api_keys: true } })
+  expect(savedBot?.api_keys?.gemini_api_key).toBe('AIza-test-gemini-key')
 })
 
 afterAll(async () => {

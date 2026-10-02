@@ -251,6 +251,17 @@ test('/verbosity applies to running sessions of the channel at once', async () =
   const { discord, channelId } = twin
   const thread = await newThread(channelId, 'Show tools-marker')
   await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'verbosity' })
+  const { message } = await waitForSelectMenu({ discord, channelId, prefix: 'verbosity:' })
+  const previous = await bot.db.db.query.channel_verbosity.findFirst({ where: { channel_id: twin.quietChannelId } })
+  await discord.channel(channelId).user(TEST_USER_ID).selectMenu({
+    messageId: message.id,
+    customId: `verbosity:${twin.quietChannelId}`,
+    values: ['text'],
+  })
+  await waitFor({
+    label: 'cross-channel verbosity selection rejected',
+    check: async () => (await discord.channel(channelId).text()).includes('Run /verbosity in the target channel'),
+  })
   expect(await pick({ channelId, prefix: 'verbosity:', value: 'text' })).toMatchInlineSnapshot(`
     [
       "Text and tools",
@@ -282,8 +293,10 @@ test('/verbosity applies to running sessions of the channel at once', async () =
     --- from: assistant (TestBot)
     Verbosity set to \`text\` for this channel.
     Text, file edits and errors. Hides the other tools.
-    Applies immediately, including active sessions."
+    Applies immediately, including active sessions.
+    Run /verbosity in the target channel"
   `)
+  expect(await bot.db.db.query.channel_verbosity.findFirst({ where: { channel_id: twin.quietChannelId } })).toEqual(previous)
 })
 
 test('/<agent>-agent variant: sets the thinking level with the agent, per session or channel', async () => {

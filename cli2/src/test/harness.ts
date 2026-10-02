@@ -63,6 +63,8 @@ export type OpencodeTestServer = {
   // Global OpenCode config dir of this server (XDG_CONFIG_HOME/opencode).
   configDir: string
   projectDirectory: string
+  // User skill folder (~/.agents/skills of the test HOME). It exists at start, so OpenCode watches it.
+  skillsDirectory: string
   client: () => Promise<OpenCodeClient>
   kill: () => Promise<void>
   start: () => Promise<void>
@@ -136,6 +138,8 @@ export async function startOpencodeTestServer({
   for (const key of ['HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'] as const) {
     fs.mkdirSync(env[key], { recursive: true })
   }
+  const skillsDirectory = path.join(env.HOME, '.agents', 'skills')
+  fs.mkdirSync(skillsDirectory, { recursive: true })
 
   const current: { child: ChildProcess | null } = { child: null }
 
@@ -177,6 +181,7 @@ export async function startOpencodeTestServer({
     serviceFile,
     configDir: path.join(env.XDG_CONFIG_HOME, 'opencode'),
     projectDirectory,
+    skillsDirectory,
     client,
     kill,
     start,

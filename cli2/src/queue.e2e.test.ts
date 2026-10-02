@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
-import { afterAll, beforeAll, expect, test } from 'vitest'
+import { afterAll, beforeAll, expect, onTestFinished, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
 import {
@@ -185,6 +185,38 @@ test('message delete takes items out of the queue, edit re-queues', async () => 
   const messages = await (await server.client()).message.list({ sessionID: bot.store.getState().roots[thread.id]! })
   const requeued = messages.data.find((message) => message.type === 'user' && JSON.stringify(message).includes('edited-marker'))
   expect(JSON.stringify(requeued)).toContain('queued-notes.txt')
+})
+
+test('a revoked user cannot replace a queued prompt', async () => {
+  const thread = await startSlowThread('Queue before revocation')
+  const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
+  const queued = await user.sendMessage({ content: 'Original queued-one. queue' })
+  await waitForAck({ threadId: thread.id, messageId: queued.id })
+  const guild = await bot.discord.guilds.fetch(twin.discord.guildId)
+  const deny = await guild.roles.create({ name: 'no-kimaki' })
+  const member = { guildId_userId: { guildId: twin.discord.guildId, userId: TEST_USER_ID } }
+  onTestFinished(async () => {
+    await twin.discord.prisma.guildMember.update({ where: member, data: { roles: '[]' } })
+  })
+  await twin.discord.prisma.guildMember.update({ where: member, data: { roles: JSON.stringify([deny.id]) } })
+  await user.editMessage({ messageId: queued.id, content: 'Replacement edited-marker. queue' })
+  await waitForFooter({ discord: twin.discord, threadId: thread.id })
+  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Queue before revocation slow-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    --- from: user (tommy)
+    Replacement edited-marker. queue
+    --- from: assistant (TestBot)
+    -# Queued message sent
+    slow-done
+    » **tommy:** Original queued-one
+    queued one ok
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  expect(await twin.discord.thread(thread.id).text()).toContain('queued one ok')
+  expect(await twin.discord.thread(thread.id).text()).not.toContain('edited ok')
 })
 
 test('/queue and /clear-queue', async () => {

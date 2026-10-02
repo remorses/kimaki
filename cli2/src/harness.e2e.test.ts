@@ -7,7 +7,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import dedent from 'string-dedent'
-import { afterAll, beforeAll, expect, test } from 'vitest'
+import { afterAll, beforeAll, expect, onTestFinished, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
 import {
@@ -61,7 +61,7 @@ test('bot reconnects after the OpenCode service restarts with a new port', async
   expect(await bot.opencode.endpoint?.client.session.active()).toEqual({})
 }, 30_000)
 
-test('a second real bot takes over the isolated lock port and answers its project', async () => {
+test('an occupied lock port rejects a second bot; it starts after the first stops', async () => {
   const otherData = tempDataDir()
   const port = await freePort()
   await seedProjectChannel({ dataDir: otherData, channelId: twin.quietChannelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
@@ -75,11 +75,21 @@ test('a second real bot takes over the isolated lock port and answers its projec
   `
   const child = spawn(process.execPath, ['--import', createRequire(import.meta.url).resolve('tsx'), '--input-type=module', '--eval', code], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
   const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+  onTestFinished(async () => {
+    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await exited }
+    fs.rmSync(otherData, { recursive: true, force: true })
+  })
   const ready = new Promise<void>((resolve, reject) => { child.once('message', () => resolve()); child.once('error', reject); child.once('exit', () => reject(new Error('Old bot exited before ready'))) })
   await ready
-  const replacement = await startTestBot({ dataDir: otherData, twin, server, lockPort: port })
+  await expect(startTestBot({ dataDir: otherData, twin, server, lockPort: port }))
+    .rejects.toMatchObject({ message: expect.stringContaining('Stop the other process') })
+  expect(child.exitCode).toBeNull()
+  expect(await fetch(`http://127.0.0.1:${port}/health`).then((response) => response.json())).toEqual({ status: 'ok', pid: child.pid })
+  child.kill('SIGTERM')
   await exited
   expect(child.exitCode).toBe(0)
+  const replacement = await startTestBot({ dataDir: otherData, twin, server, lockPort: port })
+  onTestFinished(() => replacement.stop())
   await twin.discord.channel(twin.quietChannelId).user(TEST_USER_ID).sendMessage({ content: 'Lock takeover prompt' })
   const thread = await twin.discord.channel(twin.quietChannelId).waitForThread({ timeout: 8000 })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
@@ -91,7 +101,4 @@ test('a second real bot takes over the isolated lock port and answers its projec
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
-  await replacement.stop()
-  child.kill('SIGTERM')
-  fs.rmSync(otherData, { recursive: true, force: true })
 })

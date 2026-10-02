@@ -15,7 +15,8 @@ export function setLogFile({ dataDir }: { dataDir: string }): ConfigError | void
   const file = path.join(dataDir, 'kimaki.log')
   const created = errore.try(
     () => {
-      fs.mkdirSync(dataDir, { recursive: true })
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+      fs.chmodSync(dataDir, 0o700)
       fs.writeFileSync(file, '')
     },
     (e) => new ConfigError({ reason: `Cannot write ${file}. Check --data-dir permissions`, cause: e }),

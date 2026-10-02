@@ -79,15 +79,18 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/clear-queue: Remove queued messages",
       "/compact: Compact the session context by summarizing the history",
       "/context-usage: Show token usage and context window percentage",
+      "/cwd: Show or change this session working directory",
       "/diff: Show the git diff as a shareable URL",
       "/fork: Fork the session from a past user message",
       "/fork-subagent: Fork a subagent task session into a new thread",
       "/hello-cmd: Say hello",
       "/later-cmd: Runs later",
       "/login: Connect an OpenCode provider",
+      "/merge-worktree: Merge this worktree into a local branch",
       "/model: Set the model for this session or channel",
       "/model-variant: Change the thinking level of the current model",
       "/new-session: Start a new OpenCode session",
+      "/new-worktree: Start an isolated Git worktree session; fork context when used in a thread",
       "/opencode-skill: Use this skill for any question about OpenCode itself, including how OpenCode works, using or config",
       "/plan-agent: Read-only agent for exploring the codebase and planning work before implementation.",
       "/queue: Send a message after the current run finishes",
@@ -98,8 +101,10 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/review-cmd: review changes [commit|branch|pr], defaults to uncommitted",
       "/session-id: Show the OpenCode session ID of this thread and how to open it in OpenCode",
       "/tasks: List scheduled tasks, run one now, or delete it",
+      "/transcription-key: Set the OpenAI or Gemini API key for voice transcription and speech",
       "/undo: Undo the last turn and revert its file changes",
       "/verbosity: Set what the bot shows in this channel",
+      "/worktrees: List worktrees, delete a safe checkout, or toggle automatic worktrees",
     ]
   `)
   expect(await twin.discord.getRegisteredCommands({ guildId: null })).toEqual([])
@@ -119,8 +124,8 @@ async function newThread(send: () => Promise<unknown>) {
 test('/<agent>-agent sets the channel agent, or starts a session with a prompt', async () => {
   const { discord, channelId } = twin
   const user = discord.channel(channelId).user(TEST_USER_ID)
-  const { id } = await user.runSlashCommand({ name: 'plan-agent' })
-  await discord.channel(channelId).waitForInteractionAck({ interactionId: id })
+  await user.runSlashCommand({ name: 'plan-agent' })
+  await waitForBotMessageContaining({ discord, threadId: channelId, text: 'Switched to **plan** agent for this channel' })
   const planned = await newThread(() => user.sendMessage({ content: 'Plan this plan-marker' }))
   await waitForFooter({ discord, threadId: planned.id })
 

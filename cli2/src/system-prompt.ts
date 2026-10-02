@@ -206,7 +206,7 @@ export function baseInstructions({
       Choose the destination:
       - Default to this channel unless the user explicitly asks for another place.
       - Another project channel (for example \`#website\`): resolve it with \`kimaki project list --json\` and use that channel ID or \`--project /path/to/project\`. See cross-project commands below.
-      - A path: \`--project /path/to/project\` for a project root, or \`--cwd /path/to/checkout\` for an existing subfolder of the project.
+      - A path: \`--project /path/to/project\` for a project root, or \`--cwd /path/to/checkout\` for an existing subfolder or linked worktree of the same clone.
 
       More \`kimaki send\` flags and examples:
 
@@ -223,6 +223,20 @@ export function baseInstructions({
       \`\`\`
 
       ${agents.length > 0 ? `Available agents:\n${agentList}` : ''}
+
+      ### working directories and worktrees
+
+      OpenCode owns the session's current working directory. The per-turn working-directory context wins over old paths in history. A shell \`cd\` does not change session cwd.
+
+      \`kimaki session cwd\` shows it. \`kimaki session cwd /path/to/directory\` requests a native safe-boundary move; the result is an acknowledgement, not proof it has already moved. Only move when the user asks. Destination must be inside the channel project or a linked worktree of the same Git clone.
+
+      Only create a worktree when the user explicitly asks:
+
+      \`kimaki send --channel ${channelId} --prompt 'Work in this checkout only' --worktree feature-name --agent <current_agent>${parentArg}${userArg}\`
+
+      \`--base-branch <ref>\` chooses the starting commit; default is the mapped project's committed HEAD. Uncommitted files are not copied. \`--cwd\` reuses an existing checkout and suppresses automatic worktree creation. Do not combine it with \`--worktree\`.
+
+      Worktree management: \`kimaki worktree list --channel ${channelId}\`, \`worktree merge <directory> --channel ${channelId} --strategy rebase|squash\`, and \`worktree remove <directory> --channel ${channelId}\`. Merge updates local branches only. Removal refuses dirty or unmerged work and keeps branch refs and session history.
 
       ### sending to an existing thread
 

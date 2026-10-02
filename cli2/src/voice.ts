@@ -17,12 +17,21 @@ import { promisify } from 'node:util'
 import * as errore from 'errore'
 import prism from 'prism-media'
 import dedent from 'string-dedent'
+import {
+  ActionRowBuilder,
+  MessageFlags,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  type ModalSubmitInteraction,
+} from 'discord.js'
 
 import { credentialsFromRow, gatewayUrlsFromEnv } from './credentials.ts'
 import type { KimakiDb } from './db.ts'
-import { DbError } from './errors.ts'
+import { ConfigError, DbError } from './errors.ts'
 import { createLogger } from './logger.ts'
 import type { Route } from './routes.ts'
+import * as schema from './schema.ts'
 
 const logger = createLogger('VOICE')
 const execFileAsync = promisify(execFile)
@@ -57,7 +66,7 @@ export class EmptyTranscriptionError extends errore.createTaggedError({
 
 export class NoTranscriptionKeyError extends errore.createTaggedError({
   name: 'NoTranscriptionKeyError',
-  message: 'Voice transcription needs an OpenAI or Gemini API key. Set OPENAI_API_KEY or GEMINI_API_KEY and restart Kimaki',
+  message: 'Voice transcription needs an OpenAI or Gemini API key. Run /transcription-key, or kimaki bot keys set --openai <key>',
 }) {}
 
 type TranscriptionFailure = TranscriptionError | TranscriptionApiError | TranscriptionBlockedError | EmptyTranscriptionError
@@ -460,11 +469,12 @@ export function createTranscriber({
       { kind: 'openai' as const, apiKey: process.env['OPENAI_API_KEY'] },
       { kind: 'gemini' as const, apiKey: process.env['GEMINI_API_KEY'] },
     ]
-    const found = candidates.find((candidate) => candidate.apiKey)
-    if (found?.apiKey) return { kind: found.kind, apiKey: found.apiKey }
     const credentials = row ? credentialsFromRow(row) : null
     const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
-    if (clientId && clientSecret) return { kind: 'gateway' as const, clientId, clientSecret }
+    const gateway = clientId && clientSecret ? { kind: 'gateway' as const, clientId, clientSecret } : null
+    const found = candidates.find((candidate) => candidate.apiKey)
+    if (found?.apiKey) return { kind: found.kind, apiKey: found.apiKey, gateway }
+    if (gateway) return gateway
     return new NoTranscriptionKeyError()
   }
 
@@ -489,10 +499,18 @@ export function createTranscriber({
       const tool = buildTranscriptionTool({ agentNames: agents.map((agent) => agent.name), inSession })
       const prompt = transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
       const request = { apiKey: selected.apiKey, prompt, audio, mediaType: type, tool }
-      if (selected.kind === 'openai') {
-        return withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
+      const result =
+        selected.kind === 'openai'
+          ? await withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
+          : await withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
+      // A provider content filter can refuse harmless audio: retry with hosted Whisper (always steer).
+      if (result instanceof TranscriptionBlockedError && selected.gateway) {
+        logger.warn(`provider blocked the audio (${result.message}), retrying with kimaki.dev Whisper`)
+        const hosted = await transcribeViaGateway({ audio, mediaType: type, ...selected.gateway })
+        if (!(hosted instanceof Error)) return hosted
+        logger.warn(`kimaki.dev Whisper fallback failed: ${hosted.message}`)
       }
-      return withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
+      return result
     },
   }
 }
@@ -584,4 +602,54 @@ export async function generateSpeech({
   if (!mediaType.startsWith('audio/l16') && !mediaType.startsWith('audio/pcm')) return { audio: data, mediaType }
   const sampleRate = Number(/rate=(\d+)/.exec(mediaType)?.[1] ?? 24_000)
   return { audio: Buffer.concat([wavHeader({ dataLength: data.length, sampleRate, channels: 1 }), data]), mediaType: 'audio/wav' }
+}
+
+// --- Audio API keys (/transcription-key, `kimaki bot keys set`). Stored per
+// bot in bot_api_keys; transcription and `kimaki tts` read them first.
+
+export const TRANSCRIPTION_KEY_MODAL = 'transcription_key_modal'
+
+// Writes only the given keys of the bot that uses `token`.
+export async function saveAudioKeys({ db, token, openai, gemini }: { db: KimakiDb; token: string; openai?: string; gemini?: string }): Promise<DbError | ConfigError | void> {
+  const values = { ...(openai && { openai_api_key: openai }), ...(gemini && { gemini_api_key: gemini }) }
+  if (Object.keys(values).length === 0) return new ConfigError({ reason: 'Pass --openai <key> or --gemini <key>' })
+  const bot = await db.query.bot_tokens.findFirst({ where: { token } }).catch((cause) => new DbError({ operation: 'read bot_tokens', cause }))
+  if (bot instanceof Error) return bot
+  if (!bot) return new ConfigError({ reason: 'No saved bot credentials. Start kimaki once to onboard.' })
+  const saved = await db.insert(schema.bot_api_keys).values({ app_id: bot.app_id, ...values })
+    .onConflictDoUpdate({ target: schema.bot_api_keys.app_id, set: values })
+    .then(() => undefined)
+    .catch((cause) => new DbError({ operation: 'write bot_api_keys', cause }))
+  if (saved instanceof Error) return saved
+}
+
+export function transcriptionKeyModal(): ModalBuilder {
+  const input = new TextInputBuilder()
+    .setCustomId('apikey')
+    .setLabel('OpenAI or Gemini API key')
+    .setPlaceholder('sk-... or AIza...')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+  return new ModalBuilder()
+    .setCustomId(TRANSCRIPTION_KEY_MODAL)
+    .setTitle('Audio API key')
+    .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input))
+}
+
+// The provider follows the key prefix, like V1: sk-* is OpenAI, anything else Gemini.
+export async function handleTranscriptionKeyModal({ interaction, db }: { interaction: ModalSubmitInteraction; db: KimakiDb }): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  const key = interaction.fields.getTextInputValue('apikey').trim()
+  if (!key) {
+    await interaction.editReply({ content: 'API key is required.' })
+    return
+  }
+  const openai = key.startsWith('sk-')
+  const saved = await saveAudioKeys({ db, token: interaction.client.token, ...(openai ? { openai: key } : { gemini: key }) })
+  if (saved instanceof Error) {
+    logger.warn(`save audio key: ${saved.message}`)
+    await interaction.editReply({ content: saved.message })
+    return
+  }
+  await interaction.editReply({ content: `${openai ? 'OpenAI' : 'Gemini'} API key saved. Voice transcription and speech generation are now enabled.` })
 }

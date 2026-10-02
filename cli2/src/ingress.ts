@@ -34,7 +34,7 @@ const logger = createLogger('INGRESS')
 // Owner, Administrator, Manage Server, or a role named "Kimaki". A role named
 // "no-kimaki" always denies. Missing member data fails closed.
 export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: string }): Promise<boolean> {
-  const member = await guild.members.fetch(userId).catch(() => null)
+  const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null)
   if (!(member instanceof GuildMember)) return false
   const roleNames = member.roles.cache.map((role) => role.name.toLowerCase())
   if (roleNames.includes('no-kimaki')) return false
@@ -200,8 +200,10 @@ export function registerIngress({
       attachments: attachments.filter((attachment) => attachment !== voice),
     })
     if (files instanceof Error) return reportError(files)
+    const directory = thread && voice ? await actions.workingDirectory(store.getState().roots[thread.id]!) : project.directory
+    if (directory instanceof Error) return reportError(directory)
     const route = voice
-      ? await voiceRoute({ message, attachment: voice, directory: project.directory, inSession })
+      ? await voiceRoute({ message, attachment: voice, directory, inSession })
       : (parseTextMessage({ content: message.content }) ?? (files.length > 0 ? { kind: 'steer' as const, text: '' } : null))
     if (route instanceof Error) return reportError(route)
     if (!route) return
@@ -252,7 +254,8 @@ export function registerIngress({
     if (message.author?.bot) return
     serialize(message.channelId, async () => {
       const full = message.partial ? await message.fetch().catch(() => null) : message
-      if (!full || !queuedItemFor({ store, threadId: full.channelId, messageId: full.id })) return
+      if (!full?.guild || !queuedItemFor({ store, threadId: full.channelId, messageId: full.id })) return
+      if (!(await canUseKimaki({ guild: full.guild, userId: full.author.id }))) return
       // The re-queued prompt must carry the message's attachments again.
       const files = await saveAttachments({ dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
       if (files instanceof Error) {
