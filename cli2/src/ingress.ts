@@ -23,8 +23,8 @@ import { projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts
 import { formatError } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { parseInput, sendInput } from './lock-routes.ts'
-import { dispatch, REMOTE_PROMPT_FILE, REMOTE_RESULT_PREFIX, REMOTE_SEND_PREFIX, send } from './prompt.ts'
-import { formatEcho, handleQueuedMessageDelete, handleQueuedMessageEdit, queuedItemFor } from './queue.ts'
+import { cancelQueuedPrompt, dispatch, REMOTE_PROMPT_FILE, REMOTE_RESULT_PREFIX, REMOTE_SEND_PREFIX, requeueEdited, send } from './prompt.ts'
+import { formatEcho, queuedItemFor } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import { primaryAgents, startSession } from './sessions.ts'
 import { isVoiceAttachment, parseVoiceMessage, transcribe, type AttachmentLike } from './voice.ts'
@@ -254,9 +254,17 @@ export function registerIngress(bot: Bot) {
     if (message.author.bot && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
     serialize(message.channelId, () => handleMessage(bot, message))
   })
+  // Deleting a queued Discord message removes it from the queue.
   bot.discord.on(Events.MessageDelete, (message) => {
-    serialize(message.channelId, () => handleQueuedMessageDelete(bot, message))
+    serialize(message.channelId, async () => {
+      const item = queuedItemFor(bot, { threadId: message.channelId, messageId: message.id })
+      if (!item) return
+      const result = await cancelQueuedPrompt(bot, { threadId: message.channelId, inboxID: item.inboxID })
+      if (result instanceof Error) logger.warn(`delete of queued ${message.id} failed: ${result.message}`)
+    })
   })
+  // Editing a queued message re-queues the new text at the end (spec 9.2.2
+  // option A: the inbox has no API to change an item's text).
   bot.discord.on(Events.MessageUpdate, (_old, message) => {
     if (message.author?.bot) return
     serialize(message.channelId, async () => {
@@ -269,7 +277,11 @@ export function registerIngress(bot: Bot) {
         logger.error(`edit of ${full.id}: ${files.message}`)
         return
       }
-      await handleQueuedMessageEdit(bot, { message: full, files })
+      // Read again: the item may have started while the files were saved.
+      const item = queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })
+      if (!item) return
+      const result = await requeueEdited(bot, { message: full, inboxID: item.inboxID, files })
+      if (result instanceof Error) logger.warn(`edit of queued ${full.id} failed: ${result.message}`)
     })
   })
 }

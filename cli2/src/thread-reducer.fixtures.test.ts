@@ -3,6 +3,7 @@
 
 import { expect, test } from 'vitest'
 
+import { queuedItems } from './queue.ts'
 import { isBusy, type ThreadEvent } from './thread-reducer.ts'
 import { effectLines, loadFixture, replay } from './test/replay.ts'
 
@@ -194,12 +195,7 @@ test('queue-plain: acks with positions while busy, echo per delivered item, one 
       "-# *project ⋅ main ⋅ 15s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
-  expect({ queue: view.queue, inputs: view.inputs }).toMatchInlineSnapshot(`
-    {
-      "inputs": [],
-      "queue": [],
-    }
-  `)
+  expect(view.inbox).toMatchInlineSnapshot(`[]`)
 })
 
 test('steer-queue: cancelled item edits its ack, interrupted run has no footer', () => {
@@ -222,7 +218,7 @@ test('steer-queue: cancelled item edits its ack, interrupted run has no footer',
     ]
   `)
   // The recorded order (prompt, then interrupt with resume) parks queued items.
-  expect(view.queue.map((item) => item.text)).toMatchInlineSnapshot(`
+  expect(queuedItems(view).map((item) => item.text)).toMatchInlineSnapshot(`
     [
       "QUEUED-A: after everything, reply with the word apple.",
       "QUEUED-C: reply with the word cherry.",

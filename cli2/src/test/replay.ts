@@ -42,7 +42,6 @@ export function replay({
   const start =
     initial ??
     emptyView({
-      threadId: 'thread',
       sessionId: rootSessionId(events.filter((event): event is V2Event => !event.type.startsWith('kimaki.'))),
       channelId: 'channel',
       directory: '/project',

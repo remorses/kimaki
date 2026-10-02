@@ -18,6 +18,7 @@
 // busy = root execution running OR any child running (29.2 #3). Typing
 // follows busy; the footer waits until nothing runs.
 
+import { ButtonStyle } from 'discord.js'
 import { produce, type Draft } from 'immer'
 import type {
   FormInfo,
@@ -31,6 +32,8 @@ import type {
 import type { Verbosity } from './db.ts'
 import {
   asSubtext,
+  button,
+  buttonRow,
   formatBanner,
   formatError,
   formatRetry,
@@ -40,14 +43,14 @@ import {
   formatToolFailed,
   formatToolLine,
   isToolVisible,
+  textOnly,
   type ModelRef,
   type ToolInput,
   type UiMessage,
 } from './format-parts.ts'
 import { closePermission, hydratePermissions, showPermission, STATUS, type PendingPermission } from './permissions.ts'
 import { closeForm, formatAnswer, hydrateForms, showForm, withAnswer, type PendingForm } from './questions.ts'
-import { cancelQueued, deliverQueued, enqueueInput, hydrateQueue, promoteQueued, type QueuedItem } from './queue.ts'
-import { dismissAgentPrompts, showAgentPrompt, type AgentPrompt } from './agent-ui.ts'
+import { cancelQueued, deliverQueued, enqueueInput, hydrateQueue, promoteQueued, type PendingInput } from './queue.ts'
 
 export type Turn = {
   startedAt: number
@@ -64,8 +67,21 @@ export type Child = {
   running: boolean
 }
 
+// Buttons and upload requests from `kimaki buttons` / `kimaki upload-request` (agent-ui.ts).
+export type AgentButton = { label: string; command?: string; color: 'white' | 'blue' | 'green' | 'red' }
+export type AgentPrompt = { id: string; sessionId: string; buttons?: AgentButton[]; prompt?: string; maxFiles?: number }
+
+// A tool call between session.tool.input.started and its success or failure.
+export type ToolCall = {
+  // session.tool.called has no name: it comes from input.started.
+  name: string
+  // 'called' after session.tool.called, when its tool line was posted.
+  phase: 'input' | 'called'
+  // A subagent call whose child session is not linked yet.
+  subagent: { agent: string; description: string; background: boolean } | null
+}
+
 export type ThreadView = {
-  threadId: string
   sessionId: string
   // Project channel of the thread: its verbosity applies.
   channelId: string
@@ -75,20 +91,15 @@ export type ThreadView = {
   bannerPending: boolean
   // Root execution in progress.
   turn: Turn | null
-  // Tool names by "assistantMessageID:toolID": session.tool.called has none.
-  toolNames: Readonly<Record<string, string>>
-  // Shell calls that started, so `kimaki buttons` from that shell posts after the tool line.
-  shellCalls: Readonly<Record<string, true>>
+  // Running tool calls of root and children by "assistantMessageID:toolID".
+  tools: Readonly<Record<string, ToolCall>>
   agentUi: readonly AgentPrompt[]
-  // Parent subagent calls whose child session is not known yet.
-  subagentCalls: Readonly<Record<string, { agent: string; description: string; background: boolean }>>
   children: Readonly<Record<string, Child>>
   // Blank line between text and tool blocks.
   lastKind: 'text' | 'tool' | null
   lastRetryAt: number | null
-  // Root inbox: user items not delivered yet, and the queued ones among them.
-  inputs: readonly string[]
-  queue: readonly QueuedItem[]
+  // Root inbox: user items not delivered yet, in order (queuedItems() for the queue).
+  inbox: readonly PendingInput[]
   // Questions and permission requests waiting for the user (root and children).
   forms: Readonly<Record<string, PendingForm>>
   permissions: Readonly<Record<string, PendingPermission>>
@@ -148,34 +159,28 @@ const RETRY_NOTICE_INTERVAL_MS = 10_000
 const REPLAY_LIMIT = 30
 
 export function emptyView({
-  threadId,
   sessionId,
   channelId,
   directory,
   isNew,
 }: {
-  threadId: string
   sessionId: string
   channelId: string
   directory: string
   isNew: boolean
 }): ThreadView {
   return {
-    threadId,
     sessionId,
     channelId,
     directory,
     bannerPending: isNew,
     turn: null,
-    toolNames: {},
-    shellCalls: {},
+    tools: {},
     agentUi: [],
-    subagentCalls: {},
     children: {},
     lastKind: null,
     lastRetryAt: null,
-    inputs: [],
-    queue: [],
+    inbox: [],
     forms: {},
     permissions: {},
   }
@@ -368,7 +373,7 @@ function applyRoot(context: Context & { event: V2Event }) {
       if (event.data.delivery === 'steer') promoteQueued({ draft, emit, inboxID: event.data.inboxID })
       return
     default:
-      return applyTool({ ...context, label: undefined })
+      return applyTool({ ...context, label: undefined, render: true })
   }
 }
 
@@ -393,55 +398,68 @@ function applyChild({
       return
   }
   // Background children post no tool lines: they would interleave with later turns.
-  if (!child.background) return applyTool({ draft, prefs, emit, event, label: child.agent })
-  const lastKind = draft.lastKind
-  applyTool({ draft, prefs, emit: () => {}, event, label: child.agent })
-  draft.lastKind = lastKind
+  applyTool({ draft, prefs, emit, event, label: child.agent, render: !child.background })
 }
 
 // Tool events shared by root and children. `label` is set for children.
-function applyTool(context: Context & { event: V2Event; label: string | undefined }) {
-  const { draft, event, prefs, label } = context
+// `render: false` keeps the bookkeeping and posts nothing.
+function applyTool(context: Context & { event: V2Event; label: string | undefined; render: boolean }) {
+  const { draft, event, prefs, label, render } = context
   switch (event.type) {
     case 'session.tool.input.started':
-      draft.toolNames[toolKey(event.data)] = event.data.name
+      draft.tools[toolKey(event.data)] = { name: event.data.name, phase: 'input', subagent: null }
       return
     case 'session.tool.called': {
       const key = toolKey(event.data)
-      const name = draft.toolNames[key] ?? 'tool'
+      const name = draft.tools[key]?.name ?? 'tool'
       const input = event.data.input
-      if (name === 'shell') draft.shellCalls[key] = true
+      const tool: ToolCall = { name, phase: 'called', subagent: null }
       if (name === 'subagent') {
         const reused = typeof input['sessionID'] === 'string' ? draft.children[input['sessionID']] : undefined
         const call = { agent: stringInput(input, 'agent'), description: stringInput(input, 'description'), background: input['background'] === true }
-        if (typeof input['sessionID'] !== 'string') draft.subagentCalls[key] = { ...call, agent: call.agent || 'subagent' }
+        if (typeof input['sessionID'] !== 'string') tool.subagent = { ...call, agent: call.agent || 'subagent' }
         // Reusing a child session: its mode and label follow the new call.
         if (reused) Object.assign(reused, { ...call, agent: call.agent || reused.agent })
       }
-      if (isToolVisible({ name, input }, prefs.verbosity)) toolLine(context, formatToolLine({ name, input }, { label }))
+      draft.tools[key] = tool
+      if (render && isToolVisible({ name, input }, prefs.verbosity)) toolLine(context, formatToolLine({ name, input }, { label }))
       return
     }
     case 'session.tool.progress': {
       const childId = event.data.metadata['sessionID']
-      const call = draft.subagentCalls[toolKey(event.data)]
-      if (typeof childId !== 'string' || !call) return
-      draft.children[childId] = { ...call, running: draft.children[childId]?.running ?? false }
-      delete draft.subagentCalls[toolKey(event.data)]
+      const tool = draft.tools[toolKey(event.data)]
+      if (typeof childId !== 'string' || !tool?.subagent) return
+      draft.children[childId] = { ...tool.subagent, running: draft.children[childId]?.running ?? false }
+      tool.subagent = null
       return
     }
     case 'session.tool.success':
     case 'session.tool.failed': {
       const key = toolKey(event.data)
-      const name = draft.toolNames[key] ?? 'tool'
-      delete draft.toolNames[key]
-      delete draft.shellCalls[key]
-      delete draft.subagentCalls[key]
-      if (event.type === 'session.tool.success') return
+      const name = draft.tools[key]?.name ?? 'tool'
+      delete draft.tools[key]
+      if (event.type === 'session.tool.success' || !render) return
       if (event.data.error.type === 'aborted' || name === 'question' || name.startsWith('kimaki_')) return
       toolLine(context, formatToolFailed({ name, message: event.data.error.message, label }))
       return
     }
   }
+}
+
+const BUTTON_STYLES = { white: ButtonStyle.Secondary, blue: ButtonStyle.Primary, green: ButtonStyle.Success, red: ButtonStyle.Danger } as const
+
+function showAgentPrompt({ draft, emit, prompt }: Pick<Context, 'draft' | 'emit'> & { prompt: AgentPrompt }) {
+  const buttons = prompt.buttons?.map((item, index) => button({ customId: `action_button:${prompt.id}:${index}`, label: item.label, style: BUTTON_STYLES[item.color] }))
+    ?? [button({ customId: `file_upload_btn:${prompt.id}`, label: 'Upload files' })]
+  const commands = prompt.buttons?.flatMap((item) => (item.command ? [`${item.label}: \`${item.command}\``] : [])) ?? []
+  draft.agentUi.push(prompt)
+  emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, messages: [{ content: prompt.prompt ?? commands.join('\n'), components: [buttonRow(buttons)] }] })
+}
+
+function dismissAgentPrompts({ draft, emit, ids }: Pick<Context, 'draft' | 'emit'> & { ids: readonly string[] }) {
+  if (ids.length === 0) return
+  draft.agentUi = draft.agentUi.filter((prompt) => !ids.includes(prompt.id))
+  for (const id of ids) emit({ type: 'edit', key: `agent:${id}`, messages: [textOnly('Dismissed')] })
 }
 
 function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEvent }) {

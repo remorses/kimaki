@@ -4,13 +4,14 @@
 // one typing interval per thread refreshes the indicator every 7s. Never
 // awaited by the event loop.
 //
-// Interactive prompts: `show` remembers the posted message IDs under its key,
-// `edit` with the same key replaces them and forgets the key. An edit for a
-// key this process never showed (posted before a restart) does nothing.
+// Interactive prompts: `show` remembers the posted message IDs under its key
+// (per thread), `edit` with the same key replaces them and forgets the key.
+// An edit for a key this process never showed (posted before a restart) does nothing.
 //
 // When Discord is slower than the event stream, effects pile up in the
-// queue; consecutive bot lines are then merged into one message (≤ 2000
-// chars) so a burst of tool lines does not hit the 5 msg / 5s channel limit.
+// queue; consecutive bot lines (footers included) are then merged into one
+// message (≤ 2000 chars) so a burst of tool lines does not hit the 5 msg / 5s
+// channel limit.
 
 import { execFile } from 'node:child_process'
 import path from 'node:path'
@@ -33,12 +34,10 @@ async function gitBranch(directory: string): Promise<string | null> {
   return result?.stdout.trim() || null
 }
 
-// The footer becomes a plain send, so it can merge with the lines before it.
-async function resolveFooter(effect: Effect): Promise<Resolved> {
-  if (effect.type !== 'footer') return effect
+async function footerText(effect: Extract<Effect, { type: 'footer' }>): Promise<string> {
   const { directory, durationMs, contextPercent, model, agent } = effect
   const branch = await gitBranch(directory)
-  return { type: 'send', text: formatFooter({ folder: path.basename(directory), branch, durationMs, contextPercent, model, agent }) }
+  return formatFooter({ folder: path.basename(directory), branch, durationMs, contextPercent, model, agent })
 }
 
 type ThreadWorker = {
@@ -47,19 +46,9 @@ type ThreadWorker = {
   typing: ReturnType<typeof setInterval> | null
   // Bumped by dispose(): effects taken before it are dropped.
   generation: number
-}
-
-// Adjacent `send` effects become one, as long as the joined text fits a message.
-type Resolved = Exclude<Effect, { type: 'footer' }>
-
-export function mergeSends(effects: Resolved[]): Resolved[] {
-  return effects.reduce<Resolved[]>((merged, effect) => {
-    const last = merged[merged.length - 1]
-    if (effect.type !== 'send' || last?.type !== 'send') return [...merged, effect]
-    const text = `${last.text}\n${effect.text}`
-    if (text.length > DISCORD_TEXT_LIMIT) return [...merged, effect]
-    return [...merged.slice(0, -1), { type: 'send', text }]
-  }, [])
+  // Prompt key -> IDs of its posted messages, until edited. The only
+  // Discord facts kept in memory (spec 6.3 #4).
+  prompts: Map<string, readonly string[]>
 }
 
 function markdownMessages({ text, blankLineBefore }: { text: string; blankLineBefore: boolean }): DiscordPayload[] {
@@ -71,16 +60,13 @@ function markdownMessages({ text, blankLineBefore }: { text: string; blankLineBe
 
 export function createEffectsRunner({ discord }: { discord: Client }) {
   const workers = new Map<string, ThreadWorker>()
-  // Prompt key -> IDs of its posted messages, until edited. The only
-  // Discord facts kept in memory (spec 6.3 #4).
-  const prompts = new Map<string, readonly string[]>()
   // After stop(): no more sends or typing, even from effects already queued.
   const lifecycle = { closed: false }
 
   function worker(threadId: string): ThreadWorker {
     const existing = workers.get(threadId)
     if (existing) return existing
-    const created: ThreadWorker = { queue: [], running: false, typing: null, generation: 0 }
+    const created: ThreadWorker = { queue: [], running: false, typing: null, generation: 0, prompts: new Map() }
     workers.set(threadId, created)
     return created
   }
@@ -125,7 +111,13 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     if (edited instanceof Error) logger.warn(`edit of ${messageId} failed: ${edited.message}`)
   }
 
-  async function runOne(threadId: string, effect: Resolved) {
+  // A bot message ends the typing indicator in the Discord UI.
+  async function refreshTyping(threadId: string) {
+    if (worker(threadId).typing) await pulseTyping(threadId)
+  }
+
+  // Every effect but bot lines, which drain() merges and posts itself.
+  async function runOne(threadId: string, effect: Exclude<Effect, { type: 'send' | 'footer' }>) {
     const thread = worker(threadId)
     if (effect.type === 'attachments') {
       for (let offset = 0; offset < effect.files.length; offset += 10) {
@@ -144,8 +136,8 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
       return
     }
     if (effect.type === 'edit') {
-      const ids = prompts.get(effect.key)
-      prompts.delete(effect.key)
+      const ids = thread.prompts.get(effect.key)
+      thread.prompts.delete(effect.key)
       if (!ids || ids.length === 0) return
       const channel = await sendableChannel(threadId)
       if (!channel || lifecycle.closed) return
@@ -169,29 +161,54 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
         })
         if (id) ids.push(id)
       }
-      prompts.set(effect.key, ids)
+      thread.prompts.set(effect.key, ids)
+      await refreshTyping(threadId)
+      return
     }
-    const payloads =
-      effect.type === 'send' ? [{ content: effect.text }] : effect.type === 'markdown' ? markdownMessages(effect) : []
-    for (const payload of payloads) {
+    for (const payload of markdownMessages(effect)) {
       await post({ threadId, options: payload })
     }
-    // A bot message ends the typing indicator in the Discord UI.
-    if (thread.typing) await pulseTyping(threadId)
+    await refreshTyping(threadId)
+  }
+
+  // Runs the effects queued so far in order. Adjacent bot lines (sends and
+  // footers) become one message while the joined text fits.
+  async function runBatch(threadId: string, batch: readonly Effect[]) {
+    const thread = worker(threadId)
+    const generation = thread.generation
+    const live = () => thread.generation === generation
+    let lines: string | null = null
+    const flush = async () => {
+      const text = lines
+      lines = null
+      if (text === null || !live()) return
+      await post({ threadId, options: { content: text } })
+      await refreshTyping(threadId)
+    }
+    for (const effect of batch) {
+      if (!live()) return
+      if (effect.type !== 'send' && effect.type !== 'footer') {
+        await flush()
+        if (live()) await runOne(threadId, effect)
+        continue
+      }
+      const text = effect.type === 'send' ? effect.text : await footerText(effect)
+      const joined: string | null = lines === null ? null : `${lines}\n${text}`
+      if (joined !== null && joined.length <= DISCORD_TEXT_LIMIT) {
+        lines = joined
+        continue
+      }
+      await flush()
+      lines = text
+    }
+    await flush()
   }
 
   async function drain(threadId: string) {
     const thread = worker(threadId)
     if (thread.running) return
     thread.running = true
-    while (thread.queue.length > 0) {
-      const generation = thread.generation
-      const batch = await Promise.all(thread.queue.splice(0).map(resolveFooter))
-      for (const effect of mergeSends(batch)) {
-        if (thread.generation !== generation) break
-        await runOne(threadId, effect)
-      }
-    }
+    while (thread.queue.length > 0) await runBatch(threadId, thread.queue.splice(0))
     thread.running = false
   }
 
@@ -207,6 +224,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
       if (!thread) return
       thread.queue.length = 0
       thread.generation++
+      thread.prompts.clear()
       stopTyping(threadId)
     },
     stop(): void {

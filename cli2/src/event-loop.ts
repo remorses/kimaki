@@ -23,6 +23,7 @@ import { DbError, DiscordError, OpenCodeError } from './errors.ts'
 import { createLogger } from './logger.ts'
 import type { ConnectContext, OpenCodeClient, V2Event } from './opencode-server.ts'
 import type { EventRecorder } from './session-events.ts'
+import { queuedItems } from './queue.ts'
 import type { BotStore } from './store.ts'
 import {
   emptyView,
@@ -70,9 +71,10 @@ export function createEventLoop({
 }) {
   // The client of the current connection, set before hydration starts.
   const connection: { client: OpenCodeClient | null } = { client: null }
-  // Context window sizes ("providerID/modelID" -> tokens), read once per
-  // directory per connection: project config can add providers.
-  const limits: { byModel: Readonly<Record<string, number>>; loads: Map<string, Promise<void>> } = { byModel: {}, loads: new Map() }
+  // Context window sizes ("providerID/modelID" -> tokens) by directory, read
+  // once per connection: project config can add providers. `limits` is null
+  // while loading; failed loads are removed so the next call retries.
+  const modelLimits = new Map<string, { load: Promise<void>; limits: Readonly<Record<string, number>> | null }>()
   const coldThreads = new Map<string, Held>()
   const unknownSessions = new Map<string, Held>()
   const ignoredSessions = new Set<string>()
@@ -81,18 +83,21 @@ export function createEventLoop({
   function loadModelLimits(directory: string): Promise<void> {
     const client = connection.client
     if (!client) return Promise.resolve()
-    const existing = limits.loads.get(directory)
-    if (existing) return existing
-    const load = (async () => {
-      const models = await client.model.list({ location: { directory } }).catch((e) => new OpenCodeError({ operation: 'model.list', cause: e }))
-      if (models instanceof Error) {
-        limits.loads.delete(directory)
-        logger.warn(models.message)
+    const existing = modelLimits.get(directory)
+    if (existing) return existing.load
+    const models = client.model.list({ location: { directory } }).catch((e) => new OpenCodeError({ operation: 'model.list', cause: e }))
+    const load = models.then((result) => {
+      // A reconnect cleared the map meanwhile: this result is stale.
+      if (modelLimits.get(directory)?.load !== load) return
+      if (result instanceof Error) {
+        modelLimits.delete(directory)
+        logger.warn(result.message)
         return
       }
-      limits.byModel = { ...limits.byModel, ...Object.fromEntries(models.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context])) }
-    })()
-    limits.loads.set(directory, load)
+      const limits = Object.fromEntries(result.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context]))
+      modelLimits.set(directory, { load, limits })
+    })
+    modelLimits.set(directory, { load, limits: null })
     return load
   }
 
@@ -102,7 +107,8 @@ export function createEventLoop({
     const view = state.threads[threadId]
     if (!view) return
     const verbosity = state.verbosity[view.channelId] ?? verbosityFromV1(null)
-    const result = reduce({ view, event, prefs: { verbosity, contextLimits: limits.byModel } })
+    const contextLimits = modelLimits.get(view.directory)?.limits ?? {}
+    const result = reduce({ view, event, prefs: { verbosity, contextLimits } })
     if (result.view !== view) store.setState((current) => ({ threads: { ...current.threads, [threadId]: result.view } }))
     effects.run(threadId, result.effects)
     if (event.type === 'session.moved' && event.data.sessionID === view.sessionId) void loadModelLimits(event.data.location.directory)
@@ -155,7 +161,7 @@ export function createEventLoop({
       return
     }
     if (!store.getState().threads[threadId]) {
-      const view = emptyView({ threadId, sessionId, channelId: loaded.channelId, directory: loaded.directory, isNew: false })
+      const view = emptyView({ sessionId, channelId: loaded.channelId, directory: loaded.directory, isNew: false })
       store.setState((current) => ({ threads: { ...current.threads, [threadId]: view } }))
     }
     for (const event of entry.events) fold(threadId, event)
@@ -252,7 +258,7 @@ export function createEventLoop({
         const view = threads[threadId]
         const activeSessionIds = activeIds.filter((id) => sessionThreads[id] === threadId)
         const shown = view ? [...Object.values(view.forms), ...Object.values(view.permissions)].map((item) => item.sessionId) : []
-        const queued = view && view.queue.length > 0 ? [root] : []
+        const queued = view && queuedItems(view).length > 0 ? [root] : []
         const sessionIds = [...new Set([...activeSessionIds, ...shown, ...queued])]
         const [info, sessions] = await Promise.all([
           // A deleted session keeps its last known directory.
@@ -332,7 +338,7 @@ export function createEventLoop({
       store.setState((current) => ({
         roots: { ...current.roots, [threadId]: sessionId },
         sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
-        threads: { ...current.threads, [threadId]: emptyView({ threadId, sessionId, channelId, directory, isNew }) },
+        threads: { ...current.threads, [threadId]: emptyView({ sessionId, channelId, directory, isNew }) },
       }))
       // Same synchronous turn as the routing change: no live event can come first.
       for (const event of first) deliver(threadId, event)
@@ -370,7 +376,7 @@ export function createEventLoop({
     async onConnect({ client, signal }: ConnectContext): Promise<OpenCodeError | void> {
       connection.client = client
       // A new connection may bring new providers, and old unrelated sessions are gone.
-      limits.loads.clear()
+      modelLimits.clear()
       ignoredSessions.clear()
       const result = await snapshots({ client, signal })
       if (result instanceof Error) return result

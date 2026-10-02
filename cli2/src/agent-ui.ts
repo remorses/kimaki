@@ -1,17 +1,11 @@
 import crypto from 'node:crypto'
-import type { Draft } from 'immer'
 import fs from 'node:fs'
 import path from 'node:path'
-import { ButtonStyle, FileUploadBuilder, LabelBuilder, ModalBuilder, MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js'
+import { FileUploadBuilder, LabelBuilder, ModalBuilder, MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js'
 import { sessionDirectory, type Bot } from './bot.ts'
 import { ConfigError, DiscordError } from './errors.ts'
-import { button, buttonRow, textOnly } from './format-parts.ts'
 import { send } from './prompt.ts'
-import type { Emit, ThreadView } from './thread-reducer.ts'
-
-export type AgentButton = { label: string; command?: string; color: 'white' | 'blue' | 'green' | 'red' }
-export type AgentPrompt = { id: string; sessionId: string; buttons?: AgentButton[]; prompt?: string; maxFiles?: number }
-const styles = { white: ButtonStyle.Secondary, blue: ButtonStyle.Primary, green: ButtonStyle.Success, red: ButtonStyle.Danger } as const
+import type { AgentButton, AgentPrompt, ThreadView } from './thread-reducer.ts'
 
 export function parseButton(value: string): ConfigError | AgentButton {
   const match = value.match(/:(white|blue|green|red)$/)
@@ -24,22 +18,6 @@ export function parseButton(value: string): ConfigError | AgentButton {
   if (command !== undefined && !command.trim()) return new ConfigError({ reason: 'Button command must not be empty' })
   if (color !== 'white' && color !== 'blue' && color !== 'green' && color !== 'red') return new ConfigError({ reason: 'Unknown button color' })
   return { label, color, ...(command && { command }) }
-}
-
-type Slice = { draft: Draft<ThreadView>; emit: Emit }
-
-export function showAgentPrompt({ draft, emit, prompt }: Slice & { prompt: AgentPrompt }) {
-  const buttons = prompt.buttons?.map((item, index) => button({ customId: `action_button:${prompt.id}:${index}`, label: item.label, style: styles[item.color] }))
-    ?? [button({ customId: `file_upload_btn:${prompt.id}`, label: 'Upload files' })]
-  const commands = prompt.buttons?.flatMap((item) => (item.command ? [`${item.label}: \`${item.command}\``] : [])) ?? []
-  draft.agentUi.push(prompt)
-  emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, messages: [{ content: prompt.prompt ?? commands.join('\n'), components: [buttonRow(buttons)] }] })
-}
-
-export function dismissAgentPrompts({ draft, emit, ids }: Slice & { ids: readonly string[] }) {
-  if (ids.length === 0) return
-  draft.agentUi = draft.agentUi.filter((prompt) => !ids.includes(prompt.id))
-  for (const id of ids) emit({ type: 'edit', key: `agent:${id}`, messages: [textOnly('Dismissed')] })
 }
 
 type UploadResult = { paths: string[] } | { cancelled: true }
@@ -85,7 +63,11 @@ async function waitForShellCall(
   bot: Bot,
   { toolCall, signal }: { toolCall: string; signal: AbortSignal },
 ): Promise<ConfigError | void> {
-  const seen = () => Object.values(bot.store.getState().threads).some((view) => view.shellCalls[toolCall])
+  const seen = () =>
+    Object.values(bot.store.getState().threads).some((view) => {
+      const tool = view.tools[toolCall]
+      return tool?.name === 'shell' && tool.phase === 'called'
+    })
   if (seen()) return
   return new Promise((resolve) => {
     const finish = (value?: ConfigError) => {

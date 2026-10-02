@@ -49,7 +49,7 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
   const events = loadFixture('abort.events.jsonl')
   const sessionID = rootSessionId(events)
   const started = events.find((event) => event.type === 'session.execution.started')!
-  const view = emptyView({ threadId: 'thread', sessionId: sessionID, channelId: 'channel', directory: '/project', isNew: false })
+  const view = emptyView({ sessionId: sessionID, channelId: 'channel', directory: '/project', isNew: false })
   const busy = reduce({ view, event: started, prefs: DEFAULT_PREFS }).view
   const failed = reduce({
     view: busy,
@@ -131,7 +131,7 @@ test('only these event types produce effects for the root session', () => {
   for (const file of files) {
     const events = loadFixture(file)
     const sessionId = rootSessionId(events)
-    let view = emptyView({ threadId: 'thread', sessionId, channelId: 'channel', directory: '/project', isNew: true })
+    let view = emptyView({ sessionId, channelId: 'channel', directory: '/project', isNew: true })
     for (const event of events) {
       const result = reduce({ view, event, prefs: DEFAULT_PREFS })
       view = result.view
@@ -197,7 +197,7 @@ test('only these event types produce effects for the root session', () => {
 test('retry notices are throttled to one per 10s', () => {
   const events = loadFixture('abort.events.jsonl')
   const sessionID = rootSessionId(events)
-  const view = emptyView({ threadId: 'thread', sessionId: sessionID, channelId: 'channel', directory: '/project', isNew: false })
+  const view = emptyView({ sessionId: sessionID, channelId: 'channel', directory: '/project', isNew: false })
   const retry = (created: number, attempt: number): V2Event => ({
     id: `evt_retry_${attempt}`,
     created,
