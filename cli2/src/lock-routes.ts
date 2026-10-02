@@ -14,9 +14,10 @@ import { setChannelAgent, setChannelModel, setVerbosity } from './commands/prefe
 import { channelWorktrees, manageWorktree, newWorktree, setAutoWorktrees } from './commands/worktree-commands.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeUnavailableError } from './errors.ts'
 import { abort, cancelQueuedPrompt, clearQueue, send, shell, upload } from './prompt.ts'
-import { createSleep, createTask, deleteTask, editTask, runTaskNow } from './scheduler.ts'
+import { createTask, deleteTask, editTask, runTaskNow } from './scheduler.ts'
 import * as schema from './schema.ts'
 import { channelForDirectory, channelForSession, fork, resume, sessionCwd } from './sessions.ts'
+import { createSleep } from './sleeps.ts'
 import { worktreeName } from './worktrees.ts'
 
 type LockRoute<S extends z.ZodType, R> = {

@@ -1,89 +1,123 @@
-// Pure scheduling: which tasks and sleep wakes are due at a given clock time,
-// and the next run of each (spec 30, Phase 8 "Fake clock").
+// Pure scheduling: the next run of cron tasks, --send-at and sleep wake
+// times at a clock time, and the V1 task payload (spec 17, 30 Phase 8).
 
 import { expect, test } from 'vitest'
 
-import { dueTasks, nextCronRun, parseSendAt, parseWakeAt, type Task } from './scheduler.ts'
+import { decodeTaskPayload, encodeTaskPayload, nextCronRun, nextRunOf, parseSendAt } from './scheduler.ts'
+import { parseWakeAt } from './sleeps.ts'
 
 const at = (iso: string) => Date.parse(iso)
 const iso = (value: number | Error | null) => (typeof value === 'number' ? new Date(value).toISOString() : value instanceof Error ? `Error: ${value.message}` : value)
 
-function show(result: ReturnType<typeof dueTasks>) {
-  return result.map(({ task, nextRunAt }) => ({
-    due: task.kind === 'task' ? `task #${task.id}` : `wake ${task.sessionId}`,
-    nextRunAt: iso(nextRunAt),
-  }))
-}
-
-test('one-shot, cron and sleep wakes due at a clock time', () => {
-  const tasks: Task[] = [
-    { kind: 'task', id: 1, status: 'planned', schedule: 'at', dueAt: at('2026-01-01T10:00:00Z'), cronExpr: null, timezone: null },
-    { kind: 'task', id: 2, status: 'planned', schedule: 'cron', dueAt: at('2026-01-01T09:00:00Z'), cronExpr: '0 * * * *', timezone: 'UTC' },
-    // Not due yet.
-    { kind: 'task', id: 3, status: 'planned', schedule: 'at', dueAt: at('2026-01-01T10:00:01Z'), cronExpr: null, timezone: null },
-    // Only planned rows run.
-    { kind: 'task', id: 4, status: 'running', schedule: 'at', dueAt: at('2026-01-01T08:00:00Z'), cronExpr: null, timezone: null },
-    { kind: 'task', id: 5, status: 'cancelled', schedule: 'cron', dueAt: at('2026-01-01T08:00:00Z'), cronExpr: '0 * * * *', timezone: null },
+test('next run of one-shot and cron tasks, V1 timezones included', () => {
+  const now = at('2026-01-01T10:00:00Z')
+  const rows = [
+    { id: 1, schedule_kind: 'at' as const, cron_expr: null, timezone: null },
+    { id: 2, schedule_kind: 'cron' as const, cron_expr: '0 * * * *', timezone: 'UTC' },
     // V1 rows may carry another timezone; no timezone means UTC.
-    { kind: 'task', id: 6, status: 'planned', schedule: 'cron', dueAt: at('2026-01-01T08:00:00Z'), cronExpr: '30 9 * * *', timezone: 'Europe/Rome' },
-    { kind: 'task', id: 7, status: 'planned', schedule: 'cron', dueAt: at('2026-01-01T08:00:00Z'), cronExpr: '30 9 * * *', timezone: null },
-    { kind: 'task', id: 8, status: 'planned', schedule: 'cron', dueAt: at('2026-01-01T08:00:00Z'), cronExpr: 'not a cron', timezone: null },
-    { kind: 'wake', sessionId: 'ses_due', status: 'planned', dueAt: at('2026-01-01T09:59:00Z'), lastAttemptAt: null },
-    { kind: 'wake', sessionId: 'ses_later', status: 'planned', dueAt: at('2026-01-01T11:00:00Z'), lastAttemptAt: null },
-    { kind: 'wake', sessionId: 'ses_cancelled', status: 'cancelled', dueAt: at('2026-01-01T09:00:00Z'), lastAttemptAt: null },
-    // A failed wake attempt waits 30s before the next one.
-    { kind: 'wake', sessionId: 'ses_retry_wait', status: 'planned', dueAt: at('2026-01-01T09:00:00Z'), lastAttemptAt: at('2026-01-01T09:59:45Z') },
-    { kind: 'wake', sessionId: 'ses_retry_now', status: 'planned', dueAt: at('2026-01-01T09:00:00Z'), lastAttemptAt: at('2026-01-01T09:59:30Z') },
+    { id: 6, schedule_kind: 'cron' as const, cron_expr: '30 9 * * *', timezone: 'Europe/Rome' },
+    { id: 7, schedule_kind: 'cron' as const, cron_expr: '30 9 * * *', timezone: null },
+    { id: 8, schedule_kind: 'cron' as const, cron_expr: 'not a cron', timezone: null },
+    { id: 9, schedule_kind: 'cron' as const, cron_expr: null, timezone: null },
   ]
-  expect(show(dueTasks({ tasks, now: at('2026-01-01T10:00:00Z') }))).toMatchInlineSnapshot(`
-    [
-      {
-        "due": "task #6",
-        "nextRunAt": "2026-01-02T08:30:00.000Z",
-      },
-      {
-        "due": "task #7",
-        "nextRunAt": "2026-01-02T09:30:00.000Z",
-      },
-      {
-        "due": "task #8",
-        "nextRunAt": "Error: Invalid cron expression: not a cron",
-      },
-      {
-        "due": "task #2",
-        "nextRunAt": "2026-01-01T11:00:00.000Z",
-      },
-      {
-        "due": "wake ses_retry_now",
-        "nextRunAt": null,
-      },
-      {
-        "due": "wake ses_due",
-        "nextRunAt": null,
-      },
-      {
-        "due": "task #1",
-        "nextRunAt": null,
-      },
-    ]
+  expect(Object.fromEntries(rows.map((row) => [`task #${row.id}`, iso(nextRunOf({ row, now }))]))).toMatchInlineSnapshot(`
+    {
+      "task #1": null,
+      "task #2": "2026-01-01T11:00:00.000Z",
+      "task #6": "2026-01-02T08:30:00.000Z",
+      "task #7": "2026-01-02T09:30:00.000Z",
+      "task #8": "Error: Invalid cron expression: not a cron",
+      "task #9": "Error: Task 9 has no cron expression",
+    }
   `)
 })
 
 test('a cron task fires once per occurrence as the clock moves', () => {
   const fired: string[] = []
+  const row = { id: 1, schedule_kind: 'cron' as const, cron_expr: '0 * * * *', timezone: 'UTC' }
   const state = { dueAt: at('2026-01-01T10:00:00Z') }
   for (const now of ['2026-01-01T09:30:00Z', '2026-01-01T10:00:00Z', '2026-01-01T10:00:00Z', '2026-01-01T10:59:59Z', '2026-01-01T13:20:00Z']) {
-    const task: Task = { kind: 'task', id: 1, status: 'planned', schedule: 'cron', dueAt: state.dueAt, cronExpr: '0 * * * *', timezone: 'UTC' }
-    const [due] = dueTasks({ tasks: [task], now: at(now) })
-    if (!due || typeof due.nextRunAt !== 'number') continue
-    fired.push(`${now} -> next ${iso(due.nextRunAt)}`)
-    state.dueAt = due.nextRunAt
+    if (state.dueAt > at(now)) continue
+    const next = nextRunOf({ row, now: at(now) })
+    if (typeof next !== 'number') continue
+    fired.push(`${now} -> next ${iso(next)}`)
+    state.dueAt = next
   }
   // Missed occurrences while the bot was down fire once, not once per hour.
   expect(fired).toMatchInlineSnapshot(`
     [
       "2026-01-01T10:00:00Z -> next 2026-01-01T11:00:00.000Z",
       "2026-01-01T13:20:00Z -> next 2026-01-01T14:00:00.000Z",
+    ]
+  `)
+})
+
+test('V1 task payloads decode to the send input of each run and encode back unchanged', () => {
+  const base = {
+    prompt: 'Weekly check', agent: 'plan', model: 'anthropic/claude', username: 'tommy', userId: '100', permissions: ['bash:*:allow'],
+    injectionGuardPatterns: ['secret'], parentSessionId: 'ses_parent', preRunCommand: 'git fetch', allowConcurrency: true,
+  }
+  const thread = { ...base, kind: 'thread', threadId: '300', permissions: null }
+  const channel = { ...base, kind: 'channel', channelId: '200', name: 'Weekly', notifyOnly: false, worktreeName: '', cwd: null, baseBranch: 'main' }
+  const decoded = [thread, channel].map((payload) => decodeTaskPayload(JSON.stringify(payload)))
+  expect(decoded).toMatchInlineSnapshot(`
+    [
+      {
+        "allowConcurrency": true,
+        "injectionGuardPatterns": [
+          "secret",
+        ],
+        "preRun": "git fetch",
+        "send": {
+          "agent": "plan",
+          "model": "anthropic/claude",
+          "parentSessionId": "ses_parent",
+          "prompt": "Weekly check",
+          "threadId": "300",
+          "user": "100",
+        },
+        "username": "tommy",
+      },
+      {
+        "allowConcurrency": true,
+        "injectionGuardPatterns": [
+          "secret",
+        ],
+        "preRun": "git fetch",
+        "send": {
+          "agent": "plan",
+          "baseBranch": "main",
+          "channelId": "200",
+          "model": "anthropic/claude",
+          "name": "Weekly",
+          "parentSessionId": "ses_parent",
+          "permissions": [
+            "bash:*:allow",
+          ],
+          "prompt": "Weekly check",
+          "user": "100",
+          "worktree": "",
+        },
+        "username": "tommy",
+      },
+    ]
+  `)
+  // Rewriting keeps the V1 shape, including fields V2 does not use.
+  const encoded = decoded.map((job) => {
+    const json = job instanceof Error ? job : encodeTaskPayload(job)
+    return json instanceof Error ? json : JSON.parse(json)
+  })
+  expect(encoded).toEqual([thread, channel])
+  const invalid = ['{', '[]', '{"kind":"channel","prompt":"x"}', '{"kind":"thread","threadId":"1"}'].map((json) => {
+    const job = decodeTaskPayload(json)
+    return job instanceof Error ? job.message : job
+  })
+  expect(invalid).toMatchInlineSnapshot(`
+    [
+      "Task payload is not valid JSON",
+      "Task payload must be an object",
+      "Task payload has unknown kind channel or no target",
+      "Task payload has no prompt",
     ]
   `)
 })

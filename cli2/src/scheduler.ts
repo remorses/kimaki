@@ -1,20 +1,17 @@
-// Scheduled tasks and sleep wakes (spec 10.5, 26 #5, 30 Phase 8). Time is an
-// input: `Clock.now()` is the only source of "now", so tests drive the
-// scheduler with a manual clock and no timers.
+// Scheduled tasks (spec 26 #5, 30 Phase 8). Time is an input: `Clock.now()`
+// is the only source of "now", so tests drive the scheduler with a manual
+// clock and no timers.
 //
 //   kimaki send --send-at ─▶ createTask ─▶ scheduled_tasks (V1 table and payload)
-//   kimaki sleep          ─▶ createSleep ─▶ session_sleeps (wake_at = clock + duration)
 //
 //   createScheduler loop (every 5s, production only)
-//     └─▶ runDueTasks ─▶ dueTasks (pure) ─▶ task: claim ─▶ pre-run ─▶ busy check ─▶ send
-//                                         └▶ wake: claim attempt ─▶ prompt (idempotent prompt ID)
+//     └─▶ runDueTasks ─▶ runDueWakes (sleeps.ts)
+//                     └▶ due tasks: claim ─▶ busy check ─▶ pre-run ─▶ send
 //
-// A sleep is a one-shot wake of a session. Any new input in its thread
-// cancels it (prompt.ts dispatch). Task runs are in-process calls of the same
-// `send` action as `kimaki send`; the task ID goes in session metadata.
+// Task runs are in-process calls of the same `send` action as `kimaki send`;
+// the task ID goes in session metadata.
 
 import { exec } from 'node:child_process'
-import crypto from 'node:crypto'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { CronExpressionParser } from 'cron-parser'
@@ -28,16 +25,15 @@ import {
 } from 'discord.js'
 import * as errore from 'errore'
 import * as orm from 'drizzle-orm'
-import dedent from 'string-dedent'
 
-import { fetchThread, oc, projectOf, threadOfSession, type Bot } from './bot.ts'
+import { oc, projectOf, threadOfSession, type Bot } from './bot.ts'
 import type { KimakiDb } from './db.ts'
 import { ConfigError, DbError, DiscordError } from './errors.ts'
-import { asSubtext } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { SendInput } from './lock-routes.ts'
-import { prompt, send } from './prompt.ts'
+import { send } from './prompt.ts'
 import * as schema from './schema.ts'
+import { parseFutureUtc, runDueWakes } from './sleeps.ts'
 
 const logger = createLogger('TASK')
 const execAsync = promisify(exec)
@@ -46,8 +42,6 @@ export type Clock = { now(): number }
 
 export const systemClock: Clock = { now: () => Date.now() }
 
-const WAKE_RETRY_MS = 30_000
-const WAKE_MAX_ATTEMPTS = 5
 const DUE_BATCH = 20
 // A hung pre-run command must not block every later task and wake.
 const PRE_RUN_TIMEOUT_MS = 10 * 60_000
@@ -58,19 +52,6 @@ export const TASK_RUN_PREFIX = 'task_run:'
 export const TASK_DELETE_PREFIX = 'task_delete:'
 
 type TaskRow = typeof schema.scheduled_tasks.$inferSelect
-type SleepRow = typeof schema.session_sleeps.$inferSelect
-
-export type Task =
-  | {
-      kind: 'task'
-      id: number
-      status: TaskRow['status']
-      schedule: TaskRow['schedule_kind']
-      dueAt: number
-      cronExpr: string | null
-      timezone: string | null
-    }
-  | { kind: 'wake'; sessionId: string; status: SleepRow['status']; dueAt: number; lastAttemptAt: number | null }
 
 // --- Pure time logic.
 
@@ -81,38 +62,13 @@ export function nextCronRun({ cronExpr, timezone, from }: { cronExpr: string; ti
   )
 }
 
-// Which tasks and wakes are due at `now`, oldest first, with the next run of
-// cron tasks. Missed cron occurrences fire once: the next run counts from `now`.
-export function dueTasks({ tasks, now }: { tasks: readonly Task[]; now: number }): Array<{ task: Task; nextRunAt: ConfigError | number | null }> {
-  return tasks
-    .filter((task) => task.status === 'planned' && task.dueAt <= now)
-    .filter((task) => task.kind === 'task' || task.lastAttemptAt === null || now - task.lastAttemptAt >= WAKE_RETRY_MS)
-    .sort((a, b) => a.dueAt - b.dueAt)
-    .map((task) => ({ task, nextRunAt: nextRunOf({ task, now }) }))
-}
-
-// The run after one that happens at `now`: null for one-shots and wakes.
-export function nextRunOf({ task, now }: { task: Task; now: number }): ConfigError | number | null {
-  if (task.kind === 'wake' || task.schedule === 'at') return null
-  if (!task.cronExpr) return new ConfigError({ reason: `Task ${task.id} has no cron expression` })
+// The run after one that happens at `now`: null for one-shots. Missed cron
+// occurrences fire once: the next run counts from `now`, not from the due time.
+export function nextRunOf({ row, now }: { row: Pick<TaskRow, 'id' | 'schedule_kind' | 'cron_expr' | 'timezone'>; now: number }): ConfigError | number | null {
+  if (row.schedule_kind === 'at') return null
+  if (!row.cron_expr) return new ConfigError({ reason: `Task ${row.id} has no cron expression` })
   // V1 rows may carry a timezone; new tasks are UTC.
-  return nextCronRun({ cronExpr: task.cronExpr, timezone: task.timezone || 'UTC', from: now })
-}
-
-function taskOf(row: typeof schema.scheduled_tasks.$inferSelect): Task {
-  return { kind: 'task', id: row.id, status: row.status, schedule: row.schedule_kind, dueAt: row.next_run_at.getTime(), cronExpr: row.cron_expr, timezone: row.timezone }
-}
-
-const UTC_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/
-
-function parseFutureUtc({ value, now, flag }: { value: string; now: number; flag: string }): ConfigError | number {
-  if (!UTC_DATE.test(value)) {
-    return new ConfigError({ reason: `${flag} date must be UTC ISO format ending with Z (example: 2026-03-01T09:00:00Z). Received: ${value}` })
-  }
-  const time = Date.parse(value)
-  if (Number.isNaN(time)) return new ConfigError({ reason: `Invalid UTC date for ${flag}: ${value}` })
-  if (time <= now) return new ConfigError({ reason: `${flag} must be in the future (UTC): ${value}` })
-  return time
+  return nextCronRun({ cronExpr: row.cron_expr, timezone: row.timezone || 'UTC', from: now })
 }
 
 export type SendAt = { kind: 'at'; runAt: number } | { kind: 'cron'; cronExpr: string; nextRunAt: number }
@@ -133,58 +89,20 @@ export function parseSendAt({ value, now }: { value: string; now: number }): Con
   return { kind: 'cron', cronExpr: trimmed, nextRunAt: next }
 }
 
-const DURATION = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i
-const DURATION_MS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }
 
-// `kimaki sleep`: the bot resolves the wake time with its own clock.
-export function parseWakeAt({ duration, until, now }: { duration?: string; until?: string; now: number }): ConfigError | number {
-  const relative = duration?.trim() ?? ''
-  const absolute = until?.trim() ?? ''
-  if (relative && absolute) return new ConfigError({ reason: 'Pass either --duration or --until, not both' })
-  if (absolute) return parseFutureUtc({ value: absolute, now, flag: '--until' })
-  if (!relative) return new ConfigError({ reason: 'Pass --duration or --until' })
-  const match = DURATION.exec(relative)
-  if (!match) return new ConfigError({ reason: `Invalid --duration "${relative}". Use a number plus ms, s, m, h, or d (example: 2h)` })
-  const amount = Number(match[1]) * DURATION_MS[match[2]!.toLowerCase()]!
-  if (!(amount > 0)) return new ConfigError({ reason: '--duration must be greater than 0' })
-  return now + amount
-}
+// --- Task payload. On disk it keeps V1's JSON shape (spec 17), so V1 rows run
+// unchanged. It is decoded once into the `send` input of every run.
+// `username` and `injectionGuardPatterns` are unused; kept so edits write them back.
 
-function utcLabel(time: number): string {
-  return `${new Date(time).toISOString().slice(0, 16).replace('T', ' ')} UTC`
-}
-
-// What the agent reads after `kimaki sleep` (the V1 kimaki_sleep tool result).
-export function sleepOutput({ wakeAt, reason }: { wakeAt: number; reason: string | null }): string {
-  return [
-    `Sleeping until ${utcLabel(wakeAt)}.${reason ? ` Reason: ${reason}.` : ''}`,
-    'This result is not a wake. Do not continue the waited work. Do not run more commands.',
-    'Reply with one short line that you are waiting until that time, then stop.',
-    'The real wake is a later message that starts with "Woke after sleeping until". Only then continue the wait reason.',
-    'A new user message in this thread cancels the sleep. If you still need that later wake after answering, run kimaki sleep again with --until set to the same UTC time.',
-  ].join(' ')
-}
-
-// --- V1 task payload (spec 17: same shape; injectionGuardPatterns is ignored).
-
-type PayloadBase = {
-  prompt: string
-  agent: string | null
-  model: string | null
-  username: string | null
-  userId: string | null
-  permissions: string[] | null
-  injectionGuardPatterns: string[] | null
-  parentSessionId: string | null
-  preRunCommand: string | null
+export type TaskJob = {
+  send: SendInput
+  preRun: string | null
   allowConcurrency: boolean
+  username: string | null
+  injectionGuardPatterns: string[] | null
 }
 
-export type TaskPayload =
-  | (PayloadBase & { kind: 'thread'; threadId: string })
-  | (PayloadBase & { kind: 'channel'; channelId: string; name: string | null; notifyOnly: boolean; worktreeName: string | null; cwd: string | null; baseBranch?: string })
-
-export function parsePayload(json: string): ConfigError | TaskPayload {
+export function decodeTaskPayload(json: string): ConfigError | TaskJob {
   const parsed = errore.try(() => ({ value: JSON.parse(json) as unknown }), (cause) => new ConfigError({ reason: 'Task payload is not valid JSON', cause }))
   if (parsed instanceof Error) return parsed
   const value = parsed.value
@@ -200,26 +118,73 @@ export function parsePayload(json: string): ConfigError | TaskPayload {
   }
   const prompt = text('prompt')
   if (!prompt) return new ConfigError({ reason: 'Task payload has no prompt' })
-  const base: PayloadBase = {
+  const agent = text('agent')
+  const model = text('model')
+  const user = text('userId')
+  const parentSessionId = text('parentSessionId')
+  const permissions = list('permissions')
+  const common = {
     prompt,
-    agent: text('agent'),
-    model: text('model'),
-    username: text('username'),
-    userId: text('userId'),
-    permissions: list('permissions'),
-    injectionGuardPatterns: list('injectionGuardPatterns'),
-    parentSessionId: text('parentSessionId'),
-    preRunCommand: text('preRunCommand'),
-    allowConcurrency: fields.get('allowConcurrency') === true,
+    ...(agent && { agent }),
+    ...(model && { model }),
+    ...(user && { user }),
+    ...(parentSessionId && { parentSessionId }),
+    ...(permissions?.length && { permissions }),
   }
+  const job = (send: SendInput): TaskJob => ({
+    send,
+    preRun: text('preRunCommand'),
+    allowConcurrency: fields.get('allowConcurrency') === true,
+    username: text('username'),
+    injectionGuardPatterns: list('injectionGuardPatterns'),
+  })
   const kind = text('kind')
   const threadId = text('threadId')
   const channelId = text('channelId')
-  if (kind === 'thread' && threadId) return { ...base, kind, threadId }
-  if (kind === 'channel' && channelId) {
-    return { ...base, kind, channelId, name: text('name'), notifyOnly: fields.get('notifyOnly') === true, worktreeName: text('worktreeName'), cwd: text('cwd'), ...(text('baseBranch') && { baseBranch: text('baseBranch')! }) }
+  if (kind === 'thread' && threadId) return job({ ...common, threadId })
+  if (kind !== 'channel' || !channelId) return new ConfigError({ reason: `Task payload has unknown kind ${kind ?? '(none)'} or no target` })
+  const name = text('name')
+  const cwd = text('cwd')
+  const worktree = text('worktreeName')
+  const baseBranch = text('baseBranch')
+  return job({
+    ...common,
+    channelId,
+    ...(name && { name }),
+    ...(cwd && { cwd }),
+    // '' asks for an automatic worktree name.
+    ...(worktree !== null && { worktree }),
+    ...(baseBranch && { baseBranch }),
+    ...(fields.get('notifyOnly') === true && { notifyOnly: true }),
+  })
+}
+
+// The V1 JSON shape: every field present, null when unset.
+export function encodeTaskPayload({ send, preRun, allowConcurrency, username, injectionGuardPatterns }: TaskJob): ConfigError | string {
+  const base = {
+    prompt: send.prompt,
+    agent: send.agent ?? null,
+    model: send.model ?? null,
+    username,
+    userId: send.user ?? null,
+    permissions: send.permissions ?? null,
+    injectionGuardPatterns,
+    parentSessionId: send.parentSessionId ?? null,
+    preRunCommand: preRun,
+    allowConcurrency,
   }
-  return new ConfigError({ reason: `Task payload has unknown kind ${kind ?? '(none)'} or no target` })
+  if (send.threadId) return JSON.stringify({ ...base, kind: 'thread', threadId: send.threadId })
+  if (!send.channelId) return new ConfigError({ reason: 'A task needs a channel or a thread' })
+  return JSON.stringify({
+    ...base,
+    kind: 'channel',
+    channelId: send.channelId,
+    name: send.name ?? null,
+    notifyOnly: send.notifyOnly === true,
+    worktreeName: send.worktree ?? null,
+    cwd: send.cwd ?? null,
+    ...(send.baseBranch && { baseBranch: send.baseBranch }),
+  })
 }
 
 function preview(prompt: string): string {
@@ -275,8 +240,8 @@ export async function listTasks({ db, guildId = null }: { db: KimakiDb; guildId?
   if (rows instanceof Error) return rows
   const visible = guildId === null ? rows : rows.filter((row) => row.channel && (!row.channel.guild_id || row.channel.guild_id === guildId))
   return visible.map((row) => {
-    const payload = parsePayload(row.payload_json)
-    const known = payload instanceof Error ? null : payload
+    const decoded = decodeTaskPayload(row.payload_json)
+    const job = decoded instanceof Error ? null : decoded
     return {
       id: row.id,
       status: row.status,
@@ -284,12 +249,12 @@ export async function listTasks({ db, guildId = null }: { db: KimakiDb; guildId?
       nextRunAt: row.next_run_at.toISOString(),
       prompt: row.prompt_preview,
       channelId: row.channel_id,
-      threadId: known?.kind === 'thread' ? known.threadId : null,
-      agent: known?.agent ?? null,
-      model: known?.model ?? null,
-      userId: known?.userId ?? null,
-      preRun: known?.preRunCommand ?? null,
-      allowConcurrency: known?.allowConcurrency ?? false,
+      threadId: job?.send.threadId ?? null,
+      agent: job?.send.agent ?? null,
+      model: job?.send.model ?? null,
+      userId: job?.send.user ?? null,
+      preRun: job?.preRun ?? null,
+      allowConcurrency: job?.allowConcurrency ?? false,
       lastError: row.last_error,
     }
   })
@@ -301,9 +266,10 @@ type RunOutcome =
   | { kind: 'skipped'; reason: string }
 
 // Exit 0 runs the task with stdout appended; any other exit skips this occurrence.
-async function preRun({ row, payload }: { row: TaskRow; payload: TaskPayload }): Promise<ConfigError | { prompt: string } | { skip: string }> {
-  const command = payload.preRunCommand
-  if (!command) return { prompt: payload.prompt }
+async function preRun({ row, job }: { row: TaskRow; job: TaskJob }): Promise<ConfigError | { prompt: string } | { skip: string }> {
+  const command = job.preRun
+  const prompt = job.send.prompt
+  if (!command) return { prompt }
   if (!row.project_directory) return new ConfigError({ reason: `Task ${row.id} has a pre-run command but no project directory` })
   const result = await execAsync(command, { cwd: row.project_directory, timeout: PRE_RUN_TIMEOUT_MS })
     .catch((cause: Error & { code?: number | string; stdout?: string; stderr?: string }) => cause)
@@ -314,23 +280,23 @@ async function preRun({ row, payload }: { row: TaskRow; payload: TaskPayload }):
   }
   const output = result.stdout.trim()
   logger.log(`task ${row.id} pre-run passed`)
-  return { prompt: output ? `${payload.prompt}\n\n## Pre-run command output\n\n${output}` : payload.prompt }
+  return { prompt: output ? `${prompt}\n\n## Pre-run command output\n\n${output}` : prompt }
 }
 
 async function execute(bot: Bot, row: TaskRow): Promise<Error | RunOutcome> {
-  const payload = parsePayload(row.payload_json)
-  if (payload instanceof Error) return payload
-  if (payload.permissions?.length && (payload.kind === 'thread' || payload.notifyOnly)) {
+  const job = decodeTaskPayload(row.payload_json)
+  if (job instanceof Error) return job
+  if (job.send.permissions?.length && (job.send.threadId || job.send.notifyOnly)) {
     return new ConfigError({ reason: `Task ${row.id}: --permission applies only to new sessions. Recreate the task for a project channel without --notify-only` })
   }
   // Non-overlap: the session of the previous run must be idle.
   const lastSession = row.session_id
-  if (!payload.allowConcurrency && lastSession) {
+  if (!job.allowConcurrency && lastSession) {
     const active = await oc(bot, 'session.active', (client) => client.session.active())
     if (active instanceof Error) return active
     if (lastSession in active) return { kind: 'busy', sessionId: lastSession }
   }
-  const checked = await preRun({ row, payload })
+  const checked = await preRun({ row, job })
   if (checked instanceof Error) return checked
   if ('skip' in checked) return { kind: 'skipped', reason: checked.skip }
   // Deleted or edited during the pre-run: this occurrence no longer exists.
@@ -339,27 +305,8 @@ async function execute(bot: Bot, row: TaskRow): Promise<Error | RunOutcome> {
     .catch((cause) => new DbError({ operation: `recheck task ${row.id}`, cause }))
   if (current instanceof Error) return current
   if (current?.status !== 'running') return { kind: 'skipped', reason: 'deleted while its pre-run ran' }
-  const common = {
-    prompt: checked.prompt,
-    ...(payload.agent && { agent: payload.agent }),
-    ...(payload.model && { model: payload.model }),
-    ...(payload.userId && { user: payload.userId }),
-  }
-  const input: SendInput = payload.kind === 'thread'
-    ? { ...common, threadId: payload.threadId }
-    : {
-        ...common,
-        channelId: payload.channelId,
-        ...(payload.name && { name: payload.name }),
-        ...(payload.cwd && { cwd: payload.cwd }),
-        ...(payload.worktreeName !== null && { worktree: payload.worktreeName }),
-        ...(payload.baseBranch && { baseBranch: payload.baseBranch }),
-        ...(payload.parentSessionId && { parentSessionId: payload.parentSessionId }),
-        ...(payload.permissions?.length && { permissions: payload.permissions }),
-        ...(payload.notifyOnly && { notifyOnly: true }),
-      }
   const task = { id: row.id, cronExpr: row.schedule_kind === 'cron' ? row.cron_expr : null, timezone: row.timezone }
-  const sent = await send(bot, input, { localOnly: true, task })
+  const sent = await send(bot, { ...job.send, prompt: checked.prompt }, { localOnly: true, task })
   if (sent instanceof Error) return sent
   return { kind: 'ran', threadId: sent.threadId, sessionId: sent.sessionId }
 }
@@ -402,7 +349,7 @@ async function finish(
 
 // claim ─▶ execute ─▶ finish. The claim returns the current row, so a task
 // edited or run by another caller after the due list was read runs as it is
-// now, once. `dueAt`: only claim the occurrence the due list saw.
+// now, once. `dueAt`: only claim the occurrence the due list saw; null runs now.
 async function runTask(bot: Bot, { id, dueAt }: { id: number; dueAt: Date | null }): Promise<Error | RunOutcome> {
   const time = bot.clock.now()
   const claimed = await bot.db.update(schema.scheduled_tasks)
@@ -419,178 +366,24 @@ async function runTask(bot: Bot, { id, dueAt }: { id: number; dueAt: Date | null
   if (!row) return new ConfigError({ reason: `Task #${id} is already running or no longer planned` })
   logger.log(`running task ${row.id}`)
   const outcome = await execute(bot, row)
-  const finished = await finish(bot, { row, nextRunAt: nextRunOf({ task: taskOf(row), now: time }), outcome })
+  const finished = await finish(bot, { row, nextRunAt: nextRunOf({ row, now: time }), outcome })
   if (finished instanceof Error) return finished
   return outcome
 }
 
-// --- `kimaki sleep` rows (session_sleeps). Writing a sleep, cancelling it
-// on new input and delivering its wake run one at a time per session, so a
-// wake never goes out after the input that cancelled it.
 
-function withSleepLock<T>(bot: Bot, { sessionId, run }: { sessionId: string; run: () => Promise<T> }): Promise<T> {
-  const locks = bot.local.sleepLocks
-  const previous = locks.get(sessionId) ?? Promise.resolve()
-  const next = previous.then(run, run)
-  const settled = next.then(() => undefined, () => undefined)
-  locks.set(sessionId, settled)
-  void settled.then(() => {
-    if (locks.get(sessionId) === settled) locks.delete(sessionId)
-  })
-  return next
-}
-
-function sleepRow(sessionId: string, deliveryId: string) {
-  return orm.and(
-    orm.eq(schema.session_sleeps.session_id, sessionId),
-    orm.eq(schema.session_sleeps.delivery_id, deliveryId),
-    orm.eq(schema.session_sleeps.status, 'planned'),
-  )
-}
-
-// New input supersedes a pending sleep of the session (prompt.ts dispatch, /abort).
-export async function cancelSleep(bot: Bot, sessionId: string): Promise<void> {
-  const cancelled = await withSleepLock(bot, {
-    sessionId,
-    run: () =>
-      bot.db.update(schema.session_sleeps).set({ status: 'cancelled' })
-        .where(orm.and(orm.eq(schema.session_sleeps.session_id, sessionId), orm.eq(schema.session_sleeps.status, 'planned')))
-        .returning({ sessionId: schema.session_sleeps.session_id })
-        .catch((cause) => new DbError({ operation: 'cancel sleep', cause })),
-  })
-  if (cancelled instanceof Error) return logger.warn(cancelled.message)
-  if (cancelled.length > 0) logger.log(`sleep of session ${sessionId} cancelled by new input`)
-}
-
-// `kimaki sleep`. One planned sleep per session; a new one replaces the old (new delivery ID).
-export async function createSleep(
-  bot: Bot,
-  { sessionId, duration, until, reason }: { sessionId: string; duration?: string; until?: string; reason?: string },
-) {
-  const state = bot.store.getState()
-  const threadId = state.sessionThreads[sessionId]
-  const root = threadId ? state.roots[threadId] : undefined
-  if (!threadId || !root) {
-    return new ConfigError({ reason: `Session ${sessionId} has no Kimaki thread on this machine. Run kimaki sleep inside a Kimaki session.` })
-  }
-  const time = bot.clock.now()
-  const wakeAt = parseWakeAt({ duration, until, now: time })
-  if (wakeAt instanceof Error) return wakeAt
-  const why = reason?.trim() || null
-  const values = {
-    wake_at: new Date(wakeAt),
-    reason: why,
-    status: 'planned' as const,
-    delivery_id: crypto.randomUUID(),
-    attempts: 0,
-    last_attempt_at: null,
-    created_at: new Date(time),
-  }
-  const saved = await withSleepLock(bot, {
-    sessionId: root,
-    run: () =>
-      bot.db.insert(schema.session_sleeps).values({ session_id: root, ...values })
-        .onConflictDoUpdate({ target: schema.session_sleeps.session_id, set: values })
-        .catch((cause) => new DbError({ operation: 'write session_sleeps', cause })),
-  })
-  if (saved instanceof Error) return saved
-  logger.log(`session ${root} sleeps until ${new Date(wakeAt).toISOString()}`)
-  return { sessionId: root, threadId, wakeAt: new Date(wakeAt).toISOString(), output: sleepOutput({ wakeAt, reason: why }) }
-}
-
-// Delivers a due wake if it is still the planned sleep and its retry delay
-// passed. The prompt ID comes from the delivery ID, so a retried wake cannot
-// deliver twice: OpenCode returns the existing inbox item for a repeated ID
-// (sleep.e2e.test.ts checks this). No interrupt: a wake joins a running turn
-// at its next step.
-async function wake(bot: Bot, row: SleepRow): Promise<Error | void> {
-  const sessionId = row.session_id
-  const deliveryId = row.delivery_id
-  const wakeAt = row.wake_at.getTime()
-  const reason = row.reason?.trim() || null
-  const time = bot.clock.now()
-  const echo = asSubtext(`Woke after sleeping until ${utcLabel(wakeAt)}${reason ? `. Reason: ${reason}` : ''}`)
-  const text = dedent`
-    Woke after sleeping until ${utcLabel(wakeAt)}.${reason ? `\nReason: ${reason}` : ''}
-    Continue the work you were waiting for.
-  `
-  const deliver = async () => {
-    const claimed = await bot.db.update(schema.session_sleeps)
-      .set({ attempts: orm.sql`${schema.session_sleeps.attempts} + 1`, last_attempt_at: new Date(time) })
-      .where(orm.and(
-        sleepRow(sessionId, deliveryId),
-        orm.or(orm.isNull(schema.session_sleeps.last_attempt_at), orm.lte(schema.session_sleeps.last_attempt_at, new Date(time - WAKE_RETRY_MS))),
-      ))
-      .returning({ attempts: schema.session_sleeps.attempts })
-      .catch((cause) => new DbError({ operation: `claim wake of ${sessionId}`, cause }))
-    if (claimed instanceof Error) return claimed
-    const attempt = claimed[0]
-    if (!attempt) return 'stale' as const
-    const settle = async (status: 'consumed' | 'failed') => {
-      const settled = await bot.db.update(schema.session_sleeps).set({ status }).where(sleepRow(sessionId, deliveryId))
-        .catch((cause) => new DbError({ operation: `settle wake of ${sessionId}`, cause }))
-      return settled instanceof Error ? settled : status === 'consumed' ? 'woke' as const : 'failed' as const
-    }
-    // Resolved now, not at sleep time: /resume may have moved the session.
-    const threadId = threadOfSession(bot, sessionId)
-    if (!threadId) {
-      logger.warn(`no thread owns session ${sessionId}, dropping its wake`)
-      return settle('failed')
-    }
-    const sent = await (async () => {
-      const thread = await fetchThread(bot, threadId)
-      if (thread instanceof Error) return thread
-      return prompt(bot, {
-        sessionId,
-        threadId,
-        threadName: thread.name,
-        text,
-        echo,
-        delivery: 'steer',
-        author: { id: bot.discord.user!.id, username: 'kimaki' },
-        messageId: deliveryId,
-        id: `msg_sleep_${deliveryId}`,
-      })
-    })()
-    if (!(sent instanceof Error)) return settle('consumed')
-    logger.warn(`wake of ${sessionId} failed (attempt ${attempt.attempts}): ${sent.message}`)
-    if (attempt.attempts >= WAKE_MAX_ATTEMPTS) return settle('failed')
-    return 'retry' as const
-  }
-  const result = await withSleepLock(bot, { sessionId, run: deliver })
-  if (result instanceof Error) return result
-  if (result === 'woke') logger.log(`woke session ${sessionId}`)
-}
-
+// Wakes first: they are quick, while a task can wait for its pre-run.
+// One at a time: runs share the OpenCode service and Discord rate limits.
 async function runDueTasks(bot: Bot): Promise<void> {
   const time = bot.clock.now()
-  const [tasks, sleeps] = await Promise.all([
-    bot.db.query.scheduled_tasks
-      .findMany({ where: { status: 'planned', next_run_at: { lte: new Date(time) } }, orderBy: { next_run_at: 'asc', id: 'asc' }, limit: DUE_BATCH })
-      .catch((cause) => new DbError({ operation: 'read due tasks', cause })),
-    bot.db.query.session_sleeps
-      .findMany({ where: { status: 'planned', wake_at: { lte: new Date(time) } }, orderBy: { wake_at: 'asc' }, limit: DUE_BATCH })
-      .catch((cause) => new DbError({ operation: 'read due sleeps', cause })),
-  ])
+  await runDueWakes(bot, { time, limit: DUE_BATCH })
+  const tasks = await bot.db.query.scheduled_tasks
+    .findMany({ where: { status: 'planned', next_run_at: { lte: new Date(time) } }, orderBy: { next_run_at: 'asc', id: 'asc' }, limit: DUE_BATCH })
+    .catch((cause) => new DbError({ operation: 'read due tasks', cause }))
   if (tasks instanceof Error) return logger.error(tasks.message)
-  if (sleeps instanceof Error) return logger.error(sleeps.message)
-  const sleepRows = new Map(sleeps.map((row) => [row.session_id, row]))
-  const wakes = sleeps.map((row): Task => ({
-    kind: 'wake',
-    sessionId: row.session_id,
-    status: row.status,
-    dueAt: row.wake_at.getTime(),
-    lastAttemptAt: row.last_attempt_at?.getTime() ?? null,
-  }))
-  const due = dueTasks({ now: time, tasks: [...tasks.map(taskOf), ...wakes] })
-  // Wakes first: they are quick, while a task can wait for its pre-run.
-  // One at a time: runs share the OpenCode service and Discord rate limits.
-  const ordered = [...due.filter((item) => item.task.kind === 'wake'), ...due.filter((item) => item.task.kind === 'task')]
-  for (const { task } of ordered) {
-    const result = task.kind === 'task'
-      ? await runTask(bot, { id: task.id, dueAt: new Date(task.dueAt) })
-      : await wake(bot, sleepRows.get(task.sessionId)!)
-    if (result instanceof Error) logger.warn(result.message)
+  for (const row of tasks) {
+    const ran = await runTask(bot, { id: row.id, dueAt: row.next_run_at })
+    if (ran instanceof Error) logger.warn(ran.message)
   }
 }
 
@@ -623,30 +416,16 @@ export async function createTask(bot: Bot, { send: input, options }: { send: Sen
   })()
   if (project instanceof Error) return project
   if (!project) return new ConfigError({ reason: 'Schedule tasks on the machine that owns the channel (no local project for it)' })
-  const base: PayloadBase = {
-    prompt: input.prompt,
-    agent: input.agent ?? null,
-    model: input.model ?? null,
-    username: null,
-    userId: user,
-    permissions: input.permissions ?? null,
-    injectionGuardPatterns: null,
-    parentSessionId: input.parentSessionId ?? null,
-    preRunCommand: options.preRun,
+  // The encoder keeps only the fields of the target kind.
+  const target = threadId ? { threadId } : { channelId: project.channel_id }
+  const payload = encodeTaskPayload({
+    send: { ...input, ...target, user: user ?? undefined },
+    preRun: options.preRun,
     allowConcurrency: options.allowConcurrency,
-  }
-  const payload: TaskPayload = threadId
-    ? { ...base, kind: 'thread', threadId }
-    : {
-        ...base,
-        kind: 'channel',
-        channelId: project.channel_id,
-        name: input.name ?? null,
-        notifyOnly: input.notifyOnly === true,
-        worktreeName: input.worktree ?? null,
-        cwd: input.cwd ?? null,
-        ...(input.baseBranch && { baseBranch: input.baseBranch }),
-      }
+    username: null,
+    injectionGuardPatterns: null,
+  })
+  if (payload instanceof Error) return payload
   const nextRunAt = when.kind === 'at' ? when.runAt : when.nextRunAt
   const inserted = await bot.db.insert(schema.scheduled_tasks).values({
     status: 'planned',
@@ -655,7 +434,7 @@ export async function createTask(bot: Bot, { send: input, options }: { send: Sen
     cron_expr: when.kind === 'cron' ? when.cronExpr : null,
     timezone: when.kind === 'cron' ? 'UTC' : null,
     next_run_at: new Date(nextRunAt),
-    payload_json: JSON.stringify(payload),
+    payload_json: payload,
     prompt_preview: preview(input.prompt),
     channel_id: project.channel_id,
     thread_id: threadId ?? null,
@@ -673,23 +452,29 @@ export async function editTask(bot: Bot, edit: TaskEdit) {
   if (row instanceof Error) return row
   if (!row) return new ConfigError({ reason: `Task ${edit.id} not found. List tasks with: kimaki task list` })
   if (row.status !== 'planned') return new ConfigError({ reason: `Task ${edit.id} is ${row.status}; only planned tasks can be edited` })
-  const payload = parsePayload(row.payload_json)
-  if (payload instanceof Error) return payload
-  const user = edit.user === undefined ? payload.userId : userIdOf(edit.user)
+  const job = decodeTaskPayload(row.payload_json)
+  if (job instanceof Error) return job
+  const user = edit.user === undefined ? null : userIdOf(edit.user)
   if (user instanceof Error) return user
   if (edit.model && !/^[^/]+\/.+$/.test(edit.model)) return new ConfigError({ reason: 'Use --model provider/model' })
   const when = edit.sendAt === undefined ? null : parseSendAt({ value: edit.sendAt, now: bot.clock.now() })
   if (when instanceof Error) return when
   // Empty strings clear optional values, like V1.
-  const updated: TaskPayload = {
-    ...payload,
-    ...(edit.prompt !== undefined && { prompt: edit.prompt }),
-    ...(edit.agent !== undefined && { agent: edit.agent || null }),
-    ...(edit.model !== undefined && { model: edit.model || null }),
-    ...(edit.preRun !== undefined && { preRunCommand: edit.preRun || null }),
+  const prompt = edit.prompt ?? job.send.prompt
+  const payload = encodeTaskPayload({
+    ...job,
+    send: {
+      ...job.send,
+      prompt,
+      ...(edit.agent !== undefined && { agent: edit.agent || undefined }),
+      ...(edit.model !== undefined && { model: edit.model || undefined }),
+      ...(edit.user !== undefined && { user: user ?? undefined }),
+    },
+    ...(edit.preRun !== undefined && { preRun: edit.preRun || null }),
     ...(edit.allowConcurrency !== undefined && { allowConcurrency: edit.allowConcurrency }),
-    ...(edit.user !== undefined && { userId: user, username: null }),
-  }
+    ...(edit.user !== undefined && { username: null }),
+  })
+  if (payload instanceof Error) return payload
   const schedule = when && {
     schedule_kind: when.kind,
     run_at: when.kind === 'at' ? new Date(when.runAt) : null,
@@ -698,7 +483,7 @@ export async function editTask(bot: Bot, edit: TaskEdit) {
     next_run_at: new Date(when.kind === 'at' ? when.runAt : when.nextRunAt),
   }
   const saved = await bot.db.update(schema.scheduled_tasks)
-    .set({ payload_json: JSON.stringify(updated), prompt_preview: preview(updated.prompt), ...schedule })
+    .set({ payload_json: payload, prompt_preview: preview(prompt), ...schedule })
     .where(orm.and(orm.eq(schema.scheduled_tasks.id, edit.id), orm.eq(schema.scheduled_tasks.status, 'planned')))
     .returning({ id: schema.scheduled_tasks.id })
     .catch((cause) => new DbError({ operation: 'update task', cause }))
