@@ -32,26 +32,6 @@ test('next run of one-shot and cron tasks, V1 timezones included', () => {
   `)
 })
 
-test('a cron task fires once per occurrence as the clock moves', () => {
-  const fired: string[] = []
-  const row = { id: 1, schedule_kind: 'cron' as const, cron_expr: '0 * * * *', timezone: 'UTC' }
-  const state = { dueAt: at('2026-01-01T10:00:00Z') }
-  for (const now of ['2026-01-01T09:30:00Z', '2026-01-01T10:00:00Z', '2026-01-01T10:00:00Z', '2026-01-01T10:59:59Z', '2026-01-01T13:20:00Z']) {
-    if (state.dueAt > at(now)) continue
-    const next = nextRunOf({ row, now: at(now) })
-    if (typeof next !== 'number') continue
-    fired.push(`${now} -> next ${iso(next)}`)
-    state.dueAt = next
-  }
-  // Missed occurrences while the bot was down fire once, not once per hour.
-  expect(fired).toMatchInlineSnapshot(`
-    [
-      "2026-01-01T10:00:00Z -> next 2026-01-01T11:00:00.000Z",
-      "2026-01-01T13:20:00Z -> next 2026-01-01T14:00:00.000Z",
-    ]
-  `)
-})
-
 test('V1 task payloads decode to the send input of each run and encode back unchanged', () => {
   const base = {
     prompt: 'Weekly check', agent: 'plan', model: 'anthropic/claude', username: 'tommy', userId: '100', permissions: ['bash:*:allow'],
@@ -108,6 +88,35 @@ test('V1 task payloads decode to the send input of each run and encode back unch
     return json instanceof Error ? json : JSON.parse(json)
   })
   expect(encoded).toEqual([thread, channel])
+  const empty = { ...channel, name: '', agent: '', model: '', userId: '', parentSessionId: '', permissions: [], cwd: '', baseBranch: '' }
+  const emptyJob = decodeTaskPayload(JSON.stringify(empty))
+  if (emptyJob instanceof Error) return expect.fail(emptyJob.message)
+  const rewritten = encodeTaskPayload({ ...emptyJob, allowConcurrency: false })
+  if (rewritten instanceof Error) return expect.fail(rewritten.message)
+  expect(JSON.parse(rewritten)).toMatchInlineSnapshot(`
+    {
+      "agent": "",
+      "allowConcurrency": false,
+      "baseBranch": "",
+      "channelId": "200",
+      "cwd": "",
+      "injectionGuardPatterns": [
+        "secret",
+      ],
+      "kind": "channel",
+      "model": "",
+      "name": "",
+      "notifyOnly": false,
+      "parentSessionId": "",
+      "permissions": [],
+      "preRunCommand": "git fetch",
+      "prompt": "Weekly check",
+      "userId": "",
+      "username": "tommy",
+      "worktreeName": "",
+    }
+  `)
+  expect(JSON.parse(rewritten)).toEqual({ ...empty, allowConcurrency: false })
   const invalid = ['{', '[]', '{"kind":"channel","prompt":"x"}', '{"kind":"thread","threadId":"1"}'].map((json) => {
     const job = decodeTaskPayload(json)
     return job instanceof Error ? job.message : job

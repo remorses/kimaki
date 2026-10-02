@@ -219,3 +219,33 @@ test('retry notices are throttled to one per 10s', () => {
     ]
   `)
 })
+
+test('snapshot closes the ack of an item promoted while disconnected, without an echo', () => {
+  const events = loadFixture('queue-plain.events.jsonl')
+  const index = events.findIndex((event) => event.type === 'session.inbox.enqueued' && event.data.item.delivery === 'queue')
+  const enqueued = events[index]
+  if (enqueued?.type !== 'session.inbox.enqueued' || enqueued.data.item.type !== 'user') return expect.fail('fixture has no queued user item')
+  const { view } = replay({ events: events.slice(0, index + 1) })
+  expect(view.inbox[0]?.acked).toBe(true)
+  const snapshot = {
+    type: 'kimaki.snapshot' as const,
+    at: enqueued.created,
+    directory: null,
+    activeSessionIds: [view.sessionId],
+    sessions: [{
+      sessionId: view.sessionId,
+      inbox: [{ ...enqueued.data.item, id: enqueued.data.inboxID, sessionID: view.sessionId, time: { created: enqueued.created }, delivery: 'steer' as const }],
+      forms: [],
+      permissions: [],
+    }],
+  }
+  const hydrated = reduce({ view, event: snapshot, prefs: DEFAULT_PREFS })
+  expect(effectLines(hydrated.effects)).toMatchInlineSnapshot(`
+    [
+      "[edit queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued message sent",
+    ]
+  `)
+  expect(hydrated.effects.map((effect) => effect.type)).toEqual(['edit'])
+  expect(hydrated.view.inbox[0]?.delivery).toBe('steer')
+  expect(reduce({ view: hydrated.view, event: snapshot, prefs: DEFAULT_PREFS }).effects).toEqual([])
+})

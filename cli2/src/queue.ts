@@ -136,6 +136,7 @@ export function hydrateQueue(slice: Slice & { inbox: readonly SessionInboxInfo[]
   draft.inbox = users.map((item): PendingInput => {
     const existing = known.get(item.id)
     if (existing?.delivery === item.delivery) return existing
+    if (existing?.delivery === 'queue' && item.delivery === 'steer') closeAck(slice, existing, 'Queued message sent')
     const meta = discordMetadata(item.payload.metadata)
     return { inboxID: item.id, delivery: item.delivery, text: stripTurnContext(item.payload.text), ...meta, acked: item.delivery === 'queue' }
   })

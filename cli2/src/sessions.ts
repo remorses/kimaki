@@ -176,14 +176,18 @@ export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
     const location = { directory }
     const deadline = Date.now() + 10_000
     while (Date.now() < deadline) {
+      const endpoint = bot.opencode.endpoint
+      if (!endpoint) return new OpenCodeUnavailableError({ reason: 'not connected' })
       // The integration catalog waits for activations OpenCode already started; plugin.list does not.
-      const activated = await oc(bot, 'integration.list', (client) => client.integration.list({ location }))
+      const activated = await endpoint.client.integration.list({ location })
+        .catch((cause) => new OpenCodeError({ operation: 'integration.list', cause }))
       if (activated instanceof Error) return activated
-      const plugins = await oc(bot, 'plugin.list', (client) => client.plugin.list({ location }))
+      const plugins = await endpoint.client.plugin.list({ location })
+        .catch((cause) => new OpenCodeError({ operation: 'plugin.list', cause }))
       if (plugins instanceof Error) return plugins
+      if (bot.opencode.endpoint !== endpoint) continue
       if (plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) {
-        const current = bot.opencode.endpoint
-        if (current) active.set(current, (active.get(current) ?? new Set()).add(directory))
+        active.set(endpoint, (active.get(endpoint) ?? new Set()).add(directory))
         return
       }
       await sleep(200)

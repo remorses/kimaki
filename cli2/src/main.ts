@@ -178,5 +178,6 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     ...(!(projects instanceof Error) && { user_project_count: projects }),
   })
   const resources = cleanup.move()
-  return { ...bot, lock, scheduler: { runDueTasks: scheduler.runDueTasks }, stop: () => resources.disposeAsync() }
+  let stopping: Promise<void> | undefined
+  return { ...bot, lock, scheduler: { runDueTasks: scheduler.runDueTasks }, stop: () => (stopping ??= resources.disposeAsync()) }
 }

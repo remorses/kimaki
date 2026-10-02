@@ -127,11 +127,11 @@ export function decodeTaskPayload(json: string): ConfigError | TaskJob {
   const permissions = list('permissions')
   const common = {
     prompt,
-    ...(agent && { agent }),
-    ...(model && { model }),
-    ...(user && { user }),
-    ...(parentSessionId && { parentSessionId }),
-    ...(permissions?.length && { permissions }),
+    ...(agent !== null && { agent }),
+    ...(model !== null && { model }),
+    ...(user !== null && { user }),
+    ...(parentSessionId !== null && { parentSessionId }),
+    ...(permissions !== null && { permissions }),
   }
   const job = (send: SendInput): TaskJob => ({
     send,
@@ -152,11 +152,11 @@ export function decodeTaskPayload(json: string): ConfigError | TaskJob {
   return job({
     ...common,
     channelId,
-    ...(name && { name }),
-    ...(cwd && { cwd }),
+    ...(name !== null && { name }),
+    ...(cwd !== null && { cwd }),
     // '' asks for an automatic worktree name.
     ...(worktree !== null && { worktree }),
-    ...(baseBranch && { baseBranch }),
+    ...(baseBranch !== null && { baseBranch }),
     ...(fields.get('notifyOnly') === true && { notifyOnly: true }),
   })
 }
@@ -185,7 +185,7 @@ export function encodeTaskPayload({ send, preRun, allowConcurrency, username, in
     notifyOnly: send.notifyOnly === true,
     worktreeName: send.worktree ?? null,
     cwd: send.cwd ?? null,
-    ...(send.baseBranch && { baseBranch: send.baseBranch }),
+    ...(send.baseBranch !== undefined && { baseBranch: send.baseBranch }),
   })
 }
 
@@ -308,7 +308,19 @@ async function execute(bot: Bot, row: TaskRow): Promise<Error | RunOutcome> {
   if (current instanceof Error) return current
   if (current?.status !== 'running') return { kind: 'skipped', reason: 'deleted while its pre-run ran' }
   const task = { id: row.id, cronExpr: row.schedule_kind === 'cron' ? row.cron_expr : null, timezone: row.timezone }
-  const sent = await send(bot, { ...job.send, prompt: checked.prompt }, { localOnly: true, task })
+  const input = {
+    ...job.send,
+    prompt: checked.prompt,
+    agent: job.send.agent || undefined,
+    model: job.send.model || undefined,
+    user: job.send.user || undefined,
+    parentSessionId: job.send.parentSessionId || undefined,
+    permissions: job.send.permissions?.length ? job.send.permissions : undefined,
+    name: job.send.name || undefined,
+    cwd: job.send.cwd || undefined,
+    baseBranch: job.send.baseBranch || undefined,
+  }
+  const sent = await send(bot, input, { localOnly: true, task })
   if (sent instanceof Error) return sent
   return { kind: 'ran', threadId: sent.threadId, sessionId: sent.sessionId }
 }
