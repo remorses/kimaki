@@ -7,8 +7,8 @@ import path from 'node:path'
 import * as errore from 'errore'
 
 import { ConfigError } from './errors.ts'
+import { canonicalPath } from './file-edit-log.ts'
 import { createLogger } from './logger.ts'
-import { canonicalPath } from './project.ts'
 
 const logger = createLogger('WORKTREE')
 const execAsync = promisify(execFile)

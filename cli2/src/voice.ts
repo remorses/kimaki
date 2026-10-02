@@ -446,24 +446,28 @@ async function projectFileTree(directory: string): Promise<string> {
 
 export type TranscriptionBaseUrls = { openai?: string; gemini?: string }
 
+// Usable audio API keys, best first: stored keys, then env, each in V1 order (OpenAI, then Gemini).
+// Callers choose the bot_api_keys row: transcription by bot token, `kimaki tts` any row.
+export function audioKeyCandidates(stored: { openai_api_key: string | null; gemini_api_key: string | null } | null | undefined) {
+  const candidates = [
+    { provider: 'openai' as const, apiKey: stored?.openai_api_key },
+    { provider: 'gemini' as const, apiKey: stored?.gemini_api_key },
+    { provider: 'openai' as const, apiKey: process.env['OPENAI_API_KEY'] },
+    { provider: 'gemini' as const, apiKey: process.env['GEMINI_API_KEY'] },
+  ]
+  return candidates.flatMap(({ provider, apiKey }) => (apiKey ? [{ provider, apiKey }] : []))
+}
+
 async function transcriptionProvider({ db, token }: { db: KimakiDb; token: string }) {
   const row = await db.query.bot_tokens
     .findFirst({ where: { token }, with: { api_keys: true } })
     .catch((e) => new DbError({ operation: 'read transcription keys', cause: e }))
   if (row instanceof Error) return row
-  const keys = row?.api_keys
-  // Stored keys first, then env, each in V1 order: OpenAI, then Gemini.
-  const candidates = [
-    { kind: 'openai' as const, apiKey: keys?.openai_api_key },
-    { kind: 'gemini' as const, apiKey: keys?.gemini_api_key },
-    { kind: 'openai' as const, apiKey: process.env['OPENAI_API_KEY'] },
-    { kind: 'gemini' as const, apiKey: process.env['GEMINI_API_KEY'] },
-  ]
   const credentials = row ? credentialsFromRow(row) : null
   const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
   const gateway = clientId && clientSecret ? { kind: 'gateway' as const, clientId, clientSecret } : null
-  const found = candidates.find((candidate) => candidate.apiKey)
-  if (found?.apiKey) return { kind: found.kind, apiKey: found.apiKey, gateway }
+  const found = audioKeyCandidates(row?.api_keys)[0]
+  if (found) return { kind: found.provider, apiKey: found.apiKey, gateway }
   if (gateway) return gateway
   return new NoTranscriptionKeyError()
 }

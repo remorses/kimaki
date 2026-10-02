@@ -11,7 +11,7 @@ import { ButtonStyle, ComponentType, type ButtonInteraction, type ChatInputComma
 
 import { oc, projectOf, rootSession, sessionDirectory, type Author, type Bot } from '../bot.ts'
 import { ConfigError, DbError } from '../errors.ts'
-import { canonicalPath } from '../project.ts'
+import { canonicalPath } from '../file-edit-log.ts'
 import * as schema from '../schema.ts'
 import { fork, sessionCwd, startSession } from '../sessions.ts'
 import { authorOf, replyError, resolveTarget } from '../slash-commands.ts'

@@ -45,8 +45,10 @@ export function extractEditedFiles({ tool, input, directory }: { tool: string; i
   return [...new Set(headers.map((match) => match[1]!.trim()).filter(Boolean))].map((file) => resolveToolPath(directory, file))
 }
 
-// Real path of the nearest existing ancestor plus the rest, so deleted files still match through symlinks (/var vs /private/var).
-async function canonicalPath(file: string): Promise<string> {
+// Absolute path with symlinks resolved, like the real paths OpenCode reports. A missing
+// tail (deleted file) keeps its name under the real nearest existing ancestor, so
+// /var and /private/var still match. Lives here because the plugin must stay light.
+export async function canonicalPath(file: string): Promise<string> {
   const resolved = path.resolve(file)
   const real = await fs.promises.realpath(resolved).catch(() => undefined)
   if (real) return real
