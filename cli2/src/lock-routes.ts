@@ -7,7 +7,7 @@ import path from 'node:path'
 import * as orm from 'drizzle-orm'
 import { z } from 'zod'
 
-import { parseButton, requestAgentUi } from './agent-ui.ts'
+import { parseButton } from './agent-ui.ts'
 import { fetchThread, oc, parseModel, projectOf, type Bot } from './bot.ts'
 import { credential, loginCli } from './commands/login-commands.ts'
 import { setChannelAgent, setChannelModel, setVerbosity } from './commands/preference-commands.ts'
@@ -272,7 +272,7 @@ export const lockRoutes = {
         .max(3, { error: 'Use 1 to 3 --button flags' })
         .refine((buttons) => buttons.map((item) => item.command ?? '').join('\n').length <= 1800, { error: 'Button commands must fit in one Discord message' }),
     }, { error: 'Expected agent UI input' }),
-    run: async (bot, { buttons, ...input }, signal) => requestAgentUi(bot, { ...input, content: { buttons }, signal }),
+    run: async (bot, { buttons, ...input }, signal) => bot.features.agentUi.request({ ...input, content: { buttons }, signal }),
   }),
   'upload-request': route({
     input: z.object({
@@ -281,7 +281,7 @@ export const lockRoutes = {
       maxFiles: z.number({ error: 'Use --prompt and --max-files 1 to 10' }).int({ error: 'Use --prompt and --max-files 1 to 10' })
         .min(1, { error: 'Use --prompt and --max-files 1 to 10' }).max(10, { error: 'Use --prompt and --max-files 1 to 10' }).default(5),
     }, { error: 'Expected agent UI input' }),
-    run: async (bot, { prompt, maxFiles, ...input }, signal) => requestAgentUi(bot, { ...input, content: { prompt, maxFiles }, signal }),
+    run: async (bot, { prompt, maxFiles, ...input }, signal) => bot.features.agentUi.request({ ...input, content: { prompt, maxFiles }, signal }),
   }),
   login: route({
     input: z.object({

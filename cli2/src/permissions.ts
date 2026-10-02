@@ -15,11 +15,12 @@ import { createLogger } from './logger.ts'
 import { castDraft, type Draft } from 'immer'
 
 import { button, buttonRow, textOnly, type UiMessage } from './format-parts.ts'
+import type { InteractionRoutes } from './interaction-context.ts'
 import type { Emit, ThreadView } from './thread-reducer.ts'
 
 const logger = createLogger('PERMISSION')
 
-export const PERMISSION_PREFIX = 'perm:'
+const PERMISSION_PREFIX = 'perm:'
 
 export type PermissionDecision = 'once' | 'always' | 'reject'
 
@@ -99,7 +100,7 @@ function parseDecision(value: string | undefined): PermissionDecision | null {
   return value === 'once' || value === 'always' || value === 'reject' ? value : null
 }
 
-export async function handlePermissionButton(bot: Bot, interaction: ButtonInteraction): Promise<void> {
+async function handlePermissionButton(bot: Bot, interaction: ButtonInteraction): Promise<void> {
   const [requestID, rawDecision] = interaction.customId.slice(PERMISSION_PREFIX.length).split(':')
   const decision = parseDecision(rawDecision)
   const request = requestID ? bot.store.getState().threads[interaction.channelId]?.permissions[requestID] : undefined
@@ -116,3 +117,5 @@ export async function handlePermissionButton(bot: Bot, interaction: ButtonIntera
   logger.warn(`reply ${requestID} failed: ${result.message}`)
   await interaction.followUp({ content: 'This permission request is no longer pending', flags: MessageFlags.Ephemeral })
 }
+
+export const permissionRoutes: InteractionRoutes = { buttons: { [PERMISSION_PREFIX]: handlePermissionButton } }

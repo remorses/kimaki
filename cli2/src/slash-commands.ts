@@ -1,10 +1,14 @@
 // Slash commands and component interactions (spec 14). Registered per guild
 // with one bulk overwrite (guild-scoped route: gateway-proxy rejects global
 // application command routes). Every interaction passes the same permission
-// gate as messages, then goes to its handler: thread commands here, session
-// and preference commands in commands/, buttons and selects of session output
-// in their feature files. Handlers only collect input and call the writers
-// (prompt.ts, sessions.ts, ...); session output comes from events.
+// gate as messages, then goes to its handler with one lookup:
+//
+//   feature files ─▶ InteractionRoutes ─▶ createInteractionRegistry (this file)
+//   chat command  ─▶ commands[name]  (else a dynamic command below)
+//   button        ─▶ buttons[prefix]   select ─▶ selects[prefix]   modal ─▶ modals[prefix]
+//
+// Handlers only collect input and call the writers (prompt.ts, sessions.ts,
+// ...); session output comes from events.
 //
 // Dynamic commands come from the OpenCode catalog of the guild's projects:
 //
@@ -19,129 +23,122 @@
 //
 // Discord allows 100 commands per guild; skills are cut first.
 
-import { execFile } from 'node:child_process'
-import path from 'node:path'
-import { promisify } from 'node:util'
 import {
-  ChannelType,
-  EmbedBuilder,
   Events,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
   type AutocompleteInteraction,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Guild,
   type Interaction,
-  type MessageComponentInteraction,
   type ModalSubmitInteraction,
   type RESTPostAPIChatInputApplicationCommandsJSONBody,
-  type ThreadChannel,
+  type StringSelectMenuInteraction,
 } from 'discord.js'
-import * as errore from 'errore'
-import dedent from 'string-dedent'
 
-import { clickAgentButton, submitUploadModal } from './agent-ui.ts'
-import { oc, projectOf, sessionDirectory, type Author, type Bot, type ModelChoice } from './bot.ts'
-import { handleLoginClick, handleLoginCommand, handleLoginModal, handleLoginSelect } from './commands/login-commands.ts'
-import {
-  applyAgent,
-  handlePreferenceCommand,
-  handlePreferenceSelect,
-  ownsPreferenceSelect,
-  PREFERENCE_COMMANDS,
-  switchModel,
-  variantChoices,
-  variantModel,
-} from './commands/preference-commands.ts'
-import { handleForkSelect, handleSessionCommand, ownsSessionSelect, SESSION_COMMANDS, sessionAutocomplete } from './commands/session-commands.ts'
-import { handleWorktreeClick, handleWorktreeCommand, WORKTREE_COMMANDS, WORKTREE_PREFIX } from './commands/worktree-commands.ts'
-import { ConfigError, DbError, DiscordError } from './errors.ts'
-import { formatError } from './format-parts.ts'
+import { agentUiRoutes } from './agent-ui.ts'
+import { oc, projectOf, type Bot, type ModelChoice } from './bot.ts'
+import { createLoginRoutes } from './commands/login-commands.ts'
+import { applyAgent, createPreferenceRoutes, switchModel, variantChoices, variantModel } from './commands/preference-commands.ts'
+import { sessionRoutes } from './commands/session-commands.ts'
+import { SKIPPED_COMMANDS, threadRoutes } from './commands/thread-commands.ts'
+import { worktreeRoutes } from './commands/worktree-commands.ts'
+import { DbError, DiscordError } from './errors.ts'
 import { canUseKimaki } from './ingress.ts'
+import {
+  authorOf,
+  replyError,
+  replyWithEcho,
+  resolveTarget,
+  respondChoices,
+  sessionTarget,
+  type InteractionHandler,
+  type InteractionRoutes,
+  type SlashCommand,
+} from './interaction-context.ts'
 import { createLogger } from './logger.ts'
-import { shellQuote } from './onboarding.ts'
-import { handlePermissionButton, PERMISSION_PREFIX } from './permissions.ts'
-import { abort, clearQueue, dispatch, redo, undo } from './prompt.ts'
-import { FORM_OTHER_PREFIX, FORM_SELECT_PREFIX, handleFormOther, handleFormSelect } from './questions.ts'
-import { formatEcho } from './queue.ts'
+import { permissionRoutes } from './permissions.ts'
+import { dispatch } from './prompt.ts'
+import { createQuestionHandlers } from './questions.ts'
 import type { Route } from './routes.ts'
-import { TASK_DELETE_PREFIX, TASK_RUN_PREFIX, tasksClick, tasksCommand } from './scheduler.ts'
-import { forkBtw, startSession } from './sessions.ts'
-import { handleTranscriptionKeyModal, TRANSCRIPTION_KEY_MODAL, transcriptionKeyModal } from './voice.ts'
+import { taskRoutes } from './scheduler.ts'
+import { startSession } from './sessions.ts'
 
 const logger = createLogger('COMMANDS')
-const execFileAsync = promisify(execFile)
 
 const MAX_COMMANDS = 100
 const NAME_LIMIT = 32
-// Built-in OpenCode command that only makes sense in the TUI (V1 skipped it too).
-const SKIPPED_COMMANDS = new Set(['init'])
 
-const STATIC_COMMANDS = [
-  new SlashCommandBuilder().setName('cwd').setDescription('Show or change this session working directory')
-    .addStringOption((option) => option.setName('path').setDescription('Project subfolder or linked worktree; relative to current cwd')),
-  new SlashCommandBuilder().setName('new-worktree').setDescription('Start an isolated Git worktree session; fork context when used in a thread')
-    .addStringOption((option) => option.setName('name').setDescription('Lowercase letters, digits and hyphens'))
-    .addStringOption((option) => option.setName('base-branch').setDescription('Starting Git ref (default: project HEAD)')),
-  new SlashCommandBuilder().setName('worktrees').setDescription('List worktrees, delete a safe checkout, or toggle automatic worktrees'),
-  new SlashCommandBuilder().setName('merge-worktree').setDescription('Merge this worktree into a local branch')
-    .addStringOption((option) => option.setName('strategy').setDescription('Merge strategy').addChoices({ name: 'Rebase', value: 'rebase' }, { name: 'Squash', value: 'squash' }))
-    .addStringOption((option) => option.setName('target-branch').setDescription('Local target branch (default: project checkout branch)')),
-  new SlashCommandBuilder().setName('login').setDescription('Connect an OpenCode provider'),
-  new SlashCommandBuilder().setName('transcription-key').setDescription('Set the OpenAI or Gemini API key for voice transcription and speech'),
-  new SlashCommandBuilder()
-    .setName('new-session')
-    .setDescription('Start a new OpenCode session')
-    .addStringOption((option) => option.setName('prompt').setDescription('Prompt content for the session').setRequired(true))
-    .addStringOption((option) =>
-      option.setName('files').setDescription('Files to attach (comma separated; autocomplete)').setAutocomplete(true).setMaxLength(6000),
-    )
-    .addStringOption((option) => option.setName('agent').setDescription('Agent to use for this session').setAutocomplete(true)),
-  new SlashCommandBuilder()
-    .setName('resume')
-    .setDescription('Resume an existing OpenCode session in a new thread')
-    .addStringOption((option) =>
-      option.setName('session').setDescription('The session to resume').setRequired(true).setAutocomplete(true),
-    ),
-  new SlashCommandBuilder().setName('fork').setDescription('Fork the session from a past user message'),
-  new SlashCommandBuilder().setName('fork-subagent').setDescription('Fork a subagent task session into a new thread'),
-  new SlashCommandBuilder()
-    .setName('btw')
-    .setDescription('Ask something without polluting or blocking the current session')
-    .addStringOption((option) =>
-      option.setName('prompt').setDescription('The message to send in the forked session').setRequired(true),
-    ),
-  new SlashCommandBuilder().setName('abort').setDescription('Stop the current run and clear the queue'),
-  new SlashCommandBuilder()
-    .setName('queue')
-    .setDescription('Send a message after the current run finishes')
-    .addStringOption((option) => option.setName('message').setDescription('The message to queue').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName('clear-queue')
-    .setDescription('Remove queued messages')
-    .addIntegerOption((option) => option.setName('position').setDescription('Only this position (1 = next)').setMinValue(1)),
-  new SlashCommandBuilder()
-    .setName('queue-command')
-    .setDescription('Queue an OpenCode command to run after the current run finishes')
-    .addStringOption((option) =>
-      option.setName('command').setDescription('The command to run').setRequired(true).setAutocomplete(true),
-    )
-    .addStringOption((option) => option.setName('arguments').setDescription('Arguments to pass to the command')),
-  new SlashCommandBuilder().setName('agent').setDescription('Set the agent for this session or channel'),
-  new SlashCommandBuilder().setName('model').setDescription('Set the model for this session or channel'),
-  new SlashCommandBuilder().setName('model-variant').setDescription('Change the thinking level of the current model'),
-  new SlashCommandBuilder().setName('verbosity').setDescription('Set what the bot shows in this channel'),
-  new SlashCommandBuilder().setName('compact').setDescription('Compact the session context by summarizing the history'),
-  new SlashCommandBuilder().setName('undo').setDescription('Undo the last turn (file changes are kept)'),
-  new SlashCommandBuilder().setName('redo').setDescription('Redo the previously undone turn'),
-  new SlashCommandBuilder().setName('diff').setDescription('Show the git diff as a shareable URL'),
-  new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage and context window percentage'),
-  new SlashCommandBuilder().setName('tasks').setDescription('List scheduled tasks, run one now, or delete it'),
-  new SlashCommandBuilder()
-    .setName('session-id')
-    .setDescription('Show the OpenCode session ID of this thread and how to open it in OpenCode'),
-].map((command) => command.setDMPermission(false).toJSON())
+// --- The registry: every feature's tables, combined once per bot.
+
+type PrefixRoute<I> = { prefix: string; run: InteractionHandler<I>; admin: boolean }
+
+export type InteractionRegistry = {
+  commands: ReadonlyMap<string, SlashCommand & { admin: boolean }>
+  // Static command JSON in table order; registered before the dynamic ones.
+  definitions: readonly RESTPostAPIChatInputApplicationCommandsJSONBody[]
+  buttons: ReadonlyArray<PrefixRoute<ButtonInteraction>>
+  selects: ReadonlyArray<PrefixRoute<StringSelectMenuInteraction>>
+  modals: ReadonlyArray<PrefixRoute<ModalSubmitInteraction>>
+}
+
+function prefixRoutes<I>(
+  features: readonly InteractionRoutes[],
+  table: (feature: InteractionRoutes) => Readonly<Record<string, InteractionHandler<I>>> | undefined,
+): Array<PrefixRoute<I>> {
+  const routes = features.flatMap((feature) =>
+    Object.entries(table(feature) ?? {}).map(([prefix, run]) => ({ prefix, run, admin: feature.admin === true })),
+  )
+  const prefixes = routes.map((route) => route.prefix)
+  const duplicate = prefixes.find((prefix, index) => prefixes.indexOf(prefix) !== index)
+  if (duplicate !== undefined) throw new Error(`Two interaction routes use the custom ID prefix ${duplicate}`)
+  // Longest first: a prefix that starts another prefix never hides it.
+  return routes.sort((a, b) => b.prefix.length - a.prefix.length)
+}
+
+function byPrefix<I>(routes: ReadonlyArray<PrefixRoute<I>>, customId: string): PrefixRoute<I> | null {
+  return routes.find((route) => customId.startsWith(route.prefix)) ?? null
+}
+
+export function combineRoutes(features: readonly InteractionRoutes[]): InteractionRegistry {
+  const commands = new Map<string, SlashCommand & { admin: boolean }>()
+  const definitions: RESTPostAPIChatInputApplicationCommandsJSONBody[] = []
+  for (const feature of features) {
+    for (const [name, command] of Object.entries(feature.commands ?? {})) {
+      const json = command.definition.toJSON()
+      if (json.name !== name) throw new Error(`Slash command ${json.name} is registered under ${name}`)
+      if (commands.has(name)) throw new Error(`Two features define /${name}`)
+      commands.set(name, { ...command, admin: feature.admin === true })
+      definitions.push({ ...json, dm_permission: false })
+    }
+  }
+  return {
+    commands,
+    definitions,
+    buttons: prefixRoutes(features, (feature) => feature.buttons),
+    selects: prefixRoutes(features, (feature) => feature.selects),
+    modals: prefixRoutes(features, (feature) => feature.modals),
+  }
+}
+
+// One per bot: the wizard and form features keep per-bot state in their closures.
+export function createInteractionRegistry(): InteractionRegistry {
+  return combineRoutes([
+    worktreeRoutes,
+    createLoginRoutes(),
+    sessionRoutes,
+    threadRoutes,
+    createPreferenceRoutes(),
+    taskRoutes,
+    agentUiRoutes,
+    permissionRoutes,
+    createQuestionHandlers(),
+  ])
+}
+
+// --- Dynamic commands
 
 export type DynamicCommand =
   | { kind: 'agent'; name: string }
@@ -165,16 +162,16 @@ export function discordCommandName(name: string, suffix: string): string | null 
   return `${base.slice(0, NAME_LIMIT - suffix.length).replace(/-$/, '')}${suffix}`
 }
 
-// Pure: the full command list for a guild plus the owner of each dynamic name.
-export function buildCommands(catalog: Catalog): {
+// Pure: the full command list for a guild (the fixed commands first) plus the owner of each dynamic name.
+export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIChatInputApplicationCommandsJSONBody[]; catalog: Catalog }): {
   commands: RESTPostAPIChatInputApplicationCommandsJSONBody[]
   dynamic: Map<string, DynamicCommand>
   // Commands past the Discord limit that were left out.
   dropped: number
 } {
-  const taken = new Set(STATIC_COMMANDS.map((command) => command.name))
+  const taken = new Set(fixed.map((command) => command.name))
   const dynamic = new Map<string, DynamicCommand>()
-  const commands = [...STATIC_COMMANDS]
+  const commands = [...fixed]
   // Every dynamic command has one optional text option.
   const add = ({ name, target, text }: { name: string | null; target: DynamicCommand; text: string }) => {
     if (!name || taken.has(name)) return
@@ -223,96 +220,6 @@ export function buildCommands(catalog: Catalog): {
   return { commands: commands.slice(0, MAX_COMMANDS), dynamic, dropped: Math.max(0, commands.length - MAX_COMMANDS) }
 }
 
-export function sessionIdReply({
-  sessionId,
-  threadId,
-  directory,
-}: {
-  sessionId: string
-  threadId: string
-  directory: string | null
-}): string {
-  const attach = directory ? `opencode2 ${shellQuote(directory)} --session ${sessionId}` : `opencode2 --session ${sessionId}`
-  return dedent`
-    **Session ID:** \`${sessionId}\`
-    **Thread ID:** \`${threadId}\`
-    **Attach command:**
-    \`\`\`bash
-    ${attach}
-    \`\`\`
-  `
-}
-
-// Where an interaction happens: the project channel and, in a session
-// thread, the thread and its root session.
-export type InteractionTarget = {
-  channelId: string
-  directory: string
-  thread: ThreadChannel | null
-  sessionId: string | null
-  projectDirectory: string
-}
-
-export function authorOf(interaction: { user: { id: string; username: string } }): Author {
-  return { id: interaction.user.id, username: interaction.user.username }
-}
-
-// Autocomplete choices must never throw; a failed lookup answers with nothing.
-export async function respondChoices(
-  interaction: AutocompleteInteraction,
-  choices: Error | ReadonlyArray<{ name: string; value: string }>,
-): Promise<void> {
-  if (choices instanceof Error) logger.warn(`autocomplete /${interaction.commandName}: ${choices.message}`)
-  const list = choices instanceof Error ? [] : choices.slice(0, 25)
-  await interaction.respond(list.map((choice) => ({ name: choice.name.slice(0, 100), value: choice.value.slice(0, 100) }))).catch(() => undefined)
-}
-
-export async function resolveTarget(bot: Bot, channelId: string | null): Promise<Error | InteractionTarget> {
-  if (!channelId) return new ConfigError({ reason: 'This command can only be used in a channel' })
-  const channel = await bot.discord.channels
-    .fetch(channelId)
-    .catch((cause) => new DiscordError({ operation: `fetch channel ${channelId}`, cause }))
-  if (channel instanceof Error) return channel
-  const thread = channel?.isThread() && channel.type !== ChannelType.AnnouncementThread ? channel : null
-  const projectChannelId = thread ? thread.parentId : channel?.type === ChannelType.GuildText ? channel.id : null
-  if (!projectChannelId) return new ConfigError({ reason: 'This command can only be used in text channels or threads' })
-  const row = await projectOf(bot, projectChannelId)
-  if (row instanceof Error) return row
-  if (!row) return new ConfigError({ reason: 'This channel is not configured with a project directory' })
-  const sessionId = thread ? (bot.store.getState().roots[thread.id] ?? null) : null
-  const directory = sessionId ? await sessionDirectory(bot, sessionId) : row.directory
-  if (directory instanceof Error) return directory
-  return { channelId: projectChannelId, directory, projectDirectory: row.directory, thread, sessionId }
-}
-
-export async function replyError(
-  interaction: ChatInputCommandInteraction | MessageComponentInteraction | ModalSubmitInteraction,
-  error: Error,
-) {
-  logger.error(`interaction ${interaction.id} failed: ${error.message}`)
-  // Config errors are messages for the user, the rest are failures.
-  const content = error instanceof ConfigError ? error.message : formatError(error.message)
-  if (interaction.deferred || interaction.replied) {
-    await interaction.editReply({ content, components: [] }).catch(() => undefined)
-    return
-  }
-  await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined)
-}
-
-// The session thread of a command, or a reply saying where it works.
-async function sessionTarget(bot: Bot, interaction: ChatInputCommandInteraction) {
-  const target = await resolveTarget(bot, interaction.channelId)
-  if (target instanceof Error) {
-    await replyError(interaction, target)
-    return null
-  }
-  if (!target.thread || !target.sessionId) {
-    await interaction.reply({ content: 'Use this command in a thread with a Kimaki session', flags: MessageFlags.Ephemeral })
-    return null
-  }
-  return { ...target, thread: target.thread, sessionId: target.sessionId }
-}
-
 // An input from a command: a prompt in the thread, or a new session in a channel.
 async function sendInput(
   bot: Bot,
@@ -333,9 +240,7 @@ async function sendInput(
   if (target instanceof Error) return replyError(interaction, target)
   const author = authorOf(interaction)
   if (target.thread && target.sessionId) {
-    // The visible reply stands in for the user message.
-    await interaction.reply({ content: formatEcho({ username: author.username, text: echo }), allowedMentions: { parse: [] } })
-    const reply = await interaction.fetchReply().catch((e: Error) => e)
+    const reply = await replyWithEcho(interaction, { author, text: echo })
     if (reply instanceof Error) return replyError(interaction, reply)
     if (model) {
       const switched = await switchModel(bot, { sessionId: target.sessionId, model })
@@ -385,160 +290,11 @@ async function handleDynamic(bot: Bot, { interaction, target }: { interaction: C
   })
 }
 
-async function handleSessionId(bot: Bot, interaction: ChatInputCommandInteraction) {
-  const target = await resolveTarget(bot, interaction.channelId)
-  if (target instanceof Error) return replyError(interaction, target)
-  if (!target.thread || !target.sessionId) {
-    await interaction.reply({ content: 'Run /session-id inside a Kimaki session thread.', flags: MessageFlags.Ephemeral })
-    return
-  }
-  await interaction.reply({
-    content: sessionIdReply({ sessionId: target.sessionId, threadId: target.thread.id, directory: target.directory }),
-    flags: MessageFlags.Ephemeral,
-  })
-}
-
-async function handleDiff(bot: Bot, interaction: ChatInputCommandInteraction) {
-  const target = await resolveTarget(bot, interaction.channelId)
-  if (target instanceof Error) return replyError(interaction, target)
-  await interaction.deferReply()
-  const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: target.directory, timeout: 10_000 }).catch(
-    (e) => new DiscordError({ operation: 'git status', cause: e }),
-  )
-  if (status instanceof Error) return replyError(interaction, new ConfigError({ reason: 'This project is not a git repository' }))
-  if (!status.stdout.trim()) {
-    await interaction.editReply({ content: 'No changes to show' })
-    return
-  }
-  const title = `${path.basename(target.directory)}: Discord /diff`
-  const upload = await execFileAsync('critique', ['--web', title, '--json'], { cwd: target.directory, timeout: 30_000 }).catch(
-    (e: NodeJS.ErrnoException & { stdout?: string }) => e,
-  )
-  if (upload instanceof Error && upload.code === 'ENOENT') {
-    return replyError(interaction, new ConfigError({ reason: 'critique is not installed. Install it with: npm i -g critique' }))
-  }
-  const output = upload instanceof Error ? (upload.stdout ?? '') : upload.stdout
-  const result = parseCritiqueOutput(output)
-  if (!result) return replyError(interaction, new ConfigError({ reason: `critique failed: ${output.slice(0, 200) || 'no output'}` }))
-  if (!result.ok) return replyError(interaction, new ConfigError({ reason: result.error }))
-  const embed = new EmbedBuilder().setTitle(title).setURL(result.url).setImage(`https://critique.work/og/${result.id}.png`)
-  await interaction.editReply({ embeds: [embed] })
-}
-
-async function handleContextUsage(bot: Bot, interaction: ChatInputCommandInteraction) {
-  const target = await sessionTarget(bot, interaction)
-  if (!target) return
-  const { sessionId, directory } = target
-  await interaction.deferReply()
-  const [info, messages, models] = await Promise.all([
-    oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId })),
-    oc(bot, 'message.list', (client) => client.message.list({ sessionID: sessionId, type: 'assistant', order: 'desc', limit: 20 })),
-    oc(bot, 'model.list', (client) => client.model.list({ location: { directory } })),
-  ])
-  if (info instanceof Error) return replyError(interaction, info)
-  if (messages instanceof Error) return replyError(interaction, messages)
-  const last = messages.data.find((message) => message.type === 'assistant' && message.tokens)
-  if (!last || last.type !== 'assistant' || !last.tokens) {
-    await interaction.editReply({ content: 'Token usage not available for this session yet' })
-    return
-  }
-  const { tokens, model } = last
-  const total = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
-  const limit = models instanceof Error ? null : models.data.find((candidate) => candidate.providerID === model.providerID && candidate.id === model.id)?.limit.context
-  const formatted = total.toLocaleString('en-US')
-  const lines = [
-    limit
-      ? `**Context usage:** ${Math.round((total / limit) * 100)}%, ${formatted} / ${limit.toLocaleString('en-US')} tokens`
-      : `**Context usage:** ${formatted} tokens (context limit unavailable)`,
-    `**Model:** ${model.providerID}/${model.id}`,
-    ...(info.cost > 0 ? [`**Session cost:** $${info.cost.toFixed(4)}`] : []),
-  ]
-  await interaction.editReply({ content: lines.join('\n') })
-}
-
-async function handleThreadCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
-  const target = await sessionTarget(bot, interaction)
-  if (!target) return
-  const { thread } = target
-  const author = authorOf(interaction)
-  switch (interaction.commandName) {
-    case 'abort': {
-      await interaction.deferReply()
-      const result = await abort(bot, { threadId: thread.id })
-      if (result instanceof Error) return replyError(interaction, result)
-      const note = result.cleared > 0 ? `, cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}` : ''
-      await interaction.editReply({ content: `Request **aborted**${note}` })
-      return
-    }
-    case 'queue':
-    case 'queue-command': {
-      const name = interaction.options.getString('command')?.trim().replace(/^\//, '') ?? ''
-      const args = (interaction.options.getString('arguments') ?? '').trim()
-      const echo = name ? `/${name} ${args}`.trim() : interaction.options.getString('message', true).trim()
-      const route: Route = name ? { kind: 'command', name, arguments: args, queue: true } : { kind: 'queue', text: echo }
-      // The visible reply stands in for the user message: the ack replies to it.
-      await interaction.reply({ content: formatEcho({ username: author.username, text: echo }), allowedMentions: { parse: [] } })
-      const reply = await interaction.fetchReply().catch((e: Error) => e)
-      if (reply instanceof Error) return replyError(interaction, reply)
-      const result = await dispatch(bot, { thread, route, author, messageId: reply.id })
-      if (result instanceof Error) return replyError(interaction, result)
-      return
-    }
-    case 'clear-queue': {
-      await interaction.deferReply()
-      const result = await clearQueue(bot, { threadId: thread.id, position: interaction.options.getInteger('position') })
-      if (result instanceof Error) return replyError(interaction, result)
-      const content =
-        result.cleared === 0 ? 'No queued messages' : `-# Cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}`
-      await interaction.editReply({ content })
-      return
-    }
-    case 'btw': {
-      const text = interaction.options.getString('prompt', true).trim()
-      await interaction.deferReply()
-      const result = await forkBtw(bot, { sourceThread: thread, text, author, messageId: interaction.id })
-      if (result instanceof Error) return replyError(interaction, result)
-      await interaction.editReply({ content: `Session forked! Continue in <#${result.threadId}>` })
-      return
-    }
-    case 'compact': {
-      await interaction.deferReply()
-      const result = await oc(bot, 'session.compact', (client) => client.session.compact({ sessionID: target.sessionId }))
-      if (result instanceof Error) return replyError(interaction, result)
-      await interaction.editReply({ content: 'Compacting the session context' })
-      return
-    }
-    case 'undo': {
-      await interaction.deferReply()
-      const result = await undo(bot, { threadId: thread.id })
-      if (result instanceof Error) return replyError(interaction, result)
-      if (!result.reverted) {
-        await interaction.editReply({ content: 'No messages to undo' })
-        return
-      }
-      await interaction.editReply({ content: 'Undone - removed the last turn from the session. File changes were kept' })
-      return
-    }
-    case 'redo': {
-      await interaction.deferReply()
-      const result = await redo(bot, { threadId: thread.id })
-      if (result instanceof Error) return replyError(interaction, result)
-      const content = {
-        nothing: 'Nothing to redo - no previous undo found',
-        all: 'Restored - session fully back to its previous state',
-        step: 'Restored one step forward',
-      }[result.restored]
-      await interaction.editReply({ content })
-      return
-    }
-    case 'context-usage':
-      return handleContextUsage(bot, interaction)
-  }
-}
+// --- Listener and registration
 
 // Registers the interaction listener and keeps every guild's commands in line
 // with the OpenCode catalog. Returns registerAll and stop.
-export function registerSlashCommands(bot: Bot) {
+export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
   const { discord, db } = bot
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
@@ -581,7 +337,7 @@ export function registerSlashCommands(bot: Bot) {
     }
     // Rows from before guild_id was stored belong to any guild.
     const directories = [...new Set(rows.filter((row) => !row.guild_id || row.guild_id === guild.id).map((row) => row.directory))]
-    const built = buildCommands(await catalogFor(directories))
+    const built = buildCommands({ fixed: registry.definitions, catalog: await catalogFor(directories) })
     if (passes.closed) return
     const signature = JSON.stringify(built.commands)
     if (registered.get(guild.id) === signature) {
@@ -607,40 +363,31 @@ export function registerSlashCommands(bot: Bot) {
     return interaction.guildId ? dynamic.get(interaction.guildId)?.get(interaction.commandName) : undefined
   }
 
-  async function handleCommand(interaction: ChatInputCommandInteraction) {
-    const name = interaction.commandName
-    if (name === 'login') return handleLoginCommand(bot, interaction)
-    if (name === 'transcription-key') return interaction.showModal(transcriptionKeyModal())
-    if (name === 'session-id') return handleSessionId(bot, interaction)
-    if (name === 'diff') return handleDiff(bot, interaction)
-    if (name === 'tasks') return tasksCommand(bot, interaction)
-    if (WORKTREE_COMMANDS.has(name)) return handleWorktreeCommand(bot, interaction)
-    if (SESSION_COMMANDS.has(name)) return handleSessionCommand(bot, interaction)
-    if (PREFERENCE_COMMANDS.has(name)) return handlePreferenceCommand(bot, interaction)
+  async function runCommand(interaction: ChatInputCommandInteraction) {
+    const command = registry.commands.get(interaction.commandName)
+    if (command) return command.run(bot, interaction)
     const target = dynamicCommand(interaction)
     if (target) return handleDynamic(bot, { interaction, target })
-    return handleThreadCommand(bot, interaction)
+    // A catalog command removed since the last registration: only told where commands work.
+    await sessionTarget(bot, interaction)
   }
 
-  async function handleAutocomplete(interaction: AutocompleteInteraction) {
-    if (SESSION_COMMANDS.has(interaction.commandName)) return sessionAutocomplete(bot, interaction)
-    if (dynamicCommand(interaction)?.kind === 'agent') {
-      const where = await resolveTarget(bot, interaction.channelId)
-      if (where instanceof Error) return respondChoices(interaction, where)
-      return respondChoices(interaction, await variantChoices(bot, { target: where, query: interaction.options.getFocused() }))
-    }
-    if (interaction.commandName !== 'queue-command') return respondChoices(interaction, [])
-    const target = await resolveTarget(bot, interaction.channelId)
-    if (target instanceof Error) return respondChoices(interaction, target)
-    const commands = await oc(bot, 'command.list', (client) => client.command.list({ location: { directory: target.directory } }))
-    if (commands instanceof Error) return respondChoices(interaction, commands)
-    const query = interaction.options.getFocused().toLowerCase()
-    return respondChoices(
-      interaction,
-      commands.data
-        .filter((command) => !SKIPPED_COMMANDS.has(command.name) && command.name.toLowerCase().includes(query))
-        .map((command) => ({ name: `/${command.name}${command.description ? ` - ${command.description}` : ''}`, value: command.name })),
-    )
+  async function autocomplete(interaction: AutocompleteInteraction) {
+    const command = registry.commands.get(interaction.commandName)
+    if (command?.autocomplete) return command.autocomplete(bot, interaction)
+    if (dynamicCommand(interaction)?.kind !== 'agent') return respondChoices(interaction, [])
+    const where = await resolveTarget(bot, interaction.channelId)
+    if (where instanceof Error) return respondChoices(interaction, where)
+    return respondChoices(interaction, await variantChoices(bot, { target: where, query: interaction.options.getFocused() }))
+  }
+
+  // Provider logins and audio keys are secrets of the whole bot.
+  function adminOnly(interaction: Interaction): boolean {
+    if (interaction.isChatInputCommand() || interaction.isAutocomplete()) return registry.commands.get(interaction.commandName)?.admin === true
+    if (interaction.isButton()) return byPrefix(registry.buttons, interaction.customId)?.admin === true
+    if (interaction.isStringSelectMenu()) return byPrefix(registry.selects, interaction.customId)?.admin === true
+    if (interaction.isModalSubmit()) return byPrefix(registry.modals, interaction.customId)?.admin === true
+    return false
   }
 
   async function handle(interaction: Interaction) {
@@ -658,42 +405,18 @@ export function registerSlashCommands(bot: Bot) {
       }
       return
     }
-    // Provider logins and audio keys are secrets of the whole bot.
-    const credentialCommand = (interaction.isChatInputCommand() && (interaction.commandName === 'login' || interaction.commandName === 'transcription-key'))
-      || ('customId' in interaction && (interaction.customId.startsWith('login_') || interaction.customId === TRANSCRIPTION_KEY_MODAL))
-    if (credentialCommand && guild.ownerId !== interaction.user.id) {
+    if (adminOnly(interaction) && guild.ownerId !== interaction.user.id) {
       const member = await guild.members.fetch(interaction.user.id).catch(() => null)
       if (!member?.permissions.has(PermissionFlagsBits.Administrator)) {
         if (interaction.isRepliable()) await interaction.reply({ content: 'Provider login requires the server owner or an administrator', flags: MessageFlags.Ephemeral })
         return
       }
     }
-    if (interaction.isChatInputCommand()) return handleCommand(interaction)
-    if (interaction.isAutocomplete()) return handleAutocomplete(interaction)
-    if (interaction.isButton()) {
-      const id = interaction.customId
-      if (id.startsWith(WORKTREE_PREFIX)) return handleWorktreeClick(bot, interaction)
-      if (id.startsWith('login_')) return handleLoginClick(bot, interaction)
-      if (/^(action_button|file_upload_btn):/.test(id)) return clickAgentButton(bot, interaction)
-      if (id.startsWith(TASK_RUN_PREFIX) || id.startsWith(TASK_DELETE_PREFIX)) return tasksClick(bot, interaction)
-      if (id.startsWith(PERMISSION_PREFIX)) return handlePermissionButton(bot, interaction)
-      return
-    }
-    if (interaction.isModalSubmit()) {
-      const id = interaction.customId
-      if (id.startsWith('file_upload_modal:')) return submitUploadModal(bot, interaction)
-      if (id.startsWith('login_')) return handleLoginModal(bot, interaction)
-      if (id === TRANSCRIPTION_KEY_MODAL) return handleTranscriptionKeyModal({ interaction, db })
-      if (id.startsWith(FORM_OTHER_PREFIX)) return handleFormOther(bot, interaction)
-      return
-    }
-    if (interaction.isStringSelectMenu()) {
-      const id = interaction.customId
-      if (id.startsWith('login_')) return handleLoginSelect(bot, interaction)
-      if (id.startsWith(FORM_SELECT_PREFIX)) return handleFormSelect(bot, interaction)
-      if (ownsSessionSelect(id)) return handleForkSelect(bot, interaction)
-      if (ownsPreferenceSelect(id)) return handlePreferenceSelect(bot, interaction)
-    }
+    if (interaction.isChatInputCommand()) return runCommand(interaction)
+    if (interaction.isAutocomplete()) return autocomplete(interaction)
+    if (interaction.isButton()) return byPrefix(registry.buttons, interaction.customId)?.run(bot, interaction)
+    if (interaction.isStringSelectMenu()) return byPrefix(registry.selects, interaction.customId)?.run(bot, interaction)
+    if (interaction.isModalSubmit()) return byPrefix(registry.modals, interaction.customId)?.run(bot, interaction)
   }
 
   discord.on(Events.InteractionCreate, (interaction) => {
@@ -739,26 +462,4 @@ export function registerSlashCommands(bot: Bot) {
       await passes.active
     },
   }
-}
-
-// critique --json prints { url, id } or { error } on one stdout line.
-export function parseCritiqueOutput(output: string): { ok: true; url: string; id: string } | { ok: false; error: string } | null {
-  for (const line of output.trim().split('\n')) {
-    if (!line.startsWith('{')) continue
-    const parsed = errore.try(
-      () => {
-        const value: unknown = JSON.parse(line)
-        return { value }
-      },
-      (cause) => new ConfigError({ reason: 'invalid critique output', cause }),
-    )
-    if (parsed instanceof Error || typeof parsed.value !== 'object' || parsed.value === null) continue
-    const fields = new Map<string, unknown>(Object.entries(parsed.value))
-    const error = fields.get('error')
-    const url = fields.get('url')
-    const id = fields.get('id')
-    if (typeof error === 'string') return { ok: false, error }
-    if (typeof url === 'string' && typeof id === 'string') return { ok: true, url, id }
-  }
-  return null
 }

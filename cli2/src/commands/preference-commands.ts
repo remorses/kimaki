@@ -9,39 +9,37 @@
 //   /model-variant  ─▶ variant of the current model ─▶ scope
 //   /verbosity      ─▶ text | tools for the channel
 //
-// The /model wizard keeps its picks in bot.local.modelWizards keyed by a short
-// hash (custom IDs max 100 chars), dropped after 10 minutes.
+// The /model wizard keeps its picks in the createPreferenceRoutes closure
+// keyed by a short hash (custom IDs max 100 chars), dropped after 10 minutes.
 
 import crypto from 'node:crypto'
-import type {
-  ChatInputCommandInteraction,
-  MessageComponentInteraction,
-  StringSelectMenuInteraction,
+import {
+  SlashCommandBuilder,
+  type ChatInputCommandInteraction,
+  type MessageComponentInteraction,
+  type StringSelectMenuInteraction,
 } from 'discord.js'
 
 import { oc, type Bot, type ModelChoice } from '../bot.ts'
 import { verbosityFromV1, verbosityToV1, type Verbosity } from '../db.ts'
 import { ConfigError, DbError } from '../errors.ts'
-import { selectRow } from '../format-parts.ts'
+import { paginate, selectedPage, selectRow } from '../format-parts.ts'
+import { replyError, resolveTarget, type InteractionRoutes, type InteractionTarget } from '../interaction-context.ts'
 import * as schema from '../schema.ts'
 import { primaryAgents } from '../sessions.ts'
-import { replyError, resolveTarget, type InteractionTarget } from '../slash-commands.ts'
 
 const AGENT_PREFIX = 'agent:'
 const MODEL_PREFIX = 'model:'
 const VERBOSITY_PREFIX = 'verbosity:'
 const WIZARD_TTL_MS = 10 * 60 * 1_000
 const NONE_VARIANT = '__none__'
-const PAGE_PREFIX = '__page:'
-// 23 items plus previous/next entries fit Discord's 25 options.
-const PAGE_SIZE = 23
 
 const VERBOSITY_OPTIONS: ReadonlyArray<{ value: Verbosity; label: string; description: string }> = [
   { value: 'tools', label: 'Text and tools', description: 'Text, edits and tools with side effects. Hides reads and searches.' },
   { value: 'text', label: 'Text only', description: 'Text, file edits and errors. Hides the other tools.' },
 ]
 
-export type ModelWizard = {
+type ModelWizard = {
   target: InteractionTarget
   providerID: string | null
   providerName: string | null
@@ -51,29 +49,8 @@ export type ModelWizard = {
 
 type Step = 'provider' | 'model' | 'variant' | 'scope'
 
-type Option = { label: string; value: string; description?: string }
-
-// One page of options with previous/next entries when they do not fit.
-export function paginate(options: readonly Option[], page: number): Option[] {
-  if (options.length <= 25) return [...options]
-  const pages = Math.ceil(options.length / PAGE_SIZE)
-  const current = Math.max(0, Math.min(page, pages - 1))
-  return [
-    ...(current > 0 ? [{ label: `← Previous page (${current}/${pages})`, value: `${PAGE_PREFIX}${current - 1}` }] : []),
-    ...options.slice(current * PAGE_SIZE, (current + 1) * PAGE_SIZE),
-    ...(current < pages - 1 ? [{ label: `Next page → (${current + 2}/${pages})`, value: `${PAGE_PREFIX}${current + 1}` }] : []),
-  ]
-}
-
 function modelLabel(model: { providerID: string; id: string; variant?: string | null }): string {
   return `${model.providerID}/${model.id}${model.variant ? ` (${model.variant})` : ''}`
-}
-
-function remember(bot: Bot, wizard: ModelWizard): string {
-  const hash = crypto.randomBytes(6).toString('hex')
-  bot.local.modelWizards.set(hash, wizard)
-  setTimeout(() => bot.local.modelWizards.delete(hash), WIZARD_TTL_MS).unref()
-  return hash
 }
 
 // --- Writes, shared with `kimaki channel` (lock-routes.ts) and `kimaki send --model`.
@@ -285,7 +262,7 @@ async function renderStep(
   const customId = `${MODEL_PREFIX}${hash}:${step}`
   const header = '**Set Model Preference**'
   const selected = wizard.providerID && wizard.modelID ? `${wizard.providerID}/${wizard.modelID}` : ''
-  const reply = async (content: string, options: readonly Option[], placeholder: string) => {
+  const reply = async (content: string, options: ReadonlyArray<{ label: string; value: string; description?: string }>, placeholder: string) => {
     await interaction.editReply({ content, components: [selectRow({ customId, placeholder, options: paginate(options, page) })] })
   }
   if (step === 'provider') {
@@ -333,24 +310,6 @@ async function renderStep(
   )
 }
 
-async function modelMenu(bot: Bot, interaction: ChatInputCommandInteraction) {
-  const target = await resolveTarget(bot, interaction.channelId)
-  if (target instanceof Error) return replyError(interaction, target)
-  await interaction.deferReply()
-  const wizard: ModelWizard = { target, providerID: null, providerName: null, modelID: null, variant: null }
-  if (interaction.commandName === 'model') return renderStep(bot, { interaction, hash: remember(bot, wizard), wizard, step: 'provider' })
-  // /model-variant: the variants of the model in use now.
-  const base = await baseModel(bot, target)
-  if (base instanceof Error) return replyError(interaction, base)
-  const { model, info } = base
-  if (info.variants.length === 0) {
-    await interaction.editReply({ content: `**Current model:** \`${modelLabel(model)}\`\nThis model has no thinking level variants.` })
-    return
-  }
-  const picked = { ...wizard, providerID: info.providerID, providerName: info.providerName, modelID: info.id }
-  return renderStep(bot, { interaction, hash: remember(bot, picked), wizard: picked, step: 'variant' })
-}
-
 async function applyModel(
   bot: Bot,
   { interaction, wizard, scope }: { interaction: StringSelectMenuInteraction; wizard: ModelWizard; scope: string },
@@ -369,44 +328,6 @@ async function applyModel(
       ? `Model set for this session:\n${label}\nApplies from the next step.`
       : `Model preference set for this channel:\n${label}\nAll new sessions in this channel will use this model.`
   await interaction.editReply({ content, components: [] })
-}
-
-async function handleModelSelect(bot: Bot, interaction: StringSelectMenuInteraction) {
-  const wizards = bot.local.modelWizards
-  const [hash, step] = interaction.customId.slice(MODEL_PREFIX.length).split(':')
-  const wizard = hash ? wizards.get(hash) : undefined
-  const value = interaction.values[0]
-  if (!hash || !wizard || !value) {
-    await interaction.update({ content: 'Selection expired. Please run /model again.', components: [] })
-    return
-  }
-  await interaction.deferUpdate()
-  if (value.startsWith(PAGE_PREFIX) && (step === 'provider' || step === 'model' || step === 'variant')) {
-    return renderStep(bot, { interaction, hash, wizard, step, page: Number(value.slice(PAGE_PREFIX.length)) || 0 })
-  }
-  if (step === 'provider') {
-    const models = await enabledModels(bot, wizard.target.directory)
-    if (models instanceof Error) return replyError(interaction, models)
-    const providerName = models.find((model) => model.providerID === value)?.providerName ?? value
-    const next = { ...wizard, providerID: value, providerName }
-    wizards.set(hash, next)
-    return renderStep(bot, { interaction, hash, wizard: next, step: 'model' })
-  }
-  if (step === 'model') {
-    const models = await enabledModels(bot, wizard.target.directory)
-    if (models instanceof Error) return replyError(interaction, models)
-    const info = models.find((model) => model.providerID === wizard.providerID && model.id === value)
-    const next = { ...wizard, modelID: value, variant: null }
-    wizards.set(hash, next)
-    return renderStep(bot, { interaction, hash, wizard: next, step: info && info.variants.length > 0 ? 'variant' : 'scope' })
-  }
-  if (step === 'variant') {
-    const next = { ...wizard, variant: value === NONE_VARIANT ? null : value }
-    wizards.set(hash, next)
-    return renderStep(bot, { interaction, hash, wizard: next, step: 'scope' })
-  }
-  wizards.delete(hash)
-  return applyModel(bot, { interaction, wizard, scope: value })
 }
 
 // --- /verbosity
@@ -450,25 +371,92 @@ async function handleVerbositySelect(bot: Bot, interaction: StringSelectMenuInte
   })
 }
 
-const handlers: Record<string, (bot: Bot, interaction: ChatInputCommandInteraction) => Promise<void>> = {
-  agent: agentMenu,
-  model: modelMenu,
-  'model-variant': modelMenu,
-  verbosity: verbosityMenu,
-}
+// --- Routes
 
-export const PREFERENCE_COMMANDS = new Set(Object.keys(handlers))
+// /agent, /model, /model-variant, /verbosity and their selects. One per bot:
+// the /model wizard picks stay in this closure.
+export function createPreferenceRoutes(): InteractionRoutes {
+  const wizards = new Map<string, ModelWizard>()
 
-export async function handlePreferenceCommand(bot: Bot, interaction: ChatInputCommandInteraction): Promise<void> {
-  await handlers[interaction.commandName]?.(bot, interaction)
-}
+  function remember(wizard: ModelWizard): string {
+    const hash = crypto.randomBytes(6).toString('hex')
+    wizards.set(hash, wizard)
+    setTimeout(() => wizards.delete(hash), WIZARD_TTL_MS).unref()
+    return hash
+  }
 
-export function ownsPreferenceSelect(customId: string): boolean {
-  return [AGENT_PREFIX, MODEL_PREFIX, VERBOSITY_PREFIX].some((prefix) => customId.startsWith(prefix))
-}
+  async function modelMenu(bot: Bot, interaction: ChatInputCommandInteraction) {
+    const target = await resolveTarget(bot, interaction.channelId)
+    if (target instanceof Error) return replyError(interaction, target)
+    await interaction.deferReply()
+    const wizard: ModelWizard = { target, providerID: null, providerName: null, modelID: null, variant: null }
+    return renderStep(bot, { interaction, hash: remember(wizard), wizard, step: 'provider' })
+  }
 
-export async function handlePreferenceSelect(bot: Bot, interaction: StringSelectMenuInteraction): Promise<void> {
-  if (interaction.customId.startsWith(AGENT_PREFIX)) return handleAgentSelect(bot, interaction)
-  if (interaction.customId.startsWith(MODEL_PREFIX)) return handleModelSelect(bot, interaction)
-  return handleVerbositySelect(bot, interaction)
+  // The variants of the model in use now.
+  async function variantMenu(bot: Bot, interaction: ChatInputCommandInteraction) {
+    const target = await resolveTarget(bot, interaction.channelId)
+    if (target instanceof Error) return replyError(interaction, target)
+    await interaction.deferReply()
+    const base = await baseModel(bot, target)
+    if (base instanceof Error) return replyError(interaction, base)
+    const { model, info } = base
+    if (info.variants.length === 0) {
+      await interaction.editReply({ content: `**Current model:** \`${modelLabel(model)}\`\nThis model has no thinking level variants.` })
+      return
+    }
+    const wizard: ModelWizard = { target, providerID: info.providerID, providerName: info.providerName, modelID: info.id, variant: null }
+    return renderStep(bot, { interaction, hash: remember(wizard), wizard, step: 'variant' })
+  }
+
+  async function modelSelect(bot: Bot, interaction: StringSelectMenuInteraction) {
+    const [hash, step] = interaction.customId.slice(MODEL_PREFIX.length).split(':')
+    const wizard = hash ? wizards.get(hash) : undefined
+    const value = interaction.values[0]
+    if (!hash || !wizard || !value) {
+      await interaction.update({ content: 'Selection expired. Please run /model again.', components: [] })
+      return
+    }
+    await interaction.deferUpdate()
+    const page = selectedPage(value)
+    if (page !== null && (step === 'provider' || step === 'model' || step === 'variant')) {
+      return renderStep(bot, { interaction, hash, wizard, step, page })
+    }
+    if (step === 'provider') {
+      const models = await enabledModels(bot, wizard.target.directory)
+      if (models instanceof Error) return replyError(interaction, models)
+      const providerName = models.find((model) => model.providerID === value)?.providerName ?? value
+      const next = { ...wizard, providerID: value, providerName }
+      wizards.set(hash, next)
+      return renderStep(bot, { interaction, hash, wizard: next, step: 'model' })
+    }
+    if (step === 'model') {
+      const models = await enabledModels(bot, wizard.target.directory)
+      if (models instanceof Error) return replyError(interaction, models)
+      const info = models.find((model) => model.providerID === wizard.providerID && model.id === value)
+      const next = { ...wizard, modelID: value, variant: null }
+      wizards.set(hash, next)
+      return renderStep(bot, { interaction, hash, wizard: next, step: info && info.variants.length > 0 ? 'variant' : 'scope' })
+    }
+    if (step === 'variant') {
+      const next = { ...wizard, variant: value === NONE_VARIANT ? null : value }
+      wizards.set(hash, next)
+      return renderStep(bot, { interaction, hash, wizard: next, step: 'scope' })
+    }
+    wizards.delete(hash)
+    return applyModel(bot, { interaction, wizard, scope: value })
+  }
+
+  return {
+    commands: {
+      agent: { definition: new SlashCommandBuilder().setName('agent').setDescription('Set the agent for this session or channel'), run: agentMenu },
+      model: { definition: new SlashCommandBuilder().setName('model').setDescription('Set the model for this session or channel'), run: modelMenu },
+      'model-variant': {
+        definition: new SlashCommandBuilder().setName('model-variant').setDescription('Change the thinking level of the current model'),
+        run: variantMenu,
+      },
+      verbosity: { definition: new SlashCommandBuilder().setName('verbosity').setDescription('Set what the bot shows in this channel'), run: verbosityMenu },
+    },
+    selects: { [AGENT_PREFIX]: handleAgentSelect, [MODEL_PREFIX]: modelSelect, [VERBOSITY_PREFIX]: handleVerbositySelect },
+  }
 }

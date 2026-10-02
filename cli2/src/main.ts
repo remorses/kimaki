@@ -3,10 +3,11 @@
 // in-process and stop it cleanly.
 
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
+import * as errore from 'errore'
 
-import { watchUploads } from './agent-ui.ts'
+import { createAgentUi } from './agent-ui.ts'
 import type { Analytics } from './analytics.ts'
-import { createBotLocal, type Bot } from './bot.ts'
+import type { Bot } from './bot.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
@@ -19,8 +20,9 @@ import { installPluginShim, watchOpencode, type OpencodeEndpoint } from './openc
 import { countUserProjects } from './project.ts'
 import { createScheduler, systemClock, type Clock } from './scheduler.ts'
 import { createEventRecorder } from './session-events.ts'
-import { refreshCliContext } from './sessions.ts'
-import { registerSlashCommands } from './slash-commands.ts'
+import { createPluginWait, refreshCliContext } from './sessions.ts'
+import { createInteractionRegistry, registerSlashCommands } from './slash-commands.ts'
+import { createSleepLock } from './sleeps.ts'
 import { createBotStore } from './store.ts'
 import type { TranscriptionBaseUrls } from './voice.ts'
 
@@ -71,14 +73,18 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const logFile = setLogFile({ dataDir: options.dataDir })
   if (logFile instanceof Error) return logFile
 
+  // Each resource registers its cleanup when acquired; disposal runs in reverse
+  // (commands and scheduler first, the db and the lock port last). A startup
+  // failure disposes it on return; a started bot moves it into stop().
+  await using cleanup = new errore.AsyncDisposableStack()
+
   const lock = await startLockServer({ port: options.lockPort, dataDir: options.dataDir })
   if (lock instanceof Error) return lock
+  cleanup.defer(() => lock.close())
 
   const opened = await openDb({ dataDir: options.dataDir, migrate: true })
-  if (opened instanceof Error) {
-    await lock.close()
-    return opened
-  }
+  if (opened instanceof Error) return opened
+  cleanup.defer(() => opened.close())
   const db = opened.db
 
   const discord = new Client({
@@ -86,23 +92,19 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
     ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
   })
+  cleanup.defer(() => discord.destroy())
+  cleanup.defer(() => options.analytics.flush())
   const store = createBotStore()
-  const effects = createEffectsRunner({ discord })
   const recorder = createEventRecorder({ dataDir: options.dataDir })
+  cleanup.defer(() => recorder.close())
+  const effects = createEffectsRunner({ discord })
+  cleanup.defer(() => effects.stop())
   const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics })
   const loaded = await eventLoop.load()
-  if (loaded instanceof Error) {
-    opened.close()
-    await lock.close()
-    return loaded
-  }
+  if (loaded instanceof Error) return loaded
   // Before the service is used, so a service started by ensure() loads it at once.
   const plugin = await installPluginShim({ configDir: options.opencodeConfigDir })
-  if (plugin instanceof Error) {
-    opened.close()
-    await lock.close()
-    return plugin
-  }
+  if (plugin instanceof Error) return plugin
   const opencode = watchOpencode({
     serviceFile: options.opencodeServiceFile,
     ensure: options.ensureOpencode,
@@ -110,13 +112,12 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     onEvent: eventLoop.onEvent,
     onDisconnect: eventLoop.onDisconnect,
   })
+  cleanup.defer(() => opencode.stop())
   const shim = await installShim({ dataDir: options.dataDir, command: options.kimakiCommand })
-  if (shim instanceof Error) {
-    opencode.stop()
-    opened.close()
-    await lock.close()
-    return shim
-  }
+  if (shim instanceof Error) return shim
+  // The features that non-interaction code reaches through bot.features.
+  const agentUi = createAgentUi({ store, eventLoop, opencode })
+  cleanup.defer(() => agentUi.stop())
   const bot: Bot = {
     discord,
     db,
@@ -131,28 +132,16 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     token: options.token,
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
-    local: createBotLocal(),
+    features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi },
   }
   const scheduler = createScheduler({
     bot,
     intervalMs: options.schedulerIntervalMs === undefined ? 5_000 : options.schedulerIntervalMs,
   })
-  const stopUploads = watchUploads(bot)
+  cleanup.defer(() => scheduler.stop())
   // The lock server only passes /kimaki/* paths.
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
   registerIngress(bot)
-
-  const shutdown = async () => {
-    await scheduler.stop()
-    stopUploads()
-    opencode.stop()
-    effects.stop()
-    await recorder.close()
-    await options.analytics.flush()
-    await discord.destroy()
-    opened.close()
-    await lock.close()
-  }
 
   // Resolves with the first fatal error, or null when both sides are ready.
   // Not Promise.all: a failed side must not wait for the other (Discord login
@@ -171,28 +160,16 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     void opencode.ready.then(settle)
     void loginDiscord({ discord, token: options.token }).then(settle)
   })
-  if (failure) {
-    await shutdown()
-    return failure
-  }
+  if (failure) return failure
   const refreshed = await refreshCliContext(bot)
-  if (refreshed instanceof Error) {
-    await shutdown()
-    return refreshed
-  }
-  const commands = registerSlashCommands(bot)
-  const stop = async () => {
-    await commands.stop()
-    await shutdown()
-  }
+  if (refreshed instanceof Error) return refreshed
+  const commands = registerSlashCommands(bot, createInteractionRegistry())
+  cleanup.defer(() => commands.stop())
   // Awaited so the handle is only returned once every guild has its commands.
   await commands.registerAll()
   // After Discord and OpenCode are ready: a due task needs both.
   const scheduling = await scheduler.start()
-  if (scheduling instanceof Error) {
-    await stop()
-    return scheduling
-  }
+  if (scheduling instanceof Error) return scheduling
   logger.log(`bot ready as ${discord.user?.tag}`)
   const projects = await countUserProjects({ db, dataDir: options.dataDir })
   if (projects instanceof Error) logger.warn(projects.message)
@@ -200,5 +177,6 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     guild_count: discord.guilds.cache.size,
     ...(!(projects instanceof Error) && { user_project_count: projects }),
   })
-  return { ...bot, lock, scheduler: { runDueTasks: scheduler.runDueTasks }, stop }
+  const resources = cleanup.move()
+  return { ...bot, lock, scheduler: { runDueTasks: scheduler.runDueTasks }, stop: () => resources.disposeAsync() }
 }

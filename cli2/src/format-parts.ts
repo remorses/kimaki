@@ -77,6 +77,30 @@ export function selectRow({
   }
 }
 
+type SelectOption = { label: string; value: string; description?: string }
+
+const PAGE_PREFIX = '__page:'
+// 23 items plus previous/next entries fit Discord's 25 options.
+export const SELECT_PAGE_SIZE = 23
+
+// One page of select options with previous/next entries when they do not fit.
+export function paginate(options: readonly SelectOption[], page: number): SelectOption[] {
+  if (options.length <= MAX_SELECT_OPTIONS) return [...options]
+  const pages = Math.ceil(options.length / SELECT_PAGE_SIZE)
+  const current = Math.max(0, Math.min(page, pages - 1))
+  return [
+    ...(current > 0 ? [{ label: `← Previous page (${current}/${pages})`, value: `${PAGE_PREFIX}${current - 1}` }] : []),
+    ...options.slice(current * SELECT_PAGE_SIZE, (current + 1) * SELECT_PAGE_SIZE),
+    ...(current < pages - 1 ? [{ label: `Next page → (${current + 2}/${pages})`, value: `${PAGE_PREFIX}${current + 1}` }] : []),
+  ]
+}
+
+// The page a previous/next entry of paginate() points to; null for a real option.
+export function selectedPage(value: string): number | null {
+  if (!value.startsWith(PAGE_PREFIX)) return null
+  return Number(value.slice(PAGE_PREFIX.length)) || 0
+}
+
 export function formatDuration(ms: number): string {
   if (ms < 1_000) return '<1s'
   const seconds = Math.floor(ms / 1_000)

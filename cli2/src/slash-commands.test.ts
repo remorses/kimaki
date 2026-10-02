@@ -3,10 +3,10 @@
 
 import { expect, test } from 'vitest'
 
-import { buildCommands } from './slash-commands.ts'
+import { buildCommands, createInteractionRegistry } from './slash-commands.ts'
 
 test('catalog names are sanitized, keep their suffix, skip collisions and MCP prompts, and stop at 100 commands', () => {
-  const { commands, dynamic } = buildCommands({
+  const { commands, dynamic } = buildCommands({ fixed: createInteractionRegistry().definitions, catalog: {
     agents: [
       { id: 'gpt5.4', name: 'GPT 5.4', mode: 'primary', hidden: false },
       { id: 'explore', name: 'Explore', mode: 'subagent', hidden: false },
@@ -22,7 +22,7 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
       { name: 'queue' },
     ],
     skills: Array.from({ length: 90 }, (_, index) => ({ id: `skill-${index}` })),
-  })
+  } })
   const names = commands.map((command) => command.name)
   expect(names.length).toBe(100)
   expect(names.filter((name) => !name.startsWith('skill-'))).toMatchInlineSnapshot(`
@@ -42,17 +42,17 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
       "queue",
       "clear-queue",
       "queue-command",
-      "agent",
-      "model",
-      "model-variant",
-      "verbosity",
       "compact",
       "undo",
       "redo",
       "diff",
       "context-usage",
-      "tasks",
       "session-id",
+      "agent",
+      "model",
+      "model-variant",
+      "verbosity",
+      "tasks",
       "gpt5-4-agent",
       "a-very-long-command-name-tha-cmd",
       "queue-cmd",

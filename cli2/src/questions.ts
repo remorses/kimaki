@@ -9,8 +9,8 @@
 //   form.replied / form.cancelled ─▶ every message of the form is edited: answer or cancelled, no dropdown
 //
 // Custom IDs carry only the form ID and field index. Answers of a form with
-// several questions wait in bot.local.formAnswers until the last one (lost on
-// restart, the user picks again).
+// several questions wait in the createQuestionHandlers closure until the last
+// one (lost on restart, the user picks again).
 
 import {
   ActionRowBuilder,
@@ -29,12 +29,13 @@ import { createLogger } from './logger.ts'
 import { castDraft, type Draft } from 'immer'
 
 import { textOnly, type UiMessage } from './format-parts.ts'
+import type { InteractionRoutes } from './interaction-context.ts'
 import type { Emit, ThreadView } from './thread-reducer.ts'
 
 const logger = createLogger('QUESTION')
 
-export const FORM_SELECT_PREFIX = 'form:'
-export const FORM_OTHER_PREFIX = 'form_other:'
+const FORM_SELECT_PREFIX = 'form:'
+const FORM_OTHER_PREFIX = 'form_other:'
 const OTHER_VALUE = 'other'
 // Discord: 25 options per select, one is "Other".
 const MAX_OPTIONS = 24
@@ -54,8 +55,6 @@ export type PendingForm = {
   // Subagent name for forms of child sessions.
   label: string | null
 }
-
-export type FormAnswer = { readonly [key: string]: string | readonly string[] }
 
 // FormInfo from the list API and the form.created payload differ only in
 // nominal field types; both have this shape.
@@ -213,85 +212,95 @@ async function acknowledge({
   await interaction.reply({ content, flags: MessageFlags.Ephemeral })
 }
 
-function pendingField(bot: Bot, { threadId, customId, prefix }: { threadId: string; customId: string; prefix: string }) {
-  const parsed = parseCustomId(customId, prefix)
-  if (!parsed) return null
-  const form = bot.store.getState().threads[threadId]?.forms[parsed.formID]
-  const field = form?.fields[parsed.index]
-  if (!form || !field) {
-    bot.local.formAnswers.delete(parsed.formID)
-    return null
-  }
-  return { formID: parsed.formID, form, field }
-}
-
-async function record(
-  bot: Bot,
-  {
-    interaction,
-    formID,
-    form,
-    field,
-    value,
-  }: {
-    interaction: StringSelectMenuInteraction | ModalSubmitInteraction
-    formID: string
-    form: PendingForm
-    field: QuestionField
-    value: string | readonly string[]
-  },
-) {
-  const answers = { ...bot.local.formAnswers.get(formID), [field.key]: value }
-  const complete = form.fields.every((candidate) => answers[candidate.key] !== undefined)
-  if (complete) bot.local.formAnswers.delete(formID)
-  if (!complete) bot.local.formAnswers.set(formID, answers)
-  const answered = answeredMessage({ field, label: form.label, answer: formatAnswer(value) })
-  await acknowledge({ interaction, content: answered.content })
-  if (!complete) return
-  const result = await oc(bot, 'session.form.reply', (client) =>
-    client.session.form.reply({ sessionID: form.sessionId, formID, answer: answers }),
-  )
-  if (!(result instanceof Error)) return
-  logger.warn(`answer ${formID} failed: ${result.message}`)
-  await interaction.followUp({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
-}
-
 async function expired(interaction: StringSelectMenuInteraction | ModalSubmitInteraction) {
   await interaction.reply({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
 }
 
-export async function handleFormSelect(bot: Bot, interaction: StringSelectMenuInteraction): Promise<void> {
-  const pending = pendingField(bot, { threadId: interaction.channelId, customId: interaction.customId, prefix: FORM_SELECT_PREFIX })
-  if (!pending) return expired(interaction)
-  const { formID, field } = pending
-  const values = interaction.values.flatMap((value) => {
-    const option = field.options[Number(value)]
-    return option ? [option.value] : []
-  })
-  if (interaction.values.includes(OTHER_VALUE)) {
-    bot.local.pickedWithOther.set(`${formID}:${field.key}`, values)
-    const input = new TextInputBuilder()
-      .setCustomId('answer')
-      .setLabel('Your answer')
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(true)
-    await interaction.showModal(
-      new ModalBuilder()
-        .setCustomId(interaction.customId.replace(FORM_SELECT_PREFIX, FORM_OTHER_PREFIX))
-        .setTitle((field.title || 'Answer').slice(0, 45))
-        .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input)),
-    )
-    return
-  }
-  await record(bot, { interaction, ...pending, value: field.multiple ? values : (values[0] ?? '') })
-}
+// The dropdown and "Other" modal handlers of question forms. One per bot.
+export function createQuestionHandlers(): InteractionRoutes {
+  // formID -> answers so far, for forms with several fields.
+  const answers = new Map<string, { readonly [key: string]: string | readonly string[] }>()
+  // "formID:key" -> options picked together with "Other", while the modal asks for the text.
+  const otherPicks = new Map<string, readonly string[]>()
 
-export async function handleFormOther(bot: Bot, interaction: ModalSubmitInteraction): Promise<void> {
-  const pending = pendingField(bot, { threadId: interaction.channelId ?? '', customId: interaction.customId, prefix: FORM_OTHER_PREFIX })
-  if (!pending) return expired(interaction)
-  const text = interaction.fields.getTextInputValue('answer').trim()
-  const key = `${pending.formID}:${pending.field.key}`
-  const picked = bot.local.pickedWithOther.get(key) ?? []
-  bot.local.pickedWithOther.delete(key)
-  await record(bot, { interaction, ...pending, value: pending.field.multiple ? [...picked, text] : text })
+  function pendingField(bot: Bot, { threadId, customId, prefix }: { threadId: string; customId: string; prefix: string }) {
+    const parsed = parseCustomId(customId, prefix)
+    if (!parsed) return null
+    const form = bot.store.getState().threads[threadId]?.forms[parsed.formID]
+    const field = form?.fields[parsed.index]
+    if (!form || !field) {
+      answers.delete(parsed.formID)
+      return null
+    }
+    return { formID: parsed.formID, form, field }
+  }
+
+  async function record(
+    bot: Bot,
+    {
+      interaction,
+      formID,
+      form,
+      field,
+      value,
+    }: {
+      interaction: StringSelectMenuInteraction | ModalSubmitInteraction
+      formID: string
+      form: PendingForm
+      field: QuestionField
+      value: string | readonly string[]
+    },
+  ) {
+    const answer = { ...answers.get(formID), [field.key]: value }
+    const complete = form.fields.every((candidate) => answer[candidate.key] !== undefined)
+    if (complete) answers.delete(formID)
+    if (!complete) answers.set(formID, answer)
+    const answered = answeredMessage({ field, label: form.label, answer: formatAnswer(value) })
+    await acknowledge({ interaction, content: answered.content })
+    if (!complete) return
+    const result = await oc(bot, 'session.form.reply', (client) =>
+      client.session.form.reply({ sessionID: form.sessionId, formID, answer }),
+    )
+    if (!(result instanceof Error)) return
+    logger.warn(`answer ${formID} failed: ${result.message}`)
+    await interaction.followUp({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
+  }
+
+  async function select(bot: Bot, interaction: StringSelectMenuInteraction): Promise<void> {
+    const pending = pendingField(bot, { threadId: interaction.channelId, customId: interaction.customId, prefix: FORM_SELECT_PREFIX })
+    if (!pending) return expired(interaction)
+    const { formID, field } = pending
+    const values = interaction.values.flatMap((value) => {
+      const option = field.options[Number(value)]
+      return option ? [option.value] : []
+    })
+    if (interaction.values.includes(OTHER_VALUE)) {
+      otherPicks.set(`${formID}:${field.key}`, values)
+      const input = new TextInputBuilder()
+        .setCustomId('answer')
+        .setLabel('Your answer')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+      await interaction.showModal(
+        new ModalBuilder()
+          .setCustomId(interaction.customId.replace(FORM_SELECT_PREFIX, FORM_OTHER_PREFIX))
+          .setTitle((field.title || 'Answer').slice(0, 45))
+          .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input)),
+      )
+      return
+    }
+    await record(bot, { interaction, ...pending, value: field.multiple ? values : (values[0] ?? '') })
+  }
+
+  async function other(bot: Bot, interaction: ModalSubmitInteraction): Promise<void> {
+    const pending = pendingField(bot, { threadId: interaction.channelId ?? '', customId: interaction.customId, prefix: FORM_OTHER_PREFIX })
+    if (!pending) return expired(interaction)
+    const text = interaction.fields.getTextInputValue('answer').trim()
+    const key = `${pending.formID}:${pending.field.key}`
+    const picked = otherPicks.get(key) ?? []
+    otherPicks.delete(key)
+    await record(bot, { interaction, ...pending, value: pending.field.multiple ? [...picked, text] : text })
+  }
+
+  return { selects: { [FORM_SELECT_PREFIX]: select }, modals: { [FORM_OTHER_PREFIX]: other } }
 }

@@ -4,7 +4,9 @@
 //   /login ─▶ provider select ─▶ method select ─▶ API key modal | OAuth link + code/check buttons
 //                                              └▶ activate a saved credential
 //
-// Wizard state lives in bot.local.loginWizards under a short hash (custom IDs max 100 chars).
+// Wizard state lives in the createLoginRoutes closure under a short hash (custom IDs max 100 chars).
+// /transcription-key lives here too: provider logins and audio keys are
+// secrets of the whole bot, so only the server owner or an administrator may use them.
 
 import crypto from 'node:crypto'
 import {
@@ -13,7 +15,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
   MessageFlags,
-  StringSelectMenuBuilder,
+  SlashCommandBuilder,
   type ChatInputCommandInteraction,
   type StringSelectMenuInteraction,
   type ModalSubmitInteraction,
@@ -23,43 +25,14 @@ import type { IntegrationInfo } from '@opencode/client'
 
 import { oc, type Bot } from '../bot.ts'
 import { ConfigError, DbError } from '../errors.ts'
-import { button, buttonRow } from '../format-parts.ts'
-import { replyError, resolveTarget } from '../slash-commands.ts'
+import { button, buttonRow, paginate, SELECT_PAGE_SIZE, selectedPage, selectRow } from '../format-parts.ts'
+import { replyError, resolveTarget, type InteractionRoutes } from '../interaction-context.ts'
+import { handleTranscriptionKeyModal, TRANSCRIPTION_KEY_MODAL, transcriptionKeyModal } from '../voice.ts'
 
-export type LoginWizard = { userId: string; directory: string; provider: IntegrationInfo | null; expires: number; attempt?: string }
+type LoginWizard = { userId: string; directory: string; provider: IntegrationInfo | null; expires: number; attempt?: string }
 
 const TTL = 10 * 60_000
 const POPULAR = ['openai', 'anthropic', 'google', 'opencode']
-
-function remember(bot: Bot, wizard: LoginWizard) {
-  const wizards = bot.local.loginWizards
-  for (const [id, existing] of wizards) if (existing.expires < Date.now()) wizards.delete(id)
-  const id = crypto.randomBytes(8).toString('hex')
-  wizards.set(id, wizard)
-  return id
-}
-
-function lookup(bot: Bot, { id, userId }: { id: string; userId: string }) {
-  const wizard = bot.local.loginWizards.get(id)
-  if (!wizard || wizard.expires < Date.now() || wizard.userId !== userId) {
-    return new ConfigError({ reason: 'Login menu expired or belongs to another user. Run /login again.' })
-  }
-  return wizard
-}
-
-function pageOptions(options: Array<{ label: string; value: string }>, page: number) {
-  return [
-    ...(page > 0 ? [{ label: 'Previous page', value: `page:${page - 1}` }] : []),
-    ...options.slice(page * 23, (page + 1) * 23),
-    ...((page + 1) * 23 < options.length ? [{ label: 'Next page', value: `page:${page + 1}` }] : []),
-  ]
-}
-
-function selectMenu({ customId, placeholder, options }: { customId: string; placeholder: string; options: Array<{ label: string; value: string }> }) {
-  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-    new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(options),
-  )
-}
 
 function textModal({ customId, title, inputId, label }: { customId: string; title: string; inputId: string; label: string }) {
   const input = new TextInputBuilder().setCustomId(inputId).setLabel(label).setStyle(TextInputStyle.Short).setRequired(true)
@@ -157,95 +130,154 @@ export async function loginCli(
 
 // --- /login
 
-export async function handleLoginCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-  const target = await resolveTarget(bot, interaction.channelId)
-  if (target instanceof Error) return replyError(interaction, target)
-  const options = await providers(bot, target.directory)
-  if (options instanceof Error) return replyError(interaction, options)
-  const id = remember(bot, { userId: interaction.user.id, directory: target.directory, provider: null, expires: Date.now() + TTL })
-  await interaction.editReply({
-    content: 'Connect a provider. Credentials are stored by OpenCode, not Kimaki.',
-    components: [selectMenu({ customId: `login_provider:${id}`, placeholder: 'Provider', options: pageOptions(options, 0) })],
-  })
-}
+// The login wizard: provider select ─▶ method select ─▶ key modal or OAuth buttons. One per bot.
+export function createLoginRoutes(): InteractionRoutes {
+  const wizards = new Map<string, LoginWizard>()
 
-export async function handleLoginSelect(bot: Bot, interaction: StringSelectMenuInteraction) {
-  const [kind, id = ''] = interaction.customId.split(':')
-  const wizard = lookup(bot, { id, userId: interaction.user.id })
-  if (wizard instanceof Error) return replyError(interaction, wizard)
-  const selected = interaction.values[0] ?? ''
-  if (/^page:\d+$/.test(selected)) {
+  function remember(wizard: LoginWizard) {
+    for (const [id, existing] of wizards) if (existing.expires < Date.now()) wizards.delete(id)
+    const id = crypto.randomBytes(8).toString('hex')
+    wizards.set(id, wizard)
+    return id
+  }
+
+  function lookup({ id, userId }: { id: string; userId: string }) {
+    const wizard = wizards.get(id)
+    if (!wizard || wizard.expires < Date.now() || wizard.userId !== userId) {
+      return new ConfigError({ reason: 'Login menu expired or belongs to another user. Run /login again.' })
+    }
+    return wizard
+  }
+
+  // The wizard of a select, or null after an error reply. A previous/next entry shows that page.
+  async function selected({ interaction, options }: { interaction: StringSelectMenuInteraction; options: (wizard: LoginWizard) => Promise<Error | Array<{ label: string; value: string }>> }) {
+    const id = interaction.customId.split(':')[1] ?? ''
+    const wizard = lookup({ id, userId: interaction.user.id })
+    if (wizard instanceof Error) {
+      await replyError(interaction, wizard)
+      return null
+    }
+    const value = interaction.values[0] ?? ''
+    const page = selectedPage(value)
+    if (page === null) return { id, wizard, value }
     await interaction.deferUpdate()
-    const page = Number(selected.slice(5))
-    const options = kind === 'login_provider' ? await providers(bot, wizard.directory) : wizard.provider ? methods(wizard.provider) : []
+    const all = await options(wizard)
+    if (all instanceof Error) {
+      await replyError(interaction, all)
+      return null
+    }
+    if (page < 0 || page * SELECT_PAGE_SIZE >= all.length) {
+      await replyError(interaction, new ConfigError({ reason: 'Login page no longer exists. Run /login again.' }))
+      return null
+    }
+    await interaction.editReply({ components: [selectRow({ customId: interaction.customId, placeholder: `Page ${page + 1}`, options: paginate(all, page) })] })
+    return null
+  }
+
+  async function loginCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+    const target = await resolveTarget(bot, interaction.channelId)
+    if (target instanceof Error) return replyError(interaction, target)
+    const options = await providers(bot, target.directory)
     if (options instanceof Error) return replyError(interaction, options)
-    if (page < 0 || page * 23 >= options.length) return replyError(interaction, new ConfigError({ reason: 'Login page no longer exists. Run /login again.' }))
-    return interaction.editReply({
-      components: [selectMenu({ customId: interaction.customId, placeholder: `Page ${page + 1}`, options: pageOptions(options, page) })],
+    const id = remember({ userId: interaction.user.id, directory: target.directory, provider: null, expires: Date.now() + TTL })
+    await interaction.editReply({
+      content: 'Connect a provider. Credentials are stored by OpenCode, not Kimaki.',
+      components: [selectRow({ customId: `login_provider:${id}`, placeholder: 'Provider', options: paginate(options, 0) })],
     })
   }
-  if (kind === 'login_provider') {
+
+  async function providerSelect(bot: Bot, interaction: StringSelectMenuInteraction) {
+    const picked = await selected({ interaction, options: (wizard) => providers(bot, wizard.directory) })
+    if (!picked) return
+    const { id, wizard, value } = picked
     await interaction.deferUpdate()
     const provider = await oc(bot, 'integration.get', (client) =>
-      client.integration.get({ integrationID: selected, location: { directory: wizard.directory } }),
+      client.integration.get({ integrationID: value, location: { directory: wizard.directory } }),
     )
     if (provider instanceof Error) return replyError(interaction, provider)
-    bot.local.loginWizards.set(id, { ...wizard, provider: provider.data })
+    wizards.set(id, { ...wizard, provider: provider.data })
     const options = methods(provider.data)
     if (!options.length) return replyError(interaction, new ConfigError({ reason: 'No interactive login method. This integration uses environment credentials.' }))
     await interaction.editReply({
       content: `Connect ${provider.data.name}`,
-      components: [selectMenu({ customId: `login_method:${id}`, placeholder: 'Login method', options: pageOptions(options, 0) })],
-    })
-    return
-  }
-  const provider = wizard.provider
-  if (kind !== 'login_method' || !provider) return
-  if (selected.startsWith('credential:')) {
-    await interaction.deferUpdate()
-    const credentialId = selected.slice('credential:'.length)
-    if (!provider.connections.some((connection) => connection.type === 'credential' && connection.id === credentialId)) {
-      return replyError(interaction, new ConfigError({ reason: 'Unknown credential' }))
-    }
-    const result = await credential(bot, { id: credentialId, operation: 'activate' })
-    if (result instanceof Error) return replyError(interaction, result)
-    bot.local.loginWizards.delete(id)
-    return interaction.editReply({ content: `Activated ${provider.name} credential`, components: [] })
-  }
-  if (selected.startsWith('oauth:')) {
-    await interaction.deferUpdate()
-    const method = provider.methods.find((candidate) => candidate.type === 'oauth' && candidate.id === selected.slice(6))
-    if (!method || method.type !== 'oauth') return replyError(interaction, new ConfigError({ reason: 'Unknown login method' }))
-    const result = await oc(bot, 'integration.oauth.connect', (client) =>
-      client.integration.oauth.connect({ integrationID: provider.id, methodID: method.id, location: { directory: wizard.directory } }),
-    )
-    if (result instanceof Error) return replyError(interaction, result)
-    bot.local.loginWizards.set(id, { ...wizard, attempt: result.data.attemptID })
-    const code = result.data.mode === 'code'
-    return interaction.editReply({
-      content: `${result.data.url}\n${result.data.instructions}`,
-      components: [
-        buttonRow([
-          button({ customId: `login_${code ? 'code' : 'check'}:${id}`, label: code ? 'Enter code' : 'Check login' }),
-          button({ customId: `login_cancel:${id}`, label: 'Cancel' }),
-        ]),
-      ],
+      components: [selectRow({ customId: `login_method:${id}`, placeholder: 'Login method', options: paginate(options, 0) })],
     })
   }
-  if (selected === 'key') {
-    await interaction.showModal(textModal({ customId: `login_key:${id}`, title: `Connect ${provider.name}`.slice(0, 45), inputId: 'key', label: 'API key' }))
-  }
-}
 
-export async function handleLoginModal(bot: Bot, interaction: ModalSubmitInteraction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-  const id = interaction.customId.split(':')[1] ?? ''
-  const wizard = lookup(bot, { id, userId: interaction.user.id })
-  if (wizard instanceof Error) return replyError(interaction, wizard)
-  const provider = wizard.provider
-  if (!provider) return replyError(interaction, new ConfigError({ reason: 'Choose a provider with /login first' }))
-  if (interaction.customId.startsWith('login_code:')) {
+  async function methodSelect(bot: Bot, interaction: StringSelectMenuInteraction) {
+    const picked = await selected({ interaction, options: async (wizard) => (wizard.provider ? methods(wizard.provider) : []) })
+    if (!picked) return
+    const { id, wizard, value } = picked
+    const provider = wizard.provider
+    if (!provider) return
+    if (value.startsWith('credential:')) {
+      await interaction.deferUpdate()
+      const credentialId = value.slice('credential:'.length)
+      if (!provider.connections.some((connection) => connection.type === 'credential' && connection.id === credentialId)) {
+        return replyError(interaction, new ConfigError({ reason: 'Unknown credential' }))
+      }
+      const result = await credential(bot, { id: credentialId, operation: 'activate' })
+      if (result instanceof Error) return replyError(interaction, result)
+      wizards.delete(id)
+      return interaction.editReply({ content: `Activated ${provider.name} credential`, components: [] })
+    }
+    if (value.startsWith('oauth:')) {
+      await interaction.deferUpdate()
+      const method = provider.methods.find((candidate) => candidate.type === 'oauth' && candidate.id === value.slice(6))
+      if (!method || method.type !== 'oauth') return replyError(interaction, new ConfigError({ reason: 'Unknown login method' }))
+      const result = await oc(bot, 'integration.oauth.connect', (client) =>
+        client.integration.oauth.connect({ integrationID: provider.id, methodID: method.id, location: { directory: wizard.directory } }),
+      )
+      if (result instanceof Error) return replyError(interaction, result)
+      wizards.set(id, { ...wizard, attempt: result.data.attemptID })
+      const code = result.data.mode === 'code'
+      return interaction.editReply({
+        content: `${result.data.url}\n${result.data.instructions}`,
+        components: [
+          buttonRow([
+            button({ customId: `login_${code ? 'code' : 'check'}:${id}`, label: code ? 'Enter code' : 'Check login' }),
+            button({ customId: `login_cancel:${id}`, label: 'Cancel' }),
+          ]),
+        ],
+      })
+    }
+    if (value === 'key') {
+      await interaction.showModal(textModal({ customId: `login_key:${id}`, title: `Connect ${provider.name}`.slice(0, 45), inputId: 'key', label: 'API key' }))
+    }
+  }
+
+  // The wizard of a modal, or null after an error reply.
+  async function modalWizard(interaction: ModalSubmitInteraction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+    const id = interaction.customId.split(':')[1] ?? ''
+    const wizard = lookup({ id, userId: interaction.user.id })
+    if (wizard instanceof Error) {
+      await replyError(interaction, wizard)
+      return null
+    }
+    const provider = wizard.provider
+    if (!provider) {
+      await replyError(interaction, new ConfigError({ reason: 'Choose a provider with /login first' }))
+      return null
+    }
+    return { id, wizard, provider }
+  }
+
+  async function keyModal(bot: Bot, interaction: ModalSubmitInteraction) {
+    const found = await modalWizard(interaction)
+    if (!found) return
+    const { id, wizard, provider } = found
+    const result = await connectKey(bot, { provider: provider.id, key: interaction.fields.getTextInputValue('key'), directory: wizard.directory })
+    if (result instanceof Error) return replyError(interaction, result)
+    wizards.delete(id)
+    await interaction.editReply({ content: `Connected ${provider.name}. Use /model to select a model.` })
+  }
+
+  async function codeModal(bot: Bot, interaction: ModalSubmitInteraction) {
+    const found = await modalWizard(interaction)
+    if (!found) return
+    const { id, wizard, provider } = found
     const attemptID = wizard.attempt
     if (!attemptID) return replyError(interaction, new ConfigError({ reason: 'No pending login attempt' }))
     const code = interaction.fields.getTextInputValue('code')
@@ -253,43 +285,76 @@ export async function handleLoginModal(bot: Bot, interaction: ModalSubmitInterac
       client.integration.oauth.complete({ integrationID: provider.id, attemptID, code, location: { directory: wizard.directory } }),
     )
     if (result instanceof Error) return replyError(interaction, result)
-    bot.local.loginWizards.delete(id)
+    wizards.delete(id)
     return interaction.editReply({ content: `${provider.name} OAuth connected. Use /model to select a model.` })
   }
-  const result = await connectKey(bot, { provider: provider.id, key: interaction.fields.getTextInputValue('key'), directory: wizard.directory })
-  if (result instanceof Error) return replyError(interaction, result)
-  bot.local.loginWizards.delete(id)
-  await interaction.editReply({ content: `Connected ${provider.name}. Use /model to select a model.` })
-}
 
-export async function handleLoginClick(bot: Bot, interaction: ButtonInteraction) {
-  const [kind, id = ''] = interaction.customId.split(':')
-  const wizard = lookup(bot, { id, userId: interaction.user.id })
-  if (wizard instanceof Error) return replyError(interaction, wizard)
-  const { provider, attempt: attemptID } = wizard
-  if (!provider || !attemptID) return replyError(interaction, new ConfigError({ reason: 'No pending login attempt' }))
-  if (kind === 'login_code') {
-    return interaction.showModal(textModal({ customId: `login_code:${id}`, title: 'Authorization code', inputId: 'code', label: 'Code' }))
+  // The OAuth attempt of a button, or null after an error reply.
+  async function attemptOf(interaction: ButtonInteraction) {
+    const id = interaction.customId.split(':')[1] ?? ''
+    const wizard = lookup({ id, userId: interaction.user.id })
+    if (wizard instanceof Error) {
+      await replyError(interaction, wizard)
+      return null
+    }
+    const { provider, attempt: attemptID } = wizard
+    if (!provider || !attemptID) {
+      await replyError(interaction, new ConfigError({ reason: 'No pending login attempt' }))
+      return null
+    }
+    return { id, provider, request: { integrationID: provider.id, attemptID, location: { directory: wizard.directory } } }
   }
-  await interaction.deferUpdate()
-  const request = { integrationID: provider.id, attemptID, location: { directory: wizard.directory } }
-  if (kind === 'login_cancel') {
-    const result = await oc(bot, 'integration.oauth.cancel', (client) => client.integration.oauth.cancel(request))
+
+  async function codeClick(_bot: Bot, interaction: ButtonInteraction) {
+    const found = await attemptOf(interaction)
+    if (!found) return
+    return interaction.showModal(textModal({ customId: `login_code:${found.id}`, title: 'Authorization code', inputId: 'code', label: 'Code' }))
+  }
+
+  async function cancelClick(bot: Bot, interaction: ButtonInteraction) {
+    const found = await attemptOf(interaction)
+    if (!found) return
+    await interaction.deferUpdate()
+    const result = await oc(bot, 'integration.oauth.cancel', (client) => client.integration.oauth.cancel(found.request))
     if (result instanceof Error) return replyError(interaction, result)
-    bot.local.loginWizards.delete(id)
+    wizards.delete(found.id)
     return interaction.editReply({ content: 'Login cancelled', components: [] })
   }
-  const result = await oc(bot, 'integration.oauth.status', (client) => client.integration.oauth.status(request))
-  if (result instanceof Error) return replyError(interaction, result)
-  const status = result.data
-  if (status.status === 'pending') {
-    return interaction.followUp({ content: 'Login still pending. Finish authorization, then check again.', flags: MessageFlags.Ephemeral })
+
+  async function checkClick(bot: Bot, interaction: ButtonInteraction) {
+    const found = await attemptOf(interaction)
+    if (!found) return
+    await interaction.deferUpdate()
+    const result = await oc(bot, 'integration.oauth.status', (client) => client.integration.oauth.status(found.request))
+    if (result instanceof Error) return replyError(interaction, result)
+    const status = result.data
+    if (status.status === 'pending') {
+      return interaction.followUp({ content: 'Login still pending. Finish authorization, then check again.', flags: MessageFlags.Ephemeral })
+    }
+    wizards.delete(found.id)
+    const content = status.status === 'complete'
+      ? `${found.provider.name} OAuth connected`
+      : status.status === 'failed'
+        ? status.message
+        : 'Login expired. Run /login again.'
+    return interaction.editReply({ content, components: [] })
   }
-  bot.local.loginWizards.delete(id)
-  const content = status.status === 'complete'
-    ? `${provider.name} OAuth connected`
-    : status.status === 'failed'
-      ? status.message
-      : 'Login expired. Run /login again.'
-  return interaction.editReply({ content, components: [] })
+
+  return {
+    admin: true,
+    commands: {
+      login: { definition: new SlashCommandBuilder().setName('login').setDescription('Connect an OpenCode provider'), run: loginCommand },
+      'transcription-key': {
+        definition: new SlashCommandBuilder().setName('transcription-key').setDescription('Set the OpenAI or Gemini API key for voice transcription and speech'),
+        run: (_bot, interaction) => interaction.showModal(transcriptionKeyModal()),
+      },
+    },
+    selects: { 'login_provider:': providerSelect, 'login_method:': methodSelect },
+    buttons: { 'login_code:': codeClick, 'login_check:': checkClick, 'login_cancel:': cancelClick },
+    modals: {
+      'login_key:': keyModal,
+      'login_code:': codeModal,
+      [TRANSCRIPTION_KEY_MODAL]: (bot, interaction) => handleTranscriptionKeyModal({ interaction, db: bot.db }),
+    },
+  }
 }

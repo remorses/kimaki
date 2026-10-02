@@ -12,6 +12,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   MessageFlags,
+  SlashCommandBuilder,
   type AutocompleteInteraction,
   type ChatInputCommandInteraction,
   type StringSelectMenuInteraction,
@@ -20,8 +21,8 @@ import {
 import { oc, type Bot, type PromptFile } from '../bot.ts'
 import { ConfigError } from '../errors.ts'
 import { selectRow, truncate } from '../format-parts.ts'
+import { authorOf, replyError, resolveTarget, respondChoices, type InteractionRoutes } from '../interaction-context.ts'
 import { fork, resume, startSession } from '../sessions.ts'
-import { authorOf, replyError, resolveTarget, respondChoices } from '../slash-commands.ts'
 import { stripTurnContext } from '../system-prompt.ts'
 import { resolveWorkingDirectory } from '../worktrees.ts'
 
@@ -94,39 +95,25 @@ async function resumeCommand(bot: Bot, interaction: ChatInputCommandInteraction)
   await interaction.editReply({ content: `Resumed session "${result.title}" in <#${result.threadId}>` })
 }
 
-async function forkMenu(bot: Bot, interaction: ChatInputCommandInteraction) {
+// The thread's session for /fork and /fork-subagent; null after an error reply.
+async function forkSource(bot: Bot, interaction: ChatInputCommandInteraction) {
   const target = await resolveTarget(bot, interaction.channelId)
-  if (target instanceof Error) return replyError(interaction, target)
+  if (target instanceof Error) {
+    await replyError(interaction, target)
+    return null
+  }
   const sessionId = target.sessionId
   if (!sessionId) {
-    return replyError(interaction, new ConfigError({ reason: 'This command can only be used in a thread with a session' }))
+    await replyError(interaction, new ConfigError({ reason: 'This command can only be used in a thread with a session' }))
+    return null
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-  if (interaction.commandName === 'fork-subagent') {
-    const children = await oc(bot, 'session.list', (client) =>
-      client.session.list({ parentID: sessionId, order: 'desc', limit: MAX_OPTIONS }),
-    )
-    if (children instanceof Error) return replyError(interaction, children)
-    if (children.data.length === 0) {
-      await interaction.editReply({ content: 'No subagent sessions found in this thread' })
-      return
-    }
-    await interaction.editReply({
-      content: '**Fork Subagent Session**\nSelect a subagent session to fork into a new thread:',
-      components: [
-        selectRow({
-          customId: `${FORK_SUBAGENT_PREFIX}${sessionId}`,
-          placeholder: 'Select a subagent session to fork',
-          options: children.data.map((child) => ({
-            label: flat(`${child.agent ?? 'subagent'} · ${child.title ?? 'No description'}`, 100),
-            value: child.id,
-            description: shortDate(child.time.created),
-          })),
-        }),
-      ],
-    })
-    return
-  }
+  return sessionId
+}
+
+async function forkMenu(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const sessionId = await forkSource(bot, interaction)
+  if (!sessionId) return
   const messages = await oc(bot, 'message.list', (client) =>
     client.message.list({ sessionID: sessionId, type: 'user', order: 'desc', limit: MAX_OPTIONS }),
   )
@@ -153,8 +140,35 @@ async function forkMenu(bot: Bot, interaction: ChatInputCommandInteraction) {
   })
 }
 
-export async function handleForkSelect(bot: Bot, interaction: StringSelectMenuInteraction) {
-  const subagents = interaction.customId.startsWith(FORK_SUBAGENT_PREFIX)
+async function forkSubagentMenu(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const sessionId = await forkSource(bot, interaction)
+  if (!sessionId) return
+  const children = await oc(bot, 'session.list', (client) =>
+    client.session.list({ parentID: sessionId, order: 'desc', limit: MAX_OPTIONS }),
+  )
+  if (children instanceof Error) return replyError(interaction, children)
+  if (children.data.length === 0) {
+    await interaction.editReply({ content: 'No subagent sessions found in this thread' })
+    return
+  }
+  await interaction.editReply({
+    content: '**Fork Subagent Session**\nSelect a subagent session to fork into a new thread:',
+    components: [
+      selectRow({
+        customId: `${FORK_SUBAGENT_PREFIX}${sessionId}`,
+        placeholder: 'Select a subagent session to fork',
+        options: children.data.map((child) => ({
+          label: flat(`${child.agent ?? 'subagent'} · ${child.title ?? 'No description'}`, 100),
+          value: child.id,
+          description: shortDate(child.time.created),
+        })),
+      }),
+    ],
+  })
+}
+
+// The fork selects carry the source session ID; the source thread is the interaction channel.
+async function forkSelected(bot: Bot, { interaction, subagents }: { interaction: StringSelectMenuInteraction; subagents: boolean }) {
   const sourceSessionId = interaction.customId.slice((subagents ? FORK_SUBAGENT_PREFIX : FORK_PREFIX).length)
   const selected = interaction.values[0]
   const target = await resolveTarget(bot, interaction.channelId)
@@ -183,7 +197,7 @@ export async function handleForkSelect(bot: Bot, interaction: StringSelectMenuIn
   await interaction.editReply({ content: `${label} Continue in <#${result.threadId}>`, components: [] })
 }
 
-export async function sessionAutocomplete(bot: Bot, interaction: AutocompleteInteraction) {
+async function sessionAutocomplete(bot: Bot, interaction: AutocompleteInteraction) {
   const focused = interaction.options.getFocused(true)
   const query = focused.value.trim()
   const target = await resolveTarget(bot, interaction.channelId)
@@ -238,19 +252,38 @@ export async function sessionAutocomplete(bot: Bot, interaction: AutocompleteInt
   return respondChoices(interaction, [])
 }
 
-const handlers: Record<string, (bot: Bot, interaction: ChatInputCommandInteraction) => Promise<void>> = {
-  'new-session': newSession,
-  resume: resumeCommand,
-  fork: forkMenu,
-  'fork-subagent': forkMenu,
-}
-
-export const SESSION_COMMANDS = new Set(Object.keys(handlers))
-
-export async function handleSessionCommand(bot: Bot, interaction: ChatInputCommandInteraction): Promise<void> {
-  await handlers[interaction.commandName]?.(bot, interaction)
-}
-
-export function ownsSessionSelect(customId: string): boolean {
-  return customId.startsWith(FORK_PREFIX) || customId.startsWith(FORK_SUBAGENT_PREFIX)
+export const sessionRoutes: InteractionRoutes = {
+  commands: {
+    'new-session': {
+      definition: new SlashCommandBuilder()
+        .setName('new-session')
+        .setDescription('Start a new OpenCode session')
+        .addStringOption((option) => option.setName('prompt').setDescription('Prompt content for the session').setRequired(true))
+        .addStringOption((option) =>
+          option.setName('files').setDescription('Files to attach (comma separated; autocomplete)').setAutocomplete(true).setMaxLength(6000),
+        )
+        .addStringOption((option) => option.setName('agent').setDescription('Agent to use for this session').setAutocomplete(true)),
+      run: newSession,
+      autocomplete: sessionAutocomplete,
+    },
+    resume: {
+      definition: new SlashCommandBuilder()
+        .setName('resume')
+        .setDescription('Resume an existing OpenCode session in a new thread')
+        .addStringOption((option) =>
+          option.setName('session').setDescription('The session to resume').setRequired(true).setAutocomplete(true),
+        ),
+      run: resumeCommand,
+      autocomplete: sessionAutocomplete,
+    },
+    fork: { definition: new SlashCommandBuilder().setName('fork').setDescription('Fork the session from a past user message'), run: forkMenu },
+    'fork-subagent': {
+      definition: new SlashCommandBuilder().setName('fork-subagent').setDescription('Fork a subagent task session into a new thread'),
+      run: forkSubagentMenu,
+    },
+  },
+  selects: {
+    [FORK_PREFIX]: (bot, interaction) => forkSelected(bot, { interaction, subagents: false }),
+    [FORK_SUBAGENT_PREFIX]: (bot, interaction) => forkSelected(bot, { interaction, subagents: true }),
+  },
 }

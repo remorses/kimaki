@@ -26,7 +26,7 @@ import {
 } from './bot.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import { createLogger } from './logger.ts'
-import type { OpenCodeClient } from './opencode-server.ts'
+import type { OpenCodeClient, OpencodeEndpoint } from './opencode-server.ts'
 import { prompt, runInSession } from './prompt.ts'
 import { formatEcho } from './queue.ts'
 import type { Route } from './routes.ts'
@@ -88,7 +88,7 @@ export async function sessionCwd(bot: Bot, { thread, directory }: { thread: Thre
     candidate: path.resolve(project.directory, directory),
   })
   if (destination instanceof Error) return destination
-  const plugin = await waitForPlugin(bot, destination)
+  const plugin = await bot.features.waitForPlugin(destination)
   if (plugin instanceof Error) return plugin
   const sessionId = rootSession(bot, thread.id)
   if (sessionId instanceof Error) return sessionId
@@ -161,27 +161,37 @@ async function putInstructions(
   if (put instanceof Error) return put
 }
 
+export type PluginWait = (directory: string) => Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | void>
+
 // The bot writes plugins/kimaki/ on start (opencode-server.ts), but
 // OpenCode's watcher picks it up a moment later: wait for it, bounded.
-export async function waitForPlugin(bot: Bot, directory: string): Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | void> {
-  if (bot.local.pluginActive.has(directory)) return
-  const location = { directory }
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    // The integration catalog waits for activations OpenCode already started; plugin.list does not.
-    const activated = await oc(bot, 'integration.list', (client) => client.integration.list({ location }))
-    if (activated instanceof Error) return activated
-    const plugins = await oc(bot, 'plugin.list', (client) => client.plugin.list({ location }))
-    if (plugins instanceof Error) return plugins
-    if (plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) {
-      bot.local.pluginActive.add(directory)
-      return
+// One per bot (bot.features.waitForPlugin).
+export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
+  // Directories where the plugin was seen active, per connection: a reconnect
+  // may reach a new OpenCode process, so its endpoint starts with no entries.
+  const active = new WeakMap<OpencodeEndpoint, Set<string>>()
+  return async (directory) => {
+    const endpoint = bot.opencode.endpoint
+    if (endpoint && active.get(endpoint)?.has(directory)) return
+    const location = { directory }
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      // The integration catalog waits for activations OpenCode already started; plugin.list does not.
+      const activated = await oc(bot, 'integration.list', (client) => client.integration.list({ location }))
+      if (activated instanceof Error) return activated
+      const plugins = await oc(bot, 'plugin.list', (client) => client.plugin.list({ location }))
+      if (plugins instanceof Error) return plugins
+      if (plugins.data.some((plugin) => plugin.id === 'kimaki' && plugin.state.status === 'active')) {
+        const current = bot.opencode.endpoint
+        if (current) active.set(current, (active.get(current) ?? new Set()).add(directory))
+        return
+      }
+      await sleep(200)
     }
-    await sleep(200)
+    return new ConfigError({
+      reason: `Kimaki plugin is not active in OpenCode for ${directory}. Kimaki writes it to <OpenCode config dir>/plugins/kimaki/ on start; check \`opencode plugin list\` and the OpenCode logs`,
+    })
   }
-  return new ConfigError({
-    reason: `Kimaki plugin is not active in OpenCode for ${directory}. Kimaki writes it to <OpenCode config dir>/plugins/kimaki/ on start; check \`opencode plugin list\` and the OpenCode logs`,
-  })
 }
 
 // The plugin and the agent's `kimaki` calls read metadata.kimaki. Sessions
@@ -205,7 +215,7 @@ export async function ensureSessionMarker(
     userId: string
   },
 ): Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | void> {
-  const plugin = await waitForPlugin(bot, directory)
+  const plugin = await bot.features.waitForPlugin(directory)
   if (plugin instanceof Error) return plugin
   const info = await oc(bot, `get session ${sessionId}`, (client) => client.session.get({ sessionID: sessionId }))
   if (info instanceof Error) return info
@@ -309,7 +319,7 @@ export async function startSession(
     : null
   if (checkout instanceof Error) return checkout
   const directory = checkout?.directory ?? requestedDirectory
-  const plugin = await waitForPlugin(bot, directory)
+  const plugin = await bot.features.waitForPlugin(directory)
   if (plugin instanceof Error) return plugin
 
   const channel = await textChannel(bot, channelId)
@@ -600,7 +610,7 @@ export async function fork(
       baseBranch: worktree.baseBranch,
     })
     if (checkout instanceof Error) return checkout
-    const plugin = await waitForPlugin(bot, checkout.directory)
+    const plugin = await bot.features.waitForPlugin(checkout.directory)
     if (plugin instanceof Error) return plugin
     const moved = await oc(bot, 'move worktree fork', (client) => client.session.move({ sessionID: forked.id, directory: checkout.directory }))
     if (moved instanceof Error) return moved

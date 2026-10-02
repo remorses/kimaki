@@ -1,6 +1,7 @@
 // The one context every bot function takes as its first parameter. main.ts
 // builds it once per bot; tests start several bots in one process, so per-bot
-// state lives in `bot.local`, never in module globals.
+// state never lives in module globals. State owned by one feature stays in
+// that feature's closure; Bot only exposes its operations (`features`).
 //
 // Also the small helpers most writers share: OpenCode calls with errore
 // wrapping, project and thread lookups, the session marker.
@@ -8,18 +9,17 @@
 import type { JsonValue, SessionMetadata } from '@opencode/client'
 import { ChannelType, type Client, type TextChannel, type ThreadChannel } from 'discord.js'
 
-import type { AgentUploadWait } from './agent-ui.ts'
+import type { AgentUi } from './agent-ui.ts'
 import type { Analytics } from './analytics.ts'
-import type { LoginWizard } from './commands/login-commands.ts'
-import type { ModelWizard } from './commands/preference-commands.ts'
 import type { KimakiDb } from './db.ts'
 import type { EffectsRunner } from './effects.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import type { EventLoop } from './event-loop.ts'
 import type { OpenCodeClient, OpencodeConnection } from './opencode-server.ts'
-import type { FormAnswer } from './questions.ts'
 import type { Route } from './routes.ts'
 import type { Clock } from './scheduler.ts'
+import type { PluginWait } from './sessions.ts'
+import type { SleepLock } from './sleeps.ts'
 import type { BotStore } from './store.ts'
 import type { ScheduledRun } from './system-prompt.ts'
 import type { TranscriptionBaseUrls } from './voice.ts'
@@ -30,22 +30,12 @@ export type PromptFile = { uri: string; name: string }
 
 export type ModelChoice = { providerID: string; id: string; variant: string | null }
 
-// Small per-bot mutable maps. Each belongs to one feature; none is derived from events.
-export type BotLocal = {
-  // Directories where the Kimaki plugin was seen active (it stays loaded).
-  pluginActive: Set<string>
-  // sessionId -> tail of its sleep write/cancel/wake chain (scheduler.ts withSleepLock).
-  sleepLocks: Map<string, Promise<unknown>>
-  // /model wizard picks by short hash (custom IDs max 100 chars), dropped after 10 minutes.
-  modelWizards: Map<string, ModelWizard>
-  // /login wizard state by short hash, dropped when expired.
-  loginWizards: Map<string, LoginWizard>
-  // formID -> answers so far, for question forms with several fields.
-  formAnswers: Map<string, FormAnswer>
-  // "formID:key" -> options picked together with "Other", while the modal asks for the text.
-  pickedWithOther: Map<string, readonly string[]>
-  // Agent UI upload id -> the `kimaki upload-request` call waiting for files.
-  uploads: Map<string, AgentUploadWait>
+// Operations of feature-owned state that non-interaction code needs. Wizard
+// and form state is only reachable from the slash registry (slash-commands.ts).
+export type BotFeatures = {
+  withSleepLock: SleepLock
+  waitForPlugin: PluginWait
+  agentUi: AgentUi
 }
 
 export type Bot = {
@@ -66,24 +56,12 @@ export type Bot = {
   transcriptionBaseUrls: TranscriptionBaseUrls
   // Default for channels without a channel_worktrees row.
   autoWorktrees: boolean
-  local: BotLocal
-}
-
-export function createBotLocal(): BotLocal {
-  return {
-    pluginActive: new Set(),
-    sleepLocks: new Map(),
-    modelWizards: new Map(),
-    loginWizards: new Map(),
-    formAnswers: new Map(),
-    pickedWithOther: new Map(),
-    uploads: new Map(),
-  }
+  features: BotFeatures
 }
 
 // One OpenCode call of the current connection, with its rejection as an OpenCodeError.
 export async function oc<T>(
-  bot: Bot,
+  bot: Pick<Bot, 'opencode'>,
   operation: string,
   run: (client: OpenCodeClient) => Promise<T>,
 ): Promise<OpenCodeUnavailableError | OpenCodeError | T> {
@@ -102,7 +80,7 @@ export async function projectOf(bot: Bot, channelId: string) {
 }
 
 // Current working directory of a session (session.moved changes it).
-export async function sessionDirectory(bot: Bot, sessionId: string) {
+export async function sessionDirectory(bot: Pick<Bot, 'opencode'>, sessionId: string) {
   const info = await oc(bot, 'read session directory', (client) => client.session.get({ sessionID: sessionId }))
   if (info instanceof Error) return info
   return info.location.directory

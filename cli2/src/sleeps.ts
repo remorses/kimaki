@@ -10,6 +10,7 @@ import * as orm from 'drizzle-orm'
 import dedent from 'string-dedent'
 
 import { fetchThread, threadOfSession, type Bot } from './bot.ts'
+import { parseDuration } from './duration.ts'
 import { ConfigError, DbError } from './errors.ts'
 import { asSubtext } from './format-parts.ts'
 import { createLogger } from './logger.ts'
@@ -36,9 +37,6 @@ export function parseFutureUtc({ value, now, flag }: { value: string; now: numbe
   return time
 }
 
-const DURATION = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i
-const DURATION_MS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }
-
 // `kimaki sleep`: the bot resolves the wake time with its own clock.
 export function parseWakeAt({ duration, until, now }: { duration?: string; until?: string; now: number }): ConfigError | number {
   const relative = duration?.trim() ?? ''
@@ -46,10 +44,8 @@ export function parseWakeAt({ duration, until, now }: { duration?: string; until
   if (relative && absolute) return new ConfigError({ reason: 'Pass either --duration or --until, not both' })
   if (absolute) return parseFutureUtc({ value: absolute, now, flag: '--until' })
   if (!relative) return new ConfigError({ reason: 'Pass --duration or --until' })
-  const match = DURATION.exec(relative)
-  if (!match) return new ConfigError({ reason: `Invalid --duration "${relative}". Use a number plus ms, s, m, h, or d (example: 2h)` })
-  const amount = Number(match[1]) * DURATION_MS[match[2]!.toLowerCase()]!
-  if (!(amount > 0)) return new ConfigError({ reason: '--duration must be greater than 0' })
+  const amount = parseDuration(relative, '--duration')
+  if (amount instanceof Error) return amount
   return now + amount
 }
 
@@ -68,18 +64,24 @@ export function sleepOutput({ wakeAt, reason }: { wakeAt: number; reason: string
   ].join(' ')
 }
 
+export type SleepLock = <T>(input: { sessionId: string; run: () => Promise<T> }) => Promise<T>
+
 // Writing a sleep, cancelling it on new input and delivering its wake run one
 // at a time per session, so a wake never goes out after the input that cancelled it.
-function withSleepLock<T>(bot: Bot, { sessionId, run }: { sessionId: string; run: () => Promise<T> }): Promise<T> {
-  const locks = bot.local.sleepLocks
-  const previous = locks.get(sessionId) ?? Promise.resolve()
-  const next = previous.then(run, run)
-  const settled = next.then(() => undefined, () => undefined)
-  locks.set(sessionId, settled)
-  void settled.then(() => {
-    if (locks.get(sessionId) === settled) locks.delete(sessionId)
-  })
-  return next
+// One per bot (bot.features.withSleepLock); the chains stay in this closure.
+export function createSleepLock(): SleepLock {
+  // sessionId -> tail of its write/cancel/wake chain.
+  const locks = new Map<string, Promise<void>>()
+  return function withSleepLock<T>({ sessionId, run }: { sessionId: string; run: () => Promise<T> }): Promise<T> {
+    const previous = locks.get(sessionId) ?? Promise.resolve()
+    const next = previous.then(run, run)
+    const settled = next.then(() => undefined, () => undefined)
+    locks.set(sessionId, settled)
+    void settled.then(() => {
+      if (locks.get(sessionId) === settled) locks.delete(sessionId)
+    })
+    return next
+  }
 }
 
 function sleepRow(sessionId: string, deliveryId: string) {
@@ -92,7 +94,7 @@ function sleepRow(sessionId: string, deliveryId: string) {
 
 // New input supersedes a pending sleep of the session (prompt.ts dispatch, /abort).
 export async function cancelSleep(bot: Bot, sessionId: string): Promise<void> {
-  const cancelled = await withSleepLock(bot, {
+  const cancelled = await bot.features.withSleepLock({
     sessionId,
     run: () =>
       bot.db.update(schema.session_sleeps).set({ status: 'cancelled' })
@@ -128,7 +130,7 @@ export async function createSleep(
     last_attempt_at: null,
     created_at: new Date(time),
   }
-  const saved = await withSleepLock(bot, {
+  const saved = await bot.features.withSleepLock({
     sessionId: root,
     run: () =>
       bot.db.insert(schema.session_sleeps).values({ session_id: root, ...values })
@@ -199,7 +201,7 @@ async function wake(bot: Bot, row: SleepRow): Promise<Error | void> {
     if (attempt.attempts >= WAKE_MAX_ATTEMPTS) return settle('failed')
     return 'retry' as const
   }
-  const result = await withSleepLock(bot, { sessionId, run: deliver })
+  const result = await bot.features.withSleepLock({ sessionId, run: deliver })
   if (result instanceof Error) return result
   if (result === 'woke') logger.log(`woke session ${sessionId}`)
 }

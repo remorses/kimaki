@@ -19,6 +19,7 @@ import {
   ButtonStyle,
   ComponentType,
   MessageFlags,
+  SlashCommandBuilder,
   type APIMessageTopLevelComponent,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
@@ -29,6 +30,7 @@ import * as orm from 'drizzle-orm'
 import { oc, projectOf, threadOfSession, type Bot } from './bot.ts'
 import type { KimakiDb } from './db.ts'
 import { ConfigError, DbError, DiscordError } from './errors.ts'
+import type { InteractionRoutes } from './interaction-context.ts'
 import { createLogger } from './logger.ts'
 import type { SendInput } from './lock-routes.ts'
 import { send } from './prompt.ts'
@@ -48,8 +50,8 @@ const PRE_RUN_TIMEOUT_MS = 10 * 60_000
 // /tasks rows: text + action row + 2 buttons each, under the 40-component limit.
 const MAX_TASK_ROWS = 7
 
-export const TASK_RUN_PREFIX = 'task_run:'
-export const TASK_DELETE_PREFIX = 'task_delete:'
+const TASK_RUN_PREFIX = 'task_run:'
+const TASK_DELETE_PREFIX = 'task_delete:'
 
 type TaskRow = typeof schema.scheduled_tasks.$inferSelect
 
@@ -543,31 +545,50 @@ async function renderTasks(bot: Bot, { notice, guildId }: { notice: string | nul
   return { flags: MessageFlags.IsComponentsV2 as const, components: [{ type: ComponentType.TextDisplay as const, content: header }, ...rows] }
 }
 
-export async function tasksCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
+async function tasksCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral })
   await interaction.editReply(await renderTasks(bot, { notice: null, guildId: interaction.guildId! }))
 }
 
-export async function tasksClick(bot: Bot, interaction: ButtonInteraction) {
-  const run = interaction.customId.startsWith(TASK_RUN_PREFIX)
-  const id = Number(interaction.customId.slice((run ? TASK_RUN_PREFIX : TASK_DELETE_PREFIX).length))
-  await interaction.deferUpdate()
-  const guildId = interaction.guildId!
-  const notice = await (async () => {
-    // Buttons only act on tasks of this guild, like the list.
-    const visible = await listTasks({ db: bot.db, guildId })
-    if (visible instanceof Error) return visible.message
-    if (!visible.some((task) => task.id === id)) return `Task #${id} not found in this server`
-    if (!run) {
-      const deleted = await deleteTask(bot, id)
-      return deleted instanceof Error ? deleted.message : `Deleted task #${id}`
-    }
-    const result = await runTaskNow(bot, id)
-    if (result instanceof Error) return `Could not run task #${id}: ${result.message}`
-    if (!result.ran) return `Task #${id} did not run: ${result.reason}`
-    return `Started task #${id} in <#${result.threadId}>`
-  })()
-  await interaction.editReply(await renderTasks(bot, { notice, guildId }))
+// Run now / Delete: acts on a task of this guild, then shows the list again with a notice.
+function taskButton({ prefix, act }: { prefix: string; act: (bot: Bot, id: number) => Promise<string> }) {
+  return async (bot: Bot, interaction: ButtonInteraction) => {
+    const id = Number(interaction.customId.slice(prefix.length))
+    await interaction.deferUpdate()
+    const guildId = interaction.guildId!
+    const notice = await (async () => {
+      // Buttons only act on tasks of this guild, like the list.
+      const visible = await listTasks({ db: bot.db, guildId })
+      if (visible instanceof Error) return visible.message
+      if (!visible.some((task) => task.id === id)) return `Task #${id} not found in this server`
+      return act(bot, id)
+    })()
+    await interaction.editReply(await renderTasks(bot, { notice, guildId }))
+  }
+}
+
+export const taskRoutes: InteractionRoutes = {
+  commands: {
+    tasks: { definition: new SlashCommandBuilder().setName('tasks').setDescription('List scheduled tasks, run one now, or delete it'), run: tasksCommand },
+  },
+  buttons: {
+    [TASK_RUN_PREFIX]: taskButton({
+      prefix: TASK_RUN_PREFIX,
+      act: async (bot, id) => {
+        const result = await runTaskNow(bot, id)
+        if (result instanceof Error) return `Could not run task #${id}: ${result.message}`
+        if (!result.ran) return `Task #${id} did not run: ${result.reason}`
+        return `Started task #${id} in <#${result.threadId}>`
+      },
+    }),
+    [TASK_DELETE_PREFIX]: taskButton({
+      prefix: TASK_DELETE_PREFIX,
+      act: async (bot, id) => {
+        const deleted = await deleteTask(bot, id)
+        return deleted instanceof Error ? deleted.message : `Deleted task #${id}`
+      },
+    }),
+  },
 }
 
 // --- Production loop: the only part with a lifecycle (a timer).
