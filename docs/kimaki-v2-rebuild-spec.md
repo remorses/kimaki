@@ -3077,7 +3077,7 @@ Four chokepoints. Each is the **only** place that does its job:
 
 | Chokepoint | Only place that … | Module |
 |---|---|---|
-| **actions** | calls OpenCode write APIs (`prompt`, `shell`, `interrupt`, `fork`, `form.reply`, `permission.reply`, `inbox.*`, `switchModel`, …) and creates threads | `actions.ts` |
+| **writers** | call OpenCode write APIs and create threads; plain functions taking the `Bot` context, through the `oc()` helper | `prompt.ts`, `sessions.ts`, `commands/*`, feature handlers |
 | **reducer** | interprets OpenCode events | `thread-reducer.ts` |
 | **effects executor** | posts, edits, types in session threads | `effects.ts` |
 | **store** | holds mutable in-memory state | `store.ts` |
@@ -3170,7 +3170,10 @@ The core reducer composes feature reducers.
 | `ingress.ts` | gates (bots, ownership, permission, mentions), attachments → files |
 | `routes.ts` | `parseTextMessage`, `parseVoiceMessage` → `Route` (pure, tested) |
 | `voice.ts` | transcription providers + transcription tool schema |
-| `actions.ts` | typed registry: every write, shared by slash commands, CLI, scheduler, buttons |
+| `bot.ts` | `Bot` context (discord, db, store, opencode, event loop, effects, per-bot maps in `local`), `oc()` and small lookups |
+| `prompt.ts` | input into a bound session: prompt, steer, dispatch, shell, abort, queue edits, `send` |
+| `sessions.ts` | sessions and their threads: start, fork, btw, resume, adopt, session marker, instructions |
+| `lock-routes.ts` | zod-typed table of every CLI ↔ bot route; `callBot` is typed from it |
 | `event-loop.ts` | connect protocol (6.8): subscribe, hold, hydrate, apply; subagent discovery; route by `sessionThreads`, `reduce`, store update, `runEffects` |
 | `effects.ts` | executor |
 | `store.ts` | zustand store |
@@ -3187,10 +3190,10 @@ The core reducer composes feature reducers.
 
 Rules:
 
-- a feature file may import `actions`, `store` (read), `format-parts`, `markdown`; it
+- a feature file may import `prompt.ts`, `sessions.ts`, `bot.ts`, `store` (read), `format-parts`, `markdown`; it
   never imports another feature file
-- only `event-loop.ts` writes `store.threads`; only `actions.ts` imports the OpenCode
-  client for writes
+- reducer slices edit an immer draft and call `emit(effect)`; never emit a draft object
+- only `event-loop.ts` writes `store.threads`; nothing outside the reducer renders session output
 - files under ~100 lines merge into their closest neighbour (for example `routes.ts`
   stays with its tests but `voice.ts` absorbs small provider helpers)
 

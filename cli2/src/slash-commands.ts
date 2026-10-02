@@ -3,8 +3,8 @@
 // application command routes). Every interaction passes the same permission
 // gate as messages, then goes to its handler: thread commands here, session
 // and preference commands in commands/, buttons and selects of session output
-// in their feature files. Handlers only collect input and call actions;
-// session output comes from events.
+// in their feature files. Handlers only collect input and call the writers
+// (prompt.ts, sessions.ts, ...); session output comes from events.
 //
 // Dynamic commands come from the OpenCode catalog of the guild's projects:
 //
@@ -31,7 +31,6 @@ import {
   SlashCommandBuilder,
   type AutocompleteInteraction,
   type ChatInputCommandInteraction,
-  type Client,
   type Guild,
   type Interaction,
   type MessageComponentInteraction,
@@ -42,26 +41,33 @@ import {
 import * as errore from 'errore'
 import dedent from 'string-dedent'
 
-import type { Actions, Author, ModelChoice } from './actions.ts'
-import type { AgentUi } from './agent-ui.ts'
-import { createPreferenceCommands } from './commands/preference-commands.ts'
-import { shellQuote } from './onboarding.ts'
-import { createSessionCommands } from './commands/session-commands.ts'
-import { createLoginCommands } from './commands/login-commands.ts'
-import { createWorktreeCommands, WORKTREE_PREFIX } from './commands/worktree-commands.ts'
-import type { KimakiDb } from './db.ts'
-import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
+import { clickAgentButton, submitUploadModal } from './agent-ui.ts'
+import { oc, projectOf, sessionDirectory, type Author, type Bot, type ModelChoice } from './bot.ts'
+import { handleLoginClick, handleLoginCommand, handleLoginModal, handleLoginSelect } from './commands/login-commands.ts'
+import {
+  applyAgent,
+  handlePreferenceCommand,
+  handlePreferenceSelect,
+  ownsPreferenceSelect,
+  PREFERENCE_COMMANDS,
+  switchModel,
+  variantChoices,
+  variantModel,
+} from './commands/preference-commands.ts'
+import { handleForkSelect, handleSessionCommand, ownsSessionSelect, SESSION_COMMANDS, sessionAutocomplete } from './commands/session-commands.ts'
+import { handleWorktreeClick, handleWorktreeCommand, WORKTREE_COMMANDS, WORKTREE_PREFIX } from './commands/worktree-commands.ts'
+import { ConfigError, DbError, DiscordError } from './errors.ts'
 import { formatError } from './format-parts.ts'
 import { canUseKimaki } from './ingress.ts'
 import { createLogger } from './logger.ts'
-import type { OpenCodeClient, OpencodeConnection, V2Event } from './opencode-server.ts'
+import { shellQuote } from './onboarding.ts'
 import { handlePermissionButton, PERMISSION_PREFIX } from './permissions.ts'
-import { createQuestionHandlers, FORM_OTHER_PREFIX, FORM_SELECT_PREFIX } from './questions.ts'
+import { abort, clearQueue, dispatch, redo, undo } from './prompt.ts'
+import { FORM_OTHER_PREFIX, FORM_SELECT_PREFIX, handleFormOther, handleFormSelect } from './questions.ts'
 import { formatEcho } from './queue.ts'
 import type { Route } from './routes.ts'
-import { resolveSession } from './session-events.ts'
-import { TASK_DELETE_PREFIX, TASK_RUN_PREFIX, type Scheduler } from './scheduler.ts'
-import type { BotStore } from './store.ts'
+import { TASK_DELETE_PREFIX, TASK_RUN_PREFIX, tasksClick, tasksCommand } from './scheduler.ts'
+import { forkBtw, startSession } from './sessions.ts'
 import { handleTranscriptionKeyModal, TRANSCRIPTION_KEY_MODAL, transcriptionKeyModal } from './voice.ts'
 
 const logger = createLogger('COMMANDS')
@@ -127,8 +133,8 @@ const STATIC_COMMANDS = [
   new SlashCommandBuilder().setName('model-variant').setDescription('Change the thinking level of the current model'),
   new SlashCommandBuilder().setName('verbosity').setDescription('Set what the bot shows in this channel'),
   new SlashCommandBuilder().setName('compact').setDescription('Compact the session context by summarizing the history'),
-  new SlashCommandBuilder().setName('undo').setDescription('Undo the last turn and revert its file changes'),
-  new SlashCommandBuilder().setName('redo').setDescription('Redo previously undone changes'),
+  new SlashCommandBuilder().setName('undo').setDescription('Undo the last turn (file changes are kept)'),
+  new SlashCommandBuilder().setName('redo').setDescription('Redo the previously undone turn'),
   new SlashCommandBuilder().setName('diff').setDescription('Show the git diff as a shareable URL'),
   new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage and context window percentage'),
   new SlashCommandBuilder().setName('tasks').setDescription('List scheduled tasks, run one now, or delete it'),
@@ -247,19 +253,6 @@ export type InteractionTarget = {
   projectDirectory: string
 }
 
-export type CommandContext = {
-  discord: Client
-  db: KimakiDb
-  store: BotStore
-  actions: Actions
-  // Reads only (catalogs, history); writes go through actions.
-  readClient: () => OpenCodeUnavailableError | OpenCodeClient
-  resolveTarget: (channelId: string | null) => Promise<Error | InteractionTarget>
-  replyError: (interaction: RepliableInteraction, error: Error) => Promise<void>
-}
-
-type RepliableInteraction = ChatInputCommandInteraction | MessageComponentInteraction | ModalSubmitInteraction
-
 export function authorOf(interaction: { user: { id: string; username: string } }): Author {
   return { id: interaction.user.id, username: interaction.user.username }
 }
@@ -274,44 +267,294 @@ export async function respondChoices(
   await interaction.respond(list.map((choice) => ({ name: choice.name.slice(0, 100), value: choice.value.slice(0, 100) }))).catch(() => undefined)
 }
 
-export function registerSlashCommands({
-  discord,
-  db,
-  store,
-  actions,
-  opencode,
-  agentUi,
-  scheduler,
-}: {
-  discord: Client
-  db: KimakiDb
-  store: BotStore
-  actions: Actions
-  opencode: OpencodeConnection
-  agentUi: AgentUi
-  scheduler: Pick<Scheduler, 'tasksCommand' | 'tasksClick'>
-}) {
+export async function resolveTarget(bot: Bot, channelId: string | null): Promise<Error | InteractionTarget> {
+  if (!channelId) return new ConfigError({ reason: 'This command can only be used in a channel' })
+  const channel = await bot.discord.channels
+    .fetch(channelId)
+    .catch((cause) => new DiscordError({ operation: `fetch channel ${channelId}`, cause }))
+  if (channel instanceof Error) return channel
+  const thread = channel?.isThread() && channel.type !== ChannelType.AnnouncementThread ? channel : null
+  const projectChannelId = thread ? thread.parentId : channel?.type === ChannelType.GuildText ? channel.id : null
+  if (!projectChannelId) return new ConfigError({ reason: 'This command can only be used in text channels or threads' })
+  const row = await projectOf(bot, projectChannelId)
+  if (row instanceof Error) return row
+  if (!row) return new ConfigError({ reason: 'This channel is not configured with a project directory' })
+  const sessionId = thread ? (bot.store.getState().roots[thread.id] ?? null) : null
+  const directory = sessionId ? await sessionDirectory(bot, sessionId) : row.directory
+  if (directory instanceof Error) return directory
+  return { channelId: projectChannelId, directory, projectDirectory: row.directory, thread, sessionId }
+}
+
+export async function replyError(
+  interaction: ChatInputCommandInteraction | MessageComponentInteraction | ModalSubmitInteraction,
+  error: Error,
+) {
+  logger.error(`interaction ${interaction.id} failed: ${error.message}`)
+  // Config errors are messages for the user, the rest are failures.
+  const content = error instanceof ConfigError ? error.message : formatError(error.message)
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply({ content, components: [] }).catch(() => undefined)
+    return
+  }
+  await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined)
+}
+
+// The session thread of a command, or a reply saying where it works.
+async function sessionTarget(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) {
+    await replyError(interaction, target)
+    return null
+  }
+  if (!target.thread || !target.sessionId) {
+    await interaction.reply({ content: 'Use this command in a thread with a Kimaki session', flags: MessageFlags.Ephemeral })
+    return null
+  }
+  return { ...target, thread: target.thread, sessionId: target.sessionId }
+}
+
+// An input from a command: a prompt in the thread, or a new session in a channel.
+async function sendInput(
+  bot: Bot,
+  {
+    interaction,
+    route,
+    echo,
+    model = null,
+  }: {
+    interaction: ChatInputCommandInteraction
+    route: Exclude<Route, { kind: 'btw' | 'new-session' | 'queue' }>
+    echo: string
+    // A model for this session only (`/<agent>-agent variant:`).
+    model?: ModelChoice | null
+  },
+) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return replyError(interaction, target)
+  const author = authorOf(interaction)
+  if (target.thread && target.sessionId) {
+    // The visible reply stands in for the user message.
+    await interaction.reply({ content: formatEcho({ username: author.username, text: echo }), allowedMentions: { parse: [] } })
+    const reply = await interaction.fetchReply().catch((e: Error) => e)
+    if (reply instanceof Error) return replyError(interaction, reply)
+    if (model) {
+      const switched = await switchModel(bot, { sessionId: target.sessionId, model })
+      if (switched instanceof Error) return replyError(interaction, switched)
+    }
+    const result = await dispatch(bot, { thread: target.thread, route, author, messageId: reply.id })
+    if (result instanceof Error) return replyError(interaction, result)
+    return
+  }
+  if (target.thread) {
+    await interaction.reply({ content: 'Use this command in a thread with a Kimaki session', flags: MessageFlags.Ephemeral })
+    return
+  }
+  await interaction.deferReply()
+  const started = await startSession(bot, {
+    channelId: target.channelId,
+    directory: target.directory,
+    route,
+    author,
+    messageId: interaction.id,
+    startMessageId: null,
+    ...(model && { model }),
+  })
+  if (started instanceof Error) return replyError(interaction, started)
+  await interaction.editReply({ content: `Started a new session in <#${started.threadId}>` })
+}
+
+async function handleDynamic(bot: Bot, { interaction, target }: { interaction: ChatInputCommandInteraction; target: DynamicCommand }) {
+  const text = (interaction.options.getString(target.kind === 'agent' ? 'prompt' : 'arguments') ?? '').trim()
+  if (target.kind === 'agent') {
+    const variant = interaction.options.getString('variant')?.trim()
+    const where = await resolveTarget(bot, interaction.channelId)
+    if (where instanceof Error) return replyError(interaction, where)
+    const model = variant ? await variantModel(bot, { target: where, variant }) : null
+    if (model instanceof Error) return replyError(interaction, model)
+    if (!text) return applyAgent(bot, { interaction, target: where, agent: target.name, model })
+    const label = model ? `${target.name}, ${model.variant}` : target.name
+    return sendInput(bot, { interaction, route: { kind: 'steer', text, agent: target.name }, echo: `(${label}) ${text}`, model })
+  }
+  if (target.kind === 'skill') {
+    return sendInput(bot, { interaction, route: { kind: 'skill', id: target.id, arguments: text }, echo: `/${target.id} ${text}`.trim() })
+  }
+  return sendInput(bot, {
+    interaction,
+    route: { kind: 'command', name: target.name, arguments: text, queue: false },
+    echo: `/${target.name} ${text}`.trim(),
+  })
+}
+
+async function handleSessionId(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return replyError(interaction, target)
+  if (!target.thread || !target.sessionId) {
+    await interaction.reply({ content: 'Run /session-id inside a Kimaki session thread.', flags: MessageFlags.Ephemeral })
+    return
+  }
+  await interaction.reply({
+    content: sessionIdReply({ sessionId: target.sessionId, threadId: target.thread.id, directory: target.directory }),
+    flags: MessageFlags.Ephemeral,
+  })
+}
+
+async function handleDiff(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return replyError(interaction, target)
+  await interaction.deferReply()
+  const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: target.directory, timeout: 10_000 }).catch(
+    (e) => new DiscordError({ operation: 'git status', cause: e }),
+  )
+  if (status instanceof Error) return replyError(interaction, new ConfigError({ reason: 'This project is not a git repository' }))
+  if (!status.stdout.trim()) {
+    await interaction.editReply({ content: 'No changes to show' })
+    return
+  }
+  const title = `${path.basename(target.directory)}: Discord /diff`
+  const upload = await execFileAsync('critique', ['--web', title, '--json'], { cwd: target.directory, timeout: 30_000 }).catch(
+    (e: NodeJS.ErrnoException & { stdout?: string }) => e,
+  )
+  if (upload instanceof Error && upload.code === 'ENOENT') {
+    return replyError(interaction, new ConfigError({ reason: 'critique is not installed. Install it with: npm i -g critique' }))
+  }
+  const output = upload instanceof Error ? (upload.stdout ?? '') : upload.stdout
+  const result = parseCritiqueOutput(output)
+  if (!result) return replyError(interaction, new ConfigError({ reason: `critique failed: ${output.slice(0, 200) || 'no output'}` }))
+  if (!result.ok) return replyError(interaction, new ConfigError({ reason: result.error }))
+  const embed = new EmbedBuilder().setTitle(title).setURL(result.url).setImage(`https://critique.work/og/${result.id}.png`)
+  await interaction.editReply({ embeds: [embed] })
+}
+
+async function handleContextUsage(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await sessionTarget(bot, interaction)
+  if (!target) return
+  const { sessionId, directory } = target
+  await interaction.deferReply()
+  const [info, messages, models] = await Promise.all([
+    oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId })),
+    oc(bot, 'message.list', (client) => client.message.list({ sessionID: sessionId, type: 'assistant', order: 'desc', limit: 20 })),
+    oc(bot, 'model.list', (client) => client.model.list({ location: { directory } })),
+  ])
+  if (info instanceof Error) return replyError(interaction, info)
+  if (messages instanceof Error) return replyError(interaction, messages)
+  const last = messages.data.find((message) => message.type === 'assistant' && message.tokens)
+  if (!last || last.type !== 'assistant' || !last.tokens) {
+    await interaction.editReply({ content: 'Token usage not available for this session yet' })
+    return
+  }
+  const { tokens, model } = last
+  const total = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
+  const limit = models instanceof Error ? null : models.data.find((candidate) => candidate.providerID === model.providerID && candidate.id === model.id)?.limit.context
+  const formatted = total.toLocaleString('en-US')
+  const lines = [
+    limit
+      ? `**Context usage:** ${Math.round((total / limit) * 100)}%, ${formatted} / ${limit.toLocaleString('en-US')} tokens`
+      : `**Context usage:** ${formatted} tokens (context limit unavailable)`,
+    `**Model:** ${model.providerID}/${model.id}`,
+    ...(info.cost > 0 ? [`**Session cost:** $${info.cost.toFixed(4)}`] : []),
+  ]
+  await interaction.editReply({ content: lines.join('\n') })
+}
+
+async function handleThreadCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await sessionTarget(bot, interaction)
+  if (!target) return
+  const { thread } = target
+  const author = authorOf(interaction)
+  switch (interaction.commandName) {
+    case 'abort': {
+      await interaction.deferReply()
+      const result = await abort(bot, { threadId: thread.id })
+      if (result instanceof Error) return replyError(interaction, result)
+      const note = result.cleared > 0 ? `, cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}` : ''
+      await interaction.editReply({ content: `Request **aborted**${note}` })
+      return
+    }
+    case 'queue':
+    case 'queue-command': {
+      const name = interaction.options.getString('command')?.trim().replace(/^\//, '') ?? ''
+      const args = (interaction.options.getString('arguments') ?? '').trim()
+      const echo = name ? `/${name} ${args}`.trim() : interaction.options.getString('message', true).trim()
+      const route: Route = name ? { kind: 'command', name, arguments: args, queue: true } : { kind: 'queue', text: echo }
+      // The visible reply stands in for the user message: the ack replies to it.
+      await interaction.reply({ content: formatEcho({ username: author.username, text: echo }), allowedMentions: { parse: [] } })
+      const reply = await interaction.fetchReply().catch((e: Error) => e)
+      if (reply instanceof Error) return replyError(interaction, reply)
+      const result = await dispatch(bot, { thread, route, author, messageId: reply.id })
+      if (result instanceof Error) return replyError(interaction, result)
+      return
+    }
+    case 'clear-queue': {
+      await interaction.deferReply()
+      const result = await clearQueue(bot, { threadId: thread.id, position: interaction.options.getInteger('position') })
+      if (result instanceof Error) return replyError(interaction, result)
+      const content =
+        result.cleared === 0 ? 'No queued messages' : `-# Cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}`
+      await interaction.editReply({ content })
+      return
+    }
+    case 'btw': {
+      const text = interaction.options.getString('prompt', true).trim()
+      await interaction.deferReply()
+      const result = await forkBtw(bot, { sourceThread: thread, text, author, messageId: interaction.id })
+      if (result instanceof Error) return replyError(interaction, result)
+      await interaction.editReply({ content: `Session forked! Continue in <#${result.threadId}>` })
+      return
+    }
+    case 'compact': {
+      await interaction.deferReply()
+      const result = await oc(bot, 'session.compact', (client) => client.session.compact({ sessionID: target.sessionId }))
+      if (result instanceof Error) return replyError(interaction, result)
+      await interaction.editReply({ content: 'Compacting the session context' })
+      return
+    }
+    case 'undo': {
+      await interaction.deferReply()
+      const result = await undo(bot, { threadId: thread.id })
+      if (result instanceof Error) return replyError(interaction, result)
+      if (!result.reverted) {
+        await interaction.editReply({ content: 'No messages to undo' })
+        return
+      }
+      await interaction.editReply({ content: 'Undone - removed the last turn from the session. File changes were kept' })
+      return
+    }
+    case 'redo': {
+      await interaction.deferReply()
+      const result = await redo(bot, { threadId: thread.id })
+      if (result instanceof Error) return replyError(interaction, result)
+      const content = {
+        nothing: 'Nothing to redo - no previous undo found',
+        all: 'Restored - session fully back to its previous state',
+        step: 'Restored one step forward',
+      }[result.restored]
+      await interaction.editReply({ content })
+      return
+    }
+    case 'context-usage':
+      return handleContextUsage(bot, interaction)
+  }
+}
+
+// Registers the interaction listener and keeps every guild's commands in line
+// with the OpenCode catalog. Returns registerAll and stop.
+export function registerSlashCommands(bot: Bot) {
+  const { discord, db } = bot
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
 
-  function readClient() {
-    return opencode.endpoint?.client ?? new OpenCodeUnavailableError({ reason: 'not connected' })
-  }
-
   async function catalogFor(directories: readonly string[]): Promise<Catalog> {
-    const client = readClient()
     const catalog: { agents: Catalog['agents'][number][]; commands: Catalog['commands'][number][]; skills: Catalog['skills'][number][] } = {
       agents: [],
       commands: [],
       skills: [],
     }
-    if (client instanceof Error) return catalog
     for (const directory of directories) {
       const location = { directory }
       const [agents, commands, skills] = await Promise.all([
-        client.agent.list({ location }).catch((e) => new OpenCodeError({ operation: 'agent.list', cause: e })),
-        client.command.list({ location }).catch((e) => new OpenCodeError({ operation: 'command.list', cause: e })),
-        client.skill.list({ location }).catch((e) => new OpenCodeError({ operation: 'skill.list', cause: e })),
+        oc(bot, 'agent.list', (client) => client.agent.list({ location })),
+        oc(bot, 'command.list', (client) => client.command.list({ location })),
+        oc(bot, 'skill.list', (client) => client.skill.list({ location })),
       ])
       // Union by name: the first project that has a name wins.
       if (agents instanceof Error) logger.warn(agents.message)
@@ -360,313 +603,36 @@ export function registerSlashCommands({
     logger.log(`registered ${built.commands.length} commands in guild ${guild.id}`)
   }
 
-  async function resolveTarget(channelId: string | null): Promise<Error | InteractionTarget> {
-    if (!channelId) return new ConfigError({ reason: 'This command can only be used in a channel' })
-    const channel = await discord.channels
-      .fetch(channelId)
-      .catch((e) => new DiscordError({ operation: `fetch channel ${channelId}`, cause: e }))
-    if (channel instanceof Error) return channel
-    const thread = channel?.isThread() && channel.type !== ChannelType.AnnouncementThread ? channel : null
-    const projectChannelId = thread ? thread.parentId : channel?.type === ChannelType.GuildText ? channel.id : null
-    if (!projectChannelId) return new ConfigError({ reason: 'This command can only be used in text channels or threads' })
-    const row = await db.query.channel_directories
-      .findFirst({ where: { channel_id: projectChannelId } })
-      .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
-    if (row instanceof Error) return row
-    if (!row) return new ConfigError({ reason: 'This channel is not configured with a project directory' })
-    const sessionId = thread ? (store.getState().roots[thread.id] ?? null) : null
-    const directory = sessionId ? await actions.workingDirectory(sessionId) : row.directory
-    if (directory instanceof Error) return directory
-    return { channelId: projectChannelId, directory, projectDirectory: row.directory, thread, sessionId }
-  }
-
-  async function replyError(interaction: RepliableInteraction, error: Error) {
-    logger.error(`interaction ${interaction.id} failed: ${error.message}`)
-    // Config errors are messages for the user, the rest are failures.
-    const content = error instanceof ConfigError ? error.message : formatError(error.message)
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({ content, components: [] }).catch(() => undefined)
-      return
-    }
-    await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined)
-  }
-
-  const context: CommandContext = { discord, db, store, actions, readClient, resolveTarget, replyError }
-  const sessions = createSessionCommands(context)
-  const preferences = createPreferenceCommands(context)
-  const questions = createQuestionHandlers({ store, actions })
-  const login = createLoginCommands(context)
-  const worktrees = createWorktreeCommands(context)
-
-  // The session thread of a command, or a reply saying where it works.
-  async function sessionTarget(interaction: ChatInputCommandInteraction) {
-    const target = await resolveTarget(interaction.channelId)
-    if (target instanceof Error) {
-      await replyError(interaction, target)
-      return null
-    }
-    if (!target.thread || !target.sessionId) {
-      await interaction.reply({ content: 'Use this command in a thread with a Kimaki session', flags: MessageFlags.Ephemeral })
-      return null
-    }
-    return { ...target, thread: target.thread, sessionId: target.sessionId }
-  }
-
-  // An input from a command: a prompt in the thread, or a new session in a channel.
-  async function sendInput({
-    interaction,
-    route,
-    echo,
-    model = null,
-  }: {
-    interaction: ChatInputCommandInteraction
-    route: Exclude<Route, { kind: 'btw' | 'new-session' | 'queue' }>
-    echo: string
-    // A model for this session only (`/<agent>-agent variant:`).
-    model?: ModelChoice | null
-  }) {
-    const target = await resolveTarget(interaction.channelId)
-    if (target instanceof Error) return replyError(interaction, target)
-    const author = authorOf(interaction)
-    if (target.thread && target.sessionId) {
-      // The visible reply stands in for the user message.
-      await interaction.reply({ content: formatEcho({ username: author.username, text: echo }), allowedMentions: { parse: [] } })
-      const reply = await interaction.fetchReply().catch((e: Error) => e)
-      if (reply instanceof Error) return replyError(interaction, reply)
-      if (model) {
-        const switched = await actions.switchModel({ sessionId: target.sessionId, model })
-        if (switched instanceof Error) return replyError(interaction, switched)
-      }
-      const result = await actions.dispatch({ thread: target.thread, route, author, messageId: reply.id })
-      if (result instanceof Error) return replyError(interaction, result)
-      return
-    }
-    if (target.thread) {
-      await interaction.reply({ content: 'Use this command in a thread with a Kimaki session', flags: MessageFlags.Ephemeral })
-      return
-    }
-    await interaction.deferReply()
-    const started = await actions.startSession({
-      channelId: target.channelId,
-      directory: target.directory,
-      route,
-      author,
-      messageId: interaction.id,
-      startMessageId: null,
-      ...(model && { model }),
-    })
-    if (started instanceof Error) return replyError(interaction, started)
-    await interaction.editReply({ content: `Started a new session in <#${started.threadId}>` })
-  }
-
-  async function handleDynamic(interaction: ChatInputCommandInteraction, target: DynamicCommand) {
-    const text = (interaction.options.getString(target.kind === 'agent' ? 'prompt' : 'arguments') ?? '').trim()
-    if (target.kind === 'agent') {
-      const variant = interaction.options.getString('variant')?.trim()
-      const where = await resolveTarget(interaction.channelId)
-      if (where instanceof Error) return replyError(interaction, where)
-      const model = variant ? await preferences.variantModel({ target: where, variant }) : null
-      if (model instanceof Error) return replyError(interaction, model)
-      if (!text) return preferences.applyAgent({ interaction, target: where, agent: target.name, model })
-      const label = model ? `${target.name}, ${model.variant}` : target.name
-      return sendInput({ interaction, route: { kind: 'steer', text, agent: target.name }, echo: `(${label}) ${text}`, model })
-    }
-    if (target.kind === 'skill') {
-      return sendInput({ interaction, route: { kind: 'skill', id: target.id, arguments: text }, echo: `/${target.id} ${text}`.trim() })
-    }
-    return sendInput({
-      interaction,
-      route: { kind: 'command', name: target.name, arguments: text, queue: false },
-      echo: `/${target.name} ${text}`.trim(),
-    })
-  }
-
-  async function handleSessionId(interaction: ChatInputCommandInteraction) {
-    const target = await resolveTarget(interaction.channelId)
-    if (target instanceof Error) return replyError(interaction, target)
-    if (!target.thread || !target.sessionId) {
-      await interaction.reply({ content: 'Run /session-id inside a Kimaki session thread.', flags: MessageFlags.Ephemeral })
-      return
-    }
-    await interaction.reply({
-      content: sessionIdReply({ sessionId: target.sessionId, threadId: target.thread.id, directory: target.directory }),
-      flags: MessageFlags.Ephemeral,
-    })
-  }
-
-  async function handleDiff(interaction: ChatInputCommandInteraction) {
-    const target = await resolveTarget(interaction.channelId)
-    if (target instanceof Error) return replyError(interaction, target)
-    await interaction.deferReply()
-    const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: target.directory, timeout: 10_000 }).catch(
-      (e) => new DiscordError({ operation: 'git status', cause: e }),
-    )
-    if (status instanceof Error) return replyError(interaction, new ConfigError({ reason: 'This project is not a git repository' }))
-    if (!status.stdout.trim()) {
-      await interaction.editReply({ content: 'No changes to show' })
-      return
-    }
-    const title = `${path.basename(target.directory)}: Discord /diff`
-    const upload = await execFileAsync('critique', ['--web', title, '--json'], { cwd: target.directory, timeout: 30_000 }).catch(
-      (e: NodeJS.ErrnoException & { stdout?: string }) => e,
-    )
-    if (upload instanceof Error && upload.code === 'ENOENT') {
-      return replyError(interaction, new ConfigError({ reason: 'critique is not installed. Install it with: npm i -g critique' }))
-    }
-    const output = upload instanceof Error ? (upload.stdout ?? '') : upload.stdout
-    const result = parseCritiqueOutput(output)
-    if (!result) return replyError(interaction, new ConfigError({ reason: `critique failed: ${output.slice(0, 200) || 'no output'}` }))
-    if (!result.ok) return replyError(interaction, new ConfigError({ reason: result.error }))
-    const embed = new EmbedBuilder().setTitle(title).setURL(result.url).setImage(`https://critique.work/og/${result.id}.png`)
-    await interaction.editReply({ embeds: [embed] })
-  }
-
-  async function handleContextUsage(interaction: ChatInputCommandInteraction) {
-    const target = await sessionTarget(interaction)
-    if (!target) return
-    const client = readClient()
-    if (client instanceof Error) return replyError(interaction, client)
-    await interaction.deferReply()
-    const [info, messages, models] = await Promise.all([
-      client.session.get({ sessionID: target.sessionId }).catch((e) => new OpenCodeError({ operation: 'session.get', cause: e })),
-      client.message
-        .list({ sessionID: target.sessionId, type: 'assistant', order: 'desc', limit: 20 })
-        .catch((e) => new OpenCodeError({ operation: 'message.list', cause: e })),
-      client.model.list({ location: { directory: target.directory } }).catch((e) => new OpenCodeError({ operation: 'model.list', cause: e })),
-    ])
-    if (info instanceof Error) return replyError(interaction, info)
-    if (messages instanceof Error) return replyError(interaction, messages)
-    const last = messages.data.find((message) => message.type === 'assistant' && message.tokens)
-    if (!last || last.type !== 'assistant' || !last.tokens) {
-      await interaction.editReply({ content: 'Token usage not available for this session yet' })
-      return
-    }
-    const { tokens, model } = last
-    const total = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
-    const limit = models instanceof Error ? null : models.data.find((candidate) => candidate.providerID === model.providerID && candidate.id === model.id)?.limit.context
-    const formatted = total.toLocaleString('en-US')
-    const lines = [
-      limit
-        ? `**Context usage:** ${Math.round((total / limit) * 100)}%, ${formatted} / ${limit.toLocaleString('en-US')} tokens`
-        : `**Context usage:** ${formatted} tokens (context limit unavailable)`,
-      `**Model:** ${model.providerID}/${model.id}`,
-      ...(info.cost > 0 ? [`**Session cost:** $${info.cost.toFixed(4)}`] : []),
-    ]
-    await interaction.editReply({ content: lines.join('\n') })
-  }
-
-  async function handleThreadCommand(interaction: ChatInputCommandInteraction) {
-    const target = await sessionTarget(interaction)
-    if (!target) return
-    const { thread } = target
-    const author = authorOf(interaction)
-    switch (interaction.commandName) {
-      case 'abort': {
-        await interaction.deferReply()
-        const result = await actions.abort({ threadId: thread.id })
-        if (result instanceof Error) return replyError(interaction, result)
-        const note = result.cleared > 0 ? `, cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}` : ''
-        await interaction.editReply({ content: `Request **aborted**${note}` })
-        return
-      }
-      case 'queue':
-      case 'queue-command': {
-        const name = interaction.options.getString('command')?.trim().replace(/^\//, '') ?? ''
-        const args = (interaction.options.getString('arguments') ?? '').trim()
-        const echo = name ? `/${name} ${args}`.trim() : interaction.options.getString('message', true).trim()
-        const route: Route = name ? { kind: 'command', name, arguments: args, queue: true } : { kind: 'queue', text: echo }
-        // The visible reply stands in for the user message: the ack replies to it.
-        await interaction.reply({ content: formatEcho({ username: author.username, text: echo }), allowedMentions: { parse: [] } })
-        const reply = await interaction.fetchReply().catch((e: Error) => e)
-        if (reply instanceof Error) return replyError(interaction, reply)
-        const result = await actions.dispatch({ thread, route, author, messageId: reply.id })
-        if (result instanceof Error) return replyError(interaction, result)
-        return
-      }
-      case 'clear-queue': {
-        await interaction.deferReply()
-        const result = await actions.clearQueue({ threadId: thread.id, position: interaction.options.getInteger('position') })
-        if (result instanceof Error) return replyError(interaction, result)
-        const content =
-          result.cleared === 0 ? 'No queued messages' : `-# Cleared ${result.cleared} queued message${result.cleared > 1 ? 's' : ''}`
-        await interaction.editReply({ content })
-        return
-      }
-      case 'btw': {
-        const text = interaction.options.getString('prompt', true).trim()
-        await interaction.deferReply()
-        const result = await actions.forkBtw({ sourceThread: thread, text, author, messageId: interaction.id })
-        if (result instanceof Error) return replyError(interaction, result)
-        await interaction.editReply({ content: `Session forked! Continue in <#${result.threadId}>` })
-        return
-      }
-      case 'compact': {
-        await interaction.deferReply()
-        const result = await actions.compact({ threadId: thread.id })
-        if (result instanceof Error) return replyError(interaction, result)
-        await interaction.editReply({ content: 'Compacting the session context' })
-        return
-      }
-      case 'undo': {
-        await interaction.deferReply()
-        const result = await actions.undo({ threadId: thread.id })
-        if (result instanceof Error) return replyError(interaction, result)
-        if (!result.reverted) {
-          await interaction.editReply({ content: 'No messages to undo' })
-          return
-        }
-        const files = result.reverted.files > 0 ? `\nReverted ${result.reverted.files} file(s)` : ''
-        await interaction.editReply({ content: `Undone - reverted the last turn${files}` })
-        return
-      }
-      case 'redo': {
-        await interaction.deferReply()
-        const result = await actions.redo({ threadId: thread.id })
-        if (result instanceof Error) return replyError(interaction, result)
-        const content = {
-          nothing: 'Nothing to redo - no previous undo found',
-          all: 'Restored - session fully back to its previous state',
-          step: 'Restored one step forward',
-        }[result.restored]
-        await interaction.editReply({ content })
-        return
-      }
-      case 'context-usage':
-        return handleContextUsage(interaction)
-    }
+  function dynamicCommand(interaction: { guildId: string | null; commandName: string }) {
+    return interaction.guildId ? dynamic.get(interaction.guildId)?.get(interaction.commandName) : undefined
   }
 
   async function handleCommand(interaction: ChatInputCommandInteraction) {
     const name = interaction.commandName
-    if (name === 'login') return login.handle(interaction)
+    if (name === 'login') return handleLoginCommand(bot, interaction)
     if (name === 'transcription-key') return interaction.showModal(transcriptionKeyModal())
-    if (name === 'session-id') return handleSessionId(interaction)
-    if (name === 'diff') return handleDiff(interaction)
-    if (name === 'tasks') return scheduler.tasksCommand(interaction)
-    if (worktrees.commands.has(name)) return worktrees.handle(interaction)
-    if (sessions.commands.has(name)) return sessions.handle(interaction)
-    if (preferences.commands.has(name)) return preferences.handle(interaction)
-    const target = interaction.guildId ? dynamic.get(interaction.guildId)?.get(name) : undefined
-    if (target) return handleDynamic(interaction, target)
-    return handleThreadCommand(interaction)
+    if (name === 'session-id') return handleSessionId(bot, interaction)
+    if (name === 'diff') return handleDiff(bot, interaction)
+    if (name === 'tasks') return tasksCommand(bot, interaction)
+    if (WORKTREE_COMMANDS.has(name)) return handleWorktreeCommand(bot, interaction)
+    if (SESSION_COMMANDS.has(name)) return handleSessionCommand(bot, interaction)
+    if (PREFERENCE_COMMANDS.has(name)) return handlePreferenceCommand(bot, interaction)
+    const target = dynamicCommand(interaction)
+    if (target) return handleDynamic(bot, { interaction, target })
+    return handleThreadCommand(bot, interaction)
   }
 
   async function handleAutocomplete(interaction: AutocompleteInteraction) {
-    if (sessions.commands.has(interaction.commandName)) return sessions.autocomplete(interaction)
-    const agentCommand = interaction.guildId ? dynamic.get(interaction.guildId)?.get(interaction.commandName) : undefined
-    if (agentCommand?.kind === 'agent') {
-      const where = await resolveTarget(interaction.channelId)
+    if (SESSION_COMMANDS.has(interaction.commandName)) return sessionAutocomplete(bot, interaction)
+    if (dynamicCommand(interaction)?.kind === 'agent') {
+      const where = await resolveTarget(bot, interaction.channelId)
       if (where instanceof Error) return respondChoices(interaction, where)
-      return respondChoices(interaction, await preferences.variantChoices(where, interaction.options.getFocused()))
+      return respondChoices(interaction, await variantChoices(bot, { target: where, query: interaction.options.getFocused() }))
     }
     if (interaction.commandName !== 'queue-command') return respondChoices(interaction, [])
-    const target = await resolveTarget(interaction.channelId)
+    const target = await resolveTarget(bot, interaction.channelId)
     if (target instanceof Error) return respondChoices(interaction, target)
-    const client = readClient()
-    if (client instanceof Error) return respondChoices(interaction, client)
-    const commands = await client.command
-      .list({ location: { directory: target.directory } })
-      .catch((e) => new OpenCodeError({ operation: 'command.list', cause: e }))
+    const commands = await oc(bot, 'command.list', (client) => client.command.list({ location: { directory: target.directory } }))
     if (commands instanceof Error) return respondChoices(interaction, commands)
     const query = interaction.options.getFocused().toLowerCase()
     return respondChoices(
@@ -681,7 +647,9 @@ export function registerSlashCommands({
     if (!interaction.guildId) return
     const channel = interaction.channel ?? (interaction.channelId ? await discord.channels.fetch(interaction.channelId).catch(() => null) : null)
     const projectId = channel?.isThread() ? channel.parentId : channel?.id
-    if (!projectId || !(await db.query.channel_directories.findFirst({ where: { channel_id: projectId } }))) return
+    const project = projectId ? await projectOf(bot, projectId) : null
+    if (project instanceof Error) return logger.warn(project.message)
+    if (!project) return
     const guild = interaction.guild ?? (await discord.guilds.fetch(interaction.guildId).catch(() => null))
     if (!guild || !(await canUseKimaki({ guild, userId: interaction.user.id }))) {
       if (interaction.isAutocomplete()) return respondChoices(interaction, [])
@@ -702,25 +670,30 @@ export function registerSlashCommands({
     }
     if (interaction.isChatInputCommand()) return handleCommand(interaction)
     if (interaction.isAutocomplete()) return handleAutocomplete(interaction)
-    if (interaction.isButton() && interaction.customId.startsWith(WORKTREE_PREFIX)) return worktrees.click(interaction)
-    if (interaction.isButton() && interaction.customId.startsWith('login_')) return login.click(interaction)
-    if (interaction.isButton() && /^(action_button|file_upload_btn):/.test(interaction.customId)) return agentUi.click(interaction)
-    if (interaction.isButton() && (interaction.customId.startsWith(TASK_RUN_PREFIX) || interaction.customId.startsWith(TASK_DELETE_PREFIX))) return scheduler.tasksClick(interaction)
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('file_upload_modal:')) return agentUi.modal(interaction)
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('login_')) return login.select(interaction)
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('login_')) return login.modal(interaction)
-    if (interaction.isModalSubmit() && interaction.customId === TRANSCRIPTION_KEY_MODAL) return handleTranscriptionKeyModal({ interaction, db })
-    if (interaction.isButton() && interaction.customId.startsWith(PERMISSION_PREFIX)) {
-      return handlePermissionButton({ interaction, store, actions })
+    if (interaction.isButton()) {
+      const id = interaction.customId
+      if (id.startsWith(WORKTREE_PREFIX)) return handleWorktreeClick(bot, interaction)
+      if (id.startsWith('login_')) return handleLoginClick(bot, interaction)
+      if (/^(action_button|file_upload_btn):/.test(id)) return clickAgentButton(bot, interaction)
+      if (id.startsWith(TASK_RUN_PREFIX) || id.startsWith(TASK_DELETE_PREFIX)) return tasksClick(bot, interaction)
+      if (id.startsWith(PERMISSION_PREFIX)) return handlePermissionButton(bot, interaction)
+      return
     }
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith(FORM_SELECT_PREFIX)) {
-      return questions.handleSelect(interaction)
+    if (interaction.isModalSubmit()) {
+      const id = interaction.customId
+      if (id.startsWith('file_upload_modal:')) return submitUploadModal(bot, interaction)
+      if (id.startsWith('login_')) return handleLoginModal(bot, interaction)
+      if (id === TRANSCRIPTION_KEY_MODAL) return handleTranscriptionKeyModal({ interaction, db })
+      if (id.startsWith(FORM_OTHER_PREFIX)) return handleFormOther(bot, interaction)
+      return
     }
-    if (interaction.isModalSubmit() && interaction.customId.startsWith(FORM_OTHER_PREFIX)) {
-      return questions.handleOther(interaction)
+    if (interaction.isStringSelectMenu()) {
+      const id = interaction.customId
+      if (id.startsWith('login_')) return handleLoginSelect(bot, interaction)
+      if (id.startsWith(FORM_SELECT_PREFIX)) return handleFormSelect(bot, interaction)
+      if (ownsSessionSelect(id)) return handleForkSelect(bot, interaction)
+      if (ownsPreferenceSelect(id)) return handlePreferenceSelect(bot, interaction)
     }
-    if (interaction.isStringSelectMenu() && sessions.ownsSelect(interaction.customId)) return sessions.handleSelect(interaction)
-    if (interaction.isStringSelectMenu() && preferences.ownsSelect(interaction.customId)) return preferences.handleSelect(interaction)
   }
 
   discord.on(Events.InteractionCreate, (interaction) => {
@@ -753,7 +726,7 @@ export function registerSlashCommands({
   // them while a location loads (a cold start returns an incomplete catalog) and
   // when skill files change, so a pass re-reads the lists and Discord is only
   // written when the resulting commands differ.
-  const unsubscribe = opencode.subscribe((event) => {
+  const unsubscribe = bot.opencode.subscribe((event) => {
     if (event.type === 'agent.updated' || event.type === 'command.updated' || event.type === 'skill.updated') void registerAll()
   })
 

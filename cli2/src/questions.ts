@@ -9,9 +9,8 @@
 //   form.replied / form.cancelled ─▶ every message of the form is edited: answer or cancelled, no dropdown
 //
 // Custom IDs carry only the form ID and field index. Answers of a form with
-// several questions wait in a closure map until the last one (spec 27.4:
-// wizard state lives in the feature that owns it; lost on restart, the user
-// picks again).
+// several questions wait in bot.local.formAnswers until the last one (lost on
+// restart, the user picks again).
 
 import {
   ActionRowBuilder,
@@ -25,11 +24,12 @@ import {
 } from 'discord.js'
 import type { FormInfo, JsonValue, V2Event } from '@opencode/client'
 
-import type { Actions } from './actions.ts'
+import { oc, type Bot } from './bot.ts'
 import { createLogger } from './logger.ts'
-import type { BotStore } from './store.ts'
-import type { Effect, ThreadView } from './thread-reducer.ts'
-import { textOnly, type UiMessage } from './effects.ts'
+import { castDraft, type Draft } from 'immer'
+
+import { textOnly, type UiMessage } from './format-parts.ts'
+import type { Emit, ThreadView } from './thread-reducer.ts'
 
 const logger = createLogger('QUESTION')
 
@@ -56,8 +56,6 @@ export type PendingForm = {
 }
 
 export type FormAnswer = { readonly [key: string]: string | readonly string[] }
-
-type Result = { view: ThreadView; effects: Effect[] }
 
 // FormInfo from the list API and the form.created payload differ only in
 // nominal field types; both have this shape.
@@ -147,7 +145,7 @@ const MESSAGE_LIMIT = 2_000
 
 // Header plus "✓ answer" within one Discord message. Only the display is
 // cut: OpenCode always gets the full answer.
-function withAnswer({ header: text, answer }: { header: string; answer: string }): string {
+export function withAnswer({ header: text, answer }: { header: string; answer: string }): string {
   const room = MESSAGE_LIMIT - text.length - 6
   return `${text}\n✓ _${answer.length > room ? `${answer.slice(0, room - 1)}…` : answer}_`
 }
@@ -156,77 +154,39 @@ function answeredMessage({ field, label, answer }: { field: QuestionField; label
   return textOnly(withAnswer({ header: header({ field, label }), answer }))
 }
 
-function showForm({ view, form, label }: { view: ThreadView; form: FormLike; label: string | null }): Result {
+type Slice = { draft: Draft<ThreadView>; emit: Emit }
+
+export function showForm({ draft, emit, form, label }: Slice & { form: FormLike; label: string | null }) {
   const fields = questionFields(form)
-  if (!fields || view.forms[form.id]) return { view, effects: [] }
+  if (!fields || draft.forms[form.id]) return
+  draft.forms[form.id] = castDraft({ sessionId: form.sessionID, fields, label })
   const messages = fields.map((field, index) => questionMessage({ formID: form.id, index, field, label }))
-  return {
-    view: { ...view, forms: { ...view.forms, [form.id]: { sessionId: form.sessionID, fields, label } } },
-    effects: [{ type: 'show', key: uiKey(form.id), messages, replyTo: null }],
-  }
+  emit({ type: 'show', key: uiKey(form.id), messages, replyTo: null })
 }
 
 // `render` builds each question's final text from its header.
-function closeForm({
-  view,
+export function closeForm({
+  draft,
+  emit,
   formID,
   render,
-}: {
-  view: ThreadView
-  formID: string
-  render: (field: QuestionField, header: string) => string
-}): Result {
-  const form = view.forms[formID]
-  if (!form) return { view, effects: [] }
-  const { [formID]: _settled, ...forms } = view.forms
+}: Slice & { formID: string; render: (field: QuestionField, header: string) => string }) {
+  const form = draft.forms[formID]
+  if (!form) return
   const messages = form.fields.map((field) => textOnly(render(field, header({ field, label: form.label }))))
-  return { view: { ...view, forms }, effects: [{ type: 'edit', key: uiKey(formID), messages }] }
-}
-
-// Form events of any session in the thread (root or subagent).
-export function reduceForms({ view, event, label }: { view: ThreadView; event: V2Event; label: string | null }): Result | null {
-  switch (event.type) {
-    case 'form.created':
-      return showForm({ view, form: event.data.form, label })
-    case 'form.replied':
-      return closeForm({
-        view,
-        formID: event.data.id,
-        render: (field, text) => withAnswer({ header: text, answer: formatAnswer(event.data.answer[field.key]) }),
-      })
-    case 'form.cancelled':
-      return closeForm({ view, formID: event.data.id, render: (_field, text) => `${text}\n✗ _cancelled_` })
-    default:
-      return null
-  }
+  delete draft.forms[formID]
+  emit({ type: 'edit', key: uiKey(formID), messages })
 }
 
 // After a (re)connect: pending forms of one session as OpenCode has them.
 // Unknown ones are shown (again); gone ones are closed.
-export function hydrateForms({
-  view,
-  sessionId,
-  forms,
-  label,
-}: {
-  view: ThreadView
-  sessionId: string
-  forms: readonly FormLike[]
-  label: string | null
-}): Result {
-  const pending = new Set(forms.map((form) => form.id))
-  const gone = Object.entries(view.forms).filter(([formID, form]) => form.sessionId === sessionId && !pending.has(formID))
-  const settled = gone.reduce<Result>(
-    (acc, [formID]) => {
-      const next = closeForm({ view: acc.view, formID, render: (_field, text) => `${text}\n_no longer pending_` })
-      return { view: next.view, effects: [...acc.effects, ...next.effects] }
-    },
-    { view, effects: [] },
-  )
-  return forms.reduce<Result>((acc, form) => {
-    const next = showForm({ view: acc.view, form, label })
-    return { view: next.view, effects: [...acc.effects, ...next.effects] }
-  }, settled)
+export function hydrateForms(slice: Slice & { sessionId: string; forms: readonly FormLike[]; label: string | null }) {
+  const pending = new Set(slice.forms.map((form) => form.id))
+  for (const [formID, form] of Object.entries(slice.draft.forms)) {
+    if (form.sessionId !== slice.sessionId || pending.has(formID)) continue
+    closeForm({ ...slice, formID, render: (_field, text) => `${text}\n_no longer pending_` })
+  }
+  for (const form of slice.forms) showForm({ ...slice, form })
 }
 
 // --- Discord handlers
@@ -253,26 +213,21 @@ async function acknowledge({
   await interaction.reply({ content, flags: MessageFlags.Ephemeral })
 }
 
-export function createQuestionHandlers({ store, actions }: { store: BotStore; actions: Actions }) {
-  // formID -> answers so far, for forms with several questions.
-  const partial = new Map<string, FormAnswer>()
-  // "formID:key" -> options picked together with "Other" in a multi-select,
-  // kept while the modal asks for the typed answer.
-  const pickedWithOther = new Map<string, readonly string[]>()
-
-  function pendingField({ threadId, customId, prefix }: { threadId: string; customId: string; prefix: string }) {
-    const parsed = parseCustomId(customId, prefix)
-    if (!parsed) return null
-    const form = store.getState().threads[threadId]?.forms[parsed.formID]
-    const field = form?.fields[parsed.index]
-    if (!form || !field) {
-      partial.delete(parsed.formID)
-      return null
-    }
-    return { formID: parsed.formID, form, field }
+function pendingField(bot: Bot, { threadId, customId, prefix }: { threadId: string; customId: string; prefix: string }) {
+  const parsed = parseCustomId(customId, prefix)
+  if (!parsed) return null
+  const form = bot.store.getState().threads[threadId]?.forms[parsed.formID]
+  const field = form?.fields[parsed.index]
+  if (!form || !field) {
+    bot.local.formAnswers.delete(parsed.formID)
+    return null
   }
+  return { formID: parsed.formID, form, field }
+}
 
-  async function record({
+async function record(
+  bot: Bot,
+  {
     interaction,
     formID,
     form,
@@ -284,59 +239,59 @@ export function createQuestionHandlers({ store, actions }: { store: BotStore; ac
     form: PendingForm
     field: QuestionField
     value: string | readonly string[]
-  }) {
-    const answers = { ...partial.get(formID), [field.key]: value }
-    const complete = form.fields.every((candidate) => answers[candidate.key] !== undefined)
-    if (complete) partial.delete(formID)
-    if (!complete) partial.set(formID, answers)
-    const answered = answeredMessage({ field, label: form.label, answer: formatAnswer(value) })
-    await acknowledge({ interaction, content: answered.content })
-    if (!complete) return
-    const result = await actions.answerForm({ sessionId: form.sessionId, formID, answer: answers })
-    if (!(result instanceof Error)) return
-    logger.warn(`answer ${formID} failed: ${result.message}`)
-    await interaction.followUp({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
-  }
+  },
+) {
+  const answers = { ...bot.local.formAnswers.get(formID), [field.key]: value }
+  const complete = form.fields.every((candidate) => answers[candidate.key] !== undefined)
+  if (complete) bot.local.formAnswers.delete(formID)
+  if (!complete) bot.local.formAnswers.set(formID, answers)
+  const answered = answeredMessage({ field, label: form.label, answer: formatAnswer(value) })
+  await acknowledge({ interaction, content: answered.content })
+  if (!complete) return
+  const result = await oc(bot, 'session.form.reply', (client) =>
+    client.session.form.reply({ sessionID: form.sessionId, formID, answer: answers }),
+  )
+  if (!(result instanceof Error)) return
+  logger.warn(`answer ${formID} failed: ${result.message}`)
+  await interaction.followUp({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
+}
 
-  async function expired(interaction: StringSelectMenuInteraction | ModalSubmitInteraction) {
-    await interaction.reply({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
-  }
+async function expired(interaction: StringSelectMenuInteraction | ModalSubmitInteraction) {
+  await interaction.reply({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
+}
 
-  return {
-    async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-      const pending = pendingField({ threadId: interaction.channelId, customId: interaction.customId, prefix: FORM_SELECT_PREFIX })
-      if (!pending) return expired(interaction)
-      const { formID, field } = pending
-      const values = interaction.values.flatMap((value) => {
-        const option = field.options[Number(value)]
-        return option ? [option.value] : []
-      })
-      if (interaction.values.includes(OTHER_VALUE)) {
-        pickedWithOther.set(`${formID}:${field.key}`, values)
-        const input = new TextInputBuilder()
-          .setCustomId('answer')
-          .setLabel('Your answer')
-          .setStyle(TextInputStyle.Paragraph)
-          .setRequired(true)
-        await interaction.showModal(
-          new ModalBuilder()
-            .setCustomId(interaction.customId.replace(FORM_SELECT_PREFIX, FORM_OTHER_PREFIX))
-            .setTitle((field.title || 'Answer').slice(0, 45))
-            .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input)),
-        )
-        return
-      }
-      await record({ interaction, ...pending, value: field.multiple ? values : (values[0] ?? '') })
-    },
-
-    async handleOther(interaction: ModalSubmitInteraction): Promise<void> {
-      const pending = pendingField({ threadId: interaction.channelId ?? '', customId: interaction.customId, prefix: FORM_OTHER_PREFIX })
-      if (!pending) return expired(interaction)
-      const text = interaction.fields.getTextInputValue('answer').trim()
-      const key = `${pending.formID}:${pending.field.key}`
-      const picked = pickedWithOther.get(key) ?? []
-      pickedWithOther.delete(key)
-      await record({ interaction, ...pending, value: pending.field.multiple ? [...picked, text] : text })
-    },
+export async function handleFormSelect(bot: Bot, interaction: StringSelectMenuInteraction): Promise<void> {
+  const pending = pendingField(bot, { threadId: interaction.channelId, customId: interaction.customId, prefix: FORM_SELECT_PREFIX })
+  if (!pending) return expired(interaction)
+  const { formID, field } = pending
+  const values = interaction.values.flatMap((value) => {
+    const option = field.options[Number(value)]
+    return option ? [option.value] : []
+  })
+  if (interaction.values.includes(OTHER_VALUE)) {
+    bot.local.pickedWithOther.set(`${formID}:${field.key}`, values)
+    const input = new TextInputBuilder()
+      .setCustomId('answer')
+      .setLabel('Your answer')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(true)
+    await interaction.showModal(
+      new ModalBuilder()
+        .setCustomId(interaction.customId.replace(FORM_SELECT_PREFIX, FORM_OTHER_PREFIX))
+        .setTitle((field.title || 'Answer').slice(0, 45))
+        .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input)),
+    )
+    return
   }
+  await record(bot, { interaction, ...pending, value: field.multiple ? values : (values[0] ?? '') })
+}
+
+export async function handleFormOther(bot: Bot, interaction: ModalSubmitInteraction): Promise<void> {
+  const pending = pendingField(bot, { threadId: interaction.channelId ?? '', customId: interaction.customId, prefix: FORM_OTHER_PREFIX })
+  if (!pending) return expired(interaction)
+  const text = interaction.fields.getTextInputValue('answer').trim()
+  const key = `${pending.formID}:${pending.field.key}`
+  const picked = bot.local.pickedWithOther.get(key) ?? []
+  bot.local.pickedWithOther.delete(key)
+  await record(bot, { interaction, ...pending, value: pending.field.multiple ? [...picked, text] : text })
 }

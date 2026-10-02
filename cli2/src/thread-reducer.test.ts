@@ -30,8 +30,15 @@ test('text-only turn: banner, text, typing, footer with context percent', () => 
         "type": "typing",
       },
       {
-        "text": "-# *project ⋅ main ⋅ 17s ⋅ 6% ⋅ gpt-6-luna*",
-        "type": "send",
+        "agent": "build",
+        "contextPercent": 6,
+        "directory": "/project",
+        "durationMs": 17597,
+        "model": {
+          "id": "gpt-6-luna",
+          "providerID": "openai",
+        },
+        "type": "footer",
       },
     ]
   `)
@@ -42,7 +49,7 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
   const events = loadFixture('abort.events.jsonl')
   const sessionID = rootSessionId(events)
   const started = events.find((event) => event.type === 'session.execution.started')!
-  const view = emptyView({ threadId: 'thread', sessionId: sessionID, folder: 'project', isNew: false })
+  const view = emptyView({ threadId: 'thread', sessionId: sessionID, channelId: 'channel', directory: '/project', isNew: false })
   const busy = reduce({ view, event: started, prefs: DEFAULT_PREFS }).view
   const failed = reduce({
     view: busy,
@@ -95,8 +102,15 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
         "type": "typing",
       },
       {
-        "text": "-# *project ⋅ main ⋅ 1s ⋅ 6% ⋅ gpt-6-luna*",
-        "type": "send",
+        "agent": "build",
+        "contextPercent": 6,
+        "directory": "/project",
+        "durationMs": 1387,
+        "model": {
+          "id": "gpt-6-luna",
+          "providerID": "openai",
+        },
+        "type": "footer",
       },
     ]
   `)
@@ -117,7 +131,7 @@ test('only these event types produce effects for the root session', () => {
   for (const file of files) {
     const events = loadFixture(file)
     const sessionId = rootSessionId(events)
-    let view = emptyView({ threadId: 'thread', sessionId, folder: 'project', isNew: true })
+    let view = emptyView({ threadId: 'thread', sessionId, channelId: 'channel', directory: '/project', isNew: true })
     for (const event of events) {
       const result = reduce({ view, event, prefs: DEFAULT_PREFS })
       view = result.view
@@ -183,7 +197,7 @@ test('only these event types produce effects for the root session', () => {
 test('retry notices are throttled to one per 10s', () => {
   const events = loadFixture('abort.events.jsonl')
   const sessionID = rootSessionId(events)
-  const view = emptyView({ threadId: 'thread', sessionId: sessionID, folder: 'project', isNew: false })
+  const view = emptyView({ threadId: 'thread', sessionId: sessionID, channelId: 'channel', directory: '/project', isNew: false })
   const retry = (created: number, attempt: number): V2Event => ({
     id: `evt_retry_${attempt}`,
     created,

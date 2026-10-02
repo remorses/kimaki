@@ -1,60 +1,56 @@
 // The event loop (spec 6.3, 27.2): routes every OpenCode event of the single
 // /api/event stream to its Discord thread, folds it with reduce(), stores the
-// new view and hands the effects to the executor.
+// new view and hands the effects to the executor. Folding is synchronous:
 //
-//   onEvent (never awaits) ──▶ per-thread FIFO ──▶ drain (awaits only local
-//   context loads: SQLite, git branch, model limits) ──▶ reduce ──▶ store ──▶ effects
+//   onEvent ─▶ sessionThreads ─▶ threadId ─▶ reduce ─▶ store ─▶ effects.run (never awaited)
 //
 // The SSE reader must never block: the server drops subscribers whose
-// 4096-event buffer overflows.
+// 4096-event buffer overflows. Two cases wait for a lookup, and hold their
+// events in arrival order meanwhile:
 //
-// Subagent sessions join their parent's thread (spec 6.8): session.created
-// with a known parentID maps the child at once; any other unknown session is
-// resolved by walking parentID with session.get while its events are held
-// (covers children that started before a bot restart). Sessions that lead to
-// no bound thread (TUI sessions) are remembered and dropped.
+//   unknown session  walk parentID with session.get until a bound session
+//                    (subagents that started before a bot restart). Sessions
+//                    that lead to no thread (TUI sessions) are dropped.
+//   cold thread      a bound thread without a view yet (bound in an earlier
+//                    bot run): read its project channel and directory once.
 
-import { execFile } from 'node:child_process'
-import path from 'node:path'
-import { promisify } from 'node:util'
 import { DiscordAPIError, RESTJSONErrorCodes, type Client } from 'discord.js'
-import * as errore from 'errore'
 
-import { readChannelVerbosity, type KimakiDb, type Verbosity } from './db.ts'
-import type { EffectsRunner } from './effects.ts'
 import type { Analytics } from './analytics.ts'
-import type { EventRecorder } from './session-events.ts'
+import { verbosityFromV1, type KimakiDb } from './db.ts'
+import type { EffectsRunner } from './effects.ts'
 import { DbError, DiscordError, OpenCodeError } from './errors.ts'
 import { createLogger } from './logger.ts'
 import type { ConnectContext, OpenCodeClient, V2Event } from './opencode-server.ts'
+import type { EventRecorder } from './session-events.ts'
 import type { BotStore } from './store.ts'
-import { emptyView, eventSessionId, isKimakiEvent, reduce, type KimakiEvent, type Prefs, type ThreadEvent } from './thread-reducer.ts'
+import {
+  emptyView,
+  eventSessionId,
+  isKimakiEvent,
+  reduce,
+  type KimakiEvent,
+  type SessionSnapshot,
+  type ThreadEvent,
+} from './thread-reducer.ts'
 
 const logger = createLogger('EVENTS')
 
-const CONTEXT_RETRIES = 5
-const CONTEXT_RETRY_MS = 2_000
+const LOAD_RETRIES = 5
+const LOAD_RETRY_MS = 2_000
 const MAX_HELD_EVENTS = 1_000
-const execFileAsync = promisify(execFile)
 
-type ThreadContext = {
-  sessionId: string
-  channelId: string
-  directory: string
-  verbosity: Verbosity
-}
+type Held = { events: ThreadEvent[]; loading: boolean; failures: number }
 
-class ThreadGoneError extends errore.createTaggedError({
-  name: 'ThreadGoneError',
-  message: 'Thread $threadId has no project channel',
-}) {}
+type ThreadSnapshot = { threadId: string; event: Extract<KimakiEvent, { type: 'kimaki.snapshot' }> }
 
-async function gitBranch(directory: string): Promise<string | null> {
-  const result = await execFileAsync('git', ['branch', '--show-current'], { cwd: directory, timeout: 5_000 }).catch(
-    () => null,
-  )
-  const branch = result?.stdout.trim()
-  return branch || null
+function hold(map: Map<string, Held>, key: string, event: ThreadEvent): Held {
+  const entry = map.get(key) ?? { events: [], loading: false, failures: 0 }
+  map.set(key, entry)
+  entry.events.push(event)
+  // Bounded: a lookup that keeps failing must not grow forever.
+  if (entry.events.length > MAX_HELD_EVENTS) entry.events.shift()
+  return entry
 }
 
 export function createEventLoop({
@@ -72,145 +68,97 @@ export function createEventLoop({
   recorder: EventRecorder
   analytics: Analytics
 }) {
-  const queues = new Map<string, { events: ThreadEvent[]; running: boolean; failures: number }>()
-  // Per-thread settings, loaded once: parent channel, directory, verbosity.
-  const contexts = new Map<string, ThreadContext>()
-  // Context window sizes ("providerID/modelID" -> tokens), refreshed per
-  // directory once per connection because project config can add providers.
-  const limits: { byModel: Readonly<Record<string, number>>; directories: Set<string> } = {
-    byModel: {},
-    directories: new Set(),
-  }
+  // The client of the current connection, set before hydration starts.
   const connection: { client: OpenCodeClient | null } = { client: null }
+  // Context window sizes ("providerID/modelID" -> tokens), read once per
+  // directory per connection: project config can add providers.
+  const limits: { byModel: Readonly<Record<string, number>>; loads: Map<string, Promise<void>> } = { byModel: {}, loads: new Map() }
+  const coldThreads = new Map<string, Held>()
+  const unknownSessions = new Map<string, Held>()
+  const ignoredSessions = new Set<string>()
 
-  async function loadModelLimits(directory: string) {
+  // Resolves when the limits of `directory` are known (or failed to load).
+  function loadModelLimits(directory: string): Promise<void> {
     const client = connection.client
-    if (!client || limits.directories.has(directory)) return
-    const models = await client.model
-      .list({ location: { directory } })
-      .catch((e) => new OpenCodeError({ operation: 'model.list', cause: e }))
-    if (models instanceof Error) {
-      logger.warn(models.message)
-      return
-    }
-    limits.directories.add(directory)
-    limits.byModel = {
-      ...limits.byModel,
-      ...Object.fromEntries(models.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context])),
-    }
+    if (!client) return Promise.resolve()
+    const existing = limits.loads.get(directory)
+    if (existing) return existing
+    const load = (async () => {
+      const models = await client.model.list({ location: { directory } }).catch((e) => new OpenCodeError({ operation: 'model.list', cause: e }))
+      if (models instanceof Error) {
+        limits.loads.delete(directory)
+        logger.warn(models.message)
+        return
+      }
+      limits.byModel = { ...limits.byModel, ...Object.fromEntries(models.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context])) }
+    })()
+    limits.loads.set(directory, load)
+    return load
   }
 
-  async function loadContext(threadId: string): Promise<ThreadContext | ThreadGoneError | DbError | DiscordError | OpenCodeError> {
+  // Folds one event into a loaded view.
+  function fold(threadId: string, event: ThreadEvent) {
+    const state = store.getState()
+    const view = state.threads[threadId]
+    if (!view) return
+    const verbosity = state.verbosity[view.channelId] ?? verbosityFromV1(null)
+    const result = reduce({ view, event, prefs: { verbosity, contextLimits: limits.byModel } })
+    if (result.view !== view) store.setState((current) => ({ threads: { ...current.threads, [threadId]: result.view } }))
+    effects.run(threadId, result.effects)
+    if (event.type === 'session.moved' && event.data.sessionID === view.sessionId) void loadModelLimits(event.data.location.directory)
+  }
+
+  // Every event of a thread enters here exactly once.
+  function deliver(threadId: string, event: ThreadEvent) {
+    recorder.record(threadId, event)
+    if (!isKimakiEvent(event)) analytics.observe(event, store.getState().roots[threadId] === eventSessionId(event))
+    if (store.getState().threads[threadId] && !coldThreads.has(threadId)) return fold(threadId, event)
+    hold(coldThreads, threadId, event)
+    void loadView(threadId)
+  }
+
+  // A thread bound in an earlier run: its channel (for verbosity) and the
+  // session's directory, then the held events in order.
+  async function loadView(threadId: string): Promise<void> {
+    const entry = coldThreads.get(threadId)
+    if (!entry || entry.loading) return
+    entry.loading = true
     const sessionId = store.getState().roots[threadId]
-    if (!sessionId) return new ThreadGoneError({ threadId })
-    const base = await (async () => {
-      const thread = await discord.channels.fetch(threadId).catch((e) => {
-        if (e instanceof DiscordAPIError && e.code === RESTJSONErrorCodes.UnknownChannel) {
-          return new ThreadGoneError({ threadId })
-        }
-        return new DiscordError({ operation: `fetch thread ${threadId}`, cause: e })
-      })
+    const loaded = await (async () => {
+      if (!sessionId) return null
+      const thread = await discord.channels.fetch(threadId).catch((e) => e instanceof DiscordAPIError && e.code === RESTJSONErrorCodes.UnknownChannel ? null : new DiscordError({ operation: `fetch thread ${threadId}`, cause: e }))
       if (thread instanceof Error) return thread
       const channelId = thread?.isThread() ? thread.parentId : null
-      if (!channelId) return new ThreadGoneError({ threadId })
-      const row = await db.query.channel_directories
-        .findFirst({ where: { channel_id: channelId } })
-        .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
-      if (row instanceof Error) return row
-      if (!row) return new ThreadGoneError({ threadId })
+      if (!channelId) return null
+      const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } }).catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
+      if (project instanceof Error) return project
+      if (!project) return null
       const client = connection.client
       if (!client) return new OpenCodeError({ operation: 'load session directory while disconnected' })
       const info = await client.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'read session directory', cause }))
       if (info instanceof Error) return info
-      return { sessionId, channelId, directory: info.location.directory }
+      await loadModelLimits(info.location.directory)
+      return { channelId, directory: info.location.directory }
     })()
-    if (base instanceof Error) return base
-    const verbosity = await readChannelVerbosity({ db, channelId: base.channelId })
-    if (verbosity instanceof Error) return verbosity
-    const context = { ...base, verbosity }
-    contexts.set(threadId, context)
-    return context
-  }
-
-  function prefsFor(context: ThreadContext): Prefs {
-    return { verbosity: context.verbosity, contextLimits: limits.byModel }
-  }
-
-  function apply({ threadId, context, event }: { threadId: string; context: ThreadContext; event: ThreadEvent }) {
-    const state = store.getState()
-    // Unbound (or rebound) while this event waited: it belongs to no view now.
-    if (state.roots[threadId] !== context.sessionId) return
-    const view =
-      state.threads[threadId] ??
-      emptyView({
-        threadId,
-        sessionId: context.sessionId,
-        folder: path.basename(context.directory),
-        isNew: false,
-      })
-    const result = reduce({ view, event, prefs: prefsFor(context) })
-    if (result.view !== state.threads[threadId]) {
-      store.setState((current) => ({ threads: { ...current.threads, [threadId]: result.view } }))
+    entry.loading = false
+    if (loaded instanceof Error && entry.failures < LOAD_RETRIES) {
+      // Transient Discord, SQLite or OpenCode failure: keep the events and retry.
+      entry.failures++
+      logger.warn(`thread ${threadId} load failed (${entry.failures}/${LOAD_RETRIES}): ${loaded.message}`)
+      setTimeout(() => void loadView(threadId), LOAD_RETRY_MS * entry.failures)
+      return
     }
-    effects.run(threadId, result.effects)
-  }
-
-  async function drain(threadId: string) {
-    const queue = queues.get(threadId)
-    if (!queue || queue.running) return
-    queue.running = true
-    while (queue.events.length > 0) {
-      let context = contexts.get(threadId) ?? (await loadContext(threadId))
-      if (!(context instanceof Error)) await loadModelLimits(context.directory)
-      if (context instanceof ThreadGoneError || (context instanceof Error && queue.failures >= CONTEXT_RETRIES)) {
-        logger.warn(`dropping ${queue.events.length} events of thread ${threadId}: ${context.message}`)
-        queue.events.length = 0
-        break
-      }
-      if (context instanceof Error) {
-        // Transient Discord or SQLite failure: keep the events and retry.
-        queue.failures++
-        logger.warn(`thread ${threadId} context failed (${queue.failures}/${CONTEXT_RETRIES}): ${context.message}`)
-        setTimeout(() => void drain(threadId), CONTEXT_RETRY_MS * queue.failures)
-        break
-      }
-      queue.failures = 0
-      const event = queue.events.shift()
-      if (!event) break
-      if (event.type === 'session.moved' && event.data.sessionID === context.sessionId) {
-        context = { ...context, directory: event.data.location.directory }
-        contexts.set(threadId, context)
-        await loadModelLimits(context.directory)
-        apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory), folder: path.basename(context.directory) } })
-      }
-      // A root execution starts, or one was found running after a (re)connect.
-      const rootStarts =
-        (event.type === 'session.execution.started' && eventSessionId(event) === context.sessionId) ||
-        (event.type === 'session.step.started' && event.data.sessionID === context.sessionId && !store.getState().threads[threadId]?.turn) ||
-        (event.type === 'kimaki.synced' && event.activeSessionIds.includes(context.sessionId))
-      if (rootStarts) {
-        apply({ threadId, context, event: { type: 'kimaki.branch', branch: await gitBranch(context.directory), folder: path.basename(context.directory) } })
-      }
-      apply({ threadId, context, event })
+    coldThreads.delete(threadId)
+    // Unbound, rebound or gone meanwhile: the held events belong to no view.
+    if (!sessionId || !loaded || loaded instanceof Error || store.getState().roots[threadId] !== sessionId) {
+      logger.warn(`dropping ${entry.events.length} events of thread ${threadId}: ${loaded instanceof Error ? loaded.message : 'no project channel'}`)
+      return
     }
-    queue.running = false
-  }
-
-  function enqueue(threadId: string, event: ThreadEvent) {
-    const queue = queues.get(threadId) ?? { events: [], running: false, failures: 0 }
-    queues.set(threadId, queue)
-    recorder.record(threadId, event)
-    if (!isKimakiEvent(event)) analytics.observe(event, store.getState().roots[threadId] === eventSessionId(event))
-    queue.events.push(event)
-    void drain(threadId)
-  }
-
-  const ignoredSessions = new Set<string>()
-  // Events of sessions whose thread is being looked up, in arrival order.
-  const resolving = new Map<string, { events: V2Event[]; inFlight: boolean }>()
-
-  function mapSession(sessionId: string, threadId: string) {
-    store.setState((current) => ({ sessionThreads: { ...current.sessionThreads, [sessionId]: threadId } }))
+    if (!store.getState().threads[threadId]) {
+      const view = emptyView({ threadId, sessionId, channelId: loaded.channelId, directory: loaded.directory, isNew: false })
+      store.setState((current) => ({ threads: { ...current.threads, [threadId]: view } }))
+    }
+    for (const event of entry.events) fold(threadId, event)
   }
 
   // Walks parentID up to a bound session. null = confirmed unrelated (no parent
@@ -227,9 +175,7 @@ export function createEventLoop({
     const chain: Array<{ sessionId: string; agent: string }> = []
     let current = sessionId
     for (let depth = 0; depth < 8; depth++) {
-      const info = await client.session
-        .get({ sessionID: current }, { signal })
-        .catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
+      const info = await client.session.get({ sessionID: current }, { signal }).catch((e) => new OpenCodeError({ operation: 'session.get', cause: e }))
       if (info instanceof Error) return info
       if (!info.parentID) return null
       chain.unshift({ sessionId: current, agent: info.agent ?? 'subagent' })
@@ -242,85 +188,136 @@ export function createEventLoop({
 
   function adoptChain({ threadId, chain }: { threadId: string; chain: Array<{ sessionId: string; agent: string }> }) {
     for (const link of chain) {
-      mapSession(link.sessionId, threadId)
-      enqueue(threadId, { type: 'kimaki.child', sessionId: link.sessionId, agent: link.agent })
+      store.setState((current) => ({ sessionThreads: { ...current.sessionThreads, [link.sessionId]: threadId } }))
+      deliver(threadId, { type: 'kimaki.child', sessionId: link.sessionId, agent: link.agent })
     }
   }
 
   async function resolveUnknownSession(sessionId: string) {
-    const entry = resolving.get(sessionId)
+    const entry = unknownSessions.get(sessionId)
     const client = connection.client
-    if (!entry || entry.inFlight || !client) return
-    entry.inFlight = true
+    if (!entry || entry.loading || !client) return
+    entry.loading = true
     const found = await findAncestorThread({ client, sessionId })
-    entry.inFlight = false
+    entry.loading = false
     if (found instanceof Error) {
       // Keep the held events; the next event of this session retries.
       logger.warn(`cannot resolve session ${sessionId}: ${found.message}`)
       return
     }
-    resolving.delete(sessionId)
+    unknownSessions.delete(sessionId)
     if (!found) {
       ignoredSessions.add(sessionId)
       return
     }
     adoptChain(found)
-    for (const event of entry.events) enqueue(found.threadId, event)
+    for (const event of entry.events) deliver(found.threadId, event)
   }
 
-  async function hydrateSession({
+  // What OpenCode runs and waits on now, per thread: busy state, root
+  // directory, queue, questions and permissions. Children that started while
+  // the bot was away are adopted through their parentID chain first.
+  // `threadIds`: only these threads; default every thread with a view or an
+  // active session. Waiting state is read only where it can exist: active
+  // sessions, and sessions whose questions, permissions or queue a view shows.
+  async function snapshots({
     client,
-    sessionId,
-    isRoot,
     signal,
+    threadIds,
+    beforeRead,
   }: {
     client: OpenCodeClient
-    sessionId: string
-    isRoot: boolean
     signal: AbortSignal
-  }): Promise<OpenCodeError | Extract<KimakiEvent, { type: 'kimaki.hydrated' }>> {
+    threadIds?: readonly string[]
+    // Called after adopting children, right before the state reads start.
+    beforeRead?: () => void
+  }): Promise<OpenCodeError | ThreadSnapshot[]> {
+    const active = await client.session.active({ signal }).catch((e) => new OpenCodeError({ operation: 'session.active', cause: e }))
+    if (active instanceof Error) return active
+    const unknown = Object.keys(active).filter((id) => !store.getState().sessionThreads[id] && !ignoredSessions.has(id))
+    const found = await Promise.all(unknown.map((sessionId) => findAncestorThread({ client, sessionId, signal })))
+    if (signal.aborted) return new OpenCodeError({ operation: 'sync (superseded)' })
+    for (const result of found) {
+      if (result && !(result instanceof Error)) adoptChain(result)
+    }
+    beforeRead?.()
+    const { threads, sessionThreads, roots } = store.getState()
+    const activeIds = Object.keys(active)
+    const targets = threadIds ?? [...new Set([...Object.keys(threads), ...activeIds.flatMap((id) => sessionThreads[id] ?? [])])]
+    const at = Date.now()
+    const results = await Promise.all(
+      targets.map(async (threadId): Promise<OpenCodeError | ThreadSnapshot | null> => {
+        const root = roots[threadId]
+        if (!root) return null
+        const view = threads[threadId]
+        const activeSessionIds = activeIds.filter((id) => sessionThreads[id] === threadId)
+        const shown = view ? [...Object.values(view.forms), ...Object.values(view.permissions)].map((item) => item.sessionId) : []
+        const queued = view && view.queue.length > 0 ? [root] : []
+        const sessionIds = [...new Set([...activeSessionIds, ...shown, ...queued])]
+        const [info, sessions] = await Promise.all([
+          // A deleted session keeps its last known directory.
+          client.session.get({ sessionID: root }, { signal }).catch(() => null),
+          Promise.all(sessionIds.map((sessionId) => readSession({ client, sessionId, isRoot: sessionId === root, signal }))),
+        ])
+        const failed = sessions.find((session) => session instanceof Error)
+        if (failed instanceof Error) return failed
+        const directory = info?.location.directory ?? null
+        if (directory) await loadModelLimits(directory)
+        const event: ThreadSnapshot['event'] = {
+          type: 'kimaki.snapshot',
+          at,
+          directory,
+          activeSessionIds,
+          sessions: sessions.filter((session): session is SessionSnapshot => !(session instanceof Error)),
+        }
+        return { threadId, event }
+      }),
+    )
+    if (signal.aborted) return new OpenCodeError({ operation: 'sync (superseded)' })
+    const failed = results.find((result) => result instanceof Error)
+    if (failed instanceof Error) return failed
+    return results.filter((result): result is ThreadSnapshot => result !== null && !(result instanceof Error))
+  }
+
+  async function readSession({ client, sessionId, isRoot, signal }: { client: OpenCodeClient; sessionId: string; isRoot: boolean; signal: AbortSignal }): Promise<OpenCodeError | SessionSnapshot> {
     const [inbox, forms, permissions] = await Promise.all([
-      isRoot
-        ? client.session.inbox
-            .list({ sessionID: sessionId }, { signal })
-            .catch((e) => new OpenCodeError({ operation: 'session.inbox.list', cause: e }))
-        : null,
-      client.session.form
-        .list({ sessionID: sessionId }, { signal })
-        .catch((e) => new OpenCodeError({ operation: 'session.form.list', cause: e })),
-      client.permission
-        .list({ sessionID: sessionId }, { signal })
-        .catch((e) => new OpenCodeError({ operation: 'permission.list', cause: e })),
+      isRoot ? client.session.inbox.list({ sessionID: sessionId }, { signal }).catch((e) => new OpenCodeError({ operation: 'session.inbox.list', cause: e })) : null,
+      client.session.form.list({ sessionID: sessionId }, { signal }).catch((e) => new OpenCodeError({ operation: 'session.form.list', cause: e })),
+      client.permission.list({ sessionID: sessionId }, { signal }).catch((e) => new OpenCodeError({ operation: 'permission.list', cause: e })),
     ])
     if (inbox instanceof Error) return inbox
     if (forms instanceof Error) return forms
     if (permissions instanceof Error) return permissions
-    return { type: 'kimaki.hydrated', sessionId, inbox, forms, permissions }
+    return { sessionId, inbox, forms, permissions }
   }
 
   return {
-    // Bindings from SQLite. Several rows can share a session after V1 /resume;
-    // the most recently updated one wins.
+    // Bindings and channel verbosity from SQLite. Several bindings can share a
+    // session after V1 /resume; the most recently updated one wins.
     async load(): Promise<DbError | void> {
-      const rows = await db.query.thread_sessions
-        .findMany({ orderBy: { updated_at: 'asc' } })
-        .catch((e) => new DbError({ operation: 'read thread_sessions', cause: e }))
+      const [rows, verbosity] = await Promise.all([
+        db.query.thread_sessions.findMany({ orderBy: { updated_at: 'asc' } }).catch((e) => new DbError({ operation: 'read thread_sessions', cause: e })),
+        db.query.channel_verbosity.findMany().catch((e) => new DbError({ operation: 'read channel_verbosity', cause: e })),
+      ])
       if (rows instanceof Error) return rows
+      if (verbosity instanceof Error) return verbosity
       store.setState({
         roots: Object.fromEntries(rows.map((row) => [row.thread_id, row.session_id])),
         sessionThreads: Object.fromEntries(rows.map((row) => [row.session_id, row.thread_id])),
+        verbosity: Object.fromEntries(verbosity.map((row) => [row.channel_id, verbosityFromV1(row.verbosity)])),
       })
     },
 
-    // A session this bot just created or forked for a thread. Called before
-    // the first prompt, so the whole first turn is routed.
+    // A session this bot created, forked or resumed for a thread. Called before
+    // the first prompt, so the whole first turn is routed. `first`: internal
+    // events folded before any live event (history replay).
     async bind({
       threadId,
       sessionId,
       channelId,
       directory,
       isNew,
-      first,
+      first = [],
     }: {
       threadId: string
       sessionId: string
@@ -328,138 +325,61 @@ export function createEventLoop({
       directory: string
       // New sessions show a banner on their first step; forks do not.
       isNew: boolean
-      // Internal events folded before any live event of the session (history replay).
       first?: readonly KimakiEvent[]
-    }): Promise<DbError | void> {
-      const verbosity = await readChannelVerbosity({ db, channelId })
-      if (verbosity instanceof Error) return verbosity
-      contexts.set(threadId, { sessionId, channelId, directory, verbosity })
+    }): Promise<void> {
       ignoredSessions.delete(sessionId)
+      coldThreads.delete(threadId)
       store.setState((current) => ({
         roots: { ...current.roots, [threadId]: sessionId },
         sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
-        threads: {
-          ...current.threads,
-          [threadId]: emptyView({ threadId, sessionId, folder: path.basename(directory), isNew }),
-        },
+        threads: { ...current.threads, [threadId]: emptyView({ threadId, sessionId, channelId, directory, isNew }) },
       }))
       // Same synchronous turn as the routing change: no live event can come first.
-      for (const event of first ?? []) enqueue(threadId, event)
-    },
-
-    // An existing session was bound to this thread (`/resume`, `/fork`): load
-    // what it runs and waits on now, like after a reconnect.
-    async hydrateThread(threadId: string): Promise<OpenCodeError | void> {
-      const client = connection.client
-      const sessionId = store.getState().roots[threadId]
-      if (!client || !sessionId) return
-      const signal = AbortSignal.timeout(10_000)
-      const active = await client.session
-        .active({ signal })
-        .catch((e) => new OpenCodeError({ operation: 'session.active', cause: e }))
-      if (active instanceof Error) return active
-      const unknown = Object.keys(active).filter((id) => !store.getState().sessionThreads[id] && !ignoredSessions.has(id))
-      const found = await Promise.all(unknown.map((id) => findAncestorThread({ client, sessionId: id, signal })))
-      for (const result of found) {
-        if (result && !(result instanceof Error)) adoptChain(result)
-      }
-      const { sessionThreads } = store.getState()
-      const activeSessionIds = Object.keys(active).filter((id) => sessionThreads[id] === threadId)
-      enqueue(threadId, { type: 'kimaki.synced', activeSessionIds, at: Date.now() })
-      const targets = [...new Set([sessionId, ...activeSessionIds])]
-      const hydrated = await Promise.all(
-        targets.map((id) => hydrateSession({ client, sessionId: id, isRoot: id === sessionId, signal })),
-      )
-      for (const event of hydrated) {
-        if (event instanceof Error) return event
-        enqueue(threadId, event)
-      }
+      for (const event of first) deliver(threadId, event)
+      // Before the first prompt, so its footer can show the context percent.
+      await loadModelLimits(directory)
     },
 
     // A thread loses its session (`/resume` moved the session to a new thread).
     unbind(threadId: string): void {
-      contexts.delete(threadId)
+      coldThreads.delete(threadId)
       effects.dispose(threadId)
       store.setState((current) => {
         const { [threadId]: _root, ...roots } = current.roots
         const { [threadId]: _view, ...threads } = current.threads
-        const sessionThreads = Object.fromEntries(
-          Object.entries(current.sessionThreads).filter(([, mapped]) => mapped !== threadId),
-        )
+        const sessionThreads = Object.fromEntries(Object.entries(current.sessionThreads).filter(([, mapped]) => mapped !== threadId))
         return { roots, threads, sessionThreads }
       })
     },
 
-    // Channel settings changed (`/verbosity`): threads reload them with their next event.
-    forgetChannel(channelId: string): void {
-      for (const [threadId, context] of contexts) {
-        if (context.channelId === channelId) contexts.delete(threadId)
-      }
+    // An existing session was bound to this thread (`/resume`, `/fork`). Its
+    // live events wait until the snapshot is folded, so a newer event (an
+    // execution that ended meanwhile) is never overwritten by older state.
+    async syncThread(threadId: string): Promise<OpenCodeError | void> {
+      const client = connection.client
+      if (!client || coldThreads.has(threadId)) return
+      const entry: Held = { events: [], loading: true, failures: 0 }
+      const result = await snapshots({ client, signal: AbortSignal.timeout(10_000), threadIds: [threadId], beforeRead: () => coldThreads.set(threadId, entry) })
+      if (coldThreads.get(threadId) === entry) coldThreads.delete(threadId)
+      if (!(result instanceof Error)) for (const snapshot of result) deliver(snapshot.threadId, snapshot.event)
+      for (const event of entry.events) fold(threadId, event)
+      if (result instanceof Error) return result
     },
 
     // Held live events wait while this runs (connect protocol, spec 6.8).
-    // Reconciles busy state; children that started while the bot was away are
-    // adopted through their parentID chain first.
     async onConnect({ client, signal }: ConnectContext): Promise<OpenCodeError | void> {
       connection.client = client
-      contexts.clear()
       // A new connection may bring new providers, and old unrelated sessions are gone.
-      limits.directories.clear()
+      limits.loads.clear()
       ignoredSessions.clear()
-      const active = await client.session
-        .active({ signal })
-        .catch((e) => new OpenCodeError({ operation: 'session.active', cause: e }))
-      if (active instanceof Error) return active
-      const unknown = Object.keys(active).filter(
-        (sessionId) => !store.getState().sessionThreads[sessionId] && !ignoredSessions.has(sessionId),
-      )
-      const found = await Promise.all(unknown.map((sessionId) => findAncestorThread({ client, sessionId, signal })))
-      if (signal.aborted) return new OpenCodeError({ operation: 'hydrate (superseded)' })
-      for (const result of found) {
-        if (result && !(result instanceof Error)) adoptChain(result)
-      }
-      const now = Date.now()
-      const { threads, sessionThreads } = store.getState()
-      const byThread = new Map<string, string[]>(Object.keys(threads).map((threadId) => [threadId, []]))
-      for (const sessionId of Object.keys(active)) {
-        const threadId = sessionThreads[sessionId]
-        if (!threadId) continue
-        byThread.set(threadId, [...(byThread.get(threadId) ?? []), sessionId])
-      }
-      for (const [threadId, activeSessionIds] of byThread) {
-        enqueue(threadId, { type: 'kimaki.synced', activeSessionIds, at: now })
-      }
-      // What busy sessions wait on (queue, questions, permissions), and what
-      // views still show from before, which may have settled meanwhile.
-      const { roots } = store.getState()
-      const targets = new Map<string, string>()
-      for (const sessionId of Object.keys(active)) {
-        const threadId = sessionThreads[sessionId]
-        if (threadId) targets.set(sessionId, threadId)
-      }
-      for (const [threadId, view] of Object.entries(threads)) {
-        const shown = [...Object.values(view.forms), ...Object.values(view.permissions)].map((item) => item.sessionId)
-        for (const sessionId of shown) targets.set(sessionId, threadId)
-        if (view.queue.length > 0) targets.set(view.sessionId, threadId)
-      }
-      const hydrated = await Promise.all(
-        [...targets].map(([sessionId, threadId]) =>
-          hydrateSession({ client, sessionId, isRoot: roots[threadId] === sessionId, signal }).then((event) => ({
-            threadId,
-            event,
-          })),
-        ),
-      )
-      if (signal.aborted) return new OpenCodeError({ operation: 'hydrate (superseded)' })
-      for (const { threadId, event } of hydrated) {
-        if (event instanceof Error) return event
-        enqueue(threadId, event)
-      }
+      const result = await snapshots({ client, signal })
+      if (result instanceof Error) return result
+      for (const snapshot of result) deliver(snapshot.threadId, snapshot.event)
     },
 
-    // Internal events (executor results) go through the same per-thread FIFO.
+    // Internal events (agent UI) go through the same fold as OpenCode events.
     dispatch(threadId: string, event: KimakiEvent): void {
-      enqueue(threadId, event)
+      deliver(threadId, event)
     },
 
     onEvent(event: V2Event): void {
@@ -467,22 +387,14 @@ export function createEventLoop({
       if (!sessionId) return
       const { sessionThreads } = store.getState()
       const threadId = sessionThreads[sessionId]
-      if (threadId) {
-        enqueue(threadId, event)
-        return
-      }
+      if (threadId) return deliver(threadId, event)
       if (ignoredSessions.has(sessionId)) return
       const parentThread = event.type === 'session.created' && event.data.parentID ? sessionThreads[event.data.parentID] : null
       if (parentThread) {
-        mapSession(sessionId, parentThread)
-        enqueue(parentThread, event)
-        return
+        store.setState((current) => ({ sessionThreads: { ...current.sessionThreads, [sessionId]: parentThread } }))
+        return deliver(parentThread, event)
       }
-      const entry = resolving.get(sessionId) ?? { events: [], inFlight: false }
-      resolving.set(sessionId, entry)
-      entry.events.push(event)
-      // Bounded: a session whose lookup keeps failing must not grow forever.
-      if (entry.events.length > MAX_HELD_EVENTS) entry.events.shift()
+      hold(unknownSessions, sessionId, event)
       void resolveUnknownSession(sessionId)
     },
 

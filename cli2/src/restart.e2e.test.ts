@@ -48,7 +48,7 @@ test('restarted bot continues the session of an existing thread', async () => {
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'first message before restart' })
   const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000 })
   await waitForFooter({ discord, threadId: thread.id })
-  const [binding] = await bot.db.db.query.thread_sessions.findMany()
+  const [binding] = await bot.db.query.thread_sessions.findMany()
 
   await bot.stop()
   bot = await startTestBot({ dataDir, twin, server })
@@ -69,9 +69,22 @@ test('restarted bot continues the session of an existing thread', async () => {
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
-  const rows = await bot.db.db.query.thread_sessions.findMany()
+  const rows = await bot.db.query.thread_sessions.findMany()
   expect(rows.map((row) => row.session_id)).toEqual([binding?.session_id])
   const client = await server.client()
   const messages = await client.message.list({ sessionID: binding!.session_id })
   expect(messages.data.filter((message) => message.type === 'user').length).toBe(2)
+})
+
+test('reconnect hydration skips idle sessions, so a deleted one does not block it', async () => {
+  const { discord, channelId } = twin
+  bot ??= await startTestBot({ dataDir, twin, server })
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'session that gets deleted' })
+  const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (candidate) => candidate.name === 'session that gets deleted' })
+  await waitForFooter({ discord, threadId: thread.id })
+  const client = await server.client()
+  await client.session.remove({ sessionID: bot.store.getState().roots[thread.id]! })
+
+  const reconnected = await bot.eventLoop.onConnect({ client, reconnect: true, signal: AbortSignal.timeout(10_000) })
+  expect(reconnected).toBeUndefined()
 })

@@ -14,20 +14,20 @@ import {
   GuildMember,
   PermissionFlagsBits,
   type Attachment,
-  type Client,
   type Guild,
   type Message,
 } from 'discord.js'
 import * as errore from 'errore'
 
-import { parseSendInput, REMOTE_PROMPT_FILE, REMOTE_SEND_PREFIX, REMOTE_RESULT_PREFIX, type Actions, type PromptFile } from './actions.ts'
-import type { KimakiDb } from './db.ts'
+import { projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts'
 import { formatError } from './format-parts.ts'
 import { createLogger } from './logger.ts'
+import { parseInput, sendInput } from './lock-routes.ts'
+import { dispatch, REMOTE_PROMPT_FILE, REMOTE_RESULT_PREFIX, REMOTE_SEND_PREFIX, send } from './prompt.ts'
 import { formatEcho, handleQueuedMessageDelete, handleQueuedMessageEdit, queuedItemFor } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
-import type { BotStore } from './store.ts'
-import { isVoiceAttachment, parseVoiceMessage, type AttachmentLike, type Transcriber } from './voice.ts'
+import { primaryAgents, startSession } from './sessions.ts'
+import { isVoiceAttachment, parseVoiceMessage, transcribe, type AttachmentLike } from './voice.ts'
 
 const logger = createLogger('INGRESS')
 
@@ -108,134 +108,141 @@ function attachmentLike(attachment: Attachment): AttachmentLike {
   }
 }
 
-export function registerIngress({
-  discord,
-  db,
-  store,
-  actions,
-  transcriber,
-  dataDir,
-}: {
-  discord: Client
-  db: KimakiDb
-  store: BotStore
-  actions: Actions
-  transcriber: Transcriber
-  dataDir: string
-}) {
-  const chains = new Map<string, Promise<void>>()
-
-  // Voice: transcribe first. The transcription picks the route (spec 9.4).
-  async function voiceRoute({
-    message,
-    attachment,
+// Voice: transcribe first. The transcription picks the route (spec 9.4).
+async function voiceRoute(
+  bot: Bot,
+  { message, attachment, directory, inSession }: { message: Message; attachment: Attachment; directory: string; inSession: boolean },
+): Promise<Error | Route> {
+  const audio = await download(attachment.url)
+  if (audio instanceof Error) return audio
+  const agents = await primaryAgents(bot, directory)
+  if (agents instanceof Error) return agents
+  const result = await transcribe({
+    db: bot.db,
+    token: bot.token,
+    baseUrls: bot.transcriptionBaseUrls,
+    audio,
+    mediaType: attachment.contentType ?? 'audio/ogg',
     directory,
+    // The ID is what switchAgent and session.create take.
+    agents: agents.map((agent) => ({ name: agent.id, description: agent.description ?? '' })),
     inSession,
-  }: {
-    message: Message
-    attachment: Attachment
-    directory: string
-    inSession: boolean
-  }): Promise<Error | Route> {
-    const audio = await download(attachment.url)
-    if (audio instanceof Error) return audio
-    const agents = await actions.primaryAgents({ directory })
-    if (agents instanceof Error) return agents
-    const result = await transcriber.transcribe({
-      audio,
-      mediaType: attachment.contentType ?? 'audio/ogg',
-      directory,
-      agents,
-      inSession,
+  })
+  if (result instanceof Error) return result
+  logger.log(`voice message ${message.id} -> ${result.route}${result.agent ? ` (${result.agent})` : ''}`)
+  return parseVoiceMessage(result)
+}
+
+// A remote send envelope another machine's `kimaki send` posted in a channel this bot owns.
+async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: { message: Message; channelId: string; threadId: string | null }) {
+  const footer = message.embeds[0]?.footer?.text
+  if (!footer?.startsWith(REMOTE_SEND_PREFIX)) return
+  const decoded = errore.try(
+    () => ({ value: JSON.parse(footer.slice(REMOTE_SEND_PREFIX.length)) as unknown }),
+    (cause) => new AttachmentError({ file: 'remote envelope', cause }),
+  )
+  if (decoded instanceof Error) return
+  const value = decoded.value
+  if (!value || typeof value !== 'object') return
+  if (!('requestId' in value) || typeof value.requestId !== 'string' || !/^[0-9a-f]{16}$/.test(value.requestId)) return
+  if (!('options' in value) || !value.options || typeof value.options !== 'object' || Array.isArray(value.options)) return
+  const promptInFile = 'promptFile' in value && value.promptFile === REMOTE_PROMPT_FILE
+  const first = message.attachments.first()
+  const promptAttachment = promptInFile && first?.name === REMOTE_PROMPT_FILE ? first : undefined
+  // Never fall back to the truncated preview in the message content.
+  const prompt = !promptInFile
+    ? message.content
+    : promptAttachment
+      ? await remotePromptText(promptAttachment.url)
+      : new AttachmentError({ file: REMOTE_PROMPT_FILE, cause: new Error('missing from the remote envelope') })
+  const target = threadId ? { threadId } : { channelId }
+  const input = prompt instanceof Error ? prompt : parseInput(sendInput, { ...value.options, ...target, prompt })
+  const attachments = [...message.attachments.values()].filter((attachment) => attachment !== promptAttachment)
+  const files = await saveAttachments({ dataDir: bot.dataDir, messageId: message.id, attachments })
+  const result = input instanceof Error ? input : files instanceof Error ? files : await send(bot, { ...input, files }, { localOnly: true })
+  const answer = JSON.stringify(result instanceof Error ? { error: result.message } : result)
+  await message
+    .reply({
+      content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`,
+      embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${answer}` } }],
+      allowedMentions: { parse: [] },
     })
-    if (result instanceof Error) return result
-    logger.log(`voice message ${message.id} -> ${result.route}${result.agent ? ` (${result.agent})` : ''}`)
-    return parseVoiceMessage(result)
+    .catch((error: Error) => logger.warn(`remote acknowledgment: ${error.message}`))
+}
+
+async function handleMessage(bot: Bot, message: Message) {
+  const channel = message.channel
+  const thread = channel.isThread() ? channel : null
+  const channelId = thread ? thread.parentId : channel.id
+  if (!channelId || !message.guild) return
+
+  const project = await projectOf(bot, channelId)
+  if (project instanceof Error) return logger.warn(project.message)
+  if (!project || project.channel_type !== 'text') return
+  if (message.author.bot) {
+    if (message.author.id !== bot.discord.user?.id) return
+    return handleRemoteEnvelope(bot, { message, channelId, threadId: thread?.id ?? null })
+  }
+  if (!(await canUseKimaki({ guild: message.guild, userId: message.author.id }))) {
+    logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
+    return
+  }
+  const sessionId = thread ? bot.store.getState().roots[thread.id] : undefined
+  if (thread && !sessionId) return
+  const author = { id: message.author.id, username: message.author.username }
+  const reportError = async (error: Error) => {
+    logger.error(`message ${message.id} failed: ${error.message}`)
+    await message.reply(formatError(error.message)).catch(() => undefined)
   }
 
-  async function handle(message: Message) {
-    const channel = message.channel
-    const thread = channel.isThread() ? channel : null
-    const channelId = thread ? thread.parentId : channel.id
-    if (!channelId || !message.guild) return
+  const attachments = [...message.attachments.values()]
+  const voice = attachments.find((attachment) => isVoiceAttachment(attachmentLike(attachment)))
+  const files = await saveAttachments({
+    dataDir: bot.dataDir,
+    messageId: message.id,
+    attachments: attachments.filter((attachment) => attachment !== voice),
+  })
+  if (files instanceof Error) return reportError(files)
+  const directory = sessionId && voice ? await sessionDirectory(bot, sessionId) : project.directory
+  if (directory instanceof Error) return reportError(directory)
+  const route = voice
+    ? await voiceRoute(bot, { message, attachment: voice, directory, inSession: Boolean(sessionId) })
+    : (parseTextMessage({ content: message.content }) ?? (files.length > 0 ? { kind: 'steer' as const, text: '' } : null))
+  if (route instanceof Error) return reportError(route)
+  if (!route) return
+  // The transcription is not visible anywhere else.
+  if (voice && thread && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
+    await message.reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] } })
+  }
 
-    const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } })
-    if (!project || project.channel_type !== 'text') return
-    if (message.author.bot) {
-      if (message.author.id !== discord.user?.id) return
-      const footer = message.embeds[0]?.footer?.text
-      if (!footer?.startsWith(REMOTE_SEND_PREFIX)) return
-      const decoded = errore.try(() => ({ value: JSON.parse(footer.slice(REMOTE_SEND_PREFIX.length)) as unknown }), (cause) => new AttachmentError({ file: 'remote envelope', cause }))
-      if (decoded instanceof Error) return
-      const value = decoded.value
-      if (!value || typeof value !== 'object' || !('requestId' in value) || typeof value.requestId !== 'string' || !/^[0-9a-f]{16}$/.test(value.requestId) || !('options' in value) || !value.options || typeof value.options !== 'object' || Array.isArray(value.options)) return
-      const promptInFile = 'promptFile' in value && value.promptFile === REMOTE_PROMPT_FILE
-      const first = message.attachments.first()
-      const promptAttachment = promptInFile && first?.name === REMOTE_PROMPT_FILE ? first : undefined
-      // Never fall back to the truncated preview in the message content.
-      const prompt = !promptInFile ? message.content : promptAttachment ? await remotePromptText(promptAttachment.url) : new AttachmentError({ file: REMOTE_PROMPT_FILE, cause: new Error('missing from the remote envelope') })
-      const input = prompt instanceof Error ? prompt : parseSendInput({ ...value.options, ...(thread ? { threadId: thread.id } : { channelId }), prompt })
-      const files = await saveAttachments({ dataDir, messageId: message.id, attachments: [...message.attachments.values()].filter((attachment) => attachment !== promptAttachment) })
-      const result = input instanceof Error ? input : files instanceof Error ? files : await actions.send({ ...input, files }, { localOnly: true })
-      await message.reply({ content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`, embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${JSON.stringify(result instanceof Error ? { error: result.message } : result)}` } }], allowedMentions: { parse: [] } }).catch((error: Error) => logger.warn(`remote acknowledgment: ${error.message}`))
-      return
-    }
-    if (!(await canUseKimaki({ guild: message.guild, userId: message.author.id }))) {
-      logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
-      return
-    }
-    const inSession = thread ? Boolean(store.getState().roots[thread.id]) : false
-    if (thread && !inSession) return
-    const author = { id: message.author.id, username: message.author.username }
-    const reportError = async (error: Error) => {
-      logger.error(`message ${message.id} failed: ${error.message}`)
-      await message.reply(formatError(error.message)).catch(() => undefined)
-    }
-
-    const attachments = [...message.attachments.values()]
-    const voice = attachments.find((attachment) => isVoiceAttachment(attachmentLike(attachment)))
-    const files = await saveAttachments({
-      dataDir,
+  if (!thread) {
+    // A channel message starts a session. Queue and btw need one to wait
+    // for or fork from: here they are plain prompts.
+    const first = route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' ? route : { ...route, kind: 'steer' as const }
+    const started = await startSession(bot, {
+      channelId,
+      directory: project.directory,
+      route: first,
+      author,
       messageId: message.id,
-      attachments: attachments.filter((attachment) => attachment !== voice),
+      showInput: Boolean(voice),
+      files,
     })
-    if (files instanceof Error) return reportError(files)
-    const directory = thread && voice ? await actions.workingDirectory(store.getState().roots[thread.id]!) : project.directory
-    if (directory instanceof Error) return reportError(directory)
-    const route = voice
-      ? await voiceRoute({ message, attachment: voice, directory, inSession })
-      : (parseTextMessage({ content: message.content }) ?? (files.length > 0 ? { kind: 'steer' as const, text: '' } : null))
-    if (route instanceof Error) return reportError(route)
-    if (!route) return
-    // The transcription is not visible anywhere else.
-    if (voice && thread && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
-      await message.reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] } })
-    }
-
-    if (!thread) {
-      // A channel message starts a session. Queue and btw need one to wait
-      // for or fork from: here they are plain prompts.
-      const first = route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' ? route : { ...route, kind: 'steer' as const }
-      const started = await actions.startSession({
-        channelId,
-        directory: project.directory,
-        route: first,
-        author,
-        messageId: message.id,
-        showInput: Boolean(voice),
-        files,
-      })
-      if (started instanceof Error) return reportError(started)
-      return
-    }
-
-    const result = await actions.dispatch({ thread, route, author, messageId: message.id, files })
-    if (result instanceof Error) return reportError(result)
-    if (!result) return
-    const note =
-      route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-    await message.reply(note).catch(() => undefined)
+    if (started instanceof Error) return reportError(started)
+    return
   }
+
+  const result = await dispatch(bot, { thread, route, author, messageId: message.id, files })
+  if (result instanceof Error) return reportError(result)
+  if (!result) return
+  const note =
+    route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
+  await message.reply(note).catch(() => undefined)
+}
+
+// Registers the message listeners. Messages of one channel are handled in arrival order.
+export function registerIngress(bot: Bot) {
+  const chains = new Map<string, Promise<void>>()
 
   function serialize(channelId: string, task: () => Promise<void>) {
     const previous = chains.get(channelId) ?? Promise.resolve()
@@ -243,26 +250,26 @@ export function registerIngress({
     chains.set(channelId, next)
   }
 
-  discord.on(Events.MessageCreate, (message) => {
+  bot.discord.on(Events.MessageCreate, (message) => {
     if (message.author.bot && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
-    serialize(message.channelId, () => handle(message))
+    serialize(message.channelId, () => handleMessage(bot, message))
   })
-  discord.on(Events.MessageDelete, (message) => {
-    serialize(message.channelId, () => handleQueuedMessageDelete({ message, store, actions }))
+  bot.discord.on(Events.MessageDelete, (message) => {
+    serialize(message.channelId, () => handleQueuedMessageDelete(bot, message))
   })
-  discord.on(Events.MessageUpdate, (_old, message) => {
+  bot.discord.on(Events.MessageUpdate, (_old, message) => {
     if (message.author?.bot) return
     serialize(message.channelId, async () => {
       const full = message.partial ? await message.fetch().catch(() => null) : message
-      if (!full?.guild || !queuedItemFor({ store, threadId: full.channelId, messageId: full.id })) return
+      if (!full?.guild || !queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })) return
       if (!(await canUseKimaki({ guild: full.guild, userId: full.author.id }))) return
       // The re-queued prompt must carry the message's attachments again.
-      const files = await saveAttachments({ dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
+      const files = await saveAttachments({ dataDir: bot.dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
       if (files instanceof Error) {
         logger.error(`edit of ${full.id}: ${files.message}`)
         return
       }
-      await handleQueuedMessageEdit({ message: full, files, store, actions })
+      await handleQueuedMessageEdit(bot, { message: full, files })
     })
   })
 }

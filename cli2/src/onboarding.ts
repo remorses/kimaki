@@ -22,9 +22,10 @@ import dedent from 'string-dedent'
 
 import { API } from '@discordjs/core/http-only'
 
-import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
+import { ConfigError, DbError, DiscordError } from './errors.ts'
 import { createLogger } from './logger.ts'
-import type { BotHandle } from './main.ts'
+import type { Bot } from './bot.ts'
+import { startSession } from './sessions.ts'
 import { addProjectChannel, defaultChannelName, defaultProjectDirectory } from './project.ts'
 
 const logger = createLogger('ONBOARD')
@@ -156,7 +157,7 @@ export async function runOnboarding({
   installerId,
   machine,
 }: {
-  bot: BotHandle
+  bot: Bot
   dataDir: string
   guild: Guild
   // Shell command for `kimaki`, from kimakiShellCommand().
@@ -169,7 +170,7 @@ export async function runOnboarding({
 }): Promise<
   Error | OnboardingResult
 > {
-  const { db } = bot.db
+  const { db } = bot
   const directory = defaultProjectDirectory({ dataDir })
   const mapped = await db.query.channel_directories
     .findFirst({ where: { directory } })
@@ -224,7 +225,7 @@ export async function runOnboarding({
     .catch((e) => new DiscordError({ operation: 'send welcome message', cause: e }))
   if (welcome instanceof Error) return welcome
 
-  const session = await bot.actions.startSession({
+  const session = await startSession(bot, {
     channelId: channel.channelId,
     directory,
     route: { kind: 'steer', text: onboardingPrompt({ kimaki }) },

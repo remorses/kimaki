@@ -150,30 +150,38 @@ export async function readSessionMarkdown({
   return [title, ...messages.map((message) => renderMessage(message, { thinking, verbose }))].join('\n\n')
 }
 
-export async function allMessages({ client, sessionId }: { client: OpenCodeClient; sessionId: string }): Promise<OpenCodeError | Message[]> {
-  const messages: Message[] = []
+// Cursor pagination of message.list / session.list: every page, in order.
+export async function collectPages<T>({
+  operation,
+  page,
+}: {
+  operation: string
+  page: (cursor: string | undefined) => Promise<{ data: readonly T[]; cursor: { next?: string | null } }>
+}): Promise<OpenCodeError | T[]> {
+  const items: T[] = []
   let cursor: string | undefined
   do {
-    const page = await client.message.list({ sessionID: sessionId, limit: 200, ...(cursor ? { cursor } : { order: 'asc' as const }) })
-      .catch((cause) => new OpenCodeError({ operation: 'message.list', cause }))
-    if (page instanceof Error) return page
-    messages.push(...page.data)
-    cursor = page.cursor.next ?? undefined
+    const result = await page(cursor).catch((cause) => new OpenCodeError({ operation, cause }))
+    if (result instanceof Error) return result
+    items.push(...result.data)
+    cursor = result.cursor.next ?? undefined
   } while (cursor)
-  return messages
+  return items
 }
 
-export async function allSessions({ client, directory }: { client: OpenCodeClient; directory?: string }) {
-  const sessions: Awaited<ReturnType<OpenCodeClient['session']['list']>>['data'] = []
-  let cursor: string | undefined
-  do {
-    const page = await client.session.list({ directory, limit: 200, ...(cursor ? { cursor } : { order: 'desc' as const }) })
-      .catch((cause) => new OpenCodeError({ operation: 'session.list', cause }))
-    if (page instanceof Error) return page
-    sessions.push(...page.data)
-    cursor = page.cursor.next ?? undefined
-  } while (cursor)
-  return sessions
+// Oldest first. A cursor must not be combined with `order`.
+export function allMessages({ client, sessionId, type }: { client: OpenCodeClient; sessionId: string; type?: 'user' }) {
+  return collectPages({
+    operation: 'message.list',
+    page: (cursor) => client.message.list({ sessionID: sessionId, limit: 200, ...(type && { type }), ...(cursor ? { cursor } : { order: 'asc' as const }) }),
+  })
+}
+
+export function allSessions({ client, directory }: { client: OpenCodeClient; directory?: string }) {
+  return collectPages({
+    operation: 'session.list',
+    page: (cursor) => client.session.list({ directory, limit: 200, ...(cursor ? { cursor } : { order: 'desc' as const }) }),
+  })
 }
 
 export async function waitForSessionReady({ client, sessionId, signal }: { client: OpenCodeClient; sessionId: string; signal?: AbortSignal }): Promise<OpenCodeError | void> {

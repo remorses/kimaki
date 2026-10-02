@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
 import { TEST_USER_ID, seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitForFooter, warmUp, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
+import { send } from './prompt.ts'
 
 const exec = promisify(execFile)
 const dataDir = tempDataDir()
@@ -28,7 +29,7 @@ function cli(args: string[]) {
   } })
 }
 test('independent Discord CLI lists threads and users, uploads a file, and reads bot credentials', async () => {
-  const started = await bot.actions.send({ channelId: twin.channelId, prompt: 'Discord CLI flow' })
+  const started = await send(bot, { channelId: twin.channelId, prompt: 'Discord CLI flow' })
   if (started instanceof Error) throw started
   if (!started.sessionId) throw new Error('Expected an AI session')
   await waitForFooter({ discord: twin.discord, threadId: started.threadId })

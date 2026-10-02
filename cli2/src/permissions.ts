@@ -1,20 +1,21 @@
 // Permissions feature (spec 10.2, 27.6): a permission request of any session
 // in the thread (subagents included) becomes one message with Accept /
 // Accept Always / Deny. No timeout: it waits until the user answers or a new
-// message rejects it (actions.steer).
+// message rejects it (prompt.ts steer).
 //
 //   permission.asked   ─▶ message + 3 buttons (custom id perm:<requestID>:<decision>)
 //   click              ─▶ permission.reply
 //   permission.replied ─▶ buttons removed, decision shown
 
 import { ButtonStyle, MessageFlags, type ButtonInteraction } from 'discord.js'
-import type { PermissionRequest, V2Event } from '@opencode/client'
+import type { PermissionRequest } from '@opencode/client'
 
-import type { Actions } from './actions.ts'
+import { oc, type Bot } from './bot.ts'
 import { createLogger } from './logger.ts'
-import type { BotStore } from './store.ts'
-import type { Effect, ThreadView } from './thread-reducer.ts'
-import { button, buttonRow, textOnly, type UiMessage } from './effects.ts'
+import { castDraft, type Draft } from 'immer'
+
+import { button, buttonRow, textOnly, type UiMessage } from './format-parts.ts'
+import type { Emit, ThreadView } from './thread-reducer.ts'
 
 const logger = createLogger('PERMISSION')
 
@@ -28,8 +29,6 @@ export type PendingPermission = {
   resources: readonly string[]
   label: string | null
 }
-
-type Result = { view: ThreadView; effects: Effect[] }
 
 function uiKey(requestID: string): string {
   return `perm:${requestID}`
@@ -64,104 +63,55 @@ function requestMessage({ requestID, request }: { requestID: string; request: Pe
   }
 }
 
-const STATUS: Record<PermissionDecision, string> = {
+export const STATUS: Record<PermissionDecision, string> = {
   once: '✓ _Accepted_',
   always: '✓ _Accepted always_',
   reject: '✗ _Denied_',
 }
 
-function showRequest({ view, request }: { view: ThreadView; request: PermissionRequest & { label: string | null } }): Result {
-  if (view.permissions[request.id]) return { view, effects: [] }
-  const pending: PendingPermission = {
-    sessionId: request.sessionID,
-    action: request.action,
-    resources: request.resources,
-    label: request.label,
-  }
-  const message = requestMessage({ requestID: request.id, request: pending })
-  return {
-    view: { ...view, permissions: { ...view.permissions, [request.id]: pending } },
-    effects: [{ type: 'show', key: uiKey(request.id), messages: [message], replyTo: null }],
-  }
+type Slice = { draft: Draft<ThreadView>; emit: Emit }
+
+export function showPermission({ draft, emit, request, label }: Slice & { request: PermissionRequest; label: string | null }) {
+  if (draft.permissions[request.id]) return
+  const pending: PendingPermission = { sessionId: request.sessionID, action: request.action, resources: [...request.resources], label }
+  draft.permissions[request.id] = castDraft(pending)
+  emit({ type: 'show', key: uiKey(request.id), messages: [requestMessage({ requestID: request.id, request: pending })], replyTo: null })
 }
 
-function closeRequest({ view, requestID, status }: { view: ThreadView; requestID: string; status: string }): Result {
-  const request = view.permissions[requestID]
-  if (!request) return { view, effects: [] }
-  const { [requestID]: _settled, ...permissions } = view.permissions
-  const messages = [textOnly(`${describe(request)}\n${status}`)]
-  return { view: { ...view, permissions }, effects: [{ type: 'edit', key: uiKey(requestID), messages }] }
-}
-
-export function reducePermissions({
-  view,
-  event,
-  label,
-}: {
-  view: ThreadView
-  event: V2Event
-  label: string | null
-}): Result | null {
-  switch (event.type) {
-    case 'permission.asked':
-      return showRequest({ view, request: { ...event.data, label } })
-    case 'permission.replied':
-      return closeRequest({ view, requestID: event.data.requestID, status: STATUS[event.data.reply] })
-    default:
-      return null
-  }
+export function closePermission({ draft, emit, requestID, status }: Slice & { requestID: string; status: string }) {
+  const request = draft.permissions[requestID]
+  if (!request) return
+  const text = `${describe(request)}\n${status}`
+  delete draft.permissions[requestID]
+  emit({ type: 'edit', key: uiKey(requestID), messages: [textOnly(text)] })
 }
 
 // After a (re)connect: pending requests of one session as OpenCode has them.
-export function hydratePermissions({
-  view,
-  sessionId,
-  requests,
-  label,
-}: {
-  view: ThreadView
-  sessionId: string
-  requests: readonly PermissionRequest[]
-  label: string | null
-}): Result {
-  const pending = new Set(requests.map((request) => request.id))
-  const gone = Object.entries(view.permissions).filter(([id, request]) => request.sessionId === sessionId && !pending.has(id))
-  const settled = gone.reduce<Result>(
-    (acc, [requestID]) => {
-      const next = closeRequest({ view: acc.view, requestID, status: '_no longer pending_' })
-      return { view: next.view, effects: [...acc.effects, ...next.effects] }
-    },
-    { view, effects: [] },
-  )
-  return requests.reduce<Result>((acc, request) => {
-    const next = showRequest({ view: acc.view, request: { ...request, label } })
-    return { view: next.view, effects: [...acc.effects, ...next.effects] }
-  }, settled)
+export function hydratePermissions(slice: Slice & { sessionId: string; requests: readonly PermissionRequest[]; label: string | null }) {
+  const pending = new Set(slice.requests.map((request) => request.id))
+  for (const [requestID, request] of Object.entries(slice.draft.permissions)) {
+    if (request.sessionId === slice.sessionId && !pending.has(requestID)) closePermission({ ...slice, requestID, status: '_no longer pending_' })
+  }
+  for (const request of slice.requests) showPermission({ ...slice, request })
 }
 
 function parseDecision(value: string | undefined): PermissionDecision | null {
   return value === 'once' || value === 'always' || value === 'reject' ? value : null
 }
 
-export async function handlePermissionButton({
-  interaction,
-  store,
-  actions,
-}: {
-  interaction: ButtonInteraction
-  store: BotStore
-  actions: Actions
-}): Promise<void> {
+export async function handlePermissionButton(bot: Bot, interaction: ButtonInteraction): Promise<void> {
   const [requestID, rawDecision] = interaction.customId.slice(PERMISSION_PREFIX.length).split(':')
   const decision = parseDecision(rawDecision)
-  const request = requestID ? store.getState().threads[interaction.channelId]?.permissions[requestID] : undefined
+  const request = requestID ? bot.store.getState().threads[interaction.channelId]?.permissions[requestID] : undefined
   if (!requestID || !decision || !request) {
     await interaction.reply({ content: 'This permission request is no longer pending', flags: MessageFlags.Ephemeral })
     return
   }
   // The buttons go away when permission.replied arrives.
   await interaction.deferUpdate()
-  const result = await actions.replyPermission({ sessionId: request.sessionId, requestID, decision })
+  const result = await oc(bot, 'permission.reply', (client) =>
+    client.permission.reply({ sessionID: request.sessionId, requestID, decision }),
+  )
   if (!(result instanceof Error)) return
   logger.warn(`reply ${requestID} failed: ${result.message}`)
   await interaction.followUp({ content: 'This permission request is no longer pending', flags: MessageFlags.Ephemeral })

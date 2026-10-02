@@ -5,7 +5,7 @@
 //
 //   bot_started         main.ts, once Discord and OpenCode are ready
 //   project_registered  onboarding (default channel) and `project add`
-//   session_created     actions.startSession
+//   session_created     sessions.ts startSession
 //   turn_started        root session execution.started      ┐ foldAnalytics(),
 //   turn_completed      root session execution.succeeded    │ fed by the event
 //   tokens_used         every execution end, root and child ┘ loop

@@ -1,17 +1,16 @@
 import crypto from 'node:crypto'
+import type { Draft } from 'immer'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ButtonStyle, FileUploadBuilder, LabelBuilder, ModalBuilder, MessageFlags, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js'
-import type { Actions } from './actions.ts'
+import { sessionDirectory, type Bot } from './bot.ts'
 import { ConfigError, DiscordError } from './errors.ts'
-import { button, buttonRow, textOnly } from './effects.ts'
-import type { EventLoop } from './event-loop.ts'
-import type { BotStore } from './store.ts'
-import type { ThreadEvent, ThreadView, Effect } from './thread-reducer.ts'
+import { button, buttonRow, textOnly } from './format-parts.ts'
+import { send } from './prompt.ts'
+import type { Emit, ThreadView } from './thread-reducer.ts'
 
 export type AgentButton = { label: string; command?: string; color: 'white' | 'blue' | 'green' | 'red' }
 export type AgentPrompt = { id: string; sessionId: string; buttons?: AgentButton[]; prompt?: string; maxFiles?: number }
-export type AgentUiEvent = { type: 'kimaki.agent-ui'; prompt: AgentPrompt } | { type: 'kimaki.agent-ui-dismiss'; id: string }
 const styles = { white: ButtonStyle.Secondary, blue: ButtonStyle.Primary, green: ButtonStyle.Success, red: ButtonStyle.Danger } as const
 
 export function parseButton(value: string): ConfigError | AgentButton {
@@ -27,150 +26,196 @@ export function parseButton(value: string): ConfigError | AgentButton {
   return { label, color, ...(command && { command }) }
 }
 
-export function reduceAgentUi(view: ThreadView, event: ThreadEvent): { view: ThreadView; effects: Effect[] } | null {
-  const dismiss = (ids: string[]) => ({ view: { ...view, agentUi: view.agentUi.filter((prompt) => !ids.includes(prompt.id)) }, effects: ids.map((id): Effect => ({ type: 'edit', key: `agent:${id}`, messages: [textOnly('Dismissed')] })) })
-  if (event.type === 'kimaki.agent-ui-dismiss') return dismiss([event.id])
-  if (event.type === 'session.inbox.enqueued' && event.data.item.type === 'user' && view.agentUi.length > 0) return dismiss(view.agentUi.filter((prompt) => prompt.sessionId === event.data.sessionID).map((prompt) => prompt.id))
-  if (event.type !== 'kimaki.agent-ui') return null
-  const prompt = event.prompt
+type Slice = { draft: Draft<ThreadView>; emit: Emit }
+
+export function showAgentPrompt({ draft, emit, prompt }: Slice & { prompt: AgentPrompt }) {
   const buttons = prompt.buttons?.map((item, index) => button({ customId: `action_button:${prompt.id}:${index}`, label: item.label, style: styles[item.color] }))
     ?? [button({ customId: `file_upload_btn:${prompt.id}`, label: 'Upload files' })]
-  const commands = prompt.buttons?.flatMap((item) => item.command ? [`${item.label}: \`${item.command}\``] : []) ?? []
-  return { view: { ...view, agentUi: [...view.agentUi, prompt] }, effects: [{ type: 'show', key: `agent:${prompt.id}`, replyTo: null,
-    messages: [{ content: prompt.prompt ?? commands.join('\n'), components: [buttonRow(buttons)] }] }] }
+  const commands = prompt.buttons?.flatMap((item) => (item.command ? [`${item.label}: \`${item.command}\``] : [])) ?? []
+  draft.agentUi.push(prompt)
+  emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, messages: [{ content: prompt.prompt ?? commands.join('\n'), components: [buttonRow(buttons)] }] })
 }
 
-export function createAgentUi({ store, eventLoop, actions, directoryFor }: {
-  store: BotStore; eventLoop: EventLoop; actions: Actions; directoryFor: (sessionId: string) => Promise<Error | string>
-}) {
-  const uploads = new Map<string, { resolve: (value: { paths: string[] } | { cancelled: true }) => void; timer: ReturnType<typeof setTimeout>; controller: AbortController }>()
-  const unsubscribe = store.subscribe((state, previous) => {
+export function dismissAgentPrompts({ draft, emit, ids }: Slice & { ids: readonly string[] }) {
+  if (ids.length === 0) return
+  draft.agentUi = draft.agentUi.filter((prompt) => !ids.includes(prompt.id))
+  for (const id of ids) emit({ type: 'edit', key: `agent:${id}`, messages: [textOnly('Dismissed')] })
+}
+
+type UploadResult = { paths: string[] } | { cancelled: true }
+
+// A `kimaki upload-request` call waiting for the user's files.
+export type AgentUploadWait = {
+  resolve: (value: UploadResult) => void
+  timer: ReturnType<typeof setTimeout>
+  controller: AbortController
+}
+
+function cancelUpload(pending: AgentUploadWait) {
+  clearTimeout(pending.timer)
+  pending.controller.abort()
+  pending.resolve({ cancelled: true })
+}
+
+function promptShown(threads: Readonly<Record<string, ThreadView>>, id: string): boolean {
+  return Object.values(threads).some((view) => view.agentUi.some((prompt) => prompt.id === id))
+}
+
+// The one reactive side effect of uploads: a prompt that leaves every view
+// (dismissed by a new message, the session ended) cancels its waiting call.
+// Returns the stop function, which also cancels the calls still waiting.
+export function watchUploads(bot: Bot): () => void {
+  const { uploads } = bot.local
+  const unsubscribe = bot.store.subscribe((state, previous) => {
     for (const [id, pending] of uploads) {
-      if (!Object.values(previous.threads).some((view) => view.agentUi.some((prompt) => prompt.id === id))) continue
-      if (Object.values(state.threads).some((view) => view.agentUi.some((prompt) => prompt.id === id))) continue
-      clearTimeout(pending.timer)
-      pending.controller.abort()
-      pending.resolve({ cancelled: true })
+      if (!promptShown(previous.threads, id) || promptShown(state.threads, id)) continue
+      cancelUpload(pending)
       uploads.delete(id)
     }
   })
-  async function waitForShellCall({ sessionId, toolCall, signal }: { sessionId: string; toolCall: string; signal: AbortSignal }): Promise<ConfigError | void> {
-    const seen = () => Object.values(store.getState().threads).some((view) => view.shellCalls[toolCall]?.sessionId === sessionId)
-    if (seen()) return
-    return new Promise((resolve) => {
-      const finish = (value?: ConfigError) => { clearTimeout(timer); off(); signal.removeEventListener('abort', abort); resolve(value) }
-      const off = store.subscribe(() => { if (seen()) finish() })
-      const abort = () => finish(new ConfigError({ reason: 'Agent UI request cancelled' }))
-      const timer = setTimeout(() => finish(new ConfigError({ reason: 'No running shell call observed. Run this command from the session shell.' })), 10_000)
-      signal.addEventListener('abort', abort, { once: true })
-      if (signal.aborted) abort()
-      else if (seen()) finish()
-    })
+  return () => {
+    unsubscribe()
+    for (const pending of uploads.values()) cancelUpload(pending)
+    uploads.clear()
   }
-  async function request(route: string, input: unknown, signal: AbortSignal): Promise<Error | { data: unknown }> {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) return new ConfigError({ reason: 'Expected agent UI input' })
-    const fields = new Map(Object.entries(input))
-    const sessionId = fields.get('sessionId')
-    if (typeof sessionId !== 'string' || !sessionId) return new ConfigError({ reason: 'Use --session or run inside an OpenCode session' })
-    const threadId = store.getState().sessionThreads[sessionId]
-    if (!threadId) return new ConfigError({ reason: 'This session has no local Discord thread' })
-    const id = crypto.randomBytes(8).toString('hex')
-    const prompt: AgentPrompt = { id, sessionId }
-    if (route === '/kimaki/buttons') {
-      const specs = fields.get('buttons')
-      if (!Array.isArray(specs) || specs.length < 1 || specs.length > 3 || specs.some((spec) => typeof spec !== 'string')) return new ConfigError({ reason: 'Use 1 to 3 --button flags' })
-      const buttons: AgentButton[] = []
-      for (const spec of specs) {
-        const parsed = parseButton(spec)
-        if (parsed instanceof Error) return parsed
-        buttons.push(parsed)
-      }
-      if (buttons.map((item) => item.command ?? '').join('\n').length > 1800) return new ConfigError({ reason: 'Button commands must fit in one Discord message' })
-      prompt.buttons = buttons
-    } else {
-      const text = fields.get('prompt')
-      const maxFiles = fields.get('maxFiles') ?? 5
-      if (typeof text !== 'string' || !text || text.length > 2000 || typeof maxFiles !== 'number' || !Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > 10) return new ConfigError({ reason: 'Use --prompt and --max-files 1 to 10' })
-      prompt.prompt = text
-      prompt.maxFiles = maxFiles
-    }
-    if (fields.get('fromShell') === true) {
-      const toolCall = fields.get('toolCall')
-      if (typeof toolCall !== 'string' || !toolCall) return new ConfigError({ reason: 'The Kimaki plugin must provide KIMAKI_TOOL_CALL for agent UI commands' })
-      const waited = await waitForShellCall({ sessionId, toolCall, signal })
-      if (waited instanceof Error) return waited
-    }
-    eventLoop.dispatch(threadId, { type: 'kimaki.agent-ui', prompt })
-    if (prompt.buttons) return { data: { shown: true } }
-    const result = await new Promise<{ paths: string[] } | { cancelled: true }>((resolve) => {
-      const finish = (value: { paths: string[] } | { cancelled: true }) => {
-        signal.removeEventListener('abort', abort)
-        resolve(value)
-      }
-      const abort = () => { eventLoop.dispatch(threadId, { type: 'kimaki.agent-ui-dismiss', id }); finish({ cancelled: true }) }
-      const timer = setTimeout(abort, 6 * 60_000)
-      uploads.set(id, { resolve: finish, timer, controller: new AbortController() })
-      signal.addEventListener('abort', abort, { once: true })
-      if (signal.aborted) abort()
-    })
-    return { data: result }
-  }
-  function find(id: string, threadId: string) {
-    return store.getState().threads[threadId]?.agentUi.find((prompt) => prompt.id === id)
-  }
-  async function click(interaction: ButtonInteraction) {
-    const [, id = '', index = '0'] = interaction.customId.split(':')
-    const prompt = find(id, interaction.channelId)
-    if (!prompt) return interaction.reply({ content: 'This request has expired', flags: MessageFlags.Ephemeral })
-    if (!prompt.buttons) {
-      return interaction.showModal(new ModalBuilder().setCustomId(`file_upload_modal:${id}`).setTitle('Upload files').addLabelComponents(
-        new LabelBuilder().setLabel('Files').setFileUploadComponent(new FileUploadBuilder().setCustomId('files').setMinValues(1).setMaxValues(prompt.maxFiles ?? 5).setRequired(true)),
-      ))
-    }
-    await interaction.deferUpdate()
-    const item = prompt.buttons[Number(index)]
-    if (!item) return
-    eventLoop.dispatch(interaction.channelId, { type: 'kimaki.agent-ui-dismiss', id })
-    const result = await actions.send({ threadId: interaction.channelId, prompt: item.command ? `!${item.command}` : `User clicked: ${item.label}`, user: interaction.user.id })
-    if (result instanceof Error) await interaction.followUp({ content: result.message, flags: MessageFlags.Ephemeral })
-  }
-  async function modal(interaction: ModalSubmitInteraction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-    if (!interaction.channelId) return interaction.editReply({ content: 'Use this upload in its session thread' })
-    const id = interaction.customId.split(':')[1] ?? ''
-    const prompt = find(id, interaction.channelId)
-    const pending = uploads.get(id)
-    if (!prompt || !pending) return interaction.editReply({ content: 'Upload request expired' })
-    const active = () => uploads.get(id) === pending && !pending.controller.signal.aborted
-    const directory = await directoryFor(prompt.sessionId)
-    if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
-    if (directory instanceof Error) return interaction.editReply({ content: directory.message })
-    const files = [...interaction.fields.getUploadedFiles('files', true).values()]
-    if (files.length < 1 || files.length > (prompt.maxFiles ?? 5)) return interaction.editReply({ content: 'Too many files' })
-    const output = path.join(directory, 'uploads', id)
-    const created = await fs.promises.mkdir(output, { recursive: true }).catch((cause) => new DiscordError({ operation: 'create upload directory', cause }))
-    if (created instanceof Error) return interaction.editReply({ content: created.message })
-    const paths: string[] = []
-    for (const [index, file] of files.entries()) {
-      const response = await fetch(file.url, { signal: AbortSignal.any([pending.controller.signal, AbortSignal.timeout(30000)]) }).catch((cause) => new DiscordError({ operation: 'download upload', cause }))
-      if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
-      if (response instanceof Error || !response.ok) return interaction.editReply({ content: 'Upload download failed. Try again.' })
-      const bytes = await response.arrayBuffer().catch((cause) => new DiscordError({ operation: 'read upload', cause }))
-      if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
-      if (bytes instanceof Error) return interaction.editReply({ content: bytes.message })
-      const destination = path.join(output, `${index}-${path.basename(file.name)}`)
-      const written = await fs.promises.writeFile(destination, Buffer.from(bytes), { signal: pending.controller.signal }).catch((cause) => new DiscordError({ operation: 'save upload', cause }))
-      if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
-      if (written instanceof Error) return interaction.editReply({ content: written.message })
-      paths.push(destination)
-    }
-    uploads.delete(id)
-    clearTimeout(pending.timer)
-    pending.resolve({ paths })
-    eventLoop.dispatch(interaction.channelId, { type: 'kimaki.agent-ui-dismiss', id })
-    return interaction.editReply({ content: `Uploaded ${paths.length} file(s)` })
-  }
-  return { request, click, modal, stop() { unsubscribe(); for (const pending of uploads.values()) { clearTimeout(pending.timer); pending.controller.abort(); pending.resolve({ cancelled: true }) }; uploads.clear() } }
 }
 
-export type AgentUi = ReturnType<typeof createAgentUi>
+// `kimaki buttons --from-shell` must post after its shell's tool line.
+async function waitForShellCall(
+  bot: Bot,
+  { toolCall, signal }: { toolCall: string; signal: AbortSignal },
+): Promise<ConfigError | void> {
+  const seen = () => Object.values(bot.store.getState().threads).some((view) => view.shellCalls[toolCall])
+  if (seen()) return
+  return new Promise((resolve) => {
+    const finish = (value?: ConfigError) => {
+      clearTimeout(timer)
+      off()
+      signal.removeEventListener('abort', abort)
+      resolve(value)
+    }
+    const off = bot.store.subscribe(() => {
+      if (seen()) finish()
+    })
+    const abort = () => finish(new ConfigError({ reason: 'Agent UI request cancelled' }))
+    const timer = setTimeout(() => {
+      finish(new ConfigError({ reason: 'No running shell call observed. Run this command from the session shell.' }))
+    }, 10_000)
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+    else if (seen()) finish()
+  })
+}
+
+// Lock routes `buttons` and `upload-request` (lock-routes.ts). Buttons answer
+// at once; an upload request waits until the user uploads or it is dismissed.
+export async function requestAgentUi(
+  bot: Bot,
+  {
+    sessionId,
+    content,
+    fromShell,
+    toolCall,
+    signal,
+  }: {
+    sessionId: string
+    content: { buttons: AgentButton[] } | { prompt: string; maxFiles: number }
+    fromShell?: boolean
+    toolCall?: string
+    signal: AbortSignal
+  },
+): Promise<ConfigError | { shown: true } | UploadResult> {
+  const threadId = bot.store.getState().sessionThreads[sessionId]
+  if (!threadId) return new ConfigError({ reason: 'This session has no local Discord thread' })
+  const prompt: AgentPrompt = { id: crypto.randomBytes(8).toString('hex'), sessionId, ...content }
+  if (fromShell) {
+    if (!toolCall) return new ConfigError({ reason: 'The Kimaki plugin must provide KIMAKI_TOOL_CALL for agent UI commands' })
+    const waited = await waitForShellCall(bot, { toolCall, signal })
+    if (waited instanceof Error) return waited
+  }
+  bot.eventLoop.dispatch(threadId, { type: 'kimaki.agent-ui', prompt })
+  if (prompt.buttons) return { shown: true }
+  return new Promise<UploadResult>((resolve) => {
+    const finish = (value: UploadResult) => {
+      signal.removeEventListener('abort', abort)
+      resolve(value)
+    }
+    const abort = () => {
+      bot.eventLoop.dispatch(threadId, { type: 'kimaki.agent-ui-dismiss', id: prompt.id })
+      finish({ cancelled: true })
+    }
+    const timer = setTimeout(abort, 6 * 60_000)
+    bot.local.uploads.set(prompt.id, { resolve: finish, timer, controller: new AbortController() })
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+  })
+}
+
+function shownPrompt(bot: Bot, { id, threadId }: { id: string; threadId: string }) {
+  return bot.store.getState().threads[threadId]?.agentUi.find((prompt) => prompt.id === id)
+}
+
+export async function clickAgentButton(bot: Bot, interaction: ButtonInteraction) {
+  const [, id = '', index = '0'] = interaction.customId.split(':')
+  const prompt = shownPrompt(bot, { id, threadId: interaction.channelId })
+  if (!prompt) return interaction.reply({ content: 'This request has expired', flags: MessageFlags.Ephemeral })
+  if (!prompt.buttons) {
+    const files = new FileUploadBuilder().setCustomId('files').setMinValues(1).setMaxValues(prompt.maxFiles ?? 5).setRequired(true)
+    const modal = new ModalBuilder()
+      .setCustomId(`file_upload_modal:${id}`)
+      .setTitle('Upload files')
+      .addLabelComponents(new LabelBuilder().setLabel('Files').setFileUploadComponent(files))
+    return interaction.showModal(modal)
+  }
+  await interaction.deferUpdate()
+  const item = prompt.buttons[Number(index)]
+  if (!item) return
+  bot.eventLoop.dispatch(interaction.channelId, { type: 'kimaki.agent-ui-dismiss', id })
+  const text = item.command ? `!${item.command}` : `User clicked: ${item.label}`
+  const result = await send(bot, { threadId: interaction.channelId, prompt: text, user: interaction.user.id })
+  if (result instanceof Error) await interaction.followUp({ content: result.message, flags: MessageFlags.Ephemeral })
+}
+
+// The upload modal: saves the files under <session cwd>/uploads/<id>/ and answers the waiting call.
+export async function submitUploadModal(bot: Bot, interaction: ModalSubmitInteraction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+  const threadId = interaction.channelId
+  if (!threadId) return interaction.editReply({ content: 'Use this upload in its session thread' })
+  const id = interaction.customId.split(':')[1] ?? ''
+  const prompt = shownPrompt(bot, { id, threadId })
+  const pending = bot.local.uploads.get(id)
+  if (!prompt || !pending) return interaction.editReply({ content: 'Upload request expired' })
+  const active = () => bot.local.uploads.get(id) === pending && !pending.controller.signal.aborted
+  const directory = await sessionDirectory(bot, prompt.sessionId)
+  if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
+  if (directory instanceof Error) return interaction.editReply({ content: directory.message })
+  const files = [...interaction.fields.getUploadedFiles('files', true).values()]
+  if (files.length < 1 || files.length > (prompt.maxFiles ?? 5)) return interaction.editReply({ content: 'Too many files' })
+  const output = path.join(directory, 'uploads', id)
+  const created = await fs.promises
+    .mkdir(output, { recursive: true })
+    .catch((cause) => new DiscordError({ operation: 'create upload directory', cause }))
+  if (created instanceof Error) return interaction.editReply({ content: created.message })
+  const paths: string[] = []
+  for (const [index, file] of files.entries()) {
+    const signal = AbortSignal.any([pending.controller.signal, AbortSignal.timeout(30000)])
+    const response = await fetch(file.url, { signal }).catch((cause) => new DiscordError({ operation: 'download upload', cause }))
+    if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
+    if (response instanceof Error || !response.ok) return interaction.editReply({ content: 'Upload download failed. Try again.' })
+    const bytes = await response.arrayBuffer().catch((cause) => new DiscordError({ operation: 'read upload', cause }))
+    if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
+    if (bytes instanceof Error) return interaction.editReply({ content: bytes.message })
+    const destination = path.join(output, `${index}-${path.basename(file.name)}`)
+    const written = await fs.promises
+      .writeFile(destination, Buffer.from(bytes), { signal: pending.controller.signal })
+      .catch((cause) => new DiscordError({ operation: 'save upload', cause }))
+    if (!active()) return interaction.editReply({ content: 'Upload cancelled' })
+    if (written instanceof Error) return interaction.editReply({ content: written.message })
+    paths.push(destination)
+  }
+  bot.local.uploads.delete(id)
+  clearTimeout(pending.timer)
+  pending.resolve({ paths })
+  bot.eventLoop.dispatch(threadId, { type: 'kimaki.agent-ui-dismiss', id })
+  return interaction.editReply({ content: `Uploaded ${paths.length} file(s)` })
+}

@@ -7,20 +7,21 @@
 //   inbox.delivered                    ─▶ "» user: text" echo, ack says "Queued message sent"
 //   inbox.cancelled                    ─▶ ack says "Removed from queue"
 //
-// A queued prompt's inbox ID is msg_discord_<messageId> (actions.ts), so a
+// A queued prompt's inbox ID is msg_discord_<messageId> (prompt.ts), so a
 // message delete or an edit maps to the item by ID alone. Items without a
 // Discord source message (/queue, CLI, commands) are removed with /clear-queue.
 
 import type { Message, PartialMessage } from 'discord.js'
 import type { JsonValue, SessionInboxInfo, V2Event } from '@opencode/client'
 
-import type { Actions, PromptFile } from './actions.ts'
-import { asSubtext } from './format-parts.ts'
+import type { Bot, PromptFile } from './bot.ts'
+import type { Draft } from 'immer'
+
+import { asSubtext, textOnly } from './format-parts.ts'
 import { createLogger } from './logger.ts'
-import type { BotStore } from './store.ts'
+import { cancelQueuedPrompt, requeueEdited } from './prompt.ts'
 import { stripTurnContext } from './system-prompt.ts'
-import type { Effect, ThreadView } from './thread-reducer.ts'
-import { textOnly } from './effects.ts'
+import type { Emit, ThreadView } from './thread-reducer.ts'
 
 const logger = createLogger('QUEUE')
 
@@ -37,8 +38,6 @@ export type QueuedItem = {
   // Line from the prompt metadata (scheduled runs); shown on delivery even without an ack.
   echo: string | null
 }
-
-type Result = { view: ThreadView; effects: Effect[] }
 
 function ackKey(inboxID: string): string {
   return `queue:${inboxID}`
@@ -64,126 +63,101 @@ export function formatEcho({ username, text }: { username: string | null; text: 
   return `» **${username ?? 'queued'}:** ${body}`
 }
 
-function closeAck({ view, item, content }: { view: ThreadView; item: QueuedItem; content: string }): Result {
-  if (!item.acked) return { view, effects: [] }
-  return { view, effects: [{ type: 'edit', key: ackKey(item.inboxID), messages: [textOnly(asSubtext(content))] }] }
+type Slice = { draft: Draft<ThreadView>; emit: Emit }
+
+function closeAck({ emit }: Slice, item: QueuedItem, content: string) {
+  if (item.acked) emit({ type: 'edit', key: ackKey(item.inboxID), messages: [textOnly(asSubtext(content))] })
 }
 
-function removeItem(view: ThreadView, inboxID: string): ThreadView {
-  return {
-    ...view,
-    queue: view.queue.filter((item) => item.inboxID !== inboxID),
-    inputs: view.inputs.filter((id) => id !== inboxID),
-  }
+// Removes the item from inputs and queue; returns it when it was queued.
+function takeItem({ draft }: Slice, inboxID: string): QueuedItem | null {
+  const item = draft.queue.find((candidate) => candidate.inboxID === inboxID)
+  draft.queue = draft.queue.filter((candidate) => candidate.inboxID !== inboxID)
+  draft.inputs = draft.inputs.filter((id) => id !== inboxID)
+  return item ? { ...item } : null
 }
 
-// Root inbox events. `busy` is the thread busy state before this event.
-export function reduceQueue({ view, event, busy }: { view: ThreadView; event: V2Event; busy: boolean }): Result | null {
-  switch (event.type) {
-    case 'session.inbox.enqueued': {
-      const { item, inboxID } = event.data
-      if (item.type !== 'user' || view.inputs.includes(inboxID)) return { view, effects: [] }
-      const inputs = [...view.inputs, inboxID]
-      const meta = discordMetadata(item.payload.metadata)
-      if (item.delivery !== 'queue') {
-        if (!meta.echo) return { view: { ...view, inputs }, effects: [] }
-        return { view: { ...view, inputs, lastKind: null }, effects: [{ type: 'send', text: meta.echo }] }
-      }
-      // Idle with nothing pending: OpenCode runs it at once, like a normal message.
-      const acked = busy || view.inputs.length > 0
-      const queued: QueuedItem = { inboxID, text: stripTurnContext(item.payload.text), ...meta, acked }
-      const next = { ...view, inputs, queue: [...view.queue, queued] }
-      if (!acked) return { view: next, effects: [] }
-      const ack = textOnly(asSubtext(`Queued at position ${next.queue.length}. Delete the original message to remove it, or use /clear-queue position:${next.queue.length}`))
-      return { view: next, effects: [{ type: 'show', key: ackKey(inboxID), messages: [ack], replyTo: meta.messageId }] }
-    }
-    case 'session.inbox.delivered': {
-      const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)
-      const next = removeItem(view, event.data.inboxID)
-      if (!item || (!item.acked && !item.echo)) return { view: next, effects: [] }
-      const settled = closeAck({ view: next, item, content: 'Queued message sent' })
-      return {
-        view: { ...settled.view, lastKind: null },
-        effects: [...settled.effects, { type: 'send', text: item.echo ?? formatEcho(item) }],
-      }
-    }
-    case 'session.inbox.cancelled': {
-      const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)
-      const next = removeItem(view, event.data.inboxID)
-      if (!item) return { view: next, effects: [] }
-      return closeAck({ view: next, item, content: 'Removed from queue' })
-    }
-    case 'session.inbox.delivery.changed': {
-      // Promoted to steer: it leaves the queue and runs at the next step.
-      const item = view.queue.find((candidate) => candidate.inboxID === event.data.inboxID)
-      if (!item || event.data.delivery !== 'steer') return { view, effects: [] }
-      return closeAck({ view: { ...view, queue: view.queue.filter((q) => q !== item) }, item, content: 'Queued message sent' })
-    }
-    default:
-      return null
+// Root inbox.enqueued. `busy` is the thread busy state before this event.
+export function enqueueInput(
+  slice: Slice & { data: Extract<V2Event, { type: 'session.inbox.enqueued' }>['data']; busy: boolean },
+) {
+  const { draft, emit, data, busy } = slice
+  const { item, inboxID } = data
+  if (item.type !== 'user' || draft.inputs.includes(inboxID)) return
+  const meta = discordMetadata(item.payload.metadata)
+  // Idle with nothing pending: OpenCode runs it at once, like a normal message.
+  const acked = busy || draft.inputs.length > 0
+  draft.inputs.push(inboxID)
+  if (item.delivery !== 'queue') {
+    if (!meta.echo) return
+    emit({ type: 'send', text: meta.echo })
+    draft.lastKind = null
+    return
   }
+  draft.queue.push({ inboxID, text: stripTurnContext(item.payload.text), ...meta, acked })
+  if (!acked) return
+  const position = draft.queue.length
+  const ack = textOnly(asSubtext(`Queued at position ${position}. Delete the original message to remove it, or use /clear-queue position:${position}`))
+  emit({ type: 'show', key: ackKey(inboxID), messages: [ack], replyTo: meta.messageId })
+}
+
+export function deliverQueued(slice: Slice & { inboxID: string }) {
+  const item = takeItem(slice, slice.inboxID)
+  if (!item || (!item.acked && !item.echo)) return
+  closeAck(slice, item, 'Queued message sent')
+  slice.emit({ type: 'send', text: item.echo ?? formatEcho(item) })
+  slice.draft.lastKind = null
+}
+
+export function cancelQueued(slice: Slice & { inboxID: string }) {
+  const item = takeItem(slice, slice.inboxID)
+  if (item) closeAck(slice, item, 'Removed from queue')
+}
+
+// Promoted to steer: it leaves the queue and runs at the next step.
+export function promoteQueued(slice: Slice & { inboxID: string }) {
+  const item = slice.draft.queue.find((candidate) => candidate.inboxID === slice.inboxID)
+  if (!item) return
+  closeAck(slice, { ...item }, 'Queued message sent')
+  slice.draft.queue = slice.draft.queue.filter((candidate) => candidate.inboxID !== slice.inboxID)
 }
 
 // After a (re)connect: the inbox as OpenCode has it now. Items this view does
 // not know were queued while the bot was away; their acks, if any, are from
 // an older process, so they count as acked for the echo.
-export function hydrateQueue({ view, inbox }: { view: ThreadView; inbox: readonly SessionInboxInfo[] }): Result {
+export function hydrateQueue(slice: Slice & { inbox: readonly SessionInboxInfo[] }) {
+  const { draft, inbox } = slice
   const users = inbox.filter((item) => item.type === 'user')
   const pending = new Set(users.map((item) => item.id))
-  const queue = users
+  for (const item of draft.queue) {
+    if (!pending.has(item.inboxID)) closeAck(slice, { ...item }, 'No longer queued')
+  }
+  const known = new Map(draft.queue.map((item) => [item.inboxID, { ...item }]))
+  draft.queue = users
     .filter((item) => item.delivery === 'queue')
-    .map((item): QueuedItem => {
-      const known = view.queue.find((candidate) => candidate.inboxID === item.id)
-      if (known) return known
-      return { inboxID: item.id, text: stripTurnContext(item.payload.text), ...discordMetadata(item.payload.metadata), acked: true }
-    })
-  const gone = view.queue.filter((item) => !pending.has(item.inboxID))
-  return gone.reduce<Result>(
-    (acc, item) => {
-      const settled = closeAck({ view: acc.view, item, content: 'No longer queued' })
-      return { view: settled.view, effects: [...acc.effects, ...settled.effects] }
-    },
-    { view: { ...view, queue, inputs: users.map((item) => item.id) }, effects: [] },
-  )
+    .map((item) => known.get(item.id) ?? { inboxID: item.id, text: stripTurnContext(item.payload.text), ...discordMetadata(item.payload.metadata), acked: true })
+  draft.inputs = users.map((item) => item.id)
 }
 
-// --- Discord handlers (writers side): they call actions, never render session output.
+// --- Discord handlers (writers side): they call prompt.ts, never render session output.
 
-export function queuedItemFor({ store, threadId, messageId }: { store: BotStore; threadId: string; messageId: string }) {
-  return store.getState().threads[threadId]?.queue.find((item) => item.messageId === messageId) ?? null
+export function queuedItemFor(bot: Bot, { threadId, messageId }: { threadId: string; messageId: string }) {
+  return bot.store.getState().threads[threadId]?.queue.find((item) => item.messageId === messageId) ?? null
 }
 
 // Deleting a queued Discord message removes it from the queue.
-export async function handleQueuedMessageDelete({
-  message,
-  store,
-  actions,
-}: {
-  message: Message | PartialMessage
-  store: BotStore
-  actions: Actions
-}): Promise<void> {
-  const item = queuedItemFor({ store, threadId: message.channelId, messageId: message.id })
+export async function handleQueuedMessageDelete(bot: Bot, message: Message | PartialMessage): Promise<void> {
+  const item = queuedItemFor(bot, { threadId: message.channelId, messageId: message.id })
   if (!item) return
-  const result = await actions.cancelQueued({ threadId: message.channelId, inboxID: item.inboxID })
+  const result = await cancelQueuedPrompt(bot, { threadId: message.channelId, inboxID: item.inboxID })
   if (result instanceof Error) logger.warn(`delete of queued ${message.id} failed: ${result.message}`)
 }
 
 // Editing a queued message re-queues the new text at the end (spec 9.2.2
 // option A: the inbox has no API to change an item's text).
-export async function handleQueuedMessageEdit({
-  message,
-  files,
-  store,
-  actions,
-}: {
-  message: Message
-  files: readonly PromptFile[]
-  store: BotStore
-  actions: Actions
-}): Promise<void> {
-  const item = queuedItemFor({ store, threadId: message.channelId, messageId: message.id })
+export async function handleQueuedMessageEdit(bot: Bot, { message, files }: { message: Message; files: readonly PromptFile[] }): Promise<void> {
+  const item = queuedItemFor(bot, { threadId: message.channelId, messageId: message.id })
   if (!item) return
-  const result = await actions.requeueEdited({ message, inboxID: item.inboxID, files })
+  const result = await requeueEdited(bot, { message, inboxID: item.inboxID, files })
   if (result instanceof Error) logger.warn(`edit of queued ${message.id} failed: ${result.message}`)
 }

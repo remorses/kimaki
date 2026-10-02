@@ -73,7 +73,7 @@ async function start(prompt: string) {
 }
 
 async function sleepRow(sessionId: string) {
-  return bot.db.db.query.session_sleeps.findFirst({ where: { session_id: sessionId } })
+  return bot.db.query.session_sleeps.findFirst({ where: { session_id: sessionId } })
 }
 
 test('kimaki sleep wakes the same thread at the clock time', async () => {

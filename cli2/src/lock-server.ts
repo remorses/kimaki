@@ -8,6 +8,7 @@ import crypto from 'node:crypto'
 import * as errore from 'errore'
 
 import { ConfigError, LockPortError } from './errors.ts'
+import type { LockRouteInput, LockRouteName, LockRouteOutput } from './lock-routes.ts'
 import { createLogger } from './logger.ts'
 
 const logger = createLogger('LOCK')
@@ -122,12 +123,18 @@ export async function startLockServer({ port, dataDir }: { port: number; dataDir
   }
 }
 
-export async function callBot({ dataDir, route, input, signal }: { dataDir: string; route: string; input: unknown; signal?: AbortSignal }): Promise<ConfigError | { data: unknown }> {
+// Typed by the route table; imports only its types, so the CLI loads no bot code.
+export async function callBot<N extends LockRouteName>({ dataDir, route, input, signal }: {
+  dataDir: string
+  route: N
+  input: LockRouteInput<N>
+  signal?: AbortSignal
+}): Promise<ConfigError | { data: LockRouteOutput<N> }> {
   const token = await fs.promises.readFile(path.join(dataDir, 'lock-token'), 'utf8')
     .catch((cause) => new ConfigError({ reason: 'Kimaki bot is not running. Start kimaki first.', cause }))
   if (token instanceof Error) return token
   const port = Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT)
-  const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+  const response = await fetch(`http://127.0.0.1:${port}/kimaki/${route}`, {
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify(input), signal: signal ?? AbortSignal.timeout(30_000),
   }).catch((cause) => new ConfigError({ reason: 'Kimaki bot is not running. Start kimaki first.', cause }))
@@ -140,5 +147,6 @@ export async function callBot({ dataDir, route, input, signal }: { dataDir: stri
     const reason = value && typeof value === 'object' && 'error' in value && typeof value.error === 'string' ? value.error : `Bot returned HTTP ${response.status}`
     return new ConfigError({ reason })
   }
-  return body
+  // The bot answered this route with its run() result.
+  return { data: body.data as LockRouteOutput<N> }
 }

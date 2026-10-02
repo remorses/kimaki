@@ -129,7 +129,7 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
     ]
   `)
 
-  const rows = await bot.db.db.query.channel_directories.findMany({ orderBy: { created_at: 'asc' } })
+  const rows = await bot.db.query.channel_directories.findMany({ orderBy: { created_at: 'asc' } })
   expect(rows.map((row) => path.relative(dataDir, row.directory))).toMatchInlineSnapshot(`
     [
       "projects/kimaki",

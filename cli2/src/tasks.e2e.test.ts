@@ -11,6 +11,7 @@ import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
 import * as schema from './schema.ts'
+import { abort } from './prompt.ts'
 import {
   TEST_USER_ID,
   manualClock,
@@ -69,10 +70,10 @@ test('runs do not overlap by default; --allow-concurrency starts another session
   // The skipped occurrence still moves the serial task to its next run.
   expect((await listTasks()).find((row) => row.id === serial.taskId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T20:00:00.000Z' })
   for (const threadId of [...first, ...second]) {
-    const aborted = await bot.actions.abort({ threadId })
+    const aborted = await abort(bot, { threadId })
     if (aborted instanceof Error) throw aborted
   }
-  for (const id of [serial.taskId, parallel.taskId]) await request('/kimaki/task/delete', { id })
+  for (const id of [serial.taskId, parallel.taskId]) await request('task.delete', { id })
 })
 
 test('a task row written by V1 runs unchanged', async () => {
@@ -82,7 +83,7 @@ test('a task row written by V1 runs unchanged', async () => {
     agent: null, model: null, username: 'tommy', userId: TEST_USER_ID, permissions: null, injectionGuardPatterns: null, parentSessionId: null,
     preRunCommand: null, allowConcurrency: false,
   }
-  const [row] = await bot.db.db.insert(schema.scheduled_tasks).values({
+  const [row] = await bot.db.insert(schema.scheduled_tasks).values({
     status: 'planned', schedule_kind: 'cron', cron_expr: '0 9 * * 1', timezone: 'UTC', next_run_at: new Date('2030-01-07T09:00:00.000Z'),
     payload_json: JSON.stringify(payload), prompt_preview: 'V1 weekly check', channel_id: twin.channelId, project_directory: server.projectDirectory,
   }).returning()
@@ -96,7 +97,7 @@ test('a task row written by V1 runs unchanged', async () => {
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await listTasks()).find((task) => task.id === row!.id)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-14T09:00:00.000Z' })
-  await request('/kimaki/task/delete', { id: row!.id })
+  await request('task.delete', { id: row!.id })
 })
 
 function buttons(message: APIMessage) {

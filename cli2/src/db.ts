@@ -87,17 +87,3 @@ export function verbosityToV1(value: Verbosity): schema.V1Verbosity {
   if (value === 'text') return 'text_only'
   return 'text_and_essential_tools'
 }
-
-export async function readChannelVerbosity({
-  db,
-  channelId,
-}: {
-  db: KimakiDb
-  channelId: string
-}): Promise<DbError | Verbosity> {
-  const row = await db.query.channel_verbosity
-    .findFirst({ where: { channel_id: channelId } })
-    .catch((e) => new DbError({ operation: 'read channel_verbosity', cause: e }))
-  if (row instanceof Error) return row
-  return verbosityFromV1(row?.verbosity)
-}

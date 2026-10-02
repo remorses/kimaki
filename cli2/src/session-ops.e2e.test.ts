@@ -16,7 +16,6 @@ import {
   startTwin,
   tempDataDir,
   textParts,
-  waitFor,
   waitForBotMessageContaining,
   waitForFooter,
   warmUp,
@@ -112,15 +111,19 @@ test('/compact summarizes the history without a footer', async () => {
   expect(messages.data.map((message) => message.type)).toContain('compaction')
 })
 
-test('/undo reverts the last turn and its files, /redo restores them', async () => {
+test('/undo hides the last turn but keeps its files, /redo restores the turn', async () => {
   const file = path.join(server.projectDirectory, 'undo.txt')
   const thread = await newThread('Create a file write-marker')
   expect(fs.readFileSync(file, 'utf8')).toBe('written by the agent\n')
+  const sessionId = bot.store.getState().roots[thread.id]!
+  const opencode = await server.client()
 
   await command(thread.id, 'undo', 'Undone')
-  expect(fs.existsSync(file)).toBe(false)
+  expect((await opencode.session.get({ sessionID: sessionId })).revert?.messageID).toBeDefined()
+  expect(fs.readFileSync(file, 'utf8')).toBe('written by the agent\n')
   await command(thread.id, 'redo', 'Restored')
-  await waitFor({ label: 'file restored', check: async () => fs.existsSync(file) })
+  expect((await opencode.session.get({ sessionID: sessionId })).revert).toBeUndefined()
+  expect(fs.readFileSync(file, 'utf8')).toBe('written by the agent\n')
   await command(thread.id, 'redo', 'Nothing to redo')
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
@@ -131,8 +134,7 @@ test('/undo reverts the last turn and its files, /redo restores them', async () 
 
     wrote undo.txt
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    Undone - reverted the last turn
-    Reverted 1 file(s)
+    Undone - removed the last turn from the session. File changes were kept
     Restored - session fully back to its previous state
     Nothing to redo - no previous undo found"
   `)

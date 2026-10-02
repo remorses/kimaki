@@ -72,7 +72,7 @@ beforeAll(async () => {
   await twin.discord.channel(twin.channelId).waitForInteractionAck({ interactionId: id })
   await user.submitModal({ customId: TRANSCRIPTION_KEY_MODAL, fields: [{ customId: 'apikey', value: 'AIza-test-gemini-key' }] })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'Gemini API key saved' })
-  const savedBot = await bot.db.db.query.bot_tokens.findFirst({ with: { api_keys: true } })
+  const savedBot = await bot.db.query.bot_tokens.findFirst({ with: { api_keys: true } })
   expect(savedBot?.api_keys?.gemini_api_key).toBe('AIza-test-gemini-key')
 })
 

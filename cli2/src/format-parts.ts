@@ -5,11 +5,76 @@
 
 import path from 'node:path'
 import type { JsonValue } from '@opencode/client'
+import {
+  ButtonStyle,
+  ComponentType,
+  type APIActionRowComponent,
+  type APIButtonComponentWithCustomId,
+  type APIComponentInMessageActionRow,
+} from 'discord.js'
 
 import type { Verbosity } from './db.ts'
 
 export function asSubtext(text: string): string {
   return `-# ${text}`
+}
+
+// --- Interactive messages (queue acks, question dropdowns, permission buttons, selects).
+
+export type UiMessage = {
+  content: string
+  components: ReadonlyArray<APIActionRowComponent<APIComponentInMessageActionRow>>
+}
+
+export function textOnly(content: string): UiMessage {
+  return { content, components: [] }
+}
+
+export function button({
+  customId,
+  label,
+  style = ButtonStyle.Secondary,
+}: {
+  customId: string
+  label: string
+  style?: ButtonStyle.Primary | ButtonStyle.Secondary | ButtonStyle.Success | ButtonStyle.Danger
+}): APIButtonComponentWithCustomId {
+  return { type: ComponentType.Button, custom_id: customId, label, style }
+}
+
+export function buttonRow(
+  buttons: readonly APIButtonComponentWithCustomId[],
+): APIActionRowComponent<APIComponentInMessageActionRow> {
+  return { type: ComponentType.ActionRow, components: [...buttons] }
+}
+
+const MAX_SELECT_OPTIONS = 25
+
+export function selectRow({
+  customId,
+  placeholder,
+  options,
+}: {
+  customId: string
+  placeholder: string
+  options: ReadonlyArray<{ label: string; value: string; description?: string; default?: boolean }>
+}) {
+  return {
+    type: ComponentType.ActionRow as const,
+    components: [
+      {
+        type: ComponentType.StringSelect as const,
+        custom_id: customId,
+        placeholder,
+        options: options.slice(0, MAX_SELECT_OPTIONS).map((option) => ({
+          label: option.label.slice(0, 100) || '-',
+          value: option.value,
+          ...(option.description && { description: option.description.slice(0, 100) }),
+          ...(option.default && { default: true }),
+        })),
+      },
+    ],
+  }
 }
 
 export function formatDuration(ms: number): string {
@@ -53,7 +118,7 @@ export function formatFooter({
   return asSubtext(`*${parts.join(' ⋅ ')}*`)
 }
 
-function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 

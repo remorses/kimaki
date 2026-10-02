@@ -113,7 +113,7 @@ test('channel message creates a thread with reply and footer, follow-up continue
   `)
   expect(thread.name).toBe('Say hello hello-marker')
 
-  const rows = await bot.db.db.query.thread_sessions.findMany()
+  const rows = await bot.db.query.thread_sessions.findMany()
   expect(rows.map((row) => ({ thread: row.thread_id === thread.id, source: row.source }))).toEqual([
     { thread: true, source: 'kimaki' },
   ])
@@ -134,7 +134,7 @@ test('message in a channel without a project creates no thread', async () => {
 
 test('/session-id shows the session, thread and attach command; events are recorded per thread', async () => {
   const { discord } = twin
-  const [binding] = await bot.db.db.query.thread_sessions.findMany({ where: { thread_id: helloThreadId } })
+  const [binding] = await bot.db.query.thread_sessions.findMany({ where: { thread_id: helloThreadId } })
   const { id: interactionId } = await discord.thread(helloThreadId).user(TEST_USER_ID).runSlashCommand({ name: 'session-id' })
   await discord.thread(helloThreadId).waitForInteractionAck({ interactionId, timeout: 4_000 })
   const response = await discord.thread(helloThreadId).getInteractionResponse(interactionId)

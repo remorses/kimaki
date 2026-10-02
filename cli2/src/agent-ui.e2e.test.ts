@@ -3,6 +3,7 @@ import { ComponentType } from 'discord.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
 import { TEST_USER_ID, seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitFor, waitForFooter, warmUp, toolParts, textParts, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
+import { send, shell } from './prompt.ts'
 
 const dataDir = tempDataDir()
 let server: OpencodeTestServer
@@ -30,7 +31,7 @@ afterAll(async () => {
   fs.rmSync(dataDir, { recursive: true, force: true })
 })
 async function start(prompt: string) {
-  const result = await bot.actions.send({ channelId: twin.channelId, prompt })
+  const result = await send(bot, { channelId: twin.channelId, prompt })
   if (result instanceof Error) throw result
   return result.threadId
 }
@@ -48,8 +49,8 @@ test('agent shim shows buttons after text and a click resumes the real session',
   const shown = await ui(threadId, 'action_button:')
   await waitForFooter({ discord: twin.discord, threadId })
   const sessionId = bot.store.getState().roots[threadId]!
-  const shell = bot.actions.shell({ threadId, sessionId, command: 'printf synthetic' })
-  if (shell instanceof Error) throw shell
+  const started = shell(bot, { threadId, sessionId, command: 'printf synthetic' })
+  if (started instanceof Error) throw started
   await waitFor({ label: 'synthetic shell output', check: async () => (await twin.discord.thread(threadId).text()).includes('```\nsynthetic\n```') })
   await twin.discord.thread(threadId).user(TEST_USER_ID).clickButton({ messageId: shown.message.id, customId: shown.button.custom_id })
   await waitForFooter({ discord: twin.discord, threadId, count: 2 })

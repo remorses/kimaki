@@ -4,6 +4,10 @@
 // effects to run. The event loop is the only caller in production; tests
 // replay recorded fixtures through it.
 //
+// Inside, every handler edits an immer draft and calls emit(); the caller
+// still gets a new immutable view. Never emit a draft object: emit plain
+// strings or objects built from the event.
+//
 // A thread shows its root session plus the subagent sessions it spawned:
 //
 //   root   text, tool lines, banner, footer, retries, errors
@@ -14,6 +18,7 @@
 // busy = root execution running OR any child running (29.2 #3). Typing
 // follows busy; the footer waits until nothing runs.
 
+import { produce, type Draft } from 'immer'
 import type {
   FormInfo,
   JsonValue,
@@ -27,9 +32,7 @@ import type { Verbosity } from './db.ts'
 import {
   asSubtext,
   formatBanner,
-  type ToolInput,
   formatError,
-  formatFooter,
   formatRetry,
   formatShellEnded,
   formatShellStarted,
@@ -38,12 +41,13 @@ import {
   formatToolLine,
   isToolVisible,
   type ModelRef,
+  type ToolInput,
+  type UiMessage,
 } from './format-parts.ts'
-import { hydratePermissions, reducePermissions, type PendingPermission } from './permissions.ts'
-import { hydrateForms, reduceForms, type PendingForm } from './questions.ts'
-import { hydrateQueue, reduceQueue, type QueuedItem } from './queue.ts'
-import type { UiEffect } from './effects.ts'
-import { reduceAgentUi, type AgentPrompt, type AgentUiEvent } from './agent-ui.ts'
+import { closePermission, hydratePermissions, showPermission, STATUS, type PendingPermission } from './permissions.ts'
+import { closeForm, formatAnswer, hydrateForms, showForm, withAnswer, type PendingForm } from './questions.ts'
+import { cancelQueued, deliverQueued, enqueueInput, hydrateQueue, promoteQueued, type QueuedItem } from './queue.ts'
+import { dismissAgentPrompts, showAgentPrompt, type AgentPrompt } from './agent-ui.ts'
 
 export type Turn = {
   startedAt: number
@@ -63,15 +67,18 @@ export type Child = {
 export type ThreadView = {
   threadId: string
   sessionId: string
-  folder: string
-  branch: string | null
+  // Project channel of the thread: its verbosity applies.
+  channelId: string
+  // Current working directory of the root session (session.moved changes it).
+  directory: string
   // True only for sessions this bot created: the first step shows a banner.
   bannerPending: boolean
   // Root execution in progress.
   turn: Turn | null
   // Tool names by "assistantMessageID:toolID": session.tool.called has none.
   toolNames: Readonly<Record<string, string>>
-  shellCalls: Readonly<Record<string, { sessionId: string }>>
+  // Shell calls that started, so `kimaki buttons` from that shell posts after the tool line.
+  shellCalls: Readonly<Record<string, true>>
   agentUi: readonly AgentPrompt[]
   // Parent subagent calls whose child session is not known yet.
   subagentCalls: Readonly<Record<string, { agent: string; description: string; background: boolean }>>
@@ -88,52 +95,47 @@ export type ThreadView = {
 }
 
 export type Effect =
-  // Bot-formatted Discord content (tool lines, banner, footer, errors).
+  // Bot-formatted Discord content (tool lines, banner, errors).
   | { type: 'send'; text: string }
   // Model markdown, rendered and split by the executor.
   | { type: 'markdown'; text: string; blankLineBefore: boolean }
   | { type: 'typing'; on: boolean }
+  // Files from `kimaki upload-to-discord` (never from the reducer).
   | { type: 'attachments'; files: readonly { path: string; name: string }[] }
-  | UiEffect
+  // The executor adds folder and git branch of `directory` when it posts.
+  | { type: 'footer'; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null }
+  // Posts the messages in order; the first replies to `replyTo` when set.
+  | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null }
+  // Edits the messages `show` posted under `key` (by index; the last one covers the rest).
+  | { type: 'edit'; key: string; messages: readonly UiMessage[] }
+
+export type Emit = (effect: Effect) => void
+
+// What one session of the thread runs and waits on now, read after a (re)connect.
+export type SessionSnapshot = {
+  sessionId: string
+  // Only for the root session.
+  inbox: readonly SessionInboxInfo[] | null
+  forms: readonly FormInfo[]
+  permissions: readonly PermissionRequest[]
+}
 
 // Internal events produced by the event loop, folded through the same path.
-export type KimakiEvent = AgentUiEvent
-  | { type: 'kimaki.upload'; files: readonly { path: string; name: string }[] }
-  | { type: 'kimaki.branch'; branch: string | null; folder?: string }
-  // After a (re)connect: which sessions of this thread run right now.
-  | { type: 'kimaki.synced'; activeSessionIds: readonly string[]; at: number }
+export type KimakiEvent =
+  | { type: 'kimaki.agent-ui'; prompt: AgentPrompt }
+  | { type: 'kimaki.agent-ui-dismiss'; id: string }
   // A session found by walking parentID after a bot restart.
   | { type: 'kimaki.child'; sessionId: string; agent: string }
-  // An action failed after it returned (a `!cmd` request): shown as an error line.
-  | { type: 'kimaki.error'; message: string }
   // History of a resumed or forked session, oldest first, then a closing note.
   | { type: 'kimaki.replay'; messages: readonly SessionMessageInfo[]; note: string }
-  // After a (re)connect: what one session of the thread waits on right now.
-  // `inbox` only for the root session.
-  | {
-      type: 'kimaki.hydrated'
-      sessionId: string
-      inbox: readonly SessionInboxInfo[] | null
-      forms: readonly FormInfo[]
-      permissions: readonly PermissionRequest[]
-    }
+  // After a (re)connect: which sessions of the thread run, and what they wait on.
+  // `directory`: the root session's location now, null when it could not be read.
+  | { type: 'kimaki.snapshot'; at: number; directory: string | null; activeSessionIds: readonly string[]; sessions: readonly SessionSnapshot[] }
 
 export type ThreadEvent = V2Event | KimakiEvent
 
-const KIMAKI_EVENT_TYPES: ReadonlySet<string> = new Set<KimakiEvent['type']>([
-  'kimaki.branch',
-  'kimaki.synced',
-  'kimaki.child',
-  'kimaki.hydrated',
-  'kimaki.error',
-  'kimaki.replay',
-  'kimaki.agent-ui',
-  'kimaki.agent-ui-dismiss',
-  'kimaki.upload',
-])
-
 export function isKimakiEvent(event: ThreadEvent): event is KimakiEvent {
-  return KIMAKI_EVENT_TYPES.has(event.type)
+  return event.type.startsWith('kimaki.')
 }
 
 export type Prefs = {
@@ -143,23 +145,26 @@ export type Prefs = {
 }
 
 const RETRY_NOTICE_INTERVAL_MS = 10_000
+const REPLAY_LIMIT = 30
 
 export function emptyView({
   threadId,
   sessionId,
-  folder,
+  channelId,
+  directory,
   isNew,
 }: {
   threadId: string
   sessionId: string
-  folder: string
+  channelId: string
+  directory: string
   isNew: boolean
 }): ThreadView {
   return {
     threadId,
     sessionId,
-    folder,
-    branch: null,
+    channelId,
+    directory,
     bannerPending: isNew,
     turn: null,
     toolNames: {},
@@ -192,21 +197,26 @@ export function eventSessionId(event: V2Event): string | null {
   return typeof data['sessionID'] === 'string' ? data['sessionID'] : null
 }
 
-type Result = { view: ThreadView; effects: Effect[] }
+export function reduce({ view, event, prefs }: { view: ThreadView; event: ThreadEvent; prefs: Prefs }): {
+  view: ThreadView
+  effects: Effect[]
+} {
+  const effects: Effect[] = []
+  const emit: Emit = (effect) => void effects.push(effect)
+  const next = produce(view, (draft) => {
+    if (isKimakiEvent(event)) applyKimaki({ draft, event, prefs, emit })
+    else applyOpencode({ draft, event, prefs, emit })
+  })
+  const typing = isTyping(next)
+  // Typing goes first: on before the banner, off before the footer or a prompt.
+  if (isTyping(view) !== typing) effects.unshift({ type: 'typing', on: typing })
+  return { view: next, effects }
+}
+
+type Context = { draft: Draft<ThreadView>; prefs: Prefs; emit: Emit }
 
 function toolKey(data: { assistantMessageID: string; id: string }): string {
   return `${data.assistantMessageID}:${data.id}`
-}
-
-function newTurn(at: number): Turn {
-  return { startedAt: at, model: null, agent: null, tokens: 0 }
-}
-
-function contextPercent({ turn, prefs }: { turn: Turn; prefs: Prefs }): number | null {
-  if (!turn.model || turn.tokens <= 0) return null
-  const limit = prefs.contextLimits[`${turn.model.providerID}/${turn.model.id}`]
-  if (!limit || limit <= 0) return null
-  return Math.round((turn.tokens / limit) * 100)
 }
 
 function stringInput(input: ToolInput, key: string): string {
@@ -214,248 +224,260 @@ function stringInput(input: ToolInput, key: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-function withoutKey<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {
-  const { [key]: _removed, ...rest } = record
-  return rest
-}
-
 // Posts a tool-kind line, with a blank line when the previous block was text.
-function toolLine({ view, text }: { view: ThreadView; text: string }): Result {
-  const lead = view.lastKind === 'text' ? '\n' : ''
-  return { view: { ...view, lastKind: 'tool' }, effects: [{ type: 'send', text: `${lead}${text}` }] }
+function toolLine({ draft, emit }: Context, text: string) {
+  emit({ type: 'send', text: draft.lastKind === 'text' ? `\n${text}` : text })
+  draft.lastKind = 'tool'
 }
 
-function addChild({ view, sessionId, child }: { view: ThreadView; sessionId: string; child: Child }): ThreadView {
-  return { ...view, children: { ...view.children, [sessionId]: child } }
+function contextPercent({ turn, prefs }: { turn: Draft<Turn>; prefs: Prefs }): number | null {
+  if (!turn.model || turn.tokens <= 0) return null
+  const limit = prefs.contextLimits[`${turn.model.providerID}/${turn.model.id}`]
+  if (!limit || limit <= 0) return null
+  return Math.round((turn.tokens / limit) * 100)
 }
 
-// Tool events shared by root and children. `label` is set for children.
-function reduceTool({
-  view,
-  event,
-  prefs,
-  label,
-}: {
-  view: ThreadView
-  event: V2Event
-  prefs: Prefs
-  label: string | undefined
-}): Result | null {
-  switch (event.type) {
-    case 'session.tool.input.started':
-      return { view: { ...view, toolNames: { ...view.toolNames, [toolKey(event.data)]: event.data.name } }, effects: [] }
-    case 'session.tool.called': {
-      const name = view.toolNames[toolKey(event.data)] ?? 'tool'
-      const input = event.data.input
-      view = name === 'shell' ? { ...view, shellCalls: { ...view.shellCalls, [toolKey(event.data)]: { sessionId: event.data.sessionID } } } : view
-      const next =
-        name === 'subagent' && typeof input['sessionID'] !== 'string'
-          ? {
-              ...view,
-              subagentCalls: {
-                ...view.subagentCalls,
-                [toolKey(event.data)]: {
-                  agent: stringInput(input, 'agent') || 'subagent',
-                  description: stringInput(input, 'description'),
-                  background: input['background'] === true,
-                },
-              },
-            }
-          : view
-      // Reusing a child session: its mode and label follow the new call.
-      const reused =
-        name === 'subagent' && typeof input['sessionID'] === 'string' && next.children[input['sessionID']]
-          ? addChild({
-              view: next,
-              sessionId: input['sessionID'],
-              child: {
-                ...next.children[input['sessionID']]!,
-                agent: stringInput(input, 'agent') || next.children[input['sessionID']]!.agent,
-                background: input['background'] === true,
-                description: stringInput(input, 'description'),
-              },
-            })
-          : next
-      if (!isToolVisible({ name, input }, prefs.verbosity)) return { view: reused, effects: [] }
-      return toolLine({ view: reused, text: formatToolLine({ name, input }, { label }) })
-    }
-    case 'session.tool.progress': {
-      const childId = event.data.metadata['sessionID']
-      const call = view.subagentCalls[toolKey(event.data)]
-      if (typeof childId !== 'string' || !call) return { view, effects: [] }
-      const existing = view.children[childId]
-      const linked = addChild({
-        view,
-        sessionId: childId,
-        child: {
-          agent: call.agent,
-          description: call.description,
-          background: call.background,
-          running: existing?.running ?? false,
-        },
-      })
-      return { view: { ...linked, subagentCalls: withoutKey(linked.subagentCalls, toolKey(event.data)) }, effects: [] }
-    }
-    case 'session.tool.success':
-      return {
-        view: {
-          ...view,
-          toolNames: withoutKey(view.toolNames, toolKey(event.data)),
-          shellCalls: withoutKey(view.shellCalls, toolKey(event.data)),
-          subagentCalls: withoutKey(view.subagentCalls, toolKey(event.data)),
-        },
-        effects: [],
-      }
-    case 'session.tool.failed': {
-      const name = view.toolNames[toolKey(event.data)] ?? 'tool'
-      const next = {
-        ...view,
-        toolNames: withoutKey(view.toolNames, toolKey(event.data)),
-        shellCalls: withoutKey(view.shellCalls, toolKey(event.data)),
-        subagentCalls: withoutKey(view.subagentCalls, toolKey(event.data)),
-      }
-      if (event.data.error.type === 'aborted' || name === 'question' || name.startsWith('kimaki_')) {
-        return { view: next, effects: [] }
-      }
-      return toolLine({ view: next, text: formatToolFailed({ name, message: event.data.error.message, label }) })
-    }
-    default:
-      return null
+function applyOpencode({ draft, event, prefs, emit }: Context & { event: V2Event }) {
+  // A subagent session is created, then the parent's tool.progress (with
+  // metadata.sessionID) links it to the exact call, before any child tool
+  // event (29.2 #4). Creation only registers the child; progress sets label and mode.
+  if (event.type === 'session.created') {
+    const { sessionID, parentID } = event.data
+    if (!parentID || draft.children[sessionID]) return
+    if (parentID !== draft.sessionId && !draft.children[parentID]) return
+    draft.children[sessionID] = { agent: event.data.agent ?? 'subagent', description: '', background: false, running: false }
+    return
   }
-}
-
-function reduceChild({
-  view,
-  event,
-  sessionId,
-  prefs,
-}: {
-  view: ThreadView
-  event: V2Event
-  sessionId: string
-  prefs: Prefs
-}): Result {
-  const child = view.children[sessionId]
-  if (!child) return { view, effects: [] }
-  switch (event.type) {
-    case 'session.execution.started':
-      return { view: addChild({ view, sessionId, child: { ...child, running: true } }), effects: [] }
-    case 'session.execution.succeeded':
-    case 'session.execution.failed':
-    case 'session.execution.interrupted': {
-      const next = addChild({ view, sessionId, child: { ...child, running: false } })
-      if (!child.background || event.type !== 'session.execution.succeeded') return { view: next, effects: [] }
-      return toolLine({ view: next, text: formatSubagentFinished({ agent: child.agent, description: child.description }) })
-    }
-    default: {
-      const result = reduceTool({ view, event, prefs, label: child.agent }) ?? { view, effects: [] }
-      // Background children post no tool lines: they would interleave with later turns.
-      if (child.background) return { view: { ...result.view, lastKind: view.lastKind }, effects: [] }
-      return result
-    }
+  // A new user message dismisses the agent's pending buttons and upload requests.
+  if (event.type === 'session.inbox.enqueued' && event.data.item.type === 'user') {
+    dismissAgentPrompts({ draft, emit, ids: draft.agentUi.filter((prompt) => prompt.sessionId === event.data.sessionID).map((prompt) => prompt.id) })
   }
+  const sessionId = eventSessionId(event)
+  if (!sessionId) return
+  const child = draft.children[sessionId]
+  if (sessionId !== draft.sessionId && !child) return
+  // Questions and permissions of subagents show in this thread too.
+  const label = child?.agent ?? null
+  switch (event.type) {
+    case 'form.created':
+      return showForm({ draft, emit, form: event.data.form, label })
+    case 'form.replied':
+      return closeForm({ draft, emit, formID: event.data.id, render: (field, text) => withAnswer({ header: text, answer: formatAnswer(event.data.answer[field.key]) }) })
+    case 'form.cancelled':
+      return closeForm({ draft, emit, formID: event.data.id, render: (_field, text) => `${text}\n✗ _cancelled_` })
+    case 'permission.asked':
+      return showPermission({ draft, emit, request: event.data, label })
+    case 'permission.replied':
+      return closePermission({ draft, emit, requestID: event.data.requestID, status: STATUS[event.data.reply] })
+  }
+  if (child) return applyChild({ draft, prefs, emit, event, child })
+  applyRoot({ draft, prefs, emit, event })
 }
 
-function footerResult({ view, created, prefs }: { view: ThreadView; created: number; prefs: Prefs }): Result {
-  const turn = view.turn
-  const next = { ...view, turn: null, lastKind: null }
-  // No model step ran (a compaction-only execution): nothing to summarize.
-  if (!turn?.model) return { view: next, effects: [] }
-  // A child still runs: the answer comes in a later parent execution.
-  if (Object.values(view.children).some((child) => child.running)) return { view: next, effects: [] }
-  const footer = formatFooter({
-    folder: view.folder,
-    branch: view.branch,
-    durationMs: created - turn.startedAt,
-    contextPercent: contextPercent({ turn, prefs }),
-    model: turn.model,
-    agent: turn.agent,
-  })
-  return { view: next, effects: [{ type: 'send', text: footer }] }
-}
-
-function reduceRoot({ view, event, prefs }: { view: ThreadView; event: V2Event; prefs: Prefs }): Result {
-  const none = { view, effects: [] }
+function applyRoot(context: Context & { event: V2Event }) {
+  const { draft, event, prefs, emit } = context
   switch (event.type) {
     case 'session.moved':
-      return { view, effects: [{ type: 'send', text: asSubtext(`Working directory changed to ${event.data.location.directory}`) }] }
+      draft.directory = event.data.location.directory
+      emit({ type: 'send', text: asSubtext(`Working directory changed to ${event.data.location.directory}`) })
+      return
     case 'session.execution.started':
-      return view.turn ? none : { view: { ...view, turn: newTurn(event.created) }, effects: [] }
+      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0 }
+      return
     case 'session.step.started': {
       const model = { providerID: event.data.model.providerID, id: event.data.model.id }
-      const turn = view.turn ?? newTurn(event.created)
-      const next = { ...view, bannerPending: false, turn: { ...turn, model, agent: event.data.agent } }
-      if (!view.bannerPending) return { view: next, effects: [] }
-      return { view: next, effects: [{ type: 'send', text: formatBanner({ model, agent: event.data.agent }) }] }
+      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0 }
+      draft.turn.model = model
+      draft.turn.agent = event.data.agent
+      if (draft.bannerPending) emit({ type: 'send', text: formatBanner({ model, agent: event.data.agent }) })
+      draft.bannerPending = false
+      return
     }
     case 'session.step.ended': {
-      if (!view.turn) return none
+      if (!draft.turn) return
       const { tokens } = event.data
-      const total = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
-      return { view: { ...view, turn: { ...view.turn, tokens: total } }, effects: [] }
+      draft.turn.tokens = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
+      return
     }
     case 'session.text.ended': {
       const text = event.data.text.trim()
-      if (!text) return none
-      return {
-        view: { ...view, lastKind: 'text' },
-        effects: [{ type: 'markdown', text, blankLineBefore: view.lastKind === 'tool' }],
-      }
+      if (!text) return
+      emit({ type: 'markdown', text, blankLineBefore: draft.lastKind === 'tool' })
+      draft.lastKind = 'text'
+      return
     }
-    case 'session.retry.scheduled': {
-      if (view.lastRetryAt !== null && event.created - view.lastRetryAt < RETRY_NOTICE_INTERVAL_MS) return none
-      return {
-        view: { ...view, lastRetryAt: event.created },
-        effects: [
-          {
-            type: 'send',
-            text: formatRetry({
-              attempt: event.data.attempt,
-              delayMs: event.data.at - event.created,
-              message: event.data.error.message,
-            }),
-          },
-        ],
-      }
-    }
+    case 'session.retry.scheduled':
+      if (draft.lastRetryAt !== null && event.created - draft.lastRetryAt < RETRY_NOTICE_INTERVAL_MS) return
+      draft.lastRetryAt = event.created
+      emit({ type: 'send', text: formatRetry({ attempt: event.data.attempt, delayMs: event.data.at - event.created, message: event.data.error.message }) })
+      return
     // User `!cmd` (session.shell): shown at every verbosity.
     case 'session.shell.started':
-      return toolLine({ view, text: formatShellStarted(event.data.shell.command) })
+      return toolLine(context, formatShellStarted(event.data.shell.command))
     case 'session.shell.ended':
-      return {
-        view: { ...view, lastKind: 'tool' },
-        effects: [
-          {
-            type: 'send',
-            text: formatShellEnded({
-              output: event.data.output.output,
-              truncated: event.data.output.truncated,
-              status: event.data.shell.status,
-              exit: event.data.shell.exit ?? null,
-            }),
-          },
-        ],
-      }
+      emit({
+        type: 'send',
+        text: formatShellEnded({
+          output: event.data.output.output,
+          truncated: event.data.output.truncated,
+          status: event.data.shell.status,
+          exit: event.data.shell.exit ?? null,
+        }),
+      })
+      draft.lastKind = 'tool'
+      return
     // `/compact` or automatic compaction when the context is full.
     case 'session.compaction.ended':
-      return toolLine({ view, text: asSubtext('⬦ context compacted') })
+      return toolLine(context, asSubtext('⬦ context compacted'))
     case 'session.compaction.failed':
-      return toolLine({ view, text: formatError(`compaction failed: ${event.data.error.message}`) })
-    case 'session.execution.succeeded':
-      return footerResult({ view, created: event.created, prefs })
+      return toolLine(context, formatError(`compaction failed: ${event.data.error.message}`))
+    case 'session.execution.succeeded': {
+      const turn = draft.turn
+      draft.turn = null
+      draft.lastKind = null
+      // No model step ran (a compaction-only execution): nothing to summarize.
+      if (!turn?.model) return
+      // A child still runs: the answer comes in a later parent execution.
+      if (Object.values(draft.children).some((child) => child.running)) return
+      emit({
+        type: 'footer',
+        directory: draft.directory,
+        durationMs: event.created - turn.startedAt,
+        contextPercent: contextPercent({ turn, prefs }),
+        model: { providerID: turn.model.providerID, id: turn.model.id },
+        agent: turn.agent,
+      })
+      return
+    }
     case 'session.execution.failed':
-      return {
-        view: { ...view, turn: null, lastKind: null },
-        effects: [{ type: 'send', text: formatError(event.data.error.message) }],
-      }
+      draft.turn = null
+      draft.lastKind = null
+      emit({ type: 'send', text: formatError(event.data.error.message) })
+      return
     case 'session.execution.interrupted':
-      return { view: { ...view, turn: null, lastKind: null }, effects: [] }
+      draft.turn = null
+      draft.lastKind = null
+      return
+    case 'session.inbox.enqueued':
+      return enqueueInput({ draft, emit, data: event.data, busy: isBusy(draft) })
+    case 'session.inbox.delivered':
+      return deliverQueued({ draft, emit, inboxID: event.data.inboxID })
+    case 'session.inbox.cancelled':
+      return cancelQueued({ draft, emit, inboxID: event.data.inboxID })
+    case 'session.inbox.delivery.changed':
+      if (event.data.delivery === 'steer') promoteQueued({ draft, emit, inboxID: event.data.inboxID })
+      return
     default:
-      return reduceQueue({ view, event, busy: isBusy(view) }) ?? reduceTool({ view, event, prefs, label: undefined }) ?? none
+      return applyTool({ ...context, label: undefined })
   }
 }
 
-const REPLAY_LIMIT = 30
+function applyChild({
+  draft,
+  prefs,
+  emit,
+  event,
+  child,
+}: Context & { event: V2Event; child: Draft<Child> }) {
+  switch (event.type) {
+    case 'session.execution.started':
+      child.running = true
+      return
+    case 'session.execution.succeeded':
+    case 'session.execution.failed':
+    case 'session.execution.interrupted':
+      child.running = false
+      if (child.background && event.type === 'session.execution.succeeded') {
+        toolLine({ draft, prefs, emit }, formatSubagentFinished({ agent: child.agent, description: child.description }))
+      }
+      return
+  }
+  // Background children post no tool lines: they would interleave with later turns.
+  if (!child.background) return applyTool({ draft, prefs, emit, event, label: child.agent })
+  const lastKind = draft.lastKind
+  applyTool({ draft, prefs, emit: () => {}, event, label: child.agent })
+  draft.lastKind = lastKind
+}
+
+// Tool events shared by root and children. `label` is set for children.
+function applyTool(context: Context & { event: V2Event; label: string | undefined }) {
+  const { draft, event, prefs, label } = context
+  switch (event.type) {
+    case 'session.tool.input.started':
+      draft.toolNames[toolKey(event.data)] = event.data.name
+      return
+    case 'session.tool.called': {
+      const key = toolKey(event.data)
+      const name = draft.toolNames[key] ?? 'tool'
+      const input = event.data.input
+      if (name === 'shell') draft.shellCalls[key] = true
+      if (name === 'subagent') {
+        const reused = typeof input['sessionID'] === 'string' ? draft.children[input['sessionID']] : undefined
+        const call = { agent: stringInput(input, 'agent'), description: stringInput(input, 'description'), background: input['background'] === true }
+        if (typeof input['sessionID'] !== 'string') draft.subagentCalls[key] = { ...call, agent: call.agent || 'subagent' }
+        // Reusing a child session: its mode and label follow the new call.
+        if (reused) Object.assign(reused, { ...call, agent: call.agent || reused.agent })
+      }
+      if (isToolVisible({ name, input }, prefs.verbosity)) toolLine(context, formatToolLine({ name, input }, { label }))
+      return
+    }
+    case 'session.tool.progress': {
+      const childId = event.data.metadata['sessionID']
+      const call = draft.subagentCalls[toolKey(event.data)]
+      if (typeof childId !== 'string' || !call) return
+      draft.children[childId] = { ...call, running: draft.children[childId]?.running ?? false }
+      delete draft.subagentCalls[toolKey(event.data)]
+      return
+    }
+    case 'session.tool.success':
+    case 'session.tool.failed': {
+      const key = toolKey(event.data)
+      const name = draft.toolNames[key] ?? 'tool'
+      delete draft.toolNames[key]
+      delete draft.shellCalls[key]
+      delete draft.subagentCalls[key]
+      if (event.type === 'session.tool.success') return
+      if (event.data.error.type === 'aborted' || name === 'question' || name.startsWith('kimaki_')) return
+      toolLine(context, formatToolFailed({ name, message: event.data.error.message, label }))
+      return
+    }
+  }
+}
+
+function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEvent }) {
+  switch (event.type) {
+    case 'kimaki.agent-ui':
+      return showAgentPrompt({ draft, emit, prompt: event.prompt })
+    case 'kimaki.agent-ui-dismiss':
+      return dismissAgentPrompts({ draft, emit, ids: [event.id] })
+    case 'kimaki.replay':
+      for (const effect of replayEffects({ messages: event.messages, prefs, note: event.note })) emit(effect)
+      draft.lastKind = null
+      return
+    case 'kimaki.child':
+      draft.children[event.sessionId] ??= { agent: event.agent, description: '', background: false, running: false }
+      return
+    case 'kimaki.snapshot': {
+      // A move while disconnected: no notice, only the new location.
+      if (event.directory) draft.directory = event.directory
+      // Executions that started or ended while disconnected. Their footer is lost.
+      const active = new Set(event.activeSessionIds)
+      for (const [id, child] of Object.entries(draft.children)) child.running = active.has(id)
+      if (!active.has(draft.sessionId)) draft.turn = null
+      else draft.turn ??= { startedAt: event.at, model: null, agent: null, tokens: 0 }
+      for (const session of event.sessions) {
+        const isRoot = session.sessionId === draft.sessionId
+        const child = draft.children[session.sessionId]
+        if (!isRoot && !child) continue
+        const label = child?.agent ?? null
+        if (session.inbox) hydrateQueue({ draft, emit, inbox: session.inbox })
+        hydrateForms({ draft, emit, sessionId: session.sessionId, forms: session.forms, label })
+        hydratePermissions({ draft, emit, sessionId: session.sessionId, requests: session.permissions, label })
+      }
+      return
+    }
+  }
+}
 
 // The last text and tool blocks of the assistant messages, like live output
 // (V1 /resume and /fork showed the last 30 parts). User messages are skipped.
@@ -490,88 +512,4 @@ export function replayEffects({
     ...effects,
     { type: 'send', text: note },
   ]
-}
-
-function reduceKimaki({ view, event, prefs }: { view: ThreadView; event: KimakiEvent; prefs: Prefs }): Result {
-  switch (event.type) {
-    case 'kimaki.upload':
-      return { view, effects: [{ type: 'attachments', files: event.files }] }
-    case 'kimaki.agent-ui':
-    case 'kimaki.agent-ui-dismiss':
-      return reduceAgentUi(view, event) ?? { view, effects: [] }
-    case 'kimaki.replay':
-      return { view: { ...view, lastKind: null }, effects: replayEffects({ messages: event.messages, prefs, note: event.note }) }
-    case 'kimaki.error':
-      return { view: { ...view, lastKind: null }, effects: [{ type: 'send', text: formatError(event.message) }] }
-    case 'kimaki.hydrated': {
-      const label = event.sessionId === view.sessionId ? null : (view.children[event.sessionId]?.agent ?? null)
-      if (label === null && event.sessionId !== view.sessionId) return { view, effects: [] }
-      const queued = event.inbox ? hydrateQueue({ view, inbox: event.inbox }) : { view, effects: [] }
-      const forms = hydrateForms({ view: queued.view, sessionId: event.sessionId, forms: event.forms, label })
-      const permissions = hydratePermissions({
-        view: forms.view,
-        sessionId: event.sessionId,
-        requests: event.permissions,
-        label,
-      })
-      return { view: permissions.view, effects: [...queued.effects, ...forms.effects, ...permissions.effects] }
-    }
-    case 'kimaki.branch':
-      return { view: { ...view, branch: event.branch, folder: event.folder ?? view.folder }, effects: [] }
-    case 'kimaki.child': {
-      if (view.children[event.sessionId]) return { view, effects: [] }
-      const child = { agent: event.agent, description: '', background: false, running: false }
-      return { view: addChild({ view, sessionId: event.sessionId, child }), effects: [] }
-    }
-    case 'kimaki.synced': {
-      // Executions that started or ended while disconnected. Their footer is lost.
-      const active = new Set(event.activeSessionIds)
-      const children = Object.fromEntries(
-        Object.entries(view.children).map(([id, child]) => [id, { ...child, running: active.has(id) }]),
-      )
-      const rootActive = active.has(view.sessionId)
-      const turn = rootActive ? (view.turn ?? newTurn(event.at)) : null
-      return { view: { ...view, children, turn }, effects: [] }
-    }
-  }
-}
-
-// A subagent session is created, then the parent's tool.progress (with
-// metadata.sessionID) links it to the exact call, before any child tool event
-// (29.2 #4, verified in task-subagent and task-parallel fixtures). Creation only
-// registers the child; the progress event sets label and mode.
-function registerChild({ view, event }: { view: ThreadView; event: V2Event }): ThreadView {
-  if (event.type !== 'session.created') return view
-  const parentId = event.data.parentID
-  if (!parentId || view.children[event.data.sessionID]) return view
-  if (parentId !== view.sessionId && !view.children[parentId]) return view
-  const child = { agent: event.data.agent ?? 'subagent', description: '', background: false, running: false }
-  return addChild({ view, sessionId: event.data.sessionID, child })
-}
-
-function reduceEvent({ view, event, prefs }: { view: ThreadView; event: ThreadEvent; prefs: Prefs }): Result {
-  if (isKimakiEvent(event)) return reduceKimaki({ view, event, prefs })
-  if (event.type === 'session.created') return { view: registerChild({ view, event }), effects: [] }
-  const sessionId = eventSessionId(event)
-  if (!sessionId) return { view, effects: [] }
-  const isRoot = sessionId === view.sessionId
-  const child = view.children[sessionId]
-  if (!isRoot && !child) return { view, effects: [] }
-  // Questions and permissions of subagents show in this thread too.
-  const label = child?.agent ?? null
-  const interactive = reduceForms({ view, event, label }) ?? reducePermissions({ view, event, label })
-  if (interactive) return interactive
-  if (isRoot) return reduceRoot({ view, event, prefs })
-  return reduceChild({ view, event, sessionId, prefs })
-}
-
-export function reduce({ view, event, prefs }: { view: ThreadView; event: ThreadEvent; prefs: Prefs }): Result {
-  const ui = event.type === 'session.inbox.enqueued' ? reduceAgentUi(view, event) : null
-  const folded = reduceEvent({ view: ui?.view ?? view, event, prefs })
-  const result = { view: folded.view, effects: [...(ui?.effects ?? []), ...folded.effects] }
-  const wasTyping = isTyping(view)
-  const typing = isTyping(result.view)
-  if (wasTyping === typing) return result
-  // Typing goes first: on before the banner, off before the footer or a prompt.
-  return { view: result.view, effects: [{ type: 'typing', on: typing }, ...result.effects] }
 }

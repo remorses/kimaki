@@ -30,8 +30,8 @@ import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
 import type { ToolInput } from '../format-parts.ts'
 import * as schema from '../schema.ts'
 import { startBot, type BotHandle } from '../main.ts'
-import type { SendInput } from '../actions.ts'
-import { listTasks, type Clock, type ScheduleOptions } from '../scheduler.ts'
+import type { LockRouteInput, LockRouteName } from '../lock-routes.ts'
+import { listTasks, type Clock } from '../scheduler.ts'
 
 export const TEST_MODEL = 'deterministic-v2'
 
@@ -358,11 +358,11 @@ export function schedulingKit({ suite, dataDir, clock }: {
   dataDir: string
   clock: ReturnType<typeof manualClock>
 }) {
-  async function request<T>(route: string, input: Partial<SendInput & ScheduleOptions> | { id: number }): Promise<T> {
+  async function request<N extends LockRouteName>(route: N, input: LockRouteInput<N>): Promise<unknown> {
     const { bot } = suite()
     const token = fs.readFileSync(path.join(dataDir, 'lock-token'), 'utf8')
-    const response = await fetch(`http://127.0.0.1:${bot.lock.port}${route}`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(input) })
-    const body = (await response.json()) as T
+    const response = await fetch(`http://127.0.0.1:${bot.lock.port}/kimaki/${route}`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(input) })
+    const body: unknown = await response.json()
     if (!response.ok) throw new Error(`${route} failed: ${JSON.stringify(body)}`)
     return body
   }
@@ -381,8 +381,8 @@ export function schedulingKit({ suite, dataDir, clock }: {
       return result.stdout
     },
     // `kimaki send --channel <project> --send-at …`
-    schedule(input: Partial<SendInput & ScheduleOptions>) {
-      return request<{ taskId: number; nextRunAt: string }>('/kimaki/send', { channelId: suite().twin.channelId, ...input })
+    async schedule(input: Omit<LockRouteInput<'send'>, 'channelId'>) {
+      return (await request('send', { channelId: suite().twin.channelId, ...input })) as { taskId: number; nextRunAt: string }
     },
     async listTasks() {
       const opened = await openDb({ dataDir, migrate: false })

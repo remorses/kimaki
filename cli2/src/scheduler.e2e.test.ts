@@ -7,6 +7,7 @@ import { git } from './worktrees.ts'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
+import { send } from './prompt.ts'
 import {
   manualClock,
   schedulingKit,
@@ -74,7 +75,7 @@ test('a one-shot task starts a thread at its time, then is gone', async () => {
   `)
   expect((await listTasks()).filter((row) => row.id === task.taskId)).toEqual([])
   // /resume rebuilds the instruction entry: the task section and marker stay, though the row is gone.
-  await request('/kimaki/action/session.resume', { sessionId, channelId: twin.channelId })
+  await request('session.resume', { sessionId, channelId: twin.channelId })
   const resumed = await (await server.client()).session.instructions.entry.list({ sessionID: sessionId })
   expect(resumed.map((entry) => String(entry.value)).join('\n')).toContain('started automatically by kimaki scheduled task #1.')
   expect((await (await server.client()).session.get({ sessionID: sessionId })).metadata?.['kimaki']).toMatchObject({ source: 'task', taskId: task.taskId })
@@ -98,15 +99,15 @@ test('a cron task fires once per occurrence, in a new thread each time', async (
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await listTasks()).find((row) => row.id === task.taskId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T13:00:00.000Z' })
-  await request('/kimaki/task/delete', { id: task.taskId })
+  await request('task.delete', { id: task.taskId })
 })
 
 test('a task for an existing thread prompts that thread, with or without . queue', async () => {
-  const started = await bot.actions.send({ channelId: twin.channelId, prompt: 'Thread for a reminder' })
+  const started = await send(bot, { channelId: twin.channelId, prompt: 'Thread for a reminder' })
   if (started instanceof Error) throw started
   await waitForFooter({ discord: twin.discord, threadId: started.threadId })
-  await request('/kimaki/send', { threadId: started.threadId, prompt: 'Reminder: check the logs', sendAt: '2030-01-01T14:00:00Z' })
-  await request('/kimaki/send', { threadId: started.threadId, prompt: 'Then summarize them. queue', sendAt: '2030-01-01T15:00:00Z' })
+  await request('send', { threadId: started.threadId, prompt: 'Reminder: check the logs', sendAt: '2030-01-01T14:00:00Z' })
+  await request('send', { threadId: started.threadId, prompt: 'Then summarize them. queue', sendAt: '2030-01-01T15:00:00Z' })
   expect(await tick('2030-01-01T14:00:00Z')).toEqual([])
   await waitForFooter({ discord: twin.discord, threadId: started.threadId, count: 2 })
   expect(await tick('2030-01-01T15:00:00Z')).toEqual([])
@@ -177,5 +178,5 @@ test('recurring worktree tasks get a fresh checkout on every run', async () => {
   const directories = await Promise.all([first[0]!, second[0]!].map(async (threadId) => (await client.session.get({ sessionID: bot.store.getState().roots[threadId]! })).location.directory))
   expect(new Set(directories).size).toBe(2)
   expect(directories.every((directory) => directory !== server.projectDirectory)).toBe(true)
-  await request('/kimaki/task/delete', { id: task.taskId })
+  await request('task.delete', { id: task.taskId })
 })

@@ -17,10 +17,10 @@ import { ChannelType } from 'discord.js'
 
 import { openDb } from './db.ts'
 import { DbError, OpenCodeError } from './errors.ts'
+import type { LockRouteInput, LockRouteName } from './lock-routes.ts'
 import { callBot, DEFAULT_LOCK_PORT } from './lock-server.ts'
 import { editorsForFile, loadFileEditEvents } from './file-edit-log.ts'
 import { createLogger } from './logger.ts'
-import { startBot } from './main.ts'
 import { opencodeConfigDir, resolveOpencode } from './opencode-server.ts'
 import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEventsFile, waitForSessionReady } from './session-events.ts'
 import {
@@ -32,9 +32,7 @@ import {
   resolveCredentials,
   restApiUrl,
 } from './credentials.ts'
-import { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate } from './onboarding.ts'
 import { createAnalytics } from './analytics.ts'
-import { listTasks } from './scheduler.ts'
 import { generateSpeech, saveAudioKeys } from './voice.ts'
 import { addProjectChannel, canonicalPath, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from './project.ts'
 
@@ -136,6 +134,8 @@ cli
   .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
   .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
   .action(async (options) => {
+    // Bot code loads only here: the other subcommands start without it.
+    const [{ startBot }, { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate }] = await Promise.all([import('./main.ts'), import('./onboarding.ts')])
     const dataDir = dataDirOrDefault(options.dataDir)
     const urls = gatewayUrlsFromEnv()
     const machine = options.machineName ?? defaultMachineName()
@@ -247,8 +247,8 @@ cli
       const added = await addProjectChannel({ api, db: opened.db, guildId, directory: projectDirectory, machine: options.machineName ?? defaultMachineName() })
       if (added instanceof Error || !added.created) return added
       // Agents run this while the bot runs: follow the bot's --no-analytics.
-      const status = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/status', input: {} })
-      const botAnalytics = status instanceof Error || !status.data || typeof status.data !== 'object' ? null : Reflect.get(status.data, 'analytics')
+      const status = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'status', input: {} })
+      const botAnalytics = status instanceof Error ? null : status.data.analytics
       const analytics = createAnalytics({ dataDir: dataDirOrDefault(options.dataDir), botMode: credentials.mode, enabled: botAnalytics !== false })
       const projects = await countUserProjects({ db: opened.db, dataDir: dataDirOrDefault(options.dataDir) })
       analytics.track('project_registered', { project_kind: 'user', source: 'cli', ...(!(projects instanceof Error) && { user_project_count: projects }) })
@@ -400,8 +400,8 @@ cli.command('session url <id>', 'Print the Discord URL of a session or thread')
     process.stdout.write(`https://discord.com/channels/${thread.guild_id}/${result.threadId}\n`)
   })
 
-async function action(name: string, dataDir: string | undefined, input: unknown) {
-  const result = await callBot({ dataDir: dataDirOrDefault(dataDir), route: `/kimaki/action/${name}`, input })
+async function action<N extends LockRouteName>({ route, dataDir, input, signal }: { route: N; dataDir: string | undefined; input: LockRouteInput<N>; signal?: AbortSignal }) {
+  const result = await callBot({ dataDir: dataDirOrDefault(dataDir), route, input, signal })
   if (result instanceof Error) fail(result)
   process.stdout.write(`${JSON.stringify(result.data)}\n`)
 }
@@ -412,76 +412,81 @@ for (const command of ['agent', 'model', 'verbosity'] as const) {
     .option('-c, --channel <id>', 'Target channel (default: current project)')
     .option('--variant <name>', 'Thinking variant for model')
     .option('--clear', 'Clear a saved agent or model')
-    .action(async (value, options) => action(`channel.${command}`, options.dataDir, {
-      channelId: options.channel, directory: process.cwd(), clear: options.clear, variant: options.variant,
-      ...(command === 'verbosity' ? { text: value } : { [command]: value }),
-    }))
+    .action(async (value, options) => {
+      const target = { channelId: options.channel, directory: process.cwd() }
+      // A missing verbosity gets the bot's "Invalid channel action or value".
+      if (command === 'verbosity') return action({ route: 'channel.verbosity', dataDir: options.dataDir, input: { ...target, text: value ?? '' } })
+      if (command === 'agent') return action({ route: 'channel.agent', dataDir: options.dataDir, input: { ...target, agent: value, clear: options.clear } })
+      return action({ route: 'channel.model', dataDir: options.dataDir, input: { ...target, model: value, variant: options.variant, clear: options.clear } })
+    })
 }
 
 cli.command('session abort [id]', 'Stop the running turn and clear its queue')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
-  .action(async (id, options) => action('session.abort', options.dataDir, { sessionId: id ?? process.env['OPENCODE_SESSION_ID'] }))
+  .action(async (id, options) => action({ route: 'session.abort', dataDir: options.dataDir, input: { sessionId: id ?? process.env['OPENCODE_SESSION_ID'] } }))
 
 cli.command('session archive [threadId]', 'Archive a session thread')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
-  .action(async (threadId, options) => action('session.archive', options.dataDir, { threadId, sessionId: threadId ? undefined : options.session ?? process.env['OPENCODE_SESSION_ID'] }))
+  .action(async (threadId, options) => action({ route: 'session.archive', dataDir: options.dataDir, input: { threadId, sessionId: threadId ? undefined : options.session ?? process.env['OPENCODE_SESSION_ID'] } }))
 
 cli.command('session title <title>', 'Rename the session and its Discord thread')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
-  .action(async (title, options) => action('session.title', options.dataDir, { text: title, sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] }))
+  .action(async (title, options) => action({ route: 'session.title', dataDir: options.dataDir, input: { text: title, sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] } }))
 
 for (const name of ['add', 'remove'] as const) {
   cli.command(`session queue ${name} <value>`, `${name} native queued prompts`)
     .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
     .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
     .option('--json', 'Output as JSON')
-    .action(async (value, options) => action(`queue.${name}`, options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], ...(name === 'add' ? { text: value } : { inboxId: value }) }))
+    .action(async (value, options) => {
+      const sessionId = options.session ?? process.env['OPENCODE_SESSION_ID']
+      if (name === 'add') return action({ route: 'queue.add', dataDir: options.dataDir, input: { sessionId, text: value } })
+      return action({ route: 'queue.remove', dataDir: options.dataDir, input: { sessionId, inboxId: value } })
+    })
 }
 for (const name of ['list', 'clear'] as const) {
   cli.command(`session queue ${name}`, `${name} native queued prompts`)
     .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
     .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
     .option('--json', 'Output as JSON')
-    .action(async (options) => action(`queue.${name}`, options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] }))
+    .action(async (options) => action({ route: `queue.${name}`, dataDir: options.dataDir, input: { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] } }))
 }
 
 cli.command('session command <name> [...args]', 'Run an OpenCode command, skill, or MCP prompt')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
   .option('--queue', 'Run after the current turn instead of interrupting')
-  .action(async (name, args, options) => action('session.command', options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text: [name, ...args, ...(options['--'] ?? [])].join(' '), queue: options.queue }))
+  .action(async (name, args, options) => action({ route: 'session.command', dataDir: options.dataDir, input: { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text: [name, ...args, ...(options['--'] ?? [])].join(' '), queue: options.queue } }))
 
 for (const name of ['shell', 'btw'] as const) {
   cli.command(`session ${name} <text>`, `Run ${name} through the shared session action`)
     .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
     .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
     .option('--queue', 'Queue an OpenCode command')
-    .action(async (text, options) => action(`session.${name}`, options.dataDir, { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text, queue: options.queue }))
+    .action(async (text, options) => action({ route: `session.${name}`, dataDir: options.dataDir, input: { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], text } }))
 }
 
 cli.command('session fork [id]', 'Fork a root or child session into a new thread')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('--before <messageId>', 'Fork before this user message')
   .option('-n, --name <name>', 'Thread name')
-  .action(async (id, options) => action('session.fork', options.dataDir, { sessionId: id ?? process.env['OPENCODE_SESSION_ID'], before: options.before, name: options.name }))
+  .action(async (id, options) => action({ route: 'session.fork', dataDir: options.dataDir, input: { sessionId: id ?? process.env['OPENCODE_SESSION_ID'], before: options.before, name: options.name } }))
 
 cli.command('session resume <id>', 'Bind an existing session to a new thread in its project channel')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-c, --channel <id>', 'Destination channel (default: channel of the session folder)')
-  .action(async (id, options) => action('session.resume', options.dataDir, { sessionId: id, channelId: options.channel }))
+  .action(async (id, options) => action({ route: 'session.resume', dataDir: options.dataDir, input: { sessionId: id, channelId: options.channel } }))
 
 cli.command('buttons', 'Show 1-3 action buttons. Call last, after visible text')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
   .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[=command][:white|blue|green|red]" }))
   .action(async (options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/buttons', input: {
-      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], buttons: options.button, fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'],
+    await action({ route: 'buttons', dataDir: options.dataDir, input: {
+      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] ?? '', buttons: options.button ?? [], fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'],
     } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
   })
 
 cli.command('upload-request', 'Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes')
@@ -490,11 +495,9 @@ cli.command('upload-request', 'Ask for file uploads; waits up to 6 minutes. Shel
   .option('-p, --prompt <text>', 'Text above the upload button')
   .option('--max-files <n>', '1 to 10 (default: 5)')
   .action(async (options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/upload-request', signal: AbortSignal.timeout(7 * 60_000), input: {
-      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], prompt: options.prompt, maxFiles: Number(options.maxFiles ?? 5), fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'],
-    } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'upload-request', dataDir: options.dataDir, input: {
+      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] ?? '', prompt: options.prompt ?? '', maxFiles: Number(options.maxFiles ?? 5), fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'],
+    }, signal: AbortSignal.timeout(7 * 60_000) })
   })
 
 cli.command('login <provider>', 'Connect a provider using OpenCode integration credentials')
@@ -505,9 +508,7 @@ cli.command('login <provider>', 'Connect a provider using OpenCode integration c
   .option('--code <code>', 'Authorization code for the attempt')
   .option('--cancel', 'Cancel the native OAuth attempt')
   .action(async (provider, options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/login', input: { provider, key: options.key, method: options.method, attempt: options.attempt, code: options.code, ...(options.cancel && { operation: 'cancel' }) } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'login', dataDir: options.dataDir, input: { provider, key: options.key, method: options.method, attempt: options.attempt, code: options.code, ...(options.cancel && { operation: 'cancel' }) } })
   })
 
 cli.command('login credential <id>', 'Activate, remove, or label an OpenCode credential')
@@ -515,9 +516,7 @@ cli.command('login credential <id>', 'Activate, remove, or label an OpenCode cre
   .option('--operation <name>', 'activate | remove | label')
   .option('--label <text>', 'Credential label')
   .action(async (id, options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/credential', input: { id, operation: options.operation ?? 'activate', label: options.label } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'credential', dataDir: options.dataDir, input: { id, operation: options.operation ?? 'activate', label: options.label } })
   })
 
 cli
@@ -545,7 +544,7 @@ cli
   .option('--allow-concurrency', 'Scheduled only: allow overlapping runs of this task')
   .action(async (options) => {
     if (options.wait && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the task runs later'))
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/send', signal: AbortSignal.timeout(25 * 60_000), input: {
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'send', signal: AbortSignal.timeout(25 * 60_000), input: {
       channelId: options.channel, project: options.project, threadId: options.thread, sessionId: options.session,
       prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
       cwd: options.cwd, worktree: options.worktree, baseBranch: options.baseBranch, parentSessionId: options.parentSession, permissions: options.permission, notifyOnly: options.notifyOnly,
@@ -614,18 +613,14 @@ cli.command('session cwd [directory]', 'Show or change the working directory at 
   .option('-s, --session <id>', 'Session (default: OPENCODE_SESSION_ID)')
   .option('--thread <id>', 'Discord thread')
   .action(async (directory, options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/session.cwd', input: { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], threadId: options.thread, directory } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'session.cwd', dataDir: options.dataDir, input: { sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], threadId: options.thread, directory } })
   })
 
 cli.command('channel worktrees <value>', 'Set automatic worktrees: on | off').section('Channel')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('-c, --channel <id>', 'Project channel (default: current directory)')
   .action(async (value, options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/channel.worktrees', input: { channelId: options.channel, directory: process.cwd(), text: value } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'channel.worktrees', dataDir: options.dataDir, input: { channelId: options.channel, directory: process.cwd(), text: value } })
   })
 
 cli.section('Worktree')
@@ -634,9 +629,7 @@ cli.command('worktree list', 'List linked Git worktrees')
   .option('-c, --channel <id>', 'Project channel')
   .option('-p, --project <path>', 'Project directory (default: current directory)')
   .action(async (options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/worktree.list', input: { channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()) } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'worktree.list', dataDir: options.dataDir, input: { channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()) } })
   })
 
 cli.command('worktree create [name]', 'Create an isolated worktree session')
@@ -645,9 +638,7 @@ cli.command('worktree create [name]', 'Create an isolated worktree session')
   .option('-p, --project <path>', 'Project directory (default: current directory)')
   .option('--base-branch <ref>', 'Starting Git ref (default: project HEAD)')
   .action(async (name, options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/action/worktree.create', signal: AbortSignal.timeout(25 * 60_000), input: { channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()), name, baseBranch: options.baseBranch } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'worktree.create', dataDir: options.dataDir, input: { channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()), name, baseBranch: options.baseBranch }, signal: AbortSignal.timeout(25 * 60_000) })
   })
 
 for (const operation of ['remove', 'merge'] as const) {
@@ -658,11 +649,9 @@ for (const operation of ['remove', 'merge'] as const) {
     .option('--target-branch <branch>', 'Local merge target branch')
     .option('--strategy <name>', 'Merge strategy: rebase | squash')
     .action(async (directory, options) => {
-      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: `/kimaki/action/worktree.${operation}`, signal: AbortSignal.timeout(25 * 60_000), input: {
+      await action({ route: `worktree.${operation}`, dataDir: options.dataDir, signal: AbortSignal.timeout(25 * 60_000), input: {
         channelId: options.channel, directory: path.resolve(options.project ?? process.cwd()), text: path.resolve(directory), targetBranch: options.targetBranch, strategy: options.strategy,
       } })
-      if (result instanceof Error) fail(result)
-      process.stdout.write(`${JSON.stringify(result.data)}\n`)
     })
 }
 
@@ -672,6 +661,7 @@ cli.command('task list', 'List scheduled tasks (planned, running, failed)')
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
+    const { listTasks } = await import('./scheduler.ts')
     const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
     if (opened instanceof Error) fail(opened)
     const tasks = await listTasks({ db: opened.db })
@@ -702,12 +692,10 @@ cli.command('task edit <taskId>', 'Change a planned task. An empty string clears
   .action(async (taskId, options) => {
     const flag = options.allowConcurrency
     if (flag && flag !== 'true' && flag !== 'false') fail(new Error('--allow-concurrency must be true or false'))
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/task/edit', input: {
+    await action({ route: 'task.edit', dataDir: options.dataDir, input: {
       id: Number(taskId), prompt: options.prompt, sendAt: options.sendAt, agent: options.agent, model: options.model,
       user: options.user, preRun: options.preRun, allowConcurrency: flag ? flag === 'true' : undefined,
     } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
   })
 
 for (const [name, description] of [['delete', 'Delete a scheduled task'], ['run', 'Run a scheduled task now']] as const) {
@@ -716,9 +704,7 @@ for (const [name, description] of [['delete', 'Delete a scheduled task'], ['run'
     .action(async (taskId, options) => {
       // A run waits for its pre-run command (up to 10 minutes) and the session start.
       const signal = name === 'run' ? AbortSignal.timeout(12 * 60_000) : undefined
-      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: `/kimaki/task/${name}`, input: { id: Number(taskId) }, signal })
-      if (result instanceof Error) fail(result)
-      process.stdout.write(`${JSON.stringify(result.data)}\n`)
+      await action({ route: `task.${name}`, dataDir: options.dataDir, input: { id: Number(taskId) }, signal })
     })
 }
 
@@ -729,13 +715,11 @@ cli.command('sleep', 'Wake this session later with a new message in the same thr
   .option('--reason <text>', 'Shown in Discord and in the wake message')
   .option('-s, --session <id>', 'Session to wake (default: OPENCODE_SESSION_ID)')
   .action(async (options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/sleep', input: {
-      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'], duration: options.duration, until: options.until, reason: options.reason,
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'sleep', input: {
+      sessionId: options.session ?? process.env['OPENCODE_SESSION_ID'] ?? '', duration: options.duration, until: options.until, reason: options.reason,
     } })
     if (result instanceof Error) fail(result)
-    const data = result.data
-    const output = data && typeof data === 'object' ? new Map(Object.entries(data)).get('output') : undefined
-    process.stdout.write(`${typeof output === 'string' ? output : JSON.stringify(data)}\n`)
+    process.stdout.write(`${result.data.output}\n`)
   })
 
 cli.section('Discord')
@@ -789,9 +773,7 @@ cli.command('upload-to-discord <...files>', 'Attach local files to a session thr
   .action(async (files, options) => {
     const id = options.session ?? process.env['OPENCODE_SESSION_ID']
     if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/upload', input: { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) } })
-    if (result instanceof Error) fail(result)
-    process.stdout.write(`${JSON.stringify(result.data)}\n`)
+    await action({ route: 'upload', dataDir: options.dataDir, input: { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) } })
   })
 
 cli.section('Tools')
@@ -851,23 +833,22 @@ cli.command('status', 'Bot health: running, pid, uptime, OpenCode URL and versio
   .option('--data-dir <path>', 'Data directory (default: ~/.kimaki)')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: '/kimaki/status', input: {} })
+    const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'status', input: {} })
     if (result instanceof Error) {
       process.stdout.write(options.json ? `${JSON.stringify({ running: false, reason: result.message })}\n` : `not running: ${result.message}\n`)
       process.exitCode = 1
       return
     }
-    const status = { running: true, ...(result.data && typeof result.data === 'object' ? result.data : {}) }
+    const status = { running: true, ...result.data }
     if (options.json) {
       process.stdout.write(`${JSON.stringify(status, null, 2)}\n`)
       return
     }
-    const value = (key: string) => (key in status ? JSON.stringify(status[key as keyof typeof status]) : '?')
     process.stdout.write(dedent`
-      running: pid ${value('pid')}, up ${value('uptimeSec')}s, mode ${value('mode')}
-      opencode: ${value('opencode')}
-      guilds: ${value('guilds')}
-      data dir: ${value('dataDir')}
+      running: pid ${status.pid}, up ${status.uptimeSec}s, mode ${JSON.stringify(status.mode)}
+      opencode: ${JSON.stringify(status.opencode)}
+      guilds: ${JSON.stringify(status.guilds)}
+      data dir: ${JSON.stringify(status.dataDir)}
     ` + '\n')
   })
 

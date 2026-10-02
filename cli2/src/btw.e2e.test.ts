@@ -96,7 +96,7 @@ test('. btw forks into a side thread while the source run continues', async () =
     side answer
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
-  const rows = await bot.db.db.query.thread_sessions.findMany({ where: { thread_id: fork.id } })
+  const rows = await bot.db.query.thread_sessions.findMany({ where: { thread_id: fork.id } })
   expect(rows.length).toBe(1)
 })
 

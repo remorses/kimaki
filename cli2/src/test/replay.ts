@@ -6,7 +6,7 @@ import path from 'node:path'
 import type { V2Event } from '@opencode/client'
 
 import { emptyView, reduce, type Effect, type Prefs, type ThreadEvent, type ThreadView } from '../thread-reducer.ts'
-import type { UiMessage } from '../effects.ts'
+import { formatFooter, type UiMessage } from '../format-parts.ts'
 import { ButtonStyle, ComponentType } from 'discord.js'
 
 const FIXTURES_DIR = path.join(import.meta.dirname, '../../../docs/opencode-v2-events')
@@ -44,7 +44,8 @@ export function replay({
     emptyView({
       threadId: 'thread',
       sessionId: rootSessionId(events.filter((event): event is V2Event => !event.type.startsWith('kimaki.'))),
-      folder: 'project',
+      channelId: 'channel',
+      directory: '/project',
       isNew: true,
     })
   return events.reduce<{ view: ThreadView; effects: Effect[] }>(
@@ -52,7 +53,7 @@ export function replay({
       const result = reduce({ view: acc.view, event, prefs })
       return { view: result.view, effects: [...acc.effects, ...result.effects] }
     },
-    { view: { ...start, branch: 'main' }, effects: [] },
+    { view: start, effects: [] },
   )
 }
 
@@ -79,6 +80,8 @@ export function effectLines(effects: Effect[]): string[] {
       return `[show ${effect.key}${reply}] ${effect.messages.map(uiLine).join(' | ')}`
     }
     if (effect.type === 'edit') return `[edit ${effect.key}] ${effect.messages.map(uiLine).join(' | ')}`
+    // Tests have no git checkout: the branch is always main.
+    if (effect.type === 'footer') return formatFooter({ ...effect, folder: path.basename(effect.directory), branch: 'main' })
     return effect.text.replace(/^\n/, '\\n')
   })
 }

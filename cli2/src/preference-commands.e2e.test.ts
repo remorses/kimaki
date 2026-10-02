@@ -238,7 +238,7 @@ test('/model with channel scope sets the model of new sessions', async () => {
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ plan*"
   `)
-  const row = await bot.db.db.query.channel_models.findFirst({ where: { channel_id: channelId } })
+  const row = await bot.db.query.channel_models.findFirst({ where: { channel_id: channelId } })
   expect({ model: row?.model_id, variant: row?.variant }).toMatchInlineSnapshot(`
     {
       "model": "deterministic-provider/deterministic-thinker",
@@ -252,7 +252,7 @@ test('/verbosity applies to running sessions of the channel at once', async () =
   const thread = await newThread(channelId, 'Show tools-marker')
   await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'verbosity' })
   const { message } = await waitForSelectMenu({ discord, channelId, prefix: 'verbosity:' })
-  const previous = await bot.db.db.query.channel_verbosity.findFirst({ where: { channel_id: twin.quietChannelId } })
+  const previous = await bot.db.query.channel_verbosity.findFirst({ where: { channel_id: twin.quietChannelId } })
   await discord.channel(channelId).user(TEST_USER_ID).selectMenu({
     messageId: message.id,
     customId: `verbosity:${twin.quietChannelId}`,
@@ -296,7 +296,7 @@ test('/verbosity applies to running sessions of the channel at once', async () =
     Applies immediately, including active sessions.
     Run /verbosity in the target channel"
   `)
-  expect(await bot.db.db.query.channel_verbosity.findFirst({ where: { channel_id: twin.quietChannelId } })).toEqual(previous)
+  expect(await bot.db.query.channel_verbosity.findFirst({ where: { channel_id: twin.quietChannelId } })).toEqual(previous)
 })
 
 test('/<agent>-agent variant: sets the thinking level with the agent, per session or channel', async () => {

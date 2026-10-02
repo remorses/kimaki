@@ -1,4 +1,5 @@
 // Effects executor (spec 27.5): the only Discord writer for session output.
+// The footer reads the git branch here, when it is posted.
 // One FIFO worker per thread keeps Discord order equal to event order, and
 // one typing interval per thread refreshes the indicator every 7s. Never
 // awaited by the event loop.
@@ -11,17 +12,12 @@
 // queue; consecutive bot lines are then merged into one message (≤ 2000
 // chars) so a burst of tool lines does not hit the 5 msg / 5s channel limit.
 
-import {
-  ButtonStyle,
-  ComponentType,
-  type APIActionRowComponent,
-  type APIButtonComponentWithCustomId,
-  type APIComponentInMessageActionRow,
-  type Client,
-  type MessageCreateOptions,
-  type SendableChannels,
-} from 'discord.js'
+import { execFile } from 'node:child_process'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { type Client, type MessageCreateOptions, type SendableChannels } from 'discord.js'
 
+import { formatFooter, type UiMessage } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { segmentPayloads, type DiscordPayload } from './markdown/components.ts'
 import { DISCORD_TEXT_LIMIT, renderMarkdown } from './markdown/render-markdown.ts'
@@ -30,41 +26,19 @@ import type { Effect } from './thread-reducer.ts'
 const logger = createLogger('EFFECTS')
 
 const TYPING_REFRESH_MS = 7_000
+const execFileAsync = promisify(execFile)
 
-// --- Interactive prompts (queue acks, question dropdowns, permission buttons).
-// Reducers name each prompt with a key and never see message IDs.
-
-export type UiMessage = {
-  content: string
-  components: ReadonlyArray<APIActionRowComponent<APIComponentInMessageActionRow>>
+async function gitBranch(directory: string): Promise<string | null> {
+  const result = await execFileAsync('git', ['branch', '--show-current'], { cwd: directory, timeout: 5_000 }).catch(() => null)
+  return result?.stdout.trim() || null
 }
 
-export type UiEffect =
-  // Posts the messages in order; the first replies to `replyTo` when set.
-  | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null }
-  // Edits the messages `show` posted under `key` (by index; the last one covers the rest).
-  | { type: 'edit'; key: string; messages: readonly UiMessage[] }
-
-export function textOnly(content: string): UiMessage {
-  return { content, components: [] }
-}
-
-export function button({
-  customId,
-  label,
-  style = ButtonStyle.Secondary,
-}: {
-  customId: string
-  label: string
-  style?: ButtonStyle.Primary | ButtonStyle.Secondary | ButtonStyle.Success | ButtonStyle.Danger
-}): APIButtonComponentWithCustomId {
-  return { type: ComponentType.Button, custom_id: customId, label, style }
-}
-
-export function buttonRow(
-  buttons: readonly APIButtonComponentWithCustomId[],
-): APIActionRowComponent<APIComponentInMessageActionRow> {
-  return { type: ComponentType.ActionRow, components: [...buttons] }
+// The footer becomes a plain send, so it can merge with the lines before it.
+async function resolveFooter(effect: Effect): Promise<Resolved> {
+  if (effect.type !== 'footer') return effect
+  const { directory, durationMs, contextPercent, model, agent } = effect
+  const branch = await gitBranch(directory)
+  return { type: 'send', text: formatFooter({ folder: path.basename(directory), branch, durationMs, contextPercent, model, agent }) }
 }
 
 type ThreadWorker = {
@@ -76,8 +50,10 @@ type ThreadWorker = {
 }
 
 // Adjacent `send` effects become one, as long as the joined text fits a message.
-export function mergeSends(effects: Effect[]): Effect[] {
-  return effects.reduce<Effect[]>((merged, effect) => {
+type Resolved = Exclude<Effect, { type: 'footer' }>
+
+export function mergeSends(effects: Resolved[]): Resolved[] {
+  return effects.reduce<Resolved[]>((merged, effect) => {
     const last = merged[merged.length - 1]
     if (effect.type !== 'send' || last?.type !== 'send') return [...merged, effect]
     const text = `${last.text}\n${effect.text}`
@@ -149,7 +125,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     if (edited instanceof Error) logger.warn(`edit of ${messageId} failed: ${edited.message}`)
   }
 
-  async function runOne(threadId: string, effect: Effect) {
+  async function runOne(threadId: string, effect: Resolved) {
     const thread = worker(threadId)
     if (effect.type === 'attachments') {
       for (let offset = 0; offset < effect.files.length; offset += 10) {
@@ -210,7 +186,8 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     thread.running = true
     while (thread.queue.length > 0) {
       const generation = thread.generation
-      for (const effect of mergeSends(thread.queue.splice(0))) {
+      const batch = await Promise.all(thread.queue.splice(0).map(resolveFooter))
+      for (const effect of mergeSends(batch)) {
         if (thread.generation !== generation) break
         await runOne(threadId, effect)
       }

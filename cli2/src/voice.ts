@@ -446,76 +446,68 @@ async function projectFileTree(directory: string): Promise<string> {
 
 export type TranscriptionBaseUrls = { openai?: string; gemini?: string }
 
-export function createTranscriber({
+async function transcriptionProvider({ db, token }: { db: KimakiDb; token: string }) {
+  const row = await db.query.bot_tokens
+    .findFirst({ where: { token }, with: { api_keys: true } })
+    .catch((e) => new DbError({ operation: 'read transcription keys', cause: e }))
+  if (row instanceof Error) return row
+  const keys = row?.api_keys
+  // Stored keys first, then env, each in V1 order: OpenAI, then Gemini.
+  const candidates = [
+    { kind: 'openai' as const, apiKey: keys?.openai_api_key },
+    { kind: 'gemini' as const, apiKey: keys?.gemini_api_key },
+    { kind: 'openai' as const, apiKey: process.env['OPENAI_API_KEY'] },
+    { kind: 'gemini' as const, apiKey: process.env['GEMINI_API_KEY'] },
+  ]
+  const credentials = row ? credentialsFromRow(row) : null
+  const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
+  const gateway = clientId && clientSecret ? { kind: 'gateway' as const, clientId, clientSecret } : null
+  const found = candidates.find((candidate) => candidate.apiKey)
+  if (found?.apiKey) return { kind: found.kind, apiKey: found.apiKey, gateway }
+  if (gateway) return gateway
+  return new NoTranscriptionKeyError()
+}
+
+export async function transcribe({
   db,
   token,
   baseUrls = {},
+  audio,
+  mediaType,
+  directory,
+  agents,
+  inSession,
 }: {
   db: KimakiDb
   // The running bot's token: selects its bot_tokens row and API keys.
   token: string
   baseUrls?: TranscriptionBaseUrls
-}) {
-  async function provider() {
-    const row = await db.query.bot_tokens
-      .findFirst({ where: { token }, with: { api_keys: true } })
-      .catch((e) => new DbError({ operation: 'read transcription keys', cause: e }))
-    if (row instanceof Error) return row
-    const keys = row?.api_keys
-    // Stored keys first, then env, each in V1 order: OpenAI, then Gemini.
-    const candidates = [
-      { kind: 'openai' as const, apiKey: keys?.openai_api_key },
-      { kind: 'gemini' as const, apiKey: keys?.gemini_api_key },
-      { kind: 'openai' as const, apiKey: process.env['OPENAI_API_KEY'] },
-      { kind: 'gemini' as const, apiKey: process.env['GEMINI_API_KEY'] },
-    ]
-    const credentials = row ? credentialsFromRow(row) : null
-    const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
-    const gateway = clientId && clientSecret ? { kind: 'gateway' as const, clientId, clientSecret } : null
-    const found = candidates.find((candidate) => candidate.apiKey)
-    if (found?.apiKey) return { kind: found.kind, apiKey: found.apiKey, gateway }
-    if (gateway) return gateway
-    return new NoTranscriptionKeyError()
+  audio: Buffer
+  mediaType: string
+  directory: string
+  agents: ReadonlyArray<{ name: string; description: string }>
+  inSession: boolean
+}): Promise<DbError | NoTranscriptionKeyError | TranscriptionFailure | TranscriptionResult> {
+  const selected = await transcriptionProvider({ db, token })
+  if (selected instanceof Error) return selected
+  const type = mediaType.trim().toLowerCase() || 'audio/ogg'
+  if (selected.kind === 'gateway') return transcribeViaGateway({ audio, mediaType: type, ...selected })
+  const tool = buildTranscriptionTool({ agentNames: agents.map((agent) => agent.name), inSession })
+  const prompt = transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
+  const request = { apiKey: selected.apiKey, prompt, audio, mediaType: type, tool }
+  const result =
+    selected.kind === 'openai'
+      ? await withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
+      : await withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
+  // A provider content filter can refuse harmless audio: retry with hosted Whisper (always steer).
+  if (result instanceof TranscriptionBlockedError && selected.gateway) {
+    logger.warn(`provider blocked the audio (${result.message}), retrying with kimaki.dev Whisper`)
+    const hosted = await transcribeViaGateway({ audio, mediaType: type, ...selected.gateway })
+    if (!(hosted instanceof Error)) return hosted
+    logger.warn(`kimaki.dev Whisper fallback failed: ${hosted.message}`)
   }
-
-  return {
-    async transcribe({
-      audio,
-      mediaType,
-      directory,
-      agents,
-      inSession,
-    }: {
-      audio: Buffer
-      mediaType: string
-      directory: string
-      agents: ReadonlyArray<{ name: string; description: string }>
-      inSession: boolean
-    }): Promise<DbError | NoTranscriptionKeyError | TranscriptionFailure | TranscriptionResult> {
-      const selected = await provider()
-      if (selected instanceof Error) return selected
-      const type = mediaType.trim().toLowerCase() || 'audio/ogg'
-      if (selected.kind === 'gateway') return transcribeViaGateway({ audio, mediaType: type, ...selected })
-      const tool = buildTranscriptionTool({ agentNames: agents.map((agent) => agent.name), inSession })
-      const prompt = transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
-      const request = { apiKey: selected.apiKey, prompt, audio, mediaType: type, tool }
-      const result =
-        selected.kind === 'openai'
-          ? await withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
-          : await withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
-      // A provider content filter can refuse harmless audio: retry with hosted Whisper (always steer).
-      if (result instanceof TranscriptionBlockedError && selected.gateway) {
-        logger.warn(`provider blocked the audio (${result.message}), retrying with kimaki.dev Whisper`)
-        const hosted = await transcribeViaGateway({ audio, mediaType: type, ...selected.gateway })
-        if (!(hosted instanceof Error)) return hosted
-        logger.warn(`kimaki.dev Whisper fallback failed: ${hosted.message}`)
-      }
-      return result
-    },
-  }
+  return result
 }
-
-export type Transcriber = ReturnType<typeof createTranscriber>
 
 // --- text to speech (`kimaki tts`)
 //

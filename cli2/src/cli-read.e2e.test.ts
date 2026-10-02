@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
 import { scriptedTurn, seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitForFooter, waitForSelectMenu, warmUp, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
+import { abort, send } from './prompt.ts'
 
 const exec = promisify(execFile)
 const dataDir = tempDataDir()
@@ -28,7 +29,7 @@ function cli(args: string[]) {
   })
 }
 test('session read, list, search, wait, url and events read real session history', async () => {
-  const first = await bot.actions.send({ channelId: twin.channelId, prompt: 'Reader content marker' })
+  const first = await send(bot, { channelId: twin.channelId, prompt: 'Reader content marker' })
   if (first instanceof Error) throw first
   if (!first.sessionId) throw new Error('Expected an AI session')
   await waitForFooter({ discord: twin.discord, threadId: first.threadId })
@@ -56,7 +57,7 @@ test('session read, list, search, wait, url and events read real session history
 })
 
 test('session wait returns for a real pending question; active discovery errors use exit 64', async () => {
-  const first = await bot.actions.send({ channelId: twin.channelId, prompt: 'wait-form-marker' })
+  const first = await send(bot, { channelId: twin.channelId, prompt: 'wait-form-marker' })
   if (first instanceof Error || !first.sessionId) throw new Error('Expected a session')
   await waitForSelectMenu({ discord: twin.discord, channelId: first.threadId, prefix: 'form:' })
   const result = await cli(['session', 'wait', first.sessionId, '--timeout', '3s'])
@@ -72,6 +73,6 @@ test('session wait returns for a real pending question; active discovery errors 
     env: { ...process.env, KIMAKI_OPENCODE_SERVICE_FILE: path.join(server.root, 'missing-service.json') },
   }).catch((error: Error & { code: number }) => error)
   expect(failure instanceof Error && failure.code).toBe(64)
-  const aborted = await bot.actions.abort({ threadId: first.threadId })
+  const aborted = await abort(bot, { threadId: first.threadId })
   if (aborted instanceof Error) throw aborted
 })

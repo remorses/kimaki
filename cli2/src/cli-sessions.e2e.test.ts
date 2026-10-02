@@ -13,6 +13,7 @@ import { openDb } from './db.ts'
 import type { BotHandle } from './main.ts'
 import * as schema from './schema.ts'
 import { scriptedTurn, seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, textParts, waitForFooter, warmUp, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
+import { send } from './prompt.ts'
 
 const exec = promisify(execFile)
 const dataDir = tempDataDir()
@@ -54,7 +55,7 @@ function cli(args: string[]) {
 }
 
 async function newSession(prompt: string) {
-  const started = await bot.actions.send({ channelId: twin.channelId, prompt })
+  const started = await send(bot, { channelId: twin.channelId, prompt })
   if (started instanceof Error || !started.sessionId) throw new Error('Expected a session')
   await waitForFooter({ discord: twin.discord, threadId: started.threadId })
   return { threadId: started.threadId, sessionId: started.sessionId }
