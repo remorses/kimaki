@@ -1,27 +1,30 @@
 ---
 title: Access Control
-description: Decide who can trigger Kimaki, block specific users, and require mentions in busy channels.
+description: Decide who can trigger Kimaki and block specific users with Discord roles.
 icon: lucide:lock
 ---
 
-Kimaki checks Discord permissions before processing **any** message, so only trusted people can run agents on your machine. You control access with roles and a per-channel mention mode.
+Kimaki checks Discord permissions before it handles **any** message, slash command, or button, so only trusted people can run agents on your machine. You control access with roles.
 
 ## Who can trigger Kimaki
 
 A user needs **one** of these to use the bot:
 
 - **Server Owner**
-- **Manage Server** permission
 - **Administrator** permission
-- the **"Kimaki" role** (case-insensitive)
+- **Manage Server** permission
+- a role named **"Kimaki"** (case-insensitive)
 
-Messages from anyone without one of these are silently ignored.
+Messages from anyone else are ignored. Slash commands and buttons reply with `You do not have permission to use Kimaki`.
 
 ```diagram
-   message ──▶ has Owner / Manage Server / Admin / "Kimaki" role?
+   message ──▶ has "no-kimaki" role? ── yes ──▶ ignore
+                       │ no
+                       ▼
+               Owner / Admin / Manage Server / "Kimaki" role?
                        │ yes                         │ no
                        ▼                             ▼
-                 process message                 ignore silently
+                 handle message                   ignore
 ```
 
 The **"Kimaki" role** is the recommended way to grant team access: create a role named `Kimaki` and assign it to trusted members. No elevated Discord permissions required.
@@ -30,25 +33,20 @@ The **"Kimaki" role** is the recommended way to grant team access: create a role
 
 Create a role named **"no-kimaki"** (case-insensitive) to block specific users, **even server owners**. This is useful in shared servers to prevent accidental triggers from people who otherwise have admin rights.
 
+## Provider logins need an admin
+
+`/login` and `/transcription-key` store secrets for the whole bot. Only the **server owner** or a member with **Administrator** can use them. The "Kimaki" role and Manage Server are not enough.
+
 <Aside>
 <Tip>
 Use a dedicated Discord server for your agents. It keeps coding sessions isolated and gives you full control over who has the Kimaki role.
 </Tip>
 </Aside>
 
-## Letting other bots trigger Kimaki
+## Other bots
 
-Other Discord bots are **ignored by default**. To build multi-agent orchestration where another bot drives Kimaki, assign the **"Kimaki" role to that bot**. Then its messages are treated like a trusted user's.
+Messages from other Discord bots are **always ignored**, even when the bot has the "Kimaki" role. To start or continue sessions from scripts, CI, or other agents, use [`kimaki send`](../guides/ci-automation) instead.
 
-## Mention mode for busy channels
+## Every message in a project channel starts a session
 
-By default the bot responds to every message in a configured channel. In a busy or shared channel that can be noisy. Enable **mention mode** so the bot only starts a new session when it is **@mentioned**:
-
-```
-/toggle-mention-mode
-```
-
-- When **enabled**, only `@Kimaki ...` messages start new sessions in that channel.
-- Messages **inside existing threads are unaffected**; they always continue their session without a mention.
-
-Run the command again to toggle it back off.
+There is no mention mode: any message from an allowed user in a project channel starts a new thread and session. Inside a thread, only threads with a Kimaki session are handled. Keep chat that is not for the agent in channels that are not project channels.

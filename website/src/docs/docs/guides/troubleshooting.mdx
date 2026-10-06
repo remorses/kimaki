@@ -1,75 +1,105 @@
 ---
 title: Troubleshooting
-description: How to fix common transient issues with Kimaki.
+description: How to fix common issues with Kimaki and its OpenCode service.
 icon: lucide:wrench
 ---
 
-Most Kimaki issues are transient and caused by the underlying OpenCode server getting into a bad state. The single most effective fix is **restarting the OpenCode server**.
-
-## `/restart-opencode-server`
-
-This is the first thing to try when something goes wrong. Run it in any channel or thread.
-
-**What it fixes:**
-
-- Sessions not responding or stuck
-- New sessions failing to start
-- Auth state not refreshing after `/login`
-- Slash commands not appearing or missing new agents
-- Plugins not loading after config changes
-- OpenCode server crashes or hangs
-
-**What it does:**
-
-1. Aborts any in-progress sessions in the current channel
-2. Restarts the shared OpenCode server process
-3. Re-registers all Discord slash commands (built-in, user commands, agents)
-
-Other channels reconnect automatically through the listener backoff loop once the server comes back up.
-
-> [!NOTE]
-> This restarts the **OpenCode server**, not the Kimaki bot itself. Your bot stays connected to Discord the entire time. Only the backend that runs AI sessions is restarted.
-
-## `/upgrade-and-restart`
-
-If `/restart-opencode-server` does not fix the issue, the problem is likely in Kimaki itself rather than the OpenCode server. Run `/upgrade-and-restart` to update Kimaki to the latest npm release and restart the bot process entirely. This replaces the running code with the newest version, fixing bugs in message handling, Discord event routing, session lifecycle, command registration, and anything else in the bot layer.
-
-**What it fixes (on top of `/restart-opencode-server`):**
-
-- Bot crashes or unhandled exceptions
-- Discord event handling bugs (messages not being picked up, interactions failing)
-- Session lifecycle issues (threads not created, footers stuck, typing indicator stuck)
-- Command registration failures
-- Memory leaks or degraded performance over long runs
-- Any bug that was fixed in a newer Kimaki release
-
-You can also upgrade from the terminal:
+Start with the status of the bot. It shows if the bot runs, if it is connected to OpenCode, and the Discord servers it sees.
 
 ```bash
-kimaki upgrade
+kimaki status
 ```
+
+```
+running: pid 4312, up 5400s, mode "gateway"
+opencode: {"connected":true,"url":"http://127.0.0.1:4096","version":"2.0.19"}
+guilds: [{"id":"123...","name":"My server"}]
+data dir: "/Users/me/.kimaki"
+```
+
+If it prints `not running`, start the bot with `kimaki` in a terminal.
+
+## Kimaki and OpenCode
+
+Kimaki does **not** run its own OpenCode server. It uses your **OpenCode 2 background service**, the same one the OpenCode TUI uses. Sessions live in OpenCode, so they keep running when the bot restarts.
+
+```diagram
+  Discord ──> kimaki bot ──HTTP + event stream──> OpenCode 2 service (shared with your TUI)
+```
+
+When no service runs, Kimaki starts one with `opencode serve --service`. It looks for the binary in this order:
+
+1. `OPENCODE_PATH`, if set
+2. `opencode2`
+3. `opencode`
+4. `~/.opencode/bin/opencode`
+
+When no OpenCode is installed, Kimaki installs OpenCode 2 with the official script. In a terminal it asks first.
+
+```bash
+curl -fsSL https://opencode.ai/v2/install | bash
+```
+
+Kimaki never replaces an existing OpenCode. If it finds **OpenCode 1** or an OpenCode 2 that is too old, it stops and shows how to install or upgrade.
 
 ## Common symptoms and fixes
 
 | Symptom | Fix |
 |---|---|
-| Session stuck, bot not responding | `/restart-opencode-server` |
-| "Failed to create session" errors | `/restart-opencode-server` |
-| Model change not taking effect | `/restart-opencode-server` |
-| Missing slash commands after config change | `/restart-opencode-server` |
-| Auth expired or provider errors after `/login` | `/restart-opencode-server` |
-| Bot crashes or throws unhandled errors | `/upgrade-and-restart` |
-| Threads not being created or messages ignored | `/upgrade-and-restart` |
-| Typing indicator stuck, footers missing | `/upgrade-and-restart` |
-| Issue persists after `/restart-opencode-server` | `/upgrade-and-restart` |
-| Bot completely offline | Check the terminal where `kimaki` is running |
-| Messages stop arriving when lid is closed | [Disable sleep globally](#macbook-sleeping-with-lid-closed) |
+| Bot completely offline | Run `kimaki status`. If it is not running, start `kimaki` and read the terminal output |
+| `Kimaki now requires OpenCode 2` at start | Install OpenCode 2 with the command above, then run `kimaki` again |
+| `OpenCode ... is older than the minimum` | Run `opencode upgrade`, then run `kimaki` again |
+| `opencode` is not connected in `kimaki status` | [Restart the OpenCode service](#restart-the-opencode-service) |
+| Session stuck, no reply | `/abort` in the thread, then send the message again |
+| Plugins or config changes not loaded | `opencode reload` |
+| Threads not created, messages ignored | Check that you can use Kimaki. See [Access Control](../configuration/access-control.mdx) |
+| Bot misbehaves after a long run | `kimaki restart` |
+| `port is in use` at start | Another Kimaki runs. See [Running multiple instances](./advanced-setup.mdx#running-multiple-instances) |
+| Messages stop arriving when the lid is closed | [Keep the Mac awake](#macbook-sleeping-with-lid-closed) |
+
+## Restart the OpenCode service
+
+Use the OpenCode CLI. Kimaki reconnects by itself when the service comes back.
+
+```bash
+opencode service status
+opencode service restart
+```
+
+If `opencode` on your machine is still OpenCode 1, use `opencode2` instead.
+
+<Aside>
+<Warning>
+A service restart also stops the sessions of your OpenCode TUI. `opencode reload` reloads the configuration without a restart, but it cancels pending questions and permission requests.
+</Warning>
+</Aside>
+
+## Restart the bot
+
+```bash
+kimaki restart
+```
+
+The `kimaki` command supervises the bot process. `kimaki restart` stops the bot and starts it again with the code on disk. Sessions keep running in OpenCode, and the bot shows their output again after the restart.
+
+This works only when the bot was started with the `kimaki` command.
+
+## Update Kimaki
+
+Kimaki does not update itself. Install the new version, then restart the bot:
+
+```bash
+npm i -g kimaki@latest
+kimaki restart
+```
+
+`kimaki restart` starts the same script path again. If you started the bot with `npx`, stop it and run `npx -y kimaki@latest` instead.
 
 ## MacBook sleeping with lid closed
 
-If you run Kimaki on a MacBook and close the lid, macOS puts the machine to sleep by default. This means Discord messages stop arriving and sessions go unresponsive.
+If you run Kimaki on a MacBook and close the lid, macOS can put the machine to sleep. Then Discord messages stop arriving.
 
-`caffeinate` only prevents **idle sleep**; it does not block the hardware sleep triggered by closing the lid.
+While the bot runs, Kimaki starts `caffeinate -s`. This keeps the Mac awake **only on the power adapter**. On battery, a closed lid still puts the Mac to sleep.
 
 ### Fix: disable sleep globally
 
@@ -77,65 +107,63 @@ If you run Kimaki on a MacBook and close the lid, macOS puts the machine to slee
 sudo pmset -a disablesleep 1
 ```
 
-This prevents sleep entirely, including on lid close. To re-enable later:
+This prevents sleep entirely, including on lid close. To enable sleep again:
 
 ```bash
 sudo pmset -a disablesleep 0
 ```
 
-### Fix: System Settings (power adapter only)
-
-Go to **System Settings > Battery > Options** and enable **"Prevent automatic sleeping on power adapter when the display is off"**. This only works when plugged in and may not be enough on its own for lid-close scenarios.
-
 ### Fix: Amphetamine (GUI alternative)
 
-[Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) is a free Mac App Store app with an explicit **"Allow system sleep when display is closed"** toggle. Disable that toggle to keep the Mac awake with the lid shut.
+[Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) is a free Mac App Store app with an **"Allow system sleep when display is closed"** toggle. Disable that toggle to keep the Mac awake with the lid closed.
 
 > [!WARNING]
 > Running a MacBook with the lid closed traps heat. Keep it on a flat surface with good airflow; never put it in a bag while awake.
 
 ## Debugging with logs
 
-If the issue persists after a restart, check the log file:
+```bash
+# print the log file path
+kimaki logs
+
+# print the log and follow new lines
+kimaki logs --follow
+```
+
+The log file is `~/.kimaki/kimaki.log` by default, or `<dataDir>/kimaki.log` with `--data-dir`. It resets on every bot start, so it only has the current run. Look for error lines near the bottom.
+
+To debug one session, print the events Kimaki recorded for its thread:
 
 ```bash
-# default location
-cat ~/.kimaki/kimaki.log
+kimaki session events <sessionId|threadId> > ./tmp/events.jsonl
+jq -r .event.type ./tmp/events.jsonl | sort | uniq -c
 ```
 
-The log file is reset on every bot startup, so it only contains logs from the current run. Look for error lines near the bottom for the most recent failures.
+To file a GitHub issue with session events, logs, and the model id, follow [Debug sessions and report bugs](./report-bugs.mdx).
 
-To file a GitHub issue with session jsonl, logs, and the model id, follow [Debug sessions and report bugs](./report-bugs.mdx).
+## CPU and heap profiles
 
-## Live CPU profiling
+To see where the running bot spends CPU time:
 
-To see where the running bot spends CPU time, type this in the **same terminal** as Kimaki and press Enter:
+```bash
+# record for 20 seconds (default), Ctrl+C stops early
+kimaki profile cpu
 
+# record for 1 minute
+kimaki profile cpu --duration 1m
 ```
-cpuprof
-```
 
-Type `cpuprof` again to stop, or wait **20 seconds**. Kimaki writes a Chrome DevTools `.cpuprofile` file to `~/.kimaki/cpu-profiles/` (or `<data-dir>/cpu-profiles/` if you passed `--data-dir`).
+Kimaki writes a Chrome DevTools `.cpuprofile` file to `<dataDir>/profiles/` and prints its path.
 
 ```bash
 # top functions by self-time
-bunx profano ~/.kimaki/cpu-profiles/cpu-*.cpuprofile
+bunx profano ~/.kimaki/profiles/*.cpuprofile
 ```
 
-This does not restart the bot. Heap snapshots still use `kill -SIGUSR1 <PID>`.
-
-## Restarting the bot process
-
-In rare cases where the bot itself is unresponsive (not just OpenCode), you can restart the entire process:
-
-**From the terminal:**
+For memory problems, write a heap snapshot. Open the printed `.heapsnapshot` file in Chrome DevTools, Memory tab.
 
 ```bash
-# find the process
-ps aux | grep kimaki
-
-# send restart signal
-kill -SIGUSR2 <PID>
+kimaki profile heap
 ```
 
-The bot waits 1 second and restarts with the same arguments. Your Discord connection is briefly interrupted but reconnects automatically.
+Neither command restarts the bot.

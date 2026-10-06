@@ -4,11 +4,11 @@ description: Run the bot on a schedule, cron or a one-time future time, for dige
 icon: lucide:calendar-clock
 ---
 
-Kimaki can run a prompt **on a schedule**: once at a future time, or repeatedly on a cron expression. This turns the bot into an autonomous worker that wakes up, does a job, and posts the result as a Discord thread you can reply to.
+Kimaki can run a prompt **on a schedule**: once at a future time, or again and again on a cron expression. The bot wakes up, does a job, and posts the result as a Discord thread you can reply to.
 
 ## Scheduling with `--send-at`
 
-Add **`--send-at`** to any `kimaki send` command. It accepts a one-time UTC ISO timestamp (ending in `Z`) or a cron expression:
+Add **`--send-at`** to a `kimaki send` command. It accepts a one-time UTC ISO timestamp (ending in `Z`) or a cron expression:
 
 ```bash
 # One-time: run at a specific UTC time
@@ -26,6 +26,10 @@ kimaki send --channel <channel-id> \
 All scheduling is in **UTC**. One-time dates must end with `Z`, and cron expressions fire in UTC too. Convert from your local time before scheduling.
 </Warning>
 </Aside>
+
+The **Kimaki bot must run** on the machine that owns the channel. It stores the task in its SQLite database and checks for due tasks about every 5 seconds. If a cron task misses runs while the bot is off, it runs once when the bot starts again.
+
+With `--channel` (or `--project`), each run starts a **new thread**. With `--thread` (or `--session`), each run sends the prompt into that existing thread, shown as `» task #N: <prompt>`.
 
 ## Flagship example: a morning email digest
 
@@ -53,10 +57,10 @@ When the digest lands as a thread, **reply to it** to resume the work: "mark the
 
 ## Notify-only reminders
 
-For a reminder that should **not** start an AI session, add `--notify-only`. It posts a thread you can reply to later:
+For a reminder that should **not** start an AI session, add `--notify-only`. It posts the prompt as a new thread in the channel. `--notify-only` needs `--channel` or `--project`, not a thread:
 
 ```bash
-kimaki send --session <session-id> \
+kimaki send --channel <channel-id> \
   --prompt 'Reminder: <@user-id> the staging API key created today expires 2026-06-01. Renew it before it breaks prod.' \
   --send-at '2026-05-28T09:00:00Z' --notify-only
 ```
@@ -65,11 +69,16 @@ Make reminder prompts **detailed**: the future reader has no context, so include
 
 ## Other recurring patterns
 
-- **Weekly QA** — run the full test suite, summarize failures, mention a user only if review is needed.
-- **Maintenance cron** — rotate secrets, check dependency updates, clean stale branches on a `0 9 1 * *` monthly schedule.
-- **Project memory** — have the task read and update a markdown file in the repo each run.
+- **Weekly QA**: run the full test suite, summarize failures, mention a user only if review is needed.
+- **Maintenance cron**: rotate secrets, check dependency updates, clean stale branches on a `0 9 1 * *` monthly schedule.
+- **Project memory**: have the task read and update a markdown file in the repo each run.
 
-All other `send` flags (`--notify-only`, `--worktree`, `--agent`, `--model`, `--user`) work with `--send-at`. The exception is `--wait`, which is incompatible since the task runs in the future.
+Most other `send` flags (`--notify-only`, `--worktree`, `--base-branch`, `--cwd`, `--name`, `--agent`, `--model`, `--user`, `--permission`) work with `--send-at`. Two do not:
+
+- `--wait`: the task runs in the future.
+- `--file`: put the file in the project and name it in the prompt.
+
+With `--worktree`, each run gets a **fresh worktree** with its own name.
 
 Pass **`--user`** when someone should see the thread in Discord. Omit it for quiet autonomous work so the thread stays out of the sidebar. Clear a stored user later with `kimaki task edit <id> --user ''`.
 
@@ -123,18 +132,22 @@ kimaki send --channel <channel-id> \
   --prompt 'Read the Crisp session IDs in the pre-run output. Use crisp-cli to inspect each conversation and draft a support reply.'
 ```
 
-An exit code of **0 starts the session**. Kimaki appends the command's stdout to the task prompt. Any other exit code skips that occurrence. Stdout and stderr are also written to the Kimaki log.
+An exit code of **0 starts the session**. Kimaki appends the command's stdout to the task prompt under a `## Pre-run command output` heading. Any other exit code skips that occurrence. Stderr goes to the Kimaki log. A pre-run command is stopped after 10 minutes.
 
-Scheduled tasks **do not overlap by default**. If one occurrence still has an active OpenCode session, Kimaki skips the next occurrence and checks again at the following scheduled time. Add `--allow-concurrency` only when parallel runs are safe.
+Scheduled tasks **do not overlap by default**. If the session of the last run is still active, a cron task skips that occurrence and runs again at the next scheduled time. A one-time task waits until the last session is done. Add `--allow-concurrency` only when parallel runs are safe.
 
 ## Managing tasks
 
 ```bash
 kimaki task list
-kimaki task edit <id> --prompt "new prompt" [--send-at "new schedule"] \
-  [--pre-run "command"] [--allow-concurrency true|false] [--user "<discord-user-id>"]
+kimaki task edit <id> --prompt 'new prompt' [--send-at 'new schedule'] \
+  [--agent <name>] [--model <provider/model>] [--pre-run 'command'] \
+  [--allow-concurrency true|false] [--user '<discord-user-id>']
 kimaki task edit <id> --user ''
+kimaki task run <id>
 kimaki task delete <id>
 ```
 
-The `/tasks` slash command lists scheduled tasks in Discord with cancel buttons. For the full `kimaki send` reference and CI usage, see [CI & Automation](../guides/ci-automation).
+`kimaki task list` shows planned, running, and failed tasks. An empty string in `task edit` clears a value. `task run` starts a task now, outside its schedule.
+
+The **`/tasks`** slash command lists the server's scheduled tasks in Discord. Each task has a **Run now** button and a **Delete** button. For the full `kimaki send` reference and CI usage, see [CI & Automation](../guides/ci-automation).

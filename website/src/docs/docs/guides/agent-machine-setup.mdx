@@ -5,7 +5,7 @@ sidebarTitle: Agent setup
 description: "Install Kimaki on a laptop or VPS from an agent. Start gateway mode, authorize Discord, then map a project. Use Playwriter only when Chrome is already logged in."
 icon: lucide:bot
 prompt: |
-  Write an agent-facing setup guide from @/cli/src/cli-runner.ts gateway onboarding,
+  Write an agent-facing setup guide from @/kimaki/src/cli/bot.ts and @/kimaki/src/credentials.ts gateway onboarding,
   @/website/src/docs/docs/guides/docker.mdx, @/website/src/docs/docs/guides/programmatic-gateway.mdx,
   and @/website/src/docs/docs/guides/advanced-setup.mdx.
 
@@ -45,11 +45,17 @@ On a **Mac** you will control over SSH:
 sudo pmset -a sleep 0 disksleep 0 displaysleep 0
 ```
 
-Need **Node 20+**. Then use `npx`. Do not write helper scripts.
+Need **Node 20+** and **git**. Then use `npx`. Do not write helper scripts.
+
+Kimaki needs **OpenCode 2**. It uses the OpenCode background service of the machine and does not bundle OpenCode. When no OpenCode is installed, Kimaki installs OpenCode 2 by itself. If the machine has **OpenCode 1**, Kimaki stops with an error. Then, after the user agrees, install OpenCode 2:
+
+```bash
+curl -fsSL https://opencode.ai/v2/install | bash
+```
 
 <Aside>
 <Note>
-A **second Kimaki** on the same machine needs its own data dir and lock port. See [Advanced Setup](./advanced-setup.mdx).
+A **second Kimaki** on the same machine needs its own data dir and lock port. See [Advanced Setup](./advanced-setup.mdx#running-multiple-instances).
 </Note>
 </Aside>
 
@@ -63,21 +69,21 @@ npx -y kimaki@latest --gateway
 
 Leave that process running. It is the bridge.
 
-SSH and Docker have **no TTY**. Kimaki prints SSE lines on stdout. Watch for `install_url`:
+SSH and Docker have **no TTY**. Kimaki prints `data:` event lines on stdout. Watch for `install_url`:
 
 ```
 data: {"type":"install_url","url":"https://kimaki.dev/discord-install?clientId=...&clientSecret=..."}
 ```
 
-If the log scrolled away:
+If the output scrolled away, print the URL again from another shell:
 
 ```bash
-npx -y kimaki discord-install-url --gateway
+npx -y kimaki@latest bot install-url
 ```
 
 <Aside>
 <Warning>
-That URL contains the **client secret**. Do not paste it in a public Discord channel. Authorization waits about **5 minutes**.
+That URL contains the **client secret**. Do not paste it in a public Discord channel. Authorization waits about **5 minutes**. If it times out, run `kimaki --gateway` again: it reuses the same credentials and prints the same URL.
 </Warning>
 </Aside>
 
@@ -104,29 +110,33 @@ Watch the same Kimaki process:
 | ------------- | --------------------------------------- |
 | `install_url` | Open this URL once                      |
 | `authorized`  | Discord install succeeded               |
-| `ready`       | Bot is connected and listening          |
+| `ready`       | Bot is connected and onboarding is done |
 | `error`       | Read `message`. Do not wipe `~/.kimaki` |
 
-The bot creates its own Discord **group** on that machine. Do not create categories by hand.
+The bot creates its own Discord category, `Kimaki <machine name>`, with a `#kimaki` channel and an onboarding thread. Do not create categories by hand.
 
 ## 4. Map a project
 
 From another shell on the **same** machine, while the bot is still running:
 
 ```bash
-npx -y kimaki project add /path/to/repo
+npx -y kimaki@latest project add /path/to/repo
 ```
 
-Or in Discord: **`/add-project`**. Then **`/login`** so the agent has a model. See [Managing Projects](../configuration/projects.mdx) and [Models & Subscriptions](../getting-started/subscriptions.mdx).
+The user can also ask in the onboarding thread: the agent there adds channels with the same command. Then run **`/login`** in Discord so the agent has a model. See [Managing Projects](../configuration/projects.mdx) and [Models & Subscriptions](../getting-started/subscriptions.mdx).
 
 Confirm:
 
 ```bash
-npx -y kimaki project list
-tail -n 50 ~/.kimaki/kimaki.log
+npx -y kimaki@latest status
+npx -y kimaki@latest project list
 ```
 
-You want `Discord bot is running!` and the new channel in `project list`.
+You want `running:` with `"connected":true` for OpenCode, and the new channel in `project list`. For errors, read the log:
+
+```bash
+tail -n 50 "$(npx -y kimaki@latest logs)"
+```
 
 ## 5. VPS or Docker
 
@@ -134,7 +144,7 @@ On a **VPS**, prefer Docker with a persistent volume. Same gateway flow: copy `i
 
 Follow [Deploy Kimaki on a VPS with Docker](./docker.mdx). Do not wrap that in extra scripts.
 
-Without Docker, SSH in and run the same `npx -y kimaki@latest --gateway` command. Keep the process alive with the host's usual supervisor (`systemd`, Docker `restart`, or a terminal multiplexer). Parse SSE the same way.
+Without Docker, SSH in and run the same `npx -y kimaki@latest --gateway` command. Keep the process alive with the host's usual supervisor (`systemd` or a terminal multiplexer). Parse `data:` lines the same way.
 
 Platforms that spawn Kimaki as a child process should read [Programmatic Gateway](./programmatic-gateway.mdx).
 
@@ -144,6 +154,6 @@ Platforms that spawn Kimaki as a child process should read [Programmatic Gateway
 - Do not create a Discord application unless the user asks for **self-hosted** mode.
 - Do not clone this repo to run Kimaki. Source checkouts lag npm.
 - Do not share the install URL in public chat.
-- Do not kill an existing Kimaki on the machine. Set `KIMAKI_LOCK_PORT` and `--data-dir` for a second instance.
-- Do not rename Discord groups by API unless the user asks. Kimaki stores the category **id**.
-- If `project add` fails with **50 channels** in a shared Kimaki group, the CLI is old. Upgrade with `npx -y kimaki@latest --gateway` instead of creating a group yourself.
+- Do not stop an existing Kimaki on the machine. For a second instance, set `KIMAKI_LOCK_PORT` and `--data-dir`.
+- If the machine has **OpenCode 1**, ask the user before you install OpenCode 2. The install script can replace the `opencode` command in `~/.opencode/bin`.
+- Do not rename Discord categories by API unless the user asks. Kimaki stores the category **id**.

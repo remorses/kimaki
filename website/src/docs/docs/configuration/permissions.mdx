@@ -1,14 +1,14 @@
 ---
 title: Tool Permissions
-description: Approve or deny risky tool calls from Discord, protect specific directories, and lock down sessions.
+description: Approve or deny tool calls from Discord, set rules in your OpenCode config, and lock down single sessions.
 icon: lucide:shield-check
 ---
 
-Kimaki surfaces OpenCode's **permission system** in Discord. When the agent tries something that needs approval, you get buttons in the thread. You can also pre-configure defaults and restrict individual sessions.
+Kimaki shows OpenCode's **permission prompts** in Discord. When the agent tries something that needs approval, you get buttons in the thread. The rules that decide what needs approval come from your OpenCode config.
 
 ## Approval buttons
 
-When the agent attempts a tool call that requires permission (a shell command, accessing files outside the project, etc.), Kimaki posts three buttons in the thread:
+When a tool call needs permission (a shell command, files outside the project, and so on), Kimaki posts one message with three buttons:
 
 ```diagram
    agent wants to run a command
@@ -21,9 +21,11 @@ When the agent attempts a tool call that requires permission (a shell command, a
      run once      remember rule      reject + tell agent
 ```
 
-- **Accept** — allow this one call.
-- **Accept Always** — allow and remember the rule for the session so similar calls don't ask again.
-- **Deny** — reject the call; the agent is told and continues.
+- **Accept**: allow this one call.
+- **Accept Always**: allow it and remember the rule, so similar calls don't ask again.
+- **Deny**: reject the call. The agent is told and continues.
+
+Prompts from **subagents** show up in the same thread. A prompt has **no timeout**: it waits until you click, or until you send a new message, which denies it and [interrupts](../core-concepts/message-handling) the run.
 
 <Aside>
 <Note>
@@ -31,66 +33,49 @@ OpenCode fixes a permission's scope when it asks. A reply can allow or deny, but
 </Note>
 </Aside>
 
-## Directory access
+## Rules in your OpenCode config
 
-**Every directory is allowed by default.** The agent can read and edit files outside the project without asking. OpenCode's own default is to ask for each external folder, which turned ordinary reads into a stream of approval prompts.
-
-To protect specific folders, add `deny` or `ask` rules to your `opencode.json`. Your project config is merged **after** Kimaki's defaults and the last matching rule wins, so your rules take priority:
+Kimaki adds no permission rules of its own. Sessions follow your OpenCode config, the same as in the TUI. Rules are evaluated in order and the **last matching rule wins**:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "permission": {
+    "bash": {
+      "*": "ask",
+      "git status": "allow",
+      "pnpm test*": "allow"
+    },
     "external_directory": {
-      "~/.ssh": "deny",
-      "~/.ssh/*": "deny",
-      "~/Documents/*": "ask"
+      "~/.ssh/*": "deny"
     }
   }
 }
 ```
 
-Kimaki writes `"external_directory": { "*": "allow" }`, so the keys above merge on top of that wildcard. Paths you don't list stay allowed.
+OpenCode 2 also reads this OpenCode 1 `permission` format. See the [OpenCode permissions docs](https://opencode.ai/docs/permissions/) for every action and pattern.
 
-To flip the default back to a strict allow-list, start the bot with **`--restrict-directories`**:
-
-```bash
-kimaki --restrict-directories
-```
-
-The agent is then limited to the session working directory plus a few known-safe paths (`/tmp`, `~/.config/opencode`, `~/.opensrc`, `~/.kimaki`, and common toolchain caches). Anything else raises an approval prompt in the thread.
-
-<Aside>
-<Note>
-Worktree threads deny the original checkout, with or without the flag. This keeps the agent from editing the main repo after the thread moved to a worktree. It is a session-level rule, so it also beats your `opencode.json`. The only way to override it is an explicit `--permission 'external_directory:allow'` on that session.
-</Note>
-</Aside>
-
-## Default permissions in opencode.json
-
-Set project-wide defaults in your `opencode.json`. See the [OpenCode Permissions docs](https://opencode.ai/docs/permissions/) for the full schema, pattern matching, and per-agent overrides.
-
-Agent files can also carry permissions, which is handy for an auto-allow agent that never stalls on prompts:
+Agent files can carry rules too, which is handy for an agent that never stalls on prompts:
 
 ```yaml
 ---
-description: Build agent that never stalls on prompts
+description: Build agent that does not ask before running tests
 mode: primary
 permission:
-  question: allow
-  plan_enter: allow
+  bash:
+    'pnpm test*': allow
 ---
 ```
 
 ## Locking down a single session
 
-When starting a session with `kimaki send`, restrict tools for **that session only** with repeatable `--permission` rules:
+When you start a session with `kimaki send`, add rules for **that session only** with repeatable `--permission tool[:pattern]:allow|deny|ask` flags:
 
 ```bash
 # Read-only review session
 kimaki send -c <channel-id> -p 'Review this code' \
-  --permission 'bash:deny' \
+  --permission 'shell:deny' \
   --permission 'edit:deny'
 ```
 
-Rules are evaluated last-match-wins. This is ideal for CI, scheduled tasks, or sandboxed runs. See [CI & Automation](../guides/ci-automation) for the full `--permission` reference.
+OpenCode 2 names the shell tool `shell` (it was `bash` in OpenCode 1), and `edit` also covers file writes and patches. `--permission` only works for new sessions. This is ideal for CI, scheduled tasks, or sandboxed runs; see [CI & Automation](../guides/ci-automation).

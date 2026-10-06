@@ -2,11 +2,11 @@
 $schema: https://holocron.so/frontmatter.json
 title: Debug sessions and report bugs
 sidebarTitle: Report a bug
-description: Export session events, share evidence in a secret gist, and open a Kimaki GitHub issue with ground truth. Never open a pull request unless remorses agrees.
+description: Export the recorded session events, share evidence in a secret gist, and open a Kimaki GitHub issue with ground truth. Never open a pull request unless remorses agrees.
 icon: lucide:bug
 ---
 
-Export the session, put the evidence in a **secret gist**, then open a GitHub issue. Do not open a pull request.
+Export the session events, put the evidence in a **secret gist**, then open a GitHub issue. Do not open a pull request.
 
 Agents must **read this page first** before filing anything on [remorses/kimaki](https://github.com/remorses/kimaki).
 
@@ -14,13 +14,13 @@ Agents must **read this page first** before filing anything on [remorses/kimaki]
   /session-id
        │
        v
-  export jsonl ──> jq ──> ground truth (events, not guesses)
+  kimaki session events ──> jq ──> ground truth (events, not guesses)
        │
        v
   kimaki.log + prompts + model id
        │
        v
-  secret gist ──> jsonl + log + session markdown
+  secret gist ──> events jsonl + log + session markdown
        │
        v
   gh issue create (body links gist)
@@ -33,25 +33,25 @@ Agents must **read this page first** before filing anything on [remorses/kimaki]
 
 Do not describe what you think happened. Quote what the files show.
 
-1. Get the **session id** with `/session-id` in the Discord thread, or `kimaki session list`.
-2. Export the **event stream**. This is the source of truth for session-state bugs (footer after abort, stuck typing, missed idle).
-3. Copy **`kimaki.log`**. It resets on every bot restart, so grab it before you restart.
+1. Get the **session id** with `/session-id` in the Discord thread, or `kimaki session list`. A Discord thread ID or thread URL also works in the commands below.
+2. Export the **recorded events**. They are the source of truth for display bugs (footer after abort, stuck typing, missing tool lines).
+3. Copy **`kimaki.log`**. It resets on every bot start, so copy it before you restart.
 4. Record the **model id** and the **verbatim user prompts**. Do not paraphrase.
 
 ```bash
-kimaki session export-events-jsonl --session ses_xxx --out ./tmp/ses_xxx.jsonl
+kimaki session events ses_xxx > ./tmp/ses_xxx.jsonl
 kimaki session read ses_xxx > ./tmp/ses_xxx.md
 kimaki session read ses_xxx --thinking --verbose > ./tmp/ses_xxx-full.md
-kimaki --version
+cp "$(kimaki logs)" ./tmp/kimaki.log
+kimaki status
+npm ls -g kimaki
 ```
 
-Kimaki keeps only the **last 1000 events per session** in SQLite, so export while the bug is fresh.
-
-The log file is `~/.kimaki/kimaki.log` by default, or `<dataDir>/kimaki.log` if you passed `--data-dir`.
+`kimaki logs` prints the log path: `~/.kimaki/kimaki.log` by default, or `<dataDir>/kimaki.log` if you pass `--data-dir`. `kimaki status` shows the OpenCode URL and version. `npm ls -g kimaki` shows the Kimaki version.
 
 <Aside>
 <Note>
-The jsonl dump is only for Discord-mapped Kimaki sessions. `opencode run` sessions are not in that SQLite buffer. Use `kimaki session read` for those.
+Kimaki records events only for sessions that have a Discord thread, in `<dataDir>/session-events/<threadId>.jsonl`. One file holds the root session, its subagents and Kimaki internal events. Streaming deltas are skipped, very long strings are cut, and a file starts again when it passes 20 MB. For sessions without a thread (for example your own OpenCode TUI sessions), use `kimaki session read`.
 </Note>
 </Aside>
 
@@ -61,22 +61,25 @@ The jsonl dump is only for Discord-mapped Kimaki sessions. `opencode run` sessio
 
 Before upload, **remove secrets** such as tokens, API keys, cookies, and unrelated private prompts. Keep event order, timestamps, model ids, and relevant error lines unchanged.
 
-### Inspect the jsonl
+### Inspect the events
 
-Each line is one raw OpenCode event. Read it before you write the issue.
+Each line is `{ "at": <ms>, "event": <OpenCode event> }`. Read the file before you write the issue.
 
 ```bash
 # event type counts
-jq -r '.type' ./tmp/ses_xxx.jsonl | sort | uniq -c
+jq -r .event.type ./tmp/ses_xxx.jsonl | sort | uniq -c
 
-# lifecycle only
-jq -r 'select(.type | startswith("session.execution.")) | [.created, .type, .data.sessionID, .data.executionID] | @tsv' ./tmp/ses_xxx.jsonl
+# run lifecycle only
+jq -r 'select(.event.type | startswith("session.execution.")) | [.event.created, .event.type, .event.data.sessionID] | @tsv' ./tmp/ses_xxx.jsonl
 
-# timestamps + types
-jq -r '[.created, .type] | @tsv' ./tmp/ses_xxx.jsonl
+# timestamps and types
+jq -r '[.event.created, .event.type] | @tsv' ./tmp/ses_xxx.jsonl
+
+# retries
+jq 'select(.event.type == "session.retry.scheduled")' ./tmp/ses_xxx.jsonl
 ```
 
-If the stream does not contain the event you expected, say that. Do not invent a cause.
+If the file does not contain the event you expected, say that. Do not invent a cause.
 
 ## Open an issue, never a PR
 
@@ -86,7 +89,7 @@ File issues on [github.com/remorses/kimaki/issues](https://github.com/remorses/k
 
 ### Share evidence in a gist
 
-Put the **jsonl, log, session markdown, and reproduction code** in one secret gist. Paste the URL printed by `gh gist create` into the issue body.
+Put the **events jsonl, log, session markdown, and reproduction code** in one secret gist. Paste the URL printed by `gh gist create` into the issue body.
 
 A secret gist is **unlisted, not private**. Anyone with its URL can read it. Remove secrets and unrelated private data before upload. If the evidence cannot be public, do not upload it; state that private evidence is available to the maintainer.
 
@@ -95,7 +98,7 @@ A secret gist is **unlisted, not private**. Anyone with its URL can read it. Rem
 gh gist create --desc "kimaki ses_xxx debug" \
   ./tmp/ses_xxx.jsonl \
   ./tmp/ses_xxx.md \
-  ~/.kimaki/kimaki.log \
+  ./tmp/kimaki.log \
   ./tmp/reproduction.ts
 
 # paste the returned gist URL into ./tmp/kimaki-issue.md, then create the issue
@@ -106,12 +109,13 @@ gh issue create -R remorses/kimaki \
 
 ### Issue body
 
-Keep it short. Use facts from the jsonl and log.
+Keep it short. Use facts from the events file and the log.
 
 ```markdown
 **Session:** ses_xxx
 **Model:** anthropic/claude-opus-4-6
-**Kimaki version:** output of `kimaki --version`
+**Kimaki version:** output of `npm ls -g kimaki`
+**OpenCode version:** from `kimaki status`
 **OS:** macOS 15.2
 **Gist:** https://gist.github.com/...
 
@@ -124,8 +128,8 @@ Keep it short. Use facts from the jsonl and log.
 2. ...
 
 **What the files show:**
-- jsonl line N: `session.execution.started` at <created>
-- jsonl line M: `session.execution.interrupted` then a footer message was posted
+- events line N: `session.execution.started` at <created>
+- events line M: `session.execution.interrupted`, then a footer message was posted
 - log: <exact error line>
 
 **What I expected:**
@@ -136,24 +140,22 @@ Do not write "probably a race" or "might be Discord". If you do not have an even
 
 ## Reproduce with a test
 
-Only if you have the Kimaki repo. Copy the exported jsonl into `cli/src/session-handler/event-stream-fixtures/` and extend `event-stream-state.test.ts`. That is how session-state bugs are locked down: pure derivation over a recorded stream.
+Only if you have the Kimaki repo. A recorded events file is a test fixture: the Kimaki reducer is a pure function of the events, so replaying the file shows the same Discord output.
+
+1. Copy the file into `docs/opencode-v2-events/`.
+2. Add a test in `kimaki/src/thread-reducer.fixtures.test.ts` that calls `replay({ events: loadFixture('ses_xxx.events.jsonl') })` and snapshots the effects.
 
 ```bash
-kimaki session export-events-jsonl --session ses_xxx --out ./tmp/ses_xxx.jsonl
-cp ./tmp/ses_xxx.jsonl cli/src/session-handler/event-stream-fixtures/ses_xxx.jsonl
+kimaki session events ses_xxx > docs/opencode-v2-events/ses_xxx.events.jsonl
+cd kimaki && pnpm run test --run src/thread-reducer.fixtures.test.ts
 ```
 
-Live event capture (optional, needs a bot restart or a test run):
-
-```bash
-KIMAKI_LOG_OPENCODE_SESSION_EVENTS=1 kimaki
-# writes <dataDir>/opencode-session-events/ses_xxx.jsonl
-```
+A file without a `session.created` event needs an explicit initial `view` in `replay()`.
 
 Put the failing test on the **issue** (gist or snippet). Do not open a PR unless remorses asked for one.
 
 ## Related
 
 - [Troubleshooting](./troubleshooting.mdx) for restarts and stuck sessions
-- [Managing Sessions](../core-concepts/sessions.mdx) for `/session-id` and `/share`
+- [Managing Sessions](../core-concepts/sessions.mdx) for `/session-id`
 - [Commands reference](../reference/commands.mdx) for `kimaki session` subcommands

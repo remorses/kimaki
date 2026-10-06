@@ -4,145 +4,266 @@ description: Every Kimaki slash command and CLI subcommand in one place.
 icon: lucide:slash
 ---
 
-A complete reference of Kimaki's **Discord slash commands** and **CLI subcommands**, ordered by how often you'll reach for them. For deep dives, follow the links.
+A complete reference of Kimaki's **Discord slash commands**, **message shortcuts**, and **CLI subcommands**. For deep dives, follow the links.
+
+```bash
+# start the bot (onboarding on first start)
+npx -y kimaki@latest
+
+# then, from any shell or agent
+kimaki send --channel <channel-id> --prompt 'fix the failing test'
+kimaki session list --all
+```
 
 ## Session slash commands
 
-| Command                 | Description                                                                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------- |
-| `/resume <session>`     | Resume a previous session ([docs](../core-concepts/sessions))                                             |
-| `/abort`                | Stop the current running session                                                                          |
-| `/new-session <prompt>` | Start a new session with a prompt, files, and agent                                                       |
-| `/btw <prompt>`         | Fork context into a new thread for a side question ([docs](../features/btw))                              |
-| `/fork`                 | Fork the session from a previous message ([docs](../core-concepts/sessions))                              |
-| `/fork-subagent`        | Fork a subagent task into its own thread                                                                  |
-| `/last-sessions`        | List the 20 most recently active sessions. Titles prefixed `btw:` are side-question forks, not duplicates |
-| `/share`                | Generate a public URL for the session                                                                     |
-| `/session-id`           | Show the session ID and an attach command                                                                 |
-| `/compact`              | Summarize and compact the session context                                                                 |
-| `/context-usage`        | Show token usage and context window percentage                                                            |
-| `/undo`                 | Undo the last assistant message (revert file changes)                                                     |
-| `/redo`                 | Redo the last undone message                                                                              |
+Most of these work only inside a **session thread**. `/resume` works only in a **project channel**. `/new-session` and `/diff` work in both.
 
-## Model & agent slash commands
-
-| Command         | Description                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| `/model`        | Change model, thinking level, or clear overrides ([docs](../getting-started/model-switching)) |
-| `/agent`        | Change the agent for this channel or session                                                  |
-| `/<name>-agent` | Instantly switch to a named agent file                                                        |
-| `/login`        | Authenticate a provider via OAuth or API key ([docs](../getting-started/subscriptions))       |
-| `/verbosity`    | Set how much tool output is shown ([docs](../configuration/verbosity))                        |
+| Command                                | Description                                                                                   |
+| -------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `/new-session prompt files? agent?`    | Start a new OpenCode session. `files` autocompletes project files, comma separated            |
+| `/resume session`                      | Resume an existing OpenCode session in a new thread ([docs](../core-concepts/sessions))       |
+| `/abort`                               | Stop the current run and clear the queue. Also cancels pending questions and running `!` shells |
+| `/btw prompt`                          | Ask something without polluting or blocking the current session ([docs](../features/btw))     |
+| `/fork`                                | Fork the session from a past user message ([docs](../core-concepts/sessions))                 |
+| `/fork-subagent`                       | Fork a subagent task session into a new thread                                                |
+| `/compact`                             | Compact the session context by summarizing the history                                        |
+| `/undo`                                | Undo the last turn. File changes are kept                                                     |
+| `/redo`                                | Redo the previously undone turn                                                               |
+| `/context-usage`                       | Show token usage and context window percentage                                                |
+| `/session-id`                          | Show the OpenCode session ID of this thread and how to open it in OpenCode                    |
+| `/diff`                                | Show the git diff as a shareable URL ([docs](../features/diff-viewer))                        |
 
 ## Queue slash commands
 
-| Command                    | Description                                                                                          |
-| -------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `/queue <message>`         | Queue a message for after the current run; reply has a **Remove** button ([docs](../features/queue)) |
-| `/queue-command <command>` | Queue a registered command; reply has a **Remove** button                                            |
+| Command                              | Description                                                                  |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `/queue message`                     | Send a message after the current run finishes ([docs](../features/queue))    |
+| `/queue-command command arguments?`  | Queue an OpenCode command to run after the current run finishes              |
+| `/clear-queue position?`             | Remove queued messages. `position: 1` removes only the next one              |
 
-## Project & worktree slash commands
+You can also remove a queued message by **deleting** its Discord message, or change it by **editing** it.
 
-| Command                      | Description                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------- |
-| `/add-project <project>`     | Create channels for an existing project ([docs](../configuration/projects))           |
-| `/create-new-project <name>` | Create a new project folder and start a session                                       |
-| `/remove-project <project>`  | Remove channels for a project                                                         |
-| `/new-worktree <name>`       | Move the session into an isolated git worktree ([docs](../features/worktrees))        |
-| `/merge-worktree`            | Merge the worktree branch into the default branch                                     |
-| `/worktrees`                 | List worktrees and toggle automatic worktree creation ([docs](../features/worktrees)) |
+## Model and agent slash commands
 
-## Access & permissions slash commands
+In a session thread these change the **session**. In a project channel they set the **default for new sessions** in that channel.
 
-| Command              | Description                                                                |
-| -------------------- | -------------------------------------------------------------------------- |
-| `/mcp`               | List and toggle MCP servers for the project ([docs](../configuration/mcp)) |
-| `/transcription-key` | Set the API key used for voice transcription ([docs](../features/voice))   |
+| Command          | Description                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------------- |
+| `/model`         | Set the model for this session or channel ([docs](../getting-started/model-switching))               |
+| `/model-variant` | Change the thinking level of the current model                                                       |
+| `/agent`         | Set the agent for this session or channel                                                            |
+| `/verbosity`     | Set what the bot shows in this channel: `tools` or `text` ([docs](../configuration/verbosity))       |
+| `/login`         | Connect an OpenCode provider ([docs](../getting-started/subscriptions)). Owner or admin only         |
+| `/transcription-key` | Set the OpenAI or Gemini API key for voice transcription and speech ([docs](../features/voice)). Owner or admin only |
 
-## Remote access slash commands
+## Worktree slash commands
 
-| Command                        | Description                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------- |
-| `/vscode`                      | Open browser VS Code; reply has a **Stop** button ([docs](../remote-access/vscode))         |
-| `/screenshare`                 | Share screen via VNC; reply has a **Stop** button ([docs](../remote-access/screen-sharing)) |
-| `/diff`                        | Generate a shareable diff URL ([docs](../features/diff-viewer))                             |
-| `/run-shell-command <command>` | Run a shell command in the project dir ([docs](../features/shell-commands))                 |
+| Command                                  | Description                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `/new-worktree name? base-branch?`       | Start an isolated Git worktree session. In a thread it forks the context ([docs](../features/worktrees)) |
+| `/merge-worktree strategy? target-branch?` | Merge this worktree into a local branch. `strategy` is `rebase` (default) or `squash`           |
+| `/worktrees`                             | List worktrees, delete a safe checkout, or toggle automatic worktrees                             |
+| `/cwd path?`                             | Show or change this session working directory (a project subfolder or a linked worktree)          |
 
-## Maintenance slash commands
+## Other slash commands
 
-| Command                    | Description                                                                              |
-| -------------------------- | ---------------------------------------------------------------------------------------- |
-| `/tasks`                   | List scheduled tasks with cancel buttons ([docs](../features/scheduled-tasks))           |
-| `/restart-opencode-server` | Restart the OpenCode server and re-register commands ([docs](../guides/troubleshooting)) |
-| `/upgrade-and-restart`     | Upgrade Kimaki to the latest version and restart                                         |
+| Command  | Description                                                                         |
+| -------- | ----------------------------------------------------------------------------------- |
+| `/tasks` | List scheduled tasks, run one now, or delete it ([docs](../features/scheduled-tasks)) |
 
-Your OpenCode commands, skills, and MCP prompts are also registered automatically as `/<name>-cmd`, `/<name>-skill`, and `/<name>-mcp-prompt`. See [OpenCode Commands](../features/opencode-commands).
+## Dynamic slash commands
+
+Kimaki reads the agents, commands, and skills of your projects from OpenCode and registers one slash command for each. See [OpenCode Commands](../features/opencode-commands).
+
+| Command                   | Source                 | Options                              |
+| ------------------------- | ---------------------- | ------------------------------------ |
+| `/<agent>-agent`          | primary agents         | `prompt?`, `variant?` (thinking level) |
+| `/<command>-cmd`          | OpenCode commands      | `arguments?`                         |
+| `/<skill>-skill`          | skills                 | `arguments?`                         |
+
+**MCP prompts** get no slash command. Send them as a message, like `/server:prompt args`, or queue them with `/queue-command`. Discord allows 100 commands per server; skills are dropped first when there are too many.
 
 ## Message shortcuts
 
-| Shortcut               | Effect                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------- |
-| `!<command>`           | Run a shell command in the project dir ([docs](../features/shell-commands))                 |
-| `... . queue`          | Queue the message for after the current run ([docs](../features/queue))                     |
-| `... . btw`            | Fork context to answer a side question ([docs](../features/btw))                            |
-| voice note             | Transcribed and sent as a prompt ([docs](../features/voice))                                |
-| image / PDF attachment | Sent to the agent as inline content ([docs](../features/images))                            |
-| small text attachment  | Inlined into the prompt, plus a local path and Discord URL                                  |
-| large text attachment  | Saved locally. The prompt gets the path, Discord URL, size, and type, not the file contents |
+| Shortcut                  | Effect                                                                                    |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| plain message             | Interrupts the current run and sends your message ([docs](../core-concepts/message-handling)) |
+| `!<command>`              | Runs a shell command in the session folder. Does not interrupt the agent ([docs](../features/shell-commands)) |
+| `... . queue`             | Queues the message for after the current run ([docs](../features/queue))                  |
+| `... . btw`               | Forks the context into a side thread ([docs](../features/btw))                            |
+| `/<command> args`         | Runs an OpenCode command when the project has it, else sends the text as a prompt          |
+| voice message             | Transcribed, then routed like text ([docs](../features/voice))                            |
+| attachment                | Saved locally and sent to OpenCode as a file ([docs](../features/images))                 |
 
 ## CLI subcommands
 
+Every command except `tunnel` accepts `--data-dir <path>` (default `~/.kimaki`). Commands with `-s, --session <id>` take a session ID, a Discord thread ID, or a thread URL. Inside a Kimaki session they default to `OPENCODE_SESSION_ID`, so an agent can omit the flag.
+
+### Start the bot
+
 ```bash
-# Start the bot (interactive setup on first run)
-npx -y kimaki@latest
-
-# Projects
-kimaki project add [directory]
-kimaki project list
-kimaki project create <name>
-kimaki project remove <channel-id>
-
-# Start or continue sessions programmatically
-kimaki send --channel <channel-id> --prompt 'your prompt'
-kimaki send --thread <thread-id> --prompt 'follow-up'
-kimaki send --channel <channel-id> --prompt '...' --send-at '0 9 * * 1'
-
-# Scheduled tasks
-kimaki task list
-kimaki task edit <id> --prompt 'new prompt'
-kimaki task delete <id>
-
-# Sessions
-kimaki session list
-kimaki session list --active
-kimaki session search 'query'          # last 14 days
-kimaki session search 'query' --days 0 # all time
-kimaki session search 'query' --all
-kimaki session read <session-id>
-kimaki session read <session-id> --thinking
-kimaki session read <session-id> --verbose
-kimaki session read <session-id> --tool-input-max-chars 40
-kimaki session export-events-jsonl --session <session-id> --out ./tmp/session.jsonl
-# Paths are absolute; a worktree file is not the same path as main
-kimaki session editors <file>
-kimaki session title 'Short title' --session <session-id>
-
-# OAuth account pools
-kimaki multioauth list
-kimaki multioauth anthropic list
-kimaki multioauth openai check
-
-# Bot presence
-kimaki bot status set <text>
-kimaki bot status clear
-kimaki discord-install-url
-
-# Tooling
-kimaki tunnel -- pnpm dev
-kimaki upload-to-discord --session <id> <file...>
-kimaki tts 'text' -o out.mp3
-kimaki sqlitedb
-kimaki upgrade
+kimaki [options]
 ```
 
-See [CI & Automation](../guides/ci-automation) for the full `kimaki send` flag reference and scheduling options. See [Debug sessions and report bugs](../guides/report-bugs.mdx) to export jsonl and file an issue.
+| Option                        | Description                                                              |
+| ----------------------------- | ------------------------------------------------------------------------ |
+| `--data-dir <path>`           | Data directory (default: ~/.kimaki)                                      |
+| `-g, --guild <guildId>`       | Server to onboard when the bot is in several                             |
+| `--gateway`                   | Use the shared Kimaki bot, no Discord app needed                         |
+| `--gateway-callback-url <url>`| Redirect here after the gateway install (appends ?guild_id=&lt;id&gt;)   |
+| `--install-url`               | Print the install URL and exit (non-interactive onboarding)              |
+| `--machine-name <name>`       | Name in this machine's category "Kimaki &lt;name&gt;" (default: hostname) |
+| `--restart-onboarding`        | Choose credentials again                                                 |
+| `--worktrees`                 | Use a fresh Git worktree for new sessions unless the channel overrides it |
+| `--no-analytics`              | Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)      |
+
+### Project
+
+| Command                  | Description                                                    | Options                             |
+| ------------------------ | -------------------------------------------------------------- | ----------------------------------- |
+| `project list`           | List project directories and their channels                    | `--json`                            |
+| `project add [directory]`| Create a channel for a directory (default: current directory)  | `-g, --guild`, `--machine-name`     |
+
+### Session
+
+| Command                            | Description                                                                 | Options                                                      |
+| ---------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `session list`                     | List sessions with native status and token counts                           | `--project`, `--all`, `--active`, `--exclude`, `--json`      |
+| `session search <query>`           | Search titles, then real message content                                    | `--project`, `-c, --channel`, `--all`, `--days`, `--json`    |
+| `session wait <id>`                | Wait until idle or waiting for input, then print the session                | `--timeout`                                                  |
+| `session editors <file>`           | List sessions that last edited a file, newest first                         | `--json`, `--limit`                                          |
+| `session diff`                     | Upload the git diff of the session folder to critique.work and print the URL | `-s, --session`                                             |
+| `session url <id>`                 | Print the Discord URL of a session or thread                                |                                                              |
+| `session abort [id]`               | Stop the running turn and clear its queue                                   |                                                              |
+| `session archive [id]`             | Archive a session thread                                                    |                                                              |
+| `session title <title>`            | Rename the session and its Discord thread                                   | `-s, --session`                                              |
+| `session queue add <value>`        | add native queued prompts                                                   | `-s, --session`, `--json`                                    |
+| `session queue remove <value>`     | remove native queued prompts                                                | `-s, --session`, `--json`                                    |
+| `session queue list`               | list native queued prompts                                                  | `-s, --session`, `--json`                                    |
+| `session queue clear`              | clear native queued prompts                                                 | `-s, --session`, `--json`                                    |
+| `session command <name> [...args]` | Run an OpenCode command, skill, or MCP prompt                               | `-s, --session`, `--queue`                                   |
+| `session shell <text>`             | Run shell through the shared session action                                 | `-s, --session`, `--queue`                                   |
+| `session btw <text>`               | Run btw through the shared session action                                   | `-s, --session`, `--queue`                                   |
+| `session fork [id]`                | Fork a root or child session into a new thread                              | `--before`, `-n, --name`                                     |
+| `session resume <id>`              | Bind an existing session to a new thread in its project channel             | `-c, --channel`                                              |
+| `session events <id>`              | Print the recorded OpenCode events of a thread as JSONL (root + subagents)  |                                                              |
+| `session read <id>`                | Print the messages of a session from OpenCode as markdown                   | `--thinking`, `--verbose`, `--json`                          |
+| `session cwd [directory]`          | Show or change the working directory at a native safe boundary             | `-s, --session`                                              |
+| `send`                             | Start a session in a channel, or continue a thread                          | see below                                                    |
+| `buttons`                          | Show 1-3 action buttons. Call last, after visible text                      | `-s, --session`, `-b, --button`                              |
+| `upload-request`                   | Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes | `-s, --session`, `-p, --prompt`, `--max-files`             |
+| `login <provider>`                 | Connect a provider using OpenCode integration credentials                   | `--key`, `--method`, `--attempt`, `--code`, `--cancel`       |
+| `login credential <id>`            | Activate, remove, or label an OpenCode credential                           | `--operation`, `--label`                                     |
+
+### `kimaki send`
+
+```bash
+kimaki send --channel <channel-id> --prompt 'add tests for the parser'
+kimaki send --thread <thread-id> --prompt 'now commit it'
+kimaki send --channel <channel-id> --prompt 'daily report' --send-at '0 9 * * 1-5'
+```
+
+| Option                     | Description                                                                 |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `-c, --channel <id>`       | New thread in this channel                                                  |
+| `-d, --project <path>`     | Project directory of the new thread                                         |
+| `--thread <id>`            | Continue this thread (ID or URL)                                            |
+| `-s, --session <id>`       | Continue this session: session ID, thread ID or thread URL                  |
+| `-p, --prompt <text>`      | Prompt; thread suffixes . queue and . btw are supported                     |
+| `-f, --file <path>`        | Attach a local file (repeatable)                                            |
+| `-n, --name <text>`        | Thread name                                                                 |
+| `--agent <name>`           | Agent ID                                                                    |
+| `--model <provider/model>` | Model for the new session                                                   |
+| `-u, --user <id>`          | Add this Discord user to the thread                                         |
+| `--cwd <path>`             | Existing project subfolder or linked Git worktree                           |
+| `--worktree [name]`        | Create a custom Git worktree (automatic name when omitted)                  |
+| `--base-branch <ref>`      | Starting ref for --worktree (default: project HEAD)                         |
+| `--parent-session <id>`    | Record the parent session in session metadata                               |
+| `--permission <rule>`      | Repeatable: tool[:pattern]:allow\|deny\|ask                                 |
+| `--notify-only`            | Post a notification thread without a model turn                             |
+| `--wait`                   | Wait until idle or input is needed, then print the session                  |
+| `--send-at <when>`         | Schedule: UTC ISO date ending in Z, or cron expression (UTC)                |
+| `--pre-run <command>`      | Scheduled only: run first in the project. Exit 0 starts, stdout is appended |
+| `--allow-concurrency`      | Scheduled only: allow overlapping runs of this task                         |
+
+`kimaki send` works **without a local bot** too. With `KIMAKI_BOT_TOKEN` set, it posts the request in the channel and the bot that owns the channel runs it. See [CI & Automation](../guides/ci-automation).
+
+### Channel
+
+| Command                     | Description                                    | Options                                 |
+| --------------------------- | ---------------------------------------------- | --------------------------------------- |
+| `channel agent [value]`     | Set channel agent through the running bot      | `-c, --channel`, `--variant`, `--clear` |
+| `channel model [value]`     | Set channel model through the running bot      | `-c, --channel`, `--variant`, `--clear` |
+| `channel verbosity [value]` | Set channel verbosity through the running bot  | `-c, --channel`, `--variant`, `--clear` |
+| `channel worktrees <value>` | Set automatic worktrees: on \| off             | `-c, --channel`                         |
+
+### Worktree
+
+| Command                       | Description                                                   | Options                                                           |
+| ----------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `worktree list`               | List linked Git worktrees                                     | `-c, --channel`, `-p, --project`                                  |
+| `worktree create [name]`      | Create an isolated worktree session                           | `-c, --channel`, `-p, --project`, `--base-branch`                 |
+| `worktree remove <directory>` | Remove a clean, merged worktree checkout; retain branch refs  | `-c, --channel`, `-p, --project`, `--target-branch`, `--strategy` |
+| `worktree merge <directory>`  | Merge into a local target branch                              | `-c, --channel`, `-p, --project`, `--target-branch`, `--strategy` |
+
+### Schedule
+
+| Command               | Description                                                                              | Options                                                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `task list`           | List scheduled tasks (planned, running, failed)                                          | `--json`                                                                                     |
+| `task edit <taskId>`  | Change a planned task. An empty string clears a value                                    | `--prompt`, `--send-at`, `--agent`, `--model`, `-u, --user`, `--pre-run`, `--allow-concurrency` |
+| `task delete <taskId>`| Delete a scheduled task                                                                  |                                                                                              |
+| `task run <taskId>`   | Run a scheduled task now                                                                 |                                                                                              |
+| `sleep`               | Wake this session later with a new message in the same thread. Run it last, after your text | `--duration`, `--until`, `--reason`, `-s, --session`                                     |
+
+### Discord
+
+| Command                        | Description                                              | Options                                   |
+| ------------------------------ | -------------------------------------------------------- | ----------------------------------------- |
+| `thread list`                  | List active and optionally archived threads in a channel | `-c, --channel`, `--archived`, `--json`   |
+| `user list`                    | Find Discord users for mentions                          | `-g, --guild`, `-q, --query`, `--json`    |
+| `upload-to-discord <...files>` | Attach local files to a session thread                   | `-s, --session`                           |
+
+### Tools
+
+| Command      | Description                                                                              | Options                                                    |
+| ------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `tunnel`     | Run a command and expose its local port with a public URL. The child gets TRAFORO_URL ([docs](../remote-access/tunnels)) | `-p, --port`, `-t, --tunnel-id`, `--host`, `-k, --kill` |
+| `tts [text]` | Text to speech with OpenAI or Gemini. Reads stdin if no text is given                    | `-o, --output`, `-p, --provider`, `-v, --voice`, `-i, --instructions`, `--speed` |
+
+### Bot
+
+| Command           | Description                                                                         | Options                       |
+| ----------------- | ----------------------------------------------------------------------------------- | ----------------------------- |
+| `status`          | Bot health: running, pid, uptime, OpenCode URL and version, guilds                  | `--json`                      |
+| `logs`            | Print the log file path. The bot resets the file on every start                     | `-f, --follow`                |
+| `restart`         | Restart the running bot with the code on disk. Sessions keep running in OpenCode    |                               |
+| `profile cpu`     | Record a CPU profile of the running bot and print the .cpuprofile path              | `-d, --duration`              |
+| `profile heap`    | Write a heap snapshot of the running bot and print the .heapsnapshot path           |                               |
+| `bot token`       | Print saved bot credentials for automation                                          |                               |
+| `bot keys set`    | Store OpenAI or Gemini API keys for voice transcription and kimaki tts              | `--openai`, `--gemini`        |
+| `bot install-url` | Print the Discord bot install URL                                                   | `--gateway-callback-url`      |
+
+Run `kimaki <command> --help` for the full flag descriptions. See [Debug sessions and report bugs](../guides/report-bugs.mdx) to export events and file an issue.
+
+<details>
+<summary>Moved or removed since Kimaki V1</summary>
+
+| V1 command                         | Now                                                        |
+| ---------------------------------- | ---------------------------------------------------------- |
+| `kimaki discord-install-url`       | `kimaki bot install-url`                                   |
+| `kimaki session export-events-jsonl` | `kimaki session events <id>`                             |
+| `kimaki session discord-url`       | `kimaki session url <id>`                                  |
+| `kimaki merge-worktree`            | `kimaki worktree merge <directory>`                        |
+| `kimaki project create / remove / open-in-discord` | removed. Use `kimaki project add`          |
+| `kimaki upgrade`, `/upgrade-and-restart` | removed. Run `npm i -g kimaki@latest`, then `kimaki restart` |
+| `kimaki sqlitedb`                  | removed                                                    |
+| `kimaki screenshare`, `/screenshare`, `/vscode` | removed                                       |
+| `kimaki multioauth`                | removed. Provider logins live in OpenCode                  |
+| `/restart-opencode-server`         | removed. Run `opencode2 service restart`                   |
+| `/share`, `/last-sessions`, `/mcp` | removed                                                    |
+| `/add-project`, `/create-new-project`, `/remove-project` | removed. Use `kimaki project add`    |
+| `/run-shell-command`               | removed. Send `!<command>` in a thread                     |
+
+</details>

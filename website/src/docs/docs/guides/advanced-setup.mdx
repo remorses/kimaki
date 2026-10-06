@@ -1,70 +1,89 @@
 ---
 title: Advanced Setup
-description: Running multiple Kimaki instances, multiple Discord servers, and architecture details.
+description: Running multiple Kimaki instances, multiple machines, multiple Discord servers, and architecture details.
 icon: server
 ---
 
-## Architecture: One Bot Per Machine
+## Architecture: one bot per machine
 
-**Each bot instance is tied to one machine.** This is by design.
+**Each Kimaki process belongs to one machine.** It can only open folders on that machine.
 
-When you run `kimaki` on a computer, it spawns OpenCode servers for projects on that machine. The bot can only access directories on the machine where it's running.
+```diagram
+  Discord ──> kimaki (bot process) ──> OpenCode 2 service ──> project folders
+               ~/.kimaki                (shared with your TUI)   on this machine
+```
 
-To control multiple machines, run **gateway mode** on each box and install the shared bot in the same Discord server. Agents should follow [Set up Kimaki from an agent](./agent-machine-setup.mdx).
+The bot does not run its own OpenCode server. It uses your OpenCode 2 background service, the same one the OpenCode TUI uses. See [Troubleshooting](./troubleshooting.mdx#kimaki-and-opencode).
+
+## Multiple machines
+
+To control several machines from one Discord server, run Kimaki in **gateway mode** on each machine and install the shared bot in the same server. Agents should follow [Set up Kimaki from an agent](./agent-machine-setup.mdx).
 
 1. Run `npx -y kimaki@latest --gateway` on each machine
-2. Authorize the install URL in the same Discord server
-3. Map projects with `kimaki project add` or `/add-project`
+2. Open the install URL and authorize the bot in the same Discord server
+3. Add projects with `kimaki project add /path/to/repo` on each machine
 
-Each channel shows which bot (machine) it's connected to. You can have channels from different machines in the same server, controlled by different bots.
-
-## Running Multiple Instances
-
-By default, Kimaki stores its data in `~/.kimaki`. To run multiple bot instances on the same machine (e.g., for different teams or projects), use a separate `--data-dir` and optionally set `KIMAKI_LOCK_PORT` explicitly:
+Each machine gets its own Discord category, `Kimaki <machine name>`. The default machine name is the hostname. Set another one with `--machine-name`:
 
 ```bash
-# Instance 1 - uses default ~/.kimaki
+npx -y kimaki@latest --gateway --machine-name vps
+```
+
+A bot only answers in the channels that its own machine added. To start a session on another machine from the CLI, `kimaki send --channel <id>` still works: the bot that owns the channel runs it.
+
+## Running multiple instances
+
+To run a second bot on the same machine (for example a test install, or a bot for another team), give it a separate **data directory** and a free **lock port**:
+
+```bash
+# Instance 1: default ~/.kimaki, lock port 29988
 npx -y kimaki@latest
 
-# Instance 2 - separate data directory + explicit lock port
+# Instance 2: separate data directory and lock port
 KIMAKI_LOCK_PORT=31001 npx -y kimaki@latest --data-dir ~/work-bot
-
-# Instance 3 - another separate instance
-KIMAKI_LOCK_PORT=31002 npx -y kimaki@latest --data-dir ~/personal-bot
 ```
+
+The lock port is the single-instance lock. The default is **29988** for every data directory. If the port is busy, the second bot does not start and shows `port is in use`. It never stops the bot that already runs.
+
+CLI subcommands talk to the bot through the lock port. Use the same port and data directory to reach the second bot:
+
+```bash
+KIMAKI_LOCK_PORT=31001 kimaki status --data-dir ~/work-bot
+```
+
+Inside a Kimaki session, the agent shell already has the right values.
 
 Each instance has its own:
 
-- **Database** — Bot credentials, channel mappings, session history
-- **Projects directory** — Where `/create-new-project` creates new folders
-- **Lock port** — Derived from the data directory path by default; override with `KIMAKI_LOCK_PORT` when you need a specific port
+- **Database**: `<dataDir>/kimaki.db` with bot credentials, channel mappings, and scheduled tasks
+- **Log**: `<dataDir>/kimaki.log`
+- **Default channel folder**: `<dataDir>/projects/kimaki`
+- **Lock port**: from `KIMAKI_LOCK_PORT`
 
-This lets you run completely isolated bots on the same machine, each with their own Discord app and configuration.
+All instances use the same OpenCode 2 service. Session history lives there.
 
-## Multiple Discord Servers
+## Multiple Discord servers
 
-A single Kimaki instance can serve multiple Discord servers. Install the bot in each server using the install URL shown during setup, then add project channels to each server.
+One Kimaki instance can serve several Discord servers. Install the bot in each server, then add project channels to each server.
 
-### Method 1: Use `/add-project` command
+1. Print the install URL and open it once per server:
 
-1. Run `npx kimaki` once to set up the bot
-2. Install the bot in both servers using the install URL
-3. In **Server A**: run `/add-project` and select your project
-4. In **Server B**: run `/add-project` and select your project
+```bash
+kimaki bot install-url
+```
 
-The `/add-project` command creates channels in whichever server you run it from.
+2. Add a project to a server with `--guild`:
 
-### Method 2: Re-run CLI with `--add-channels`
+```bash
+kimaki project add /path/to/repo --guild 123456789012345678
+```
 
-1. Run `npx kimaki` — set up bot, install in both servers, create channels in first server
-2. Run `npx kimaki --add-channels` — select projects for the second server
+Without `--guild`, `project add` uses the server that already has Kimaki channels. When channels exist in several servers, `--guild` is required.
 
-The setup wizard lets you pick one server at a time.
+You can add the same folder in several servers. All channels point to the same folder on your machine.
 
-You can link the same project to channels in multiple servers — both will point to the same directory on your machine.
+When you start the bot and it is in several servers, first-run onboarding asks which server to use. Without a terminal, pass `--guild <id>`.
 
 ## Docker on a VPS
 
-To run Kimaki on a remote machine instead of your laptop, put it in a container with a persistent volume. The first boot prints an install URL in the logs. See [Deploy Kimaki on a VPS with Docker](./docker.mdx).
-
-To reach the OpenCode server from your laptop (`opencode attach`, `opencode web`), start Kimaki with `--opencode-hostname 0.0.0.0`, a fixed `--opencode-port`, and `OPENCODE_SERVER_PASSWORD`. See [Expose the OpenCode server](../remote-access/opencode-server.mdx).
+To run Kimaki on a remote machine instead of your laptop, put it in a container with a persistent volume. The first start prints an install URL in the logs. See [Deploy Kimaki on a VPS with Docker](./docker.mdx).

@@ -1,174 +1,114 @@
 ---
 title: Model & Agent Switching
-description: How to quickly switch models and thinking levels using agent markdown files and Discord commands.
+description: Switch models, thinking levels, and agents from Discord with /model, /model-variant, /agent, and one slash command per agent.
 icon: repeat
 ---
 
-Kimaki gives you two main ways to switch models: **agent files** (`.opencode/agent/*.md`) for one-command switching, and the **`/model` slash command** for interactive selection. From `/model` you can also change the thinking level or clear an override via buttons on the same reply. Agent files are the fastest option for day-to-day use; `/model` is useful for one-off changes.
+Pick a model with **`/model`**, a thinking level with **`/model-variant`**, and an agent with **`/agent`** or its own **`/<name>-agent`** command.
 
-## Why agents are faster than /model
-
-The `/model` command requires clicking through 3-4 dropdown menus every time you want to switch. With agent files you define a model + variant + permissions once, restart kimaki, and from then on you can switch with a single `/sonnet-high-agent` command. No menus, instant.
-
-This is especially useful when you regularly switch between models during a session, for example using a cheap model for boilerplate and a powerful one for architecture decisions.
-
-## Creating agent files
-
-Create `.md` files in your project's `.opencode/agent/` directory. Each file becomes a selectable agent in the `/agent` dropdown and gets its own `/<name>-agent` slash command.
-
-The file only needs YAML frontmatter. The body is an optional system prompt override.
-
-### Examples
-
-**.opencode/agent/sonnet-high.md** - Sonnet with high thinking, auto-allows questions and plan entry so it doesn't stall on permission prompts:
-
-```yaml
----
-description: Claude Sonnet with high thinking
-mode: primary
-model: anthropic/claude-sonnet-4-20250514
-variant: high
-permission:
-  question: allow
-  plan_enter: allow
----
+```diagram
+/model          ──▶ provider ──▶ model ──▶ thinking level ──▶ this session | this channel
+/model-variant  ──▶ thinking level of the current model  ──▶ this session | this channel
+/agent          ──▶ agent dropdown                        ──▶ session (in a thread) | channel
+/plan-agent     ──▶ same as /agent, one step, optional prompt and variant
 ```
 
-**.opencode/agent/opus-max.md** - Opus with maximum thinking budget. Use for complex architecture and debugging tasks:
+Every change in a thread applies **from the next step** of the running session. A change in a project channel becomes the default for **new sessions** in that channel.
 
-```yaml
----
-description: Claude Opus with max thinking
-mode: primary
-model: anthropic/claude-opus-4-20250514
-variant: max
-permission:
-  question: allow
-  plan_enter: allow
----
+## /model
+
+Run `/model` and pick a provider, a model, and a thinking level (only shown when the model has variants). Then choose where it applies:
+
+- **This session**: only in a thread. The session switches model from its next step.
+- **This channel**: new sessions in this channel use this model.
+
+With no channel model, Kimaki uses the **OpenCode default model**. Set it in your `opencode.json`:
+
+```json
+{
+  "model": "anthropic/claude-sonnet-4-5"
+}
 ```
 
-**.opencode/agent/gpt5.md** - GPT 5 Codex for fast iteration:
+Only providers with credentials show up. Connect one first with [`/login`](../getting-started/subscriptions).
 
-```yaml
----
-description: GPT 5 Codex
-mode: primary
-model: openai/gpt-5.3-codex
-permission:
-  question: allow
-  plan_enter: allow
----
+## /model-variant
+
+`/model-variant` changes only the thinking level (for example `low`, `high`, `max`) of the model in use. The values come from the model itself, so they differ per provider.
+
+## /agent and agent commands
+
+`/agent` shows the primary agents of the project. In a thread it switches the session's agent; in a project channel it sets the agent for new sessions.
+
+Kimaki also registers **one slash command per primary agent**, named `/<name>-agent`. It has two optional options:
+
+| Option | Effect |
+|---|---|
+| `prompt` | Send this prompt with the agent. In a channel this starts a new session. |
+| `variant` | Also set the thinking level of the current model (autocomplete lists them). |
+
+```
+/plan-agent prompt:how should we split the auth module? variant:high
 ```
 
-**.opencode/agent/gpt5-medium.md** - GPT 5 Codex pinned to medium reasoning effort:
+The agent commands follow your agent files. When you add, rename, or delete an agent, Kimaki updates the commands by itself; no restart needed. Discord allows 100 commands per server, so skills are cut first when a project has many.
 
-```yaml
+The thread banner and footer show what runs: `-# *using anthropic/claude-sonnet-4-5 ⋅ plan*`.
+
+## Agent files
+
+Agents are OpenCode agents. Define one as a markdown file in `.opencode/agent/` of the project; the file name is the agent name.
+
+**.opencode/agent/review.md**: a read-only reviewer that never asks before searching.
+
+```markdown
 ---
-description: GPT 5 Codex, medium effort
+description: Review changes without editing files
 mode: primary
-model: openai/gpt-5.3-codex
-variant: medium
 permission:
+  edit: deny
   question: allow
-  plan_enter: allow
 ---
+
+Review the current changes. Point out bugs and risky code. Do not edit files.
 ```
 
-**.opencode/agent/gemini-low.md** - Gemini with low thinking for quick cheap tasks. Lower temperature for more deterministic output:
+The markdown body is the agent's system prompt. A file with only frontmatter keeps the default prompt and changes only the config fields. A file named like a built-in agent (for example `build.md`) changes that agent.
 
-```yaml
----
-description: Gemini 3 pro, low thinking
-mode: primary
-model: google/gemini-3-pro-preview
-variant: low
-temperature: 0.3
-permission:
-  question: allow
-  plan_enter: allow
----
-```
-
-**.opencode/agent/safe-build.md** - Locked down agent that can only read and edit, no bash or external tools. Useful for untrusted refactoring tasks:
-
-```yaml
----
-description: Build agent, no bash or external tools
-mode: primary
-model: anthropic/claude-sonnet-4-20250514
-variant: high
-color: '#E67E22'
-steps: 50
-permission:
-  bash: deny
-  question: allow
-  plan_enter: allow
----
-```
+<Aside>
+<Note>
+In OpenCode 2 the main session runs the model picked with `/model` (or the OpenCode default). An agent's `model` field does not change it; it applies when the agent runs as a subagent. To pair an agent with a thinking level, use the `variant` option of `/<name>-agent`.
+</Note>
+</Aside>
 
 ### Frontmatter reference
 
-| Field         | Type    | Description                                                                  |
-| ------------- | ------- | ---------------------------------------------------------------------------- |
-| `model`       | string  | Model ID as `provider/model` (e.g. `anthropic/claude-sonnet-4-20250514`)     |
-| `variant`     | string  | Reasoning level (provider/model dependent): `none`, `minimal`, `low`, `medium`, `high`, `max`, `xhigh` |
-| `mode`        | string  | `primary` (top-level agent) or `all` (usable as both top-level and subagent) |
-| `description` | string  | Shown in the `/agent` selector and agent autocomplete                        |
-| `permission`  | object  | Auto-allow/deny permissions: `question`, `plan_enter`, `bash`, `edit`, etc.  |
-| `temperature` | number  | Sampling temperature (e.g. `0.3` for deterministic, `1.0` for creative)      |
-| `top_p`       | number  | Top-p nucleus sampling                                                       |
-| `steps`       | number  | Max agentic iterations before forcing a text-only response                   |
-| `hidden`      | boolean | Hide from the agent selector UI                                              |
-| `color`       | string  | Hex color (e.g. `"#FF5733"`) or theme color (`primary`, `warning`, etc.)     |
-| `options`     | object  | Extra provider-specific parameters passed through to the model API           |
+| Field         | Description                                                              |
+| ------------- | ------------------------------------------------------------------------ |
+| `description` | Shown in the `/agent` dropdown and as the `/<name>-agent` description    |
+| `mode`        | `primary` (shown in Discord), `subagent`, or `all`                       |
+| `permission`  | Rules like `edit: deny` or `bash: ask`; see [Tool Permissions](../configuration/permissions) |
+| `model`, `variant` | Model and thinking level when the agent runs as a subagent          |
+| `steps`       | Max agentic iterations                                                   |
+| `hidden`      | `true` hides the agent from `/agent` and gives it no slash command       |
+| `color`       | Hex color, for example `"#E67E22"`                                       |
 
-Any unknown frontmatter keys are automatically merged into `options` and forwarded to the provider, so you can pass provider-specific parameters directly in frontmatter without nesting them under `options`.
+See the [OpenCode agents docs](https://opencode.ai/docs/agents/) for every field.
 
-### Effort customization notes
+## From the CLI
 
-`variant` is the primary way to customize agent effort from markdown frontmatter.
+Set channel defaults without Discord. The bot must be running.
 
-- For GPT-5 models, use variants like `minimal`, `low`, `medium`, `high`, or `xhigh` (if the selected GPT-5 model supports it).
-- For Anthropic models, common values are `high` and `max` (mapped to model thinking settings).
-- Available values depend on the exact provider + model pair.
+```bash
+# default model and thinking level of the current project's channel
+kimaki channel model anthropic/claude-opus-4-6 --variant high
 
-## Override the default `build` agent variant
+# default agent of a specific channel
+kimaki channel agent plan --channel 1234567890
 
-The best way to override the default build agent effort is to create a file named exactly `build.md` in `.opencode/agent/`. The filename maps to the agent name, so this merges into the built-in `build` agent config.
-
-Use both `model` and `variant` to make behavior predictable:
-
-```yaml
----
-description: Build agent pinned to GPT-5 medium effort
-mode: primary
-model: openai/gpt-5.3-codex
-variant: medium
-permission:
-  question: allow
-  plan_enter: allow
----
+# back to the OpenCode defaults
+kimaki channel model --clear
+kimaki channel agent --clear
 ```
 
-Why this is the most reliable approach:
-
-- `build.md` targets the native `build` agent directly.
-- `variant` gives you default effort for that agent.
-- pairing with `model` avoids ambiguity when the active model changes.
-- explicit per-request variant still wins when you choose one manually.
-
-> Using `.md` agent files does **not** override built-in prompts unless the file has markdown body content.
-> Frontmatter-only files keep default prompt behavior and only change config fields like `model`, `variant`, `permission`, and `steps`.
-> This applies to built-in agents like `build`, `plan`, `explore`, and other native agents.
-
-### Activating
-
-After creating or editing agent files, restart kimaki so it picks up the new slash commands. Then switch with:
-
-- `/agent` dropdown to pick from all available agents
-- `/<name>-agent` slash command for instant one-step switching (e.g. `/sonnet-high-agent`, `/opus-max-agent`, `/gpt5-agent`)
-
-## Setting variant via /model
-
-The `/model` command includes a variant picker. After selecting a provider and model, if the model supports thinking levels a dropdown appears. The variant is stored alongside the model at whatever scope you choose (session, channel, or global).
+`kimaki send` takes `--model provider/model` and `--agent <name>` for one session.

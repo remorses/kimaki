@@ -4,56 +4,90 @@ description: Start Kimaki sessions from CI pipelines, cron jobs, or any automati
 icon: workflow
 ---
 
-## Getting Your Bot Token
+Start a session from anywhere with one command. Only the bot token is needed; no Kimaki database, no local bot.
 
-The `send` command authenticates with Discord using the `KIMAKI_BOT_TOKEN` environment variable. The value depends on which mode you're using.
+```bash
+KIMAKI_BOT_TOKEN='...' npx -y kimaki@latest send \
+  --channel 1234567890123456789 \
+  --prompt 'Run the test suite and fix the failures'
+```
 
-Print your token with:
+```
+{"threadId":"1398...","sessionId":"ses_..."}
+```
+
+The Kimaki bot that owns the channel must be running on its machine. It runs the prompt in a new thread and answers with the thread and session IDs.
+
+## Getting your bot token
+
+Print the token on the machine that runs the bot:
 
 ```bash
 kimaki bot token
 ```
 
-This prints the token to stdout so you can copy it or pipe it into a secret manager.
+Store it as a CI secret and pass it as `KIMAKI_BOT_TOKEN`. The value depends on the mode:
 
-### Self-hosted mode
+| Mode | `KIMAKI_BOT_TOKEN` value |
+|---|---|
+| Gateway (`kimaki --gateway`, shared Kimaki bot) | `clientId:clientSecret` pair from onboarding, like `a1b2c3d4-...:7f8e9d...`. It is not a Discord bot token |
+| Self-hosted (your own Discord app) | Your Discord bot token, from the [Developer Portal](https://discord.com/developers/applications) under Bot > Token |
 
-If you created your own Discord bot, the token is your **Discord bot token** (starts with a base64 app ID, like `MTIz...`). You can also find it in the [Discord Developer Portal](https://discord.com/developers/applications) under Bot > Token.
+`kimaki bot token` prints the correct value in both modes.
 
-### Gateway mode
+## How it works
 
-If you're using the shared Kimaki gateway bot (`kimaki --gateway`), the token is a **`clientId:clientSecret`** pair generated during onboarding. It looks like `a1b2c3d4-...:7f8e9d...`. This credential authenticates your kimaki instance against the gateway proxy; it is not a Discord bot token.
-
-`kimaki bot token` prints the correct value in both modes. Store it as a repository secret and pass it as `KIMAKI_BOT_TOKEN` in CI.
-
-## Programmatically Start Sessions
-
-The `send` command creates a Discord thread with your prompt, and the running bot on your machine picks it up automatically.
-
-### Environment Variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `KIMAKI_BOT_TOKEN` | Yes (in CI) | Bot token or gateway `clientId:clientSecret` (see above) |
-
-### CLI Options
-
-```bash
-npx -y kimaki send \
-  --channel <channel-id>    # Required: Discord channel ID
-  --prompt <prompt>         # Required: Message content
-  --name <name>             # Optional: Thread name (defaults to prompt preview)
-  --app-id <app-id>         # Optional: Bot application ID for validation
-  --notify-only             # Optional: Create notification thread without starting AI session
-  --worktree <name>         # Optional: Create git worktree for isolated session
-  --thread <thread-id>      # Optional: Send prompt to existing thread (no new thread)
-  --session <session-id>    # Optional: Resolve thread from session and send prompt
-  --permission <rule>       # Optional: Repeatable. Per-session permission rule (see below)
+```diagram
+  CI runner                         Discord channel                    your machine
+ ┌──────────────────────┐          ┌──────────────────────┐          ┌──────────────────────┐
+ │ kimaki send          │──post───>│ envelope message     │──event──>│ kimaki bot (owner)   │
+ │ (no local bot)       │          │ (as the bot user)    │          │ starts the session   │
+ │ waits up to 20s      │<──read───│ reply with IDs       │<──reply──│ in a new thread      │
+ └──────────────────────┘          └──────────────────────┘          └──────────────────────┘
 ```
 
-Use either `--channel/--project` (create new thread) or `--thread/--session` (send to existing thread), not both.
+1. **CI runs `send`**. No bot runs on the CI runner, so the CLI posts an envelope message in the channel with the bot token.
+2. **The owning bot reads it**. Only the bot whose machine added that channel answers.
+3. **It starts the session** in a new thread, on your machine with full codebase access.
+4. **It replies with the IDs**. `send` prints `{"threadId", "sessionId"}` and exits.
 
-### Example: GitHub Actions on New Issues
+If no bot answers in 20 seconds, `send` fails with `No Kimaki bot answered this send`. Start Kimaki on the machine that owns the channel.
+
+On a machine where the bot runs, `send` talks to the local bot directly instead.
+
+## `kimaki send` options
+
+```bash
+npx -y kimaki@latest send \
+  --channel <channel-id>      # New thread in this channel
+  --thread <thread-id>        # Or: continue this thread (ID or URL)
+  --prompt <prompt>           # Required: the message
+  --name <name>               # Thread name (default: prompt preview)
+  --file <path>               # Attach a local file (repeatable)
+  --agent <name>              # Agent for the session
+  --model <provider/model>    # Model for the new session
+  --user <id>                 # Add this Discord user to the thread
+  --worktree [name]           # Run in a new Git worktree (automatic name when omitted)
+  --base-branch <ref>         # Starting ref for --worktree
+  --cwd <path>                # Existing project subfolder or linked worktree
+  --permission <rule>         # Per-session permission rule (repeatable, see below)
+  --notify-only               # Post a notification thread, no model turn
+```
+
+Use exactly one target: `--channel` or `--thread`.
+
+These need a running bot on the **same machine**, so they do not work from CI:
+
+| Option | What it does |
+|---|---|
+| `--session <id>` | Continue a session by session ID |
+| `--project <path>` | Pick the channel by project folder |
+| `--wait` | Wait until the session is idle, then print it as markdown |
+| `--send-at <when>` | Schedule the prompt (see below) |
+
+Use `--notify-only` for notifications that do not need an immediate AI response (for example subscription events). Reply in the thread later to start a session with the notification as context.
+
+## Example: GitHub Actions on new issues
 
 This workflow starts a Kimaki session whenever a new issue is opened:
 
@@ -73,54 +107,42 @@ jobs:
         env:
           KIMAKI_BOT_TOKEN: ${{ secrets.KIMAKI_BOT_TOKEN }}
         run: |
-          npx -y kimaki send \
+          npx -y kimaki@latest send \
             --channel '1234567890123456789' \
-            --prompt 'Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try fixing it in a new worktree ./${{ github.event.issue.number }}' \
-            --name 'Issue #${{ github.event.issue.number }}'
+            --prompt 'Investigate issue ${{ github.event.issue.html_url }} using gh cli. Try to fix it.' \
+            --name 'Issue #${{ github.event.issue.number }}' \
+            --worktree 'issue-${{ github.event.issue.number }}'
 ```
 
 **Setup:**
 
 1. Add `KIMAKI_BOT_TOKEN` to your repository secrets (Settings > Secrets > Actions)
 2. Replace `1234567890123456789` with your Discord channel ID (right-click channel > Copy Channel ID)
-3. Make sure the Kimaki bot is running on your machine
+3. Keep the Kimaki bot running on the machine that owns the channel
 
-### How It Works
+<Aside>
+<Warning>
+Do not pass untrusted issue text directly in the prompt. Anyone who can open an issue can then write instructions for your agent. Pass the issue URL and let the agent read it.
+</Warning>
+</Aside>
 
-1. **CI runs `send`** — Creates a Discord thread with your prompt
-2. **Running bot detects thread** — Automatically starts a session
-3. **Bot starts OpenCode session** — Uses the prompt from the thread
-4. **AI investigates** — Runs on your machine with full codebase access
+## Other commands that use the token
 
-Use `--notify-only` for notifications that don't need immediate AI response (e.g., subscription events). Reply to the thread later to start a session with the notification as context.
-
-## Add Project Channels
-
-Create Discord channels for a project directory without starting a session:
+`KIMAKI_BOT_TOKEN` also works without a local bot for these commands, which call Discord directly:
 
 ```bash
-# Add current directory as a project
-npx -y kimaki project add
+# Discord users, for mentions
+KIMAKI_BOT_TOKEN='...' npx -y kimaki@latest user list --guild <guild-id> --query tommy
 
-# Add a specific directory
-npx -y kimaki project add /path/to/project
-
-# Specify guild when bot is in multiple servers
-npx -y kimaki project add ./myproject --guild 123456789
-
-# In CI with env var for bot token
-KIMAKI_BOT_TOKEN=xxx npx -y kimaki project add --app-id 987654321
+# threads of a channel
+KIMAKI_BOT_TOKEN='...' npx -y kimaki@latest thread list --channel <channel-id>
 ```
 
-| Option | Description |
-|---|---|
-| `[directory]` | Project directory path (defaults to current directory) |
-| `-g, --guild <guildId>` | Discord guild/server ID (auto-detects if bot is in only one server) |
-| `-a, --app-id <appId>` | Bot application ID (reads from database if available) |
+To add a project channel, run `kimaki project add /path/to/project` on the machine that holds the folder. It needs that machine's Kimaki data directory.
 
-## Scheduled Tasks
+## Scheduled tasks
 
-Add `--send-at` to any `kimaki send` command to schedule it for later, using a one-time UTC ISO date or a recurring cron expression:
+Add `--send-at` to a `kimaki send` command to run it later. Use a one-time UTC ISO date or a recurring cron expression (UTC). Run it on the machine where the bot runs:
 
 ```bash
 # Recurring: every Monday at 9am UTC
@@ -129,33 +151,23 @@ kimaki send --channel <channel-id> \
   --send-at '0 9 * * 1'
 ```
 
-For the full scheduling workflow, including morning email digests, reminders, and recurring maintenance, see [Scheduled Tasks](../features/scheduled-tasks).
+For the full scheduling workflow, including `--pre-run`, `kimaki task list`, and `/tasks`, see [Scheduled Tasks](../features/scheduled-tasks).
 
-## Per-Session Permissions
+## Per-session permissions
 
-When starting sessions with `kimaki send`, you can restrict tools for that specific session using `--permission`. Useful for CI pipelines, scheduled tasks, or spawning sandboxed sessions.
+When you start a new session with `kimaki send`, you can restrict tools for that session with `--permission`. This is useful for CI pipelines, scheduled tasks, and sandboxed sessions.
 
-Format: `tool:action` or `tool:pattern:action`. Actions: `allow`, `deny`, `ask`.
+Format: `tool:action` or `tool:pattern:action`. Actions: `allow`, `deny`, `ask`. The tool names are OpenCode 2 permission names, for example `shell` and `edit`.
 
 ```bash
-# Read-only session (no edits, no bash)
+# No shell commands and no file edits
 kimaki send -c 123 -p 'Review this code' \
-  --permission 'bash:deny' \
+  --permission 'shell:deny' \
   --permission 'edit:deny'
 
-# Only allow git commands
-kimaki send -c 123 -p 'Check git history' \
-  --permission 'bash:git *:allow' \
-  --permission 'bash:*:deny'
-
-# Deny everything except reading
-kimaki send -c 123 -p 'Analyze the codebase' \
-  --permission '*:deny' \
-  --permission 'read:allow' \
-  --permission 'glob:allow' \
-  --permission 'grep:allow'
+# Ask before any rm command
+kimaki send -c 123 -p 'Clean up the build folder' \
+  --permission 'shell:rm *:ask'
 ```
 
-Rules are evaluated with `findLast()` — later rules override earlier ones. The `--permission` flag works with `--send-at` (scheduled tasks) and `--thread`/`--session` (existing threads) too.
-
-See the full [OpenCode Permissions documentation](https://opencode.ai/docs/permissions/) for all available permissions, granular pattern matching, and per-agent overrides.
+`--permission` works only for **new** sessions. It does not work with `--thread`, `--session`, or `--notify-only`. It works with `--send-at`.

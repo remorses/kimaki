@@ -1,78 +1,83 @@
 ---
 title: Shell Commands
-description: Prefix a Discord message with ! to run a shell command directly in the project directory.
+description: Prefix a Discord message with ! to run a shell command in the session's working directory.
 icon: lucide:square-chevron-right
 ---
 
-Prefix any Discord message with **`!`** to run it as a shell command in the project directory, no AI session involved. It's the fastest way to peek at state, run a quick script, or check git status.
+Prefix a Discord message with **`!`** to run it as a shell command. There is no model turn. It is the fastest way to check state, run a quick script, or see git status.
+
+```
+!git status
+```
 
 ## Using the `!` prefix
 
 ```diagram
-  "!git status" ──▶ strips "!" ──▶ runs in dir ──▶ output streams into one message
+  "!pnpm test" ──▶ OpenCode session shell ──▶ "-# $ pnpm test"
+                                                    │ command exits
+                                                    ▼
+                                           one output message
 ```
 
-Type a message starting with `!`. Kimaki strips the `!` and runs the rest as a shell command:
+Kimaki removes the `!` and runs the rest with OpenCode's native session shell. You see two bot messages:
 
-```
-!pnpm test
-```
+1. A start line when the command starts:
 
-The reply **streams** while the command runs. Kimaki edits the same message about once per second, so you see progress live:
+   ```
+   -# $ pnpm test
+   ```
 
-````
-```
- ✓ src/utils.test.ts (12 tests)
- ✓ src/cli.test.ts (8 tests)
-```
--# exit 0 ⋅ 4.2s
-````
+2. One output message when the command **ends**, with the last part of the output in a code block:
 
-- **stdout and stderr** are interleaved in the order the command prints them.
-- The last line is a small subtext footer: `running...` while it runs, then the **exit code** and duration.
-- Colors are stripped. Progress bars that redraw with `\r` show only their latest state.
-- When output grows past one Discord message, it continues in new messages (up to 5). Past that, the last message shows the **tail** of the output with a count of hidden lines.
-- Commands are killed after 10 minutes.
+   ````
+   ```
+    ✓ src/utils.test.ts (12 tests)
+    ✗ src/cli.test.ts (1 failed)
+   ```
+   -# exit 1
+   ````
 
-## Show the result to the agent
+Details:
 
-Shell commands do **not** add anything to the session. The agent sees the output only if you **reply** to the output message, for example `fix this`.
+- The output is not live. Kimaki posts it once, after the command exits.
+- Long output is cut to the **last ~1800 characters** and marked `output truncated`.
+- The status line shows `exit N` for a non-zero exit code, `killed`, or `timed out`. A successful command has no status line.
+- Empty output shows `(no output)`.
 
-## Queue a command after the current run
+## The agent sees the output
 
-Add the [queue suffix](./queue) to run the command **after** the agent's current turn and any earlier queued messages:
+The command and its output become part of the **session history**. The agent does not reply to it, but it sees the output on its next turn. So you can run `!pnpm test`, then send `fix the failing test`.
 
-```
-!pnpm test --run. queue
-```
+## It does not interrupt
 
-It waits in the queue like a normal message, with the same Remove button. When its turn comes, the output streams as a reply to your message and the queue continues. `/queue !pnpm build` works too.
+A `!` command runs **next to** the current run. It does not stop the agent. Its output joins the context at the next step.
 
-## Shell command buttons
+Shell commands **cannot be queued**. `!pnpm test. queue` runs the literal command `pnpm test. queue`.
 
-The agent can show **action buttons** that run a shell command, for example a **Build** button that runs `pnpm build`. The message above the buttons shows each command, so you see what runs before you click. Clicking one runs the command at once, the same as sending `!pnpm build` yourself. There is no model turn between the click and the output, so the feedback loop is fast.
+## Stopping a command
+
+The command runs until it exits. **`/abort`** stops the current run and also kills the thread's running `!` commands.
+
+Long-running servers block until they exit. For a dev server you want to open remotely, use [Tunnels](../remote-access/tunnels) instead.
 
 ## Where it runs
 
-- **In a thread** with a [worktree](../features/worktrees) that is ready, the command runs in the **worktree directory**.
-- **Otherwise** it runs in the channel's **project directory**.
+The command runs in the **session's working directory**. That is the [worktree](../features/worktrees) when the session uses one, or the folder set with `/cwd`. Otherwise it is the project folder. So `!` commands run in the same place the agent works.
 
-This means `!` commands always run in the same place the agent is working.
+A `!` message in a **project channel** starts a new thread and session, then runs the command there.
 
-<Aside>
-<Note>
-While a worktree is still being created, `!` commands are skipped so they don't accidentally run in the base directory.
-</Note>
-</Aside>
+## Shell command buttons
 
-## The slash command equivalent
+The agent can show **action buttons** that run a shell command, for example a **Build** button that runs `pnpm build`. The message with the buttons lists each command, so you see what runs before you click. A click runs the command like `!pnpm build`, with no model turn in between.
 
-`/run-shell-command <command>` does exactly the same thing as the `!` prefix. The `!` prefix is just a shortcut.
+## From the CLI
+
+```bash
+kimaki session shell 'git status' --session <session-id>
+```
 
 ## What it's good for
 
-- **`!git status`**, **`!git log --oneline -5`** — quick git checks.
-- **`!ls`**, **`!cat package.json`** — inspect files without spending an agent turn.
-- **`!pnpm test`** — kick off a one-off command directly.
-
-For long-running servers you want to view remotely, use [Tunnels](../remote-access/tunnels) instead.
+- **`!git status`**, **`!git log --oneline -5`**: quick git checks.
+- **`!ls`**, **`!cat package.json`**: inspect files without an agent turn.
+- **`!pnpm test`**: start a one-off command and give the result to the agent.

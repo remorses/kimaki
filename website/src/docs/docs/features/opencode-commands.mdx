@@ -1,55 +1,85 @@
 ---
 title: OpenCode Commands
-description: Your OpenCode commands, skills, and MCP prompts become Discord slash commands automatically.
+description: Your OpenCode agents, commands, and skills become Discord slash commands automatically.
 icon: lucide:terminal-square
 ---
 
-Kimaki registers your project's **OpenCode commands, skills, and MCP prompts** as Discord slash commands. Anything you can invoke in OpenCode, you can invoke from Discord.
+Kimaki registers your projects' **OpenCode agents, commands, and skills** as Discord slash commands. What you can start in OpenCode, you can start from Discord.
+
+```
+/review-cmd arguments: the auth module
+```
 
 ## How names map
 
-Kimaki adds a suffix so each kind of command is distinct and avoids colliding with Kimaki's own commands:
+Kimaki adds a suffix to each name, so the kinds stay apart and do not collide with Kimaki's own commands:
 
 ```diagram
-  OpenCode command "deploy"     ──▶ /deploy-cmd
-  skill "analysis"              ──▶ /analysis-skill
-  MCP prompt "git-commit"       ──▶ /git-commit-mcp-prompt
+  primary agent "plan"      ──▶ /plan-agent
+  OpenCode command "review" ──▶ /review-cmd
+  skill "analysis"          ──▶ /analysis-skill
 ```
 
-| Source         | Suffix          | Example slash command   |
-|----------------|-----------------|-------------------------|
-| Command        | `-cmd`          | `/deploy-cmd`           |
-| Skill          | `-skill`        | `/analysis-skill`       |
-| MCP prompt     | `-mcp-prompt`   | `/git-commit-mcp-prompt`|
+| Source        | Suffix   | Example           | Options                 |
+| ------------- | -------- | ----------------- | ----------------------- |
+| Primary agent | `-agent` | `/plan-agent`     | `prompt`, `variant`     |
+| Command       | `-cmd`   | `/review-cmd`     | `arguments`             |
+| Skill         | `-skill` | `/analysis-skill` | `arguments`             |
 
-Names are lowercased and sanitized to fit Discord's 32-character limit, with the suffix preserved. The reserved `init` command is never registered.
+Names are lowercased and cut to fit Discord's 32-character limit. The suffix always stays. Subagents, hidden agents, and the built-in `init` command get no slash command.
 
-## Passing arguments
+Kimaki reads the agents, commands, and skills of every project channel in the server. If two projects have the same name, the first one wins.
 
-Each generated slash command takes an optional **`arguments`** field, passed through to the underlying OpenCode command:
+## Running them
+
+- **`/<name>-cmd arguments:...`** runs the OpenCode command with the arguments.
+- **`/<name>-skill arguments:...`** sends the arguments as a prompt with that skill attached.
+- **`/<name>-agent`** without a prompt switches the agent. With `prompt:...` it sends the prompt with that agent. `variant:` picks a thinking level for the current model.
+
+In a project channel, the command starts a new thread. In a thread, it continues that session. Like a normal message, it **interrupts** the current run.
+
+## MCP prompts
+
+OpenCode names MCP prompts `server:prompt`. Names with a colon get **no slash command**. Type them as a message instead:
 
 ```
-/deploy-cmd arguments: --staging
+/github:review-pr 123
 ```
 
-Run in a project channel, the command starts a new thread; run in a thread, it continues that session.
+## Typing a command as a message
 
-## Triggering commands programmatically
+A message that starts with `/name` runs the OpenCode command when the project has it. Otherwise the text goes to the agent as a normal prompt.
 
-You can also invoke a registered command through `kimaki send` by starting the prompt with `/commandname`:
+```
+/review fix the auth module
+```
+
+Add the [queue suffix](./queue) to run the command after the current run: `/review the auth module. queue`. Or use **`/queue-command`**, which autocompletes the project's commands.
+
+## Triggering commands from the CLI
+
+`kimaki send` accepts the same `/name args` prompt:
 
 ```bash
 kimaki send --thread <thread-id> --prompt '/review fix the auth module'
 ```
 
-If the name matches a registered command it runs as that command; otherwise the prompt is sent as plain text. See [CI & Automation](../guides/ci-automation) for more on `kimaki send`.
+`kimaki session command` runs a command, skill, or MCP prompt in a session. Add `--queue` to run it after the current turn:
+
+```bash
+kimaki session command review the auth module --session <session-id> --queue
+```
+
+See [CI & Automation](../guides/ci-automation) for more on `kimaki send`.
 
 ## Refreshing the command list
 
-After adding or changing OpenCode commands, skills, or MCP servers, **restart Kimaki** so it re-registers the Discord slash commands. The `/restart-opencode-server` command also re-registers commands without a full restart.
+Kimaki updates the slash commands **automatically** when OpenCode reports a change to agents, commands, or skills. You do not need to restart. Discord can take a moment to show the new list.
+
+Discord allows **100 commands** per server. When there are more, Kimaki leaves out skills first.
 
 <Aside>
 <Tip>
-Skills you add to a project show up as `/<name>-skill`, so you can trigger a whole skill workflow from a single Discord command.
+Skills you add to a project show up as `/<name>-skill`, so you can start a whole skill workflow from one Discord command.
 </Tip>
 </Aside>

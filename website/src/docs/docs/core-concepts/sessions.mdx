@@ -1,32 +1,40 @@
 ---
 title: Managing Sessions
-description: Resume, fork, share, undo, compact, and inspect your coding sessions from Discord.
+description: Resume, fork, undo, compact, and inspect your coding sessions from Discord and the kimaki CLI.
 icon: lucide:history
 ---
 
-Every thread is a session, and Kimaki gives you a full set of commands to manage their lifecycle: pick up old ones, branch off, share, and clean up context.
+Every thread is a session, and Kimaki gives you commands to manage its lifecycle: pick up old sessions, branch off, and keep the context healthy.
 
 ## Resuming and starting
 
 ```diagram
-/resume <session> ──▶ continue a past session (autocomplete lists recent)
-/new-session      ──▶ start a fresh session with a prompt, files, and agent
-/last-sessions    ──▶ list the 20 most recently active sessions
+/resume <session> ──▶ move a session of this project into a new thread (autocomplete)
+/new-session      ──▶ start a fresh session with a prompt, optional files and agent
 ```
 
-- **`/resume <session>`** — reopen any earlier session; autocomplete suggests recent ones.
-- **`/new-session`** — start a new session, optionally with mentioned files and a chosen agent.
-- **`/last-sessions`** — a quick cross-project list of what you were last working on. Titles prefixed **`btw:`** are [side-question forks](../features/btw.mdx). They answer a related question in parallel and are not duplicate sessions.
+- **`/resume <session>`**: run it in a project channel. Autocomplete lists the project's sessions, newest first, including sessions started in the OpenCode TUI. Kimaki creates a `Resume: <title>` thread, posts recent history, and streams new output there. A session has one thread: older threads of that session stop following it.
+- **`/new-session prompt:<text>`**: start a session in a new thread. `files:` attaches project files (comma separated, autocomplete), `agent:` picks the agent.
 
-The CLI equivalent is **`kimaki session list --active`**.
+From the terminal:
+
+```bash
+kimaki session list                 # sessions of the current project, with status and tokens
+kimaki session list --all --active  # busy sessions of every project
+kimaki session search "auth bug"    # titles first, then message content (last 14 days)
+kimaki session resume <sessionId>   # same as /resume
+kimaki session read <sessionId>     # print the conversation as markdown
+```
 
 ## Forking
 
-Forking branches a session so you can explore without disturbing the original.
+Forking copies a session so you can explore without disturbing the original.
 
-- **`/fork`** — fork from a chosen earlier message and continue from that point.
-- **`/fork-subagent`** — pull a subagent's task out into its own thread to continue it directly.
-- **[`/btw`](../features/btw)** — fork the whole context into a new thread to answer a side question in parallel.
+- **`/fork`**: pick one of your earlier messages. The fork continues as if you had not sent that message.
+- **`/fork-subagent`**: pick a subagent session of this thread and continue it in its own thread.
+- **[`/btw`](../features/btw)**: fork the whole context into a `btw:` thread to answer a side question while the original keeps running.
+
+The CLI equivalent is `kimaki session fork [id]`, with `--before <messageId>` to fork before a message.
 
 <Aside>
 <Tip>
@@ -34,26 +42,30 @@ Use `/fork` to try an alternative approach from a known-good point. The original
 </Tip>
 </Aside>
 
-## Sharing and identifying
+## Identifying and sharing
 
-- **`/share`** — generate a **public URL** for the session so anyone with the link can read it.
-- **`/session-id`** — show the session ID and an `opencode` command to attach to it from your terminal.
-- **[`/diff`](../features/diff-viewer)** — share the current changes as a diff URL.
+- **`/session-id`**: show the session ID, the thread ID, and a command to open the session in the OpenCode TUI, like `opencode2 /code/web-app --session ses_...`.
+- **[`/diff`](../features/diff-viewer)**: share the current git changes as a diff URL.
+- **`kimaki session url <id>`**: print the Discord URL of a session's thread.
 
-To export the session event stream and file a Kimaki bug, see [Debug sessions and report bugs](../guides/report-bugs.mdx).
+To read the session's recorded events and file a Kimaki bug, see [Debug sessions and report bugs](../guides/report-bugs).
 
 ## Context management
 
 Long sessions fill the model's context window. Keep them healthy:
 
-- **`/context-usage`** — show token usage and the percentage of the context window used.
-- **`/compact`** — summarize the conversation so far to free up context while keeping the gist.
+- **`/context-usage`**: show the tokens used, the percentage of the context window, the model, and the session cost.
+- **`/compact`**: summarize the conversation so far to free up context. Kimaki posts `-# ⬦ context compacted` when it is done.
 
-Kimaki also shows context usage automatically in the thread at roughly 10% increments (prefixed `-# `), and at the end of each assistant turn in a footer like `-# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus*`.
+The footer at the end of every finished turn also shows the context percentage:
+
+```
+-# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*
+```
 
 ## Undo and redo
 
-- **`/undo`** — revert the last assistant message, including the file changes it made.
-- **`/redo`** — reapply the last undone message.
+- **`/undo`**: remove the last turn from the session. Run it again to go one more turn back. **File changes are kept**; revert them with git if you need to.
+- **`/redo`**: bring back the turn you undid, one step at a time.
 
-These let you back out a change the agent made without manually reverting files.
+Both stop the current run first.

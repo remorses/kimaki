@@ -1,32 +1,40 @@
 ---
 title: MCP Servers
-description: List and toggle Model Context Protocol servers for a project, straight from Discord.
+description: MCP servers come from your OpenCode config. Manage them with the opencode CLI; run their prompts from Discord.
 icon: lucide:plug-2
 ---
 
-The **`/mcp`** command lets you list and toggle **MCP (Model Context Protocol) servers** for the current project without touching config files. MCP servers give the agent extra tools and data sources.
+Kimaki uses the **MCP (Model Context Protocol) servers** of your OpenCode config. There is no Kimaki-specific MCP setup: a server you add for OpenCode is available in every Kimaki session too.
 
-## Using it
-
-Run **`/mcp`** in a project channel. Kimaki shows the configured servers and their status, with a menu to connect or disconnect each one.
-
-```diagram
-   /mcp ──▶ list configured MCP servers ──▶ pick one ──▶ connect / disconnect
+```bash
+opencode mcp list     # configured servers and their status
+opencode mcp add      # add a server
+opencode mcp auth     # log in to a server that uses OAuth
 ```
 
-- **Connect** — start the server so its tools become available to the agent.
-- **Disconnect** — stop it; its tools are removed.
-
-## Project-scoped, no extra storage
-
-MCP state is **project-scoped** (per channel), not per thread or session. The state lives in **OpenCode's own config**, so toggling from Discord changes the same configuration OpenCode uses everywhere. There's no separate Kimaki database for it.
+Kimaki and the OpenCode CLI use the same OpenCode service, so a change shows up in Discord without a Kimaki restart.
 
 <Aside>
 <Note>
-MCP servers are configured in your OpenCode config. The `/mcp` command manages the ones already defined there; add new servers in your `opencode.json`.
+Kimaki V2 has no `/mcp` slash command. Use the `opencode mcp` commands above, or edit the `mcp` section of your `opencode.json`.
 </Note>
 </Aside>
 
-## MCP prompts as slash commands
+## MCP tools in a thread
 
-If an MCP server exposes **prompts**, Kimaki registers them as Discord slash commands with the `-mcp-prompt` suffix (for example `/git-commit-mcp-prompt`). See [OpenCode Commands](../features/opencode-commands) for how commands, skills, and MCP prompts map to slash commands.
+MCP tool calls appear in the thread like other tools: a `-# ┣ <tool name>` line. They are hidden at the `text` [verbosity](../configuration/verbosity).
+
+## MCP prompts
+
+OpenCode names MCP prompts `server:prompt`. Because of the colon they get **no slash command** in Discord. Run them in one of these ways:
+
+```
+/github:review-pr 123                            ← send as a normal message in a thread
+/queue-command command:github:review-pr arguments:123   ← run after the current turn
+```
+
+```bash
+kimaki session command github:review-pr 123      # from the terminal
+```
+
+See [OpenCode Commands](../features/opencode-commands) for how commands, skills, and MCP prompts map to slash commands.
