@@ -4,8 +4,8 @@
 //   audio ─▶ OpenAI gpt-audio (OGG/M4A converted to WAV) or Gemini (raw audio)
 //        ─▶ tool call { transcription, route, agent? } ─▶ parseVoiceMessage ─▶ Route
 //
-// Key order (V1): bot_api_keys OpenAI, then Gemini, then OPENAI_API_KEY /
-// GEMINI_API_KEY. Gateway installs without a key use the free kimaki.dev
+// Key order: OpenAI (bot_api_keys, then OPENAI_API_KEY), then Gemini
+// (bot_api_keys, then GEMINI_API_KEY). Gateway installs without a key use the free kimaki.dev
 // Whisper endpoint, which has no tool call: the route is always steer.
 // Plain fetch, no AI SDK: we parse provider bodies ourselves so transient
 // bad responses keep their details and can be retried.
@@ -446,13 +446,14 @@ async function projectFileTree(directory: string): Promise<string> {
 
 export type TranscriptionBaseUrls = { openai?: string; gemini?: string }
 
-// Usable audio API keys, best first: stored keys, then env, each in V1 order (OpenAI, then Gemini).
+// Usable audio API keys, best first: any OpenAI key (stored, then env) before any Gemini key.
+// Gemini's content filter blocks harmless voice messages, so a stored Gemini key must not win over env OpenAI.
 // Callers choose the bot_api_keys row: transcription by bot token, `kimaki tts` any row.
 export function audioKeyCandidates(stored: { openai_api_key: string | null; gemini_api_key: string | null } | null | undefined) {
   const candidates = [
     { provider: 'openai' as const, apiKey: stored?.openai_api_key },
-    { provider: 'gemini' as const, apiKey: stored?.gemini_api_key },
     { provider: 'openai' as const, apiKey: process.env['OPENAI_API_KEY'] },
+    { provider: 'gemini' as const, apiKey: stored?.gemini_api_key },
     { provider: 'gemini' as const, apiKey: process.env['GEMINI_API_KEY'] },
   ]
   return candidates.flatMap(({ provider, apiKey }) => (apiKey ? [{ provider, apiKey }] : []))
