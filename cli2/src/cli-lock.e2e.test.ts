@@ -347,6 +347,16 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -f, --follow                    Print the log and keep printing new lines
 
+      restart                           Restart the running bot with the code on disk. Sessions keep running in OpenCode
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+
+      profile cpu                       Record a CPU profile of the running bot and print the .cpuprofile path
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+        -d, --duration <duration>       How long to record, e.g. 20s or 2m (default: 20s)
+
+      profile heap                      Write a heap snapshot of the running bot and print the .heapsnapshot path
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+
       bot token                         Print saved bot credentials for automation
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
@@ -473,3 +483,32 @@ test('status reports the running bot, logs prints and follows the log file', asy
   await waitFor({ label: 'followed log line', check: async () => output.text.includes('follow-marker-line') })
   follow.kill()
 })
+
+test('profile cpu and profile heap write owner-only files; restart needs the supervisor', async () => {
+  const cpu = (await cli(['profile', 'cpu', '--duration', '200ms'])).stdout.trim()
+  const heap = (await cli(['profile', 'heap'])).stdout.trim()
+  const profile = JSON.parse(fs.readFileSync(cpu, 'utf8')) as { nodes: unknown[] }
+  expect({
+    cpu: path.relative(dataDir, cpu).replace(/cpu-.*/, 'cpu-<time>.cpuprofile'),
+    heap: path.relative(dataDir, heap).replace(/heap-.*/, 'heap-<time>.heapsnapshot'),
+    cpuMode: (fs.statSync(cpu).mode & 0o777).toString(8),
+    heapMode: (fs.statSync(heap).mode & 0o777).toString(8),
+    hasNodes: profile.nodes.length > 0,
+  }).toMatchInlineSnapshot(`
+    {
+      "cpu": "profiles/cpu-<time>.cpuprofile",
+      "cpuMode": "600",
+      "hasNodes": true,
+      "heap": "profiles/heap-<time>.heapsnapshot",
+      "heapMode": "600",
+    }
+  `)
+  // The test bot runs in-process, not under the `kimaki` supervisor.
+  const restart = await cli(['restart']).catch((error: { code: number; stderr: string }) => error)
+  expect('code' in restart ? { code: restart.code, stderr: restart.stderr.trim() } : restart).toMatchInlineSnapshot(`
+    {
+      "code": 1,
+      "stderr": "This bot was not started by the \`kimaki\` command, so nothing would start it again. Stop it and start it yourself.",
+    }
+  `)
+}, 60_000)

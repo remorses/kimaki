@@ -2,6 +2,7 @@
 // login, tools (tunnel, tts), and bot status, logs, credentials and keys.
 // main.ts, onboarding.ts and traforo are loaded only by the commands that run them.
 
+import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -11,7 +12,8 @@ import type { Goke } from 'goke'
 import { createAnalytics } from '../analytics.ts'
 import { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl } from '../credentials.ts'
 import { openDb } from '../db.ts'
-import { callBot, DEFAULT_LOCK_PORT } from '../lock-server.ts'
+import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE } from '../lock-server.ts'
+import { parseDuration } from '../duration.ts'
 import { createLogger } from '../logger.ts'
 import { opencodeConfigDir } from '../opencode-server.ts'
 import { defaultMachineName } from '../project.ts'
@@ -51,6 +53,39 @@ async function followFile(file: string): Promise<never> {
   }
 }
 
+// The root command runs the bot in a child process and starts it again when it
+// exits with RESTART_EXIT_CODE (`kimaki restart`), so a restart loads new code:
+//
+//   kimaki (supervisor) ──spawn, same argv, KIMAKI_SUPERVISED=1──▶ bot
+//        ▲                                                         │
+//        └──────────── exit 75: spawn again; other code: exit ─────┘
+//
+// The child shares the terminal (stdio inherit), so onboarding prompts work.
+// The IPC channel only exists so the child sees `disconnect` if the supervisor dies.
+async function supervise(): Promise<never> {
+  const state: { child: ChildProcess | null } = { child: null }
+  // Ctrl+C reaches both processes; `kill <supervisor pid>` reaches only this one.
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.on(signal, () => state.child?.kill('SIGTERM'))
+  }
+  while (true) {
+    const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+      stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+      env: { ...process.env, KIMAKI_SUPERVISED: '1' },
+    })
+    state.child = child
+    const code = await new Promise<number>((resolve) => {
+      child.once('error', (error) => {
+        process.stderr.write(`Cannot start the kimaki bot process: ${error.message}\n`)
+        resolve(1)
+      })
+      child.once('exit', (exitCode, signal) => resolve(exitCode ?? (signal ? 1 : 0)))
+    })
+    if (code !== RESTART_EXIT_CODE) process.exit(code)
+    process.stderr.write('Restarting kimaki...\n')
+  }
+}
+
 // `kimaki2` with no subcommand.
 export function registerStartCommand(cli: Goke) {
   cli.command('', 'Start the bot. Runs onboarding on first start')
@@ -64,6 +99,7 @@ export function registerStartCommand(cli: Goke) {
     .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
     .action(async (options) => {
+      if (process.env['KIMAKI_SUPERVISED'] !== '1') return supervise()
       // Bot code loads only here: the other subcommands start without it.
       const [{ startBot }, { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate }] = await Promise.all([import('../main.ts'), import('../onboarding.ts')])
       const dataDir = dataDirOrDefault(options.dataDir)
@@ -115,11 +151,14 @@ export function registerStartCommand(cli: Goke) {
         autoWorktrees: Boolean(options.worktrees),
       })
       if (bot instanceof Error) failStartup(bot)
+      // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
       const shutdown = () => {
-        void bot.stop().then(() => process.exit(0))
+        void bot.stop().then(() => process.exit())
       }
       process.once('SIGTERM', shutdown)
       process.once('SIGINT', shutdown)
+      // The supervisor died (SIGKILL, crash): nobody owns this bot anymore.
+      process.once('disconnect', shutdown)
 
       const gateway = credentials.mode === 'gateway'
       const guild = await chooseGuild({ discord: bot.discord, guildId: options.guild ?? install?.guildId, installUrl, gateway })
@@ -241,6 +280,39 @@ export function registerBotCommands(cli: Goke) {
         return
       }
       await followFile(file)
+    })
+
+  cli.command('restart', 'Restart the running bot with the code on disk. Sessions keep running in OpenCode')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .action(async (options) => {
+      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'restart', input: {} })
+      if (result instanceof Error) fail(result)
+      process.stdout.write(`Restarting bot (pid ${result.data.pid})\n`)
+    })
+
+  cli.command('profile cpu', 'Record a CPU profile of the running bot and print the .cpuprofile path')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .option('-d, --duration <duration>', 'How long to record, e.g. 20s or 2m (default: 20s)')
+    .example('kimaki2 profile cpu --duration 30s')
+    .action(async (options) => {
+      const durationMs = parseDuration(options.duration ?? '20s', '--duration')
+      if (durationMs instanceof Error) fail(durationMs)
+      // Ctrl+C stops the recording early; the bot still writes the profile.
+      const controller = new AbortController()
+      process.once('SIGINT', () => controller.abort())
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(durationMs + 30_000)])
+      process.stderr.write(`Recording for ${options.duration ?? '20s'}. Press Ctrl+C to stop early.\n`)
+      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'profile.cpu', input: { durationMs }, signal })
+      if (result instanceof Error) fail(controller.signal.aborted ? new Error('Stopped early. The bot writes the profile to <data dir>/profiles/') : result)
+      process.stdout.write(`${result.data.path}\n`)
+    })
+
+  cli.command('profile heap', 'Write a heap snapshot of the running bot and print the .heapsnapshot path')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .action(async (options) => {
+      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'profile.heap', input: {}, signal: AbortSignal.timeout(300_000) })
+      if (result instanceof Error) fail(result)
+      process.stdout.write(`${result.data.path}\n`)
     })
 
   cli.command('bot token', 'Print saved bot credentials for automation')

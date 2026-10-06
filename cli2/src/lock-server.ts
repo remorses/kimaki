@@ -15,6 +15,9 @@ const logger = createLogger('LOCK')
 
 export const DEFAULT_LOCK_PORT = 29988
 
+// Exit code that tells the supervisor of the root `kimaki` command (cli/bot.ts) to start the bot again.
+export const RESTART_EXIT_CODE = 75
+
 export async function installShim({ dataDir, command }: { dataDir: string; command: string }): Promise<ConfigError | void> {
   const directory = path.join(dataDir, 'bin')
   const created = await fs.promises.mkdir(directory, { recursive: true }).catch((cause) => new ConfigError({ reason: 'Cannot create Kimaki shim directory', cause }))

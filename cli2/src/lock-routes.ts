@@ -3,7 +3,12 @@
 //   ─▶ zod input schema ─▶ run(bot, input, signal) ─▶ JSON { data } or { error }
 // The CLI imports only types from here, so it never loads bot code for the table.
 
+import fs from 'node:fs'
+import inspector from 'node:inspector/promises'
 import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+import v8 from 'node:v8'
+import * as errore from 'errore'
 import * as orm from 'drizzle-orm'
 import { z } from 'zod'
 
@@ -12,7 +17,8 @@ import { fetchThread, oc, parseModel, projectOf, type Bot } from './bot.ts'
 import { credential, loginCli } from './commands/login-commands.ts'
 import { setChannelAgent, setChannelModel, setVerbosity } from './commands/preference-commands.ts'
 import { channelWorktrees, manageWorktree, newWorktree, setAutoWorktrees } from './commands/worktree-commands.ts'
-import { ConfigError, DbError, DiscordError, OpenCodeUnavailableError } from './errors.ts'
+import { ConfigError, DbError, DiscordError, FilesystemError, OpenCodeUnavailableError } from './errors.ts'
+import { RESTART_EXIT_CODE } from './lock-server.ts'
 import { abort, cancelQueuedPrompt, clearQueue, send, shell, upload } from './prompt.ts'
 import { createTask, deleteTask, editTask, runTaskNow } from './scheduler.ts'
 import * as schema from './schema.ts'
@@ -196,6 +202,53 @@ const buttonSpec = z.string().transform((value, ctx) => {
   return parsed
 })
 
+// --- Process control: `kimaki restart`, `kimaki profile cpu|heap`.
+
+// Snapshots can hold the bot token: owner-only files.
+async function profileFile({ dataDir, name }: { dataDir: string; name: string }): Promise<FilesystemError | string> {
+  const directory = path.join(dataDir, 'profiles')
+  const created = await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 })
+    .catch((cause) => new FilesystemError({ operation: `mkdir ${directory}`, cause }))
+  if (created instanceof Error) return created
+  return path.join(directory, `${name}-${new Date().toISOString().replace(/[:.]/g, '-')}`)
+}
+
+// One CPU profile at a time: the inspector has one profiler per process.
+const cpuProfile: { running: boolean } = { running: false }
+
+// Profiles for `durationMs`, or until the CLI disconnects, then writes a .cpuprofile.
+async function profileCpu({ dataDir, durationMs, signal }: { dataDir: string; durationMs: number; signal: AbortSignal }) {
+  if (cpuProfile.running) return new ConfigError({ reason: 'A CPU profile is already running. Wait for it to finish.' })
+  cpuProfile.running = true
+  const session = new inspector.Session()
+  session.connect()
+  const result = await (async () => {
+    await session.post('Profiler.enable')
+    await session.post('Profiler.start')
+    await sleep(durationMs, undefined, { signal }).catch(() => undefined)
+    const { profile } = await session.post('Profiler.stop')
+    const file = await profileFile({ dataDir, name: 'cpu' })
+    if (file instanceof Error) return file
+    const target = `${file}.cpuprofile`
+    return fs.promises.writeFile(target, JSON.stringify(profile), { mode: 0o600 })
+      .then(() => ({ path: target }), (cause: Error) => new FilesystemError({ operation: `write ${target}`, cause }))
+  })().catch((cause: Error) => new FilesystemError({ operation: 'cpu profile', cause }))
+  session.disconnect()
+  cpuProfile.running = false
+  return result
+}
+
+async function snapshotHeap({ dataDir }: { dataDir: string }) {
+  const file = await profileFile({ dataDir, name: 'heap' })
+  if (file instanceof Error) return file
+  // Blocks the event loop for seconds on a large heap; that is the cost of a snapshot.
+  const written = errore.try(() => v8.writeHeapSnapshot(`${file}.heapsnapshot`), (cause) => new FilesystemError({ operation: 'write heap snapshot', cause }))
+  if (written instanceof Error) return written
+  const chmod = await fs.promises.chmod(written, 0o600).catch((cause) => new FilesystemError({ operation: `chmod ${written}`, cause }))
+  if (chmod instanceof Error) return chmod
+  return { path: written }
+}
+
 const loginField = z.string({ error: 'Login fields must be non-empty strings' }).min(1, { error: 'Login fields must be non-empty strings' }).optional()
 
 export const lockRoutes = {
@@ -228,14 +281,38 @@ export const lockRoutes = {
       }
     },
   }),
+  restart: route({
+    input: z.object({}),
+    run: async () => {
+      if (process.env['KIMAKI_SUPERVISED'] !== '1') {
+        return new ConfigError({ reason: 'This bot was not started by the `kimaki` command, so nothing would start it again. Stop it and start it yourself.' })
+      }
+      // After the response: the SIGTERM handler stops the bot and exits with this code.
+      process.exitCode = RESTART_EXIT_CODE
+      setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
+      return { restarting: true, pid: process.pid }
+    },
+  }),
+  'profile.cpu': route({
+    input: z.object({ durationMs: z.number({ error: 'durationMs must be a number' }).int().min(100).max(600_000, { error: 'A CPU profile can run at most 10 minutes' }) }),
+    run: async (bot, input, signal) => profileCpu({ dataDir: bot.dataDir, durationMs: input.durationMs, signal }),
+  }),
+  'profile.heap': route({
+    input: z.object({}),
+    run: async (bot) => snapshotHeap({ dataDir: bot.dataDir }),
+  }),
   sleep: route({
     input: z.object({
-      sessionId: z.string({ error: 'Use --session or run kimaki sleep inside an OpenCode session' }).min(1, { error: 'Use --session or run kimaki sleep inside an OpenCode session' }),
+      ...sessionTarget,
       duration: z.string({ error: 'Sleep fields must be strings' }).optional(),
       until: z.string({ error: 'Sleep fields must be strings' }).optional(),
       reason: z.string({ error: 'Sleep fields must be strings' }).optional(),
     }, { error: 'Expected a sleep object' }),
-    run: async (bot, input) => createSleep(bot, input),
+    run: async (bot, { threadId, ...input }) => {
+      const sessionId = sessionOf(bot, { ...input, threadId })
+      if (sessionId instanceof Error) return sessionId
+      return createSleep(bot, { ...input, sessionId })
+    },
   }),
   'task.edit': route({
     input: z.object({

@@ -101,6 +101,7 @@ export function baseInstructions({
       ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Kimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
       If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${dataDir}/kimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
       \`kimaki session events <id>\` prints the recorded OpenCode events of a thread as JSONL.
+      \`kimaki restart\` restarts the bot (only when the user asks). \`kimaki profile cpu --duration 30s\` and \`kimaki profile heap\` print the profile file path.
 
       ## uploading files to discord
 

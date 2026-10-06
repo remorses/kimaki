@@ -4,11 +4,12 @@
 // OAuth callback, authorizes the new client in the twin, which plays
 // gateway-proxy (REST scope rules enforced).
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import { createApi } from './project.ts'
@@ -26,6 +27,7 @@ import {
   type TestTwin,
 } from './test/harness.ts'
 
+const execFileAsync = promisify(execFile)
 let server: OpencodeTestServer
 let twin: TestTwin
 let website: http.Server
@@ -90,6 +92,7 @@ function sseEvents(stdout: string): Array<Record<string, unknown>> {
 test('kimaki --gateway without a TTY installs, onboards and reports ready on stdout', async () => {
   const require = createRequire(import.meta.url)
   const proxy = new URL('/', twin.discord.restUrl).toString()
+  const lockPort = await freePort()
   child = spawn(
     process.execPath,
     ['--import', require.resolve('tsx'), path.resolve('src/cli.ts'), '--data-dir', dataDir, '--gateway', '--machine-name', 'test-machine'],
@@ -98,7 +101,7 @@ test('kimaki --gateway without a TTY installs, onboards and reports ready on std
         ...process.env,
         KIMAKI_WEBSITE_URL: websiteUrl,
         KIMAKI_GATEWAY_PROXY_URL: proxy,
-        KIMAKI_LOCK_PORT: String(await freePort()),
+        KIMAKI_LOCK_PORT: String(lockPort),
         KIMAKI_OPENCODE_SERVICE_FILE: server.serviceFile,
         OPENCODE_CONFIG_DIR: server.configDir,
       },
@@ -167,7 +170,20 @@ test('kimaki --gateway without a TTY installs, onboards and reports ready on std
     Want channels for your projects?
     -# *kimaki ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
-}, 30_000)
+
+  // `kimaki restart`: the supervisor starts a new bot process, which reports ready again.
+  const cli = (args: string[]) => execFileAsync(process.execPath, ['--import', require.resolve('tsx'), path.resolve('src/cli.ts'), ...args, '--data-dir', dataDir], {
+    env: { ...process.env, KIMAKI_LOCK_PORT: String(lockPort) },
+  })
+  const before = JSON.parse((await cli(['status', '--json'])).stdout) as { pid: number }
+  await cli(['restart'])
+  await waitFor({
+    label: `second ready event (stderr: ${output.stderr.slice(-500)})`,
+    check: async () => sseEvents(output.stdout).filter((event) => event['type'] === 'ready').length === 2,
+  })
+  const after = JSON.parse((await cli(['status', '--json'])).stdout) as { pid: number }
+  expect({ newPid: after.pid !== before.pid, supervisorAlive: child.exitCode === null }).toEqual({ newPid: true, supervisorAlive: true })
+}, 40_000)
 
 test('--install-url --gateway prints the install URL with the callback and exits', async () => {
   const otherDataDir = tempDataDir()
