@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': patch
+'kimaki': patch
 ---
 
 Show what OpenCode 2 Code Mode `execute` calls do in Discord. Before, every call showed only `┣ execute`, so tools like `opencode.session_move`, `opencode.models` and MCP tools were not visible.

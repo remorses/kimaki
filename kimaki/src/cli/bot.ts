@@ -75,7 +75,7 @@ async function supervise(): Promise<never> {
   }
 }
 
-// `kimaki2` with no subcommand.
+// `kimaki` with no subcommand.
 export function registerStartCommand(cli: Goke) {
   cli.command('', 'Start the bot. Runs onboarding on first start')
     .option('--data-dir <path>', DATA_DIR_HELP)
@@ -145,7 +145,7 @@ export function registerStartCommand(cli: Goke) {
       const installUrl = installUrlFor({ credentials, website: urls.website, callbackUrl: options.gatewayCallbackUrl })
       // The agent calls this same install: same node, loader flags and script.
       const kimaki = kimakiShellCommand({
-        command: [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki2'],
+        command: [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki'],
         dataDir,
       })
 
@@ -305,7 +305,7 @@ export function registerBotCommands(cli: Goke) {
   cli.command('profile cpu', 'Record a CPU profile of the running bot and print the .cpuprofile path')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-d, --duration <duration>', 'How long to record, e.g. 20s or 2m (default: 20s)')
-    .example('kimaki2 profile cpu --duration 30s')
+    .example('kimaki profile cpu --duration 30s')
     .action(async (options) => {
       const durationMs = parseDuration(options.duration ?? '20s', '--duration')
       if (durationMs instanceof Error) fail(durationMs)

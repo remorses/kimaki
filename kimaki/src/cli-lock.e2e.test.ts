@@ -62,13 +62,13 @@ test('CLI help documents the supported P7 commands', async () => {
   expect(output.stdout).toContain('send')
   expect(output.stdout).toContain('upload-request')
   expect(output.stdout).toMatchInlineSnapshot(`
-    "kimaki2
+    "kimaki
 
     Usage:
-      $ kimaki2 [options]
+      $ kimaki [options]
 
     Commands:
-      kimaki2                           Start the bot. Runs onboarding on first start
+      kimaki                            Start the bot. Runs onboarding on first start
 
       Project:
       project list                      List project directories and their channels

@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': patch
+'kimaki': patch
 ---
 
 Fix small security gaps in the OpenCode V2 rewrite:

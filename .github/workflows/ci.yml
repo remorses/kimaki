@@ -51,9 +51,9 @@ jobs:
         run: pnpm generate
         working-directory: discord-digital-twin
 
-      - name: Generate Prisma + SQL (cli)
+      - name: Generate SQL (kimaki)
         run: pnpm generate
-        working-directory: cli
+        working-directory: kimaki
 
       - name: Build discord-digital-twin
         run: pnpm build
@@ -62,7 +62,7 @@ jobs:
       # --retry 3: some e2e tests have timing sensitivity on CI hardware
       # (question tool cleanup races, reply ordering under slower I/O).
       - name: Run tests
-        run: pnpm test -- --run --retry 3
-        working-directory: cli
+        run: pnpm run test --run --retry 3
+        working-directory: kimaki
         env:
           NODE_ENV: test

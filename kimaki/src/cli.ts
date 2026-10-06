@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// kimaki2 entrypoint. `kimaki2` starts the bot and onboards on first start;
+// kimaki entrypoint. `kimaki` starts the bot and onboards on first start;
 // the subcommands live in src/cli/*.ts, one module per job.
 // Startup must stay light: bot modules (main.ts, onboarding.ts, scheduler.ts)
 // are imported lazily inside the commands that need them.
@@ -12,7 +12,7 @@ import { registerChannelPreferenceCommands, registerChannelWorktreeCommand, regi
 import { registerScheduleCommands, registerSendCommand } from './cli/schedule.ts'
 import { registerSessionActionCommands, registerSessionHistoryCommands, registerSessionQueryCommands } from './cli/session.ts'
 
-const cli = goke('kimaki2')
+const cli = goke('kimaki')
 
 // Registration order is the --help order; goke groups consecutive commands under each section.
 registerStartCommand(cli)

@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': minor
+'kimaki': minor
 ---
 
 Add first-class session working directories and custom Git worktrees to the V2 rebuild.

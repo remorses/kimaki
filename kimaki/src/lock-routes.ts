@@ -163,7 +163,7 @@ function worktreeRoute(operation: 'remove' | 'merge') {
   })
 }
 
-// --- `kimaki session|queue …`: a local session, from a session or thread ID (cli/shared.ts parseTarget).
+// --- `kimaki session|queue …`: a local session, from a session or thread ID (src/cli/shared.ts parseTarget).
 
 const sessionTarget = {
   sessionId: text('sessionId').optional(),

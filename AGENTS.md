@@ -1,4 +1,4 @@
-the important package in this repo is `kimaki/`: the Kimaki Discord bot and `kimaki` CLI, rebuilt on OpenCode V2. it replaces `cli/` (V1), which will be deleted. do not add features to `cli/`. during the rebuild the package binary is `kimaki2`; agent shells use the `kimaki` shim.
+the important package in this repo is `kimaki/`: the Kimaki Discord bot and `kimaki` CLI (npm package `kimaki`), built on OpenCode V2. it replaced the V1 `cli/` package; `kimaki/CHANGELOG.md` keeps the V1 release history.
 
 after every change run `pnpm build` (tsc) inside `kimaki` to validate it. try to never use `as any`.
 

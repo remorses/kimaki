@@ -245,8 +245,8 @@ export function registerSessionActionCommands(cli: Goke) {
 export function registerSessionHistoryCommands(cli: Goke) {
   cli.command('session events <id>', 'Print the recorded OpenCode events of a thread as JSONL (root + subagents)')
     .option('--data-dir <path>', DATA_DIR_HELP)
-    .example('kimaki2 session events ses_abc | jq -r .event.type | sort | uniq -c')
-    .example(`kimaki2 session events ses_abc | jq 'select(.event.type == "session.retry.scheduled")'`)
+    .example('kimaki session events ses_abc | jq -r .event.type | sort | uniq -c')
+    .example(`kimaki session events ses_abc | jq 'select(.event.type == "session.retry.scheduled")'`)
     .action(async (id, options) => {
       const resolved = await resolveTarget(id, options.dataDir)
       if (!resolved.threadId) fail(new Error(`No Kimaki thread for ${id}. Pass a root session ID or thread ID.`))

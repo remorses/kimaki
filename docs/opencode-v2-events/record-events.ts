@@ -128,21 +128,21 @@ const scenarios: Record<string, () => Promise<string[]>> = {
   // task tool with explore subagent + read/grep tools
   async 'task-subagent'() {
     const id = await create('task subagent')
-    await prompt(id, 'Use the subagent tool with agent "general" to find which file defines the Drizzle SQLite schema in cli/src (the subagent should use glob and read). Then read the first 10 lines of that file yourself with the read tool and answer in 2 short sentences.')
+    await prompt(id, 'Use the subagent tool with agent "general" to find which file defines the Drizzle SQLite schema in kimaki/src (the subagent should use glob and read). Then read the first 10 lines of that file yourself with the read tool and answer in 2 short sentences.')
     await waitIdle(id)
     return [id]
   },
   // two parallel subagents in one step
   async 'task-parallel'() {
     const id = await create('parallel subagents')
-    await prompt(id, 'In a single step, call the subagent tool twice in parallel, both with agent "general": one to count the .ts files in cli/src/commands using a shell command, one to list the top-level folders of the repo with a shell command. Then reply with both results in 2 lines.')
+    await prompt(id, 'In a single step, call the subagent tool twice in parallel, both with agent "general": one to count the .ts files in kimaki/src/commands using a shell command, one to list the top-level folders of the repo with a shell command. Then reply with both results in 2 lines.')
     await waitIdle(id)
     return [id]
   },
   // bash, write, edit, read, glob
   async tools() {
     const id = await create('tools')
-    await prompt(id, 'Do these steps with tools, one by one: 1) run `ls cli/src | head -5` with bash, 2) write a file tmp-events/hello.txt containing "hello", 3) edit that file to replace hello with "hello world", 4) glob for **/*.txt under tmp-events, 5) read the file. Then reply with one short line.')
+    await prompt(id, 'Do these steps with tools, one by one: 1) run `ls kimaki/src | head -5` with bash, 2) write a file tmp-events/hello.txt containing "hello", 3) edit that file to replace hello with "hello world", 4) glob for **/*.txt under tmp-events, 5) read the file. Then reply with one short line.')
     await waitIdle(id)
     return [id]
   },

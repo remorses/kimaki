@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': patch
+'kimaki': patch
 ---
 
 Fix shutdown, scheduled-task edits, and reconnect handling in the V2 rebuild.

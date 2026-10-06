@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': patch
+'kimaki': patch
 ---
 
 Every command that targets a session now accepts a session ID, a Discord thread ID, or a Discord thread URL. Kimaki detects the kind from the format.

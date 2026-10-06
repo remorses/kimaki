@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': patch
+'kimaki': patch
 ---
 
 Show a notice in the thread when the provider prompt cache misses.

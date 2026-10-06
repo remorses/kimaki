@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': minor
+'kimaki': minor
 ---
 
 Add `kimaki restart`, `kimaki profile cpu` and `kimaki profile heap` for the running bot.

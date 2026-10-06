@@ -1,5 +1,5 @@
 ---
-'kimaki-cli2': patch
+'kimaki': patch
 ---
 
 Recover from a silent OpenCode event stream and keep footer context usage current in the V2 rebuild.

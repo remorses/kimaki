@@ -1,4 +1,4 @@
-// Custom Git checkouts, as in cli/git-worktree-core.ts. OpenCode owns session cwd, not checkout creation.
+// Custom Git checkouts. OpenCode owns session cwd, not checkout creation.
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import crypto from 'node:crypto'

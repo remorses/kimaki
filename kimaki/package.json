@@ -1,12 +1,16 @@
 {
-  "name": "kimaki-cli2",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Kimaki rebuilt on the OpenCode V2 event model. See docs/kimaki-v2-rebuild-spec.md",
+  "name": "kimaki",
+  "version": "0.31.0",
+  "description": "A collaborative agent orchestrator for OpenCode, inside Discord",
+  "repository": "https://github.com/remorses/kimaki",
   "type": "module",
   "bin": {
-    "kimaki2": "./dist/cli.js"
+    "kimaki": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "src"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "vitest",
