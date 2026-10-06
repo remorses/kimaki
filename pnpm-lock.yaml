@@ -231,7 +231,7 @@ importers:
         version: 2.0.19(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.0))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@strada.sh/sdk':
         specifier: ^0.8.0
-        version: 0.8.0(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.0)(better-auth@1.6.19(@cloudflare/workers-types@4.20260619.1)(@opentelemetry/api@1.9.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@1.0.0-beta.22)(drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5))(mysql2@3.15.3)(pg@8.22.0)(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))
+        version: 0.8.0(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.0)(better-auth@1.6.19(@cloudflare/workers-types@4.20260619.1)(@opentelemetry/api@1.9.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@1.0.0-beta.22)(drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5))(mysql2@3.15.3)(pg@8.22.0)(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       cron-parser:
         specifier: ^5.5.0
         version: 5.5.0
@@ -588,6 +588,24 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  opencode-fallback:
+    devDependencies:
+      '@opencode/cli':
+        specifier: 2.0.22
+        version: 2.0.22
+      '@opencode/client':
+        specifier: 2.0.22
+        version: 2.0.22(effect@4.0.0-rc.112)
+      '@opencode/plugin':
+        specifier: 2.0.22
+        version: 2.0.22(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.0))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.0))
+      '@types/node':
+        specifier: ^24.3.0
+        version: 24.13.2
+      rimraf:
+        specifier: ^6.0.1
+        version: 6.1.3
 
   opencode-injection-guard:
     devDependencies:
@@ -2652,8 +2670,16 @@ packages:
   '@opencode/ai@2.0.19':
     resolution: {integrity: sha512-KF0ZYWMu2SUo09cgxwvlqnIi75HbXrxwms9AQ+WajiAMJdc8TlrfB+woKxarvzXqz4tApXlP+AeZ7C8JdqOtvw==}
 
+  '@opencode/ai@2.0.22':
+    resolution: {integrity: sha512-wdD2ut4G/areDkA9bYizYiho6C1sRQ6mPqMSji93XzadavbkIcbhU/VyodOmExtZtOg2IjheJCUVCpDXQ8n8FA==}
+
   '@opencode/cli-darwin-arm64@2.0.19':
     resolution: {integrity: sha512-0uY/cQqUWOrY0YqGC3islJAEtpseKo7L0aqLWugca6HjLFH4acXdvXf26mIs7lL3tjTd0dzKChlCErKJ4Ebz0g==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@opencode/cli-darwin-arm64@2.0.22':
+    resolution: {integrity: sha512-NNg1VCCTWSfLlNKpRb4RA6IE7H67ZBLBYmfIWjP3CxR9NPtdROQFCL8lpPf+Tz2Qje4Bb27sQOLWanYyNT/9dQ==}
     cpu: [arm64]
     os: [darwin]
 
@@ -2662,8 +2688,18 @@ packages:
     cpu: [x64]
     os: [darwin]
 
+  '@opencode/cli-darwin-x64-baseline@2.0.22':
+    resolution: {integrity: sha512-q5TO4/gETPehcivXDT8JHriFfRz/4iMhpFguRIehu+b0qZmwhBR5TccNKIDDGX98l1z8ku6N4SPbsDrpypl6Rw==}
+    cpu: [x64]
+    os: [darwin]
+
   '@opencode/cli-darwin-x64@2.0.19':
     resolution: {integrity: sha512-LwLaeqjnguf68n1/V+fLEvzW57nImqoigQfqtJ+tIJ5YhSJYL3yJIN4l3j9rFgnh0Tfm/L6zDaPUxW2QqoHxlg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@opencode/cli-darwin-x64@2.0.22':
+    resolution: {integrity: sha512-R/o6HCCHdcDlmXSqveuYBBTB3mrGjMvG4H2AO3PpUJ2X1VEaHhei0BQ0nckGjJh6JXe7J/zJZqpxuBsVJbHfOw==}
     cpu: [x64]
     os: [darwin]
 
@@ -2672,8 +2708,18 @@ packages:
     cpu: [arm64]
     os: [linux]
 
+  '@opencode/cli-linux-arm64-musl@2.0.22':
+    resolution: {integrity: sha512-ChEe1o5ydUZO/7N6LBhbp6TSG4cxEIil9Rejv8fTPxiKFCBUu8E3walzpBGASuwvFdr4iEl2Z/WTpbWHaSPI+A==}
+    cpu: [arm64]
+    os: [linux]
+
   '@opencode/cli-linux-arm64@2.0.19':
     resolution: {integrity: sha512-i0HOHovWgm8QK6MzEos6V5rDj3dHOOafUdP3cNH4Mc4djULWMAQwfNoygp6QXmlWXatVgUzQt65XHkdCF7VAPA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@opencode/cli-linux-arm64@2.0.22':
+    resolution: {integrity: sha512-t/yuu9Dqd/M44dFH95bphu7ikO6FATMQuVk/91QBnCMzsP8zVrXU7zAxD1wVLpYYUDqIonEmi80XETlFqx7chw==}
     cpu: [arm64]
     os: [linux]
 
@@ -2682,8 +2728,18 @@ packages:
     cpu: [x64]
     os: [linux]
 
+  '@opencode/cli-linux-x64-baseline-musl@2.0.22':
+    resolution: {integrity: sha512-vtNMJreED2OXjai5ebBecYozm+qX42hzS6AppnbjOaQZXFvuo8BkBe87vXcqt+FFQO0xvO4b4H/kOLbF7YauGA==}
+    cpu: [x64]
+    os: [linux]
+
   '@opencode/cli-linux-x64-baseline@2.0.19':
     resolution: {integrity: sha512-VVKdNcdNLNfbIvF7+7NmJTtV8Lyww7eDarVwaH/VMhp0o0cdsSRc0lkHC7zEavqnHbxaaZM0Gpr4/lT3Yk2nfw==}
+    cpu: [x64]
+    os: [linux]
+
+  '@opencode/cli-linux-x64-baseline@2.0.22':
+    resolution: {integrity: sha512-nwVyjnug68v1A0emkDf28GUM37m5PjiFgu2Xbn3ujNHdnSd0v43Yr5G7TD1XTvAbXg+Zv46hX0CvINJorLuOFA==}
     cpu: [x64]
     os: [linux]
 
@@ -2692,8 +2748,18 @@ packages:
     cpu: [x64]
     os: [linux]
 
+  '@opencode/cli-linux-x64-musl@2.0.22':
+    resolution: {integrity: sha512-JLk1rQHC6Lv1nAZ5Yvq9vpaOYsewyBCWOuzQlEk/XwcnZt0fGh6vfPPmJhvBhz9VJKC/bC5wN13EuOq4Cmewkg==}
+    cpu: [x64]
+    os: [linux]
+
   '@opencode/cli-linux-x64@2.0.19':
     resolution: {integrity: sha512-FB/rRN+Lwbipw1eIFWXUSRzGejk13Hh3yP3kKK8hbe62rK5kmvCVnwRxRa3zxqwA6y6iLnPMKrez2uHvpvjW3w==}
+    cpu: [x64]
+    os: [linux]
+
+  '@opencode/cli-linux-x64@2.0.22':
+    resolution: {integrity: sha512-DlV1qgEDDnVqpTWMPqv7tCHCcXodzZBFaMcxjsiYdY6E5gHH2Q68JfasVksyQ1nu6m1887WQKGhOsepE+oKyYw==}
     cpu: [x64]
     os: [linux]
 
@@ -2702,13 +2768,28 @@ packages:
     cpu: [arm64]
     os: [win32]
 
+  '@opencode/cli-windows-arm64@2.0.22':
+    resolution: {integrity: sha512-eVGgsYQmMPpb6Be28yFjgQiMXSojxypQ949xHbKH0Gg7rhv4hMxeBkOik4gb0jW/NqEZhRBQwHPKuMEGOhBgSw==}
+    cpu: [arm64]
+    os: [win32]
+
   '@opencode/cli-windows-x64-baseline@2.0.19':
     resolution: {integrity: sha512-QD3OD9LRE1wKrSQhIFfkOvpKzAQmdYz1lZkdUN4xEy09xCXEcENZUmmhcE51/4TTrKh53WIZ2WrHxSmrWMpVPw==}
     cpu: [x64]
     os: [win32]
 
+  '@opencode/cli-windows-x64-baseline@2.0.22':
+    resolution: {integrity: sha512-o7gQWmvckjnLjYTCjsHiztfLfhNZMHpPdRwM/Y/TsYaQsSqAiM3l65OaHBH6q4cEClnOYlpWqU2Jpb+iLwqvIQ==}
+    cpu: [x64]
+    os: [win32]
+
   '@opencode/cli-windows-x64@2.0.19':
     resolution: {integrity: sha512-zY3VHRXysZCO4oaKi8ogDktnQcp+/UTRW5YQloxkSmgO2PYdSyiGYIpiWhamMjC5tTIqT/6omYSG3t5q+u/4ug==}
+    cpu: [x64]
+    os: [win32]
+
+  '@opencode/cli-windows-x64@2.0.22':
+    resolution: {integrity: sha512-n7eg3FwlHtRSZY5SV00XYh5c/TV7V0GIDqgygv9c5UEzPfbBfdk6d9mvGbZqn/Po/gmOPFyxU6SjmjWdGDF3ag==}
     cpu: [x64]
     os: [win32]
 
@@ -2718,8 +2799,25 @@ packages:
     os: [darwin, linux, win32]
     hasBin: true
 
+  '@opencode/cli@2.0.22':
+    resolution: {integrity: sha512-BJzGgplZ3owjPh4Cq5vbe7zMSgYXugOMJmrdlRriUl/9/rKitvK/F+ruk5JJOlIe4fw0bQ+UBAvN8+XGbUqTPw==}
+    cpu: [arm64, x64]
+    os: [darwin, linux, win32]
+    hasBin: true
+
   '@opencode/client@2.0.19':
     resolution: {integrity: sha512-N6Z9/uePIoU7Xby4szaCEnTpNy6/t+UhwT7MXOp2X/cubDqV/rLcvR0qoTcH4OIfnJqwBLn8wskDKzd/ZMRaJw==}
+    peerDependencies:
+      effect: 4.0.0-rc.112
+      solid-js: '>=1.9.0'
+    peerDependenciesMeta:
+      effect:
+        optional: true
+      solid-js:
+        optional: true
+
+  '@opencode/client@2.0.22':
+    resolution: {integrity: sha512-FJKugH301QHlV/rGL8TvgL3ly+toVlww+TP+YdVTKQWytQvjLoUdYtvvm+Iq5k6pN6Ki3ybE/08E8Cg+e6Opbg==}
     peerDependencies:
       effect: 4.0.0-rc.112
       solid-js: '>=1.9.0'
@@ -2746,14 +2844,40 @@ packages:
       solid-js:
         optional: true
 
+  '@opencode/plugin@2.0.22':
+    resolution: {integrity: sha512-EJyr+qA+I41rfJqE2zfyKL2qNez+wE8QkNwXf5TddEKIPmL8FUvYMVT5lLhbnXyOGTDxsEc0/8bX7ErQfX5/Rg==}
+    peerDependencies:
+      '@opencode/theme': 2.0.22
+      '@opentui/core': '>=0.5.14'
+      '@opentui/solid': '>=0.5.14'
+      solid-js: '>=1.9.0'
+    peerDependenciesMeta:
+      '@opencode/theme':
+        optional: true
+      '@opentui/core':
+        optional: true
+      '@opentui/solid':
+        optional: true
+      solid-js:
+        optional: true
+
   '@opencode/protocol@2.0.19':
     resolution: {integrity: sha512-WUfQX8ltMrry7JDZY5N+x9JaJ7nUJXKvcm2wedRYf3On+eMsQ3+Ln740n03e06pz1FXsozBNdLYPT4q4YsJoCA==}
+
+  '@opencode/protocol@2.0.22':
+    resolution: {integrity: sha512-Ws3DKQW/rlBDwNz2cPE9+nGwbw7pgnZ+5bzgoHWCWxgTZmxdFulmLP05lxR+PPwMklUwzOGoUXFIzODPZ27WfA==}
 
   '@opencode/schema@2.0.19':
     resolution: {integrity: sha512-k7aJtI2XmmPpCWzYeQjbd32A55gx/NOuE0TcpiFGZTZJPGk+W+gYNSbB6XCW4iFhax+Ovb0HaC0UdE2rTRkL4Q==}
 
+  '@opencode/schema@2.0.22':
+    resolution: {integrity: sha512-PTqTrx3QHhlRL5ypfoMnSzXDU8XB2+vtKX8QKwIHP7B1F1yw90LN0XTmGP82k9rYoEcERq0TLuL+ykAsYJXJdA==}
+
   '@opencode/util@2.0.19':
     resolution: {integrity: sha512-uenhQbof/3pMDrEozIsQpYHNnPfwIwe2UdlcFOoLApY5m1bmRv4VAOHxwX0Eh0BAyWz2h5ZEz5QoP4qflqFDsQ==}
+
+  '@opencode/util@2.0.22':
+    resolution: {integrity: sha512-nipMu7ZAM9gCOKwH06eqAUVgATR+5XbqXEKSN+ECYLgm9PStsmxraxDN93gJLV3bYzpR+9Ow0Be/s0ZYKUxPKg==}
 
   '@opentelemetry/api-logs@0.214.0':
     resolution: {integrity: sha512-40lSJeqYO8Uz2Yj7u94/SJWE/wONa7rmMKjI1ZcIjgf3MHNHv1OZUCrCETGuaRF62d5pQD1wKIW+L4lmSMTzZA==}
@@ -10422,40 +10546,88 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@opencode/ai@2.0.22':
+    dependencies:
+      '@aws-sdk/credential-providers': 3.1057.0
+      '@opencode/schema': 2.0.22
+      '@smithy/eventstream-codec': 4.2.14
+      '@smithy/util-utf8': 4.2.2
+      aws4fetch: 1.0.20
+      effect: 4.0.0-rc.112
+      google-auth-library: 10.5.0
+    transitivePeerDependencies:
+      - supports-color
+
   '@opencode/cli-darwin-arm64@2.0.19':
+    optional: true
+
+  '@opencode/cli-darwin-arm64@2.0.22':
     optional: true
 
   '@opencode/cli-darwin-x64-baseline@2.0.19':
     optional: true
 
+  '@opencode/cli-darwin-x64-baseline@2.0.22':
+    optional: true
+
   '@opencode/cli-darwin-x64@2.0.19':
+    optional: true
+
+  '@opencode/cli-darwin-x64@2.0.22':
     optional: true
 
   '@opencode/cli-linux-arm64-musl@2.0.19':
     optional: true
 
+  '@opencode/cli-linux-arm64-musl@2.0.22':
+    optional: true
+
   '@opencode/cli-linux-arm64@2.0.19':
+    optional: true
+
+  '@opencode/cli-linux-arm64@2.0.22':
     optional: true
 
   '@opencode/cli-linux-x64-baseline-musl@2.0.19':
     optional: true
 
+  '@opencode/cli-linux-x64-baseline-musl@2.0.22':
+    optional: true
+
   '@opencode/cli-linux-x64-baseline@2.0.19':
+    optional: true
+
+  '@opencode/cli-linux-x64-baseline@2.0.22':
     optional: true
 
   '@opencode/cli-linux-x64-musl@2.0.19':
     optional: true
 
+  '@opencode/cli-linux-x64-musl@2.0.22':
+    optional: true
+
   '@opencode/cli-linux-x64@2.0.19':
+    optional: true
+
+  '@opencode/cli-linux-x64@2.0.22':
     optional: true
 
   '@opencode/cli-windows-arm64@2.0.19':
     optional: true
 
+  '@opencode/cli-windows-arm64@2.0.22':
+    optional: true
+
   '@opencode/cli-windows-x64-baseline@2.0.19':
     optional: true
 
+  '@opencode/cli-windows-x64-baseline@2.0.22':
+    optional: true
+
   '@opencode/cli-windows-x64@2.0.19':
+    optional: true
+
+  '@opencode/cli-windows-x64@2.0.22':
     optional: true
 
   '@opencode/cli@2.0.19':
@@ -10473,10 +10645,32 @@ snapshots:
       '@opencode/cli-windows-x64': 2.0.19
       '@opencode/cli-windows-x64-baseline': 2.0.19
 
+  '@opencode/cli@2.0.22':
+    optionalDependencies:
+      '@opencode/cli-darwin-arm64': 2.0.22
+      '@opencode/cli-darwin-x64': 2.0.22
+      '@opencode/cli-darwin-x64-baseline': 2.0.22
+      '@opencode/cli-linux-arm64': 2.0.22
+      '@opencode/cli-linux-arm64-musl': 2.0.22
+      '@opencode/cli-linux-x64': 2.0.22
+      '@opencode/cli-linux-x64-baseline': 2.0.22
+      '@opencode/cli-linux-x64-baseline-musl': 2.0.22
+      '@opencode/cli-linux-x64-musl': 2.0.22
+      '@opencode/cli-windows-arm64': 2.0.22
+      '@opencode/cli-windows-x64': 2.0.22
+      '@opencode/cli-windows-x64-baseline': 2.0.22
+
   '@opencode/client@2.0.19(effect@4.0.0-rc.112)':
     dependencies:
       '@opencode/protocol': 2.0.19
       '@opencode/schema': 2.0.19
+    optionalDependencies:
+      effect: 4.0.0-rc.112
+
+  '@opencode/client@2.0.22(effect@4.0.0-rc.112)':
+    dependencies:
+      '@opencode/protocol': 2.0.22
+      '@opencode/schema': 2.0.22
     optionalDependencies:
       effect: 4.0.0-rc.112
 
@@ -10518,12 +10712,41 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@opencode/plugin@2.0.22(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.0))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@ai-sdk/provider': 3.0.8
+      '@opencode/ai': 2.0.22
+      '@opencode/client': 2.0.22(effect@4.0.0-rc.112)
+      '@opencode/protocol': 2.0.22
+      '@opencode/schema': 2.0.22
+      '@opencode/util': 2.0.22(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.0))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.0))
+      '@standard-schema/spec': 1.1.0
+      effect: 4.0.0-rc.112
+      zod: 4.1.8
+    transitivePeerDependencies:
+      - '@opentelemetry/sdk-trace-web'
+      - '@opentelemetry/semantic-conventions'
+      - bufferutil
+      - redis
+      - supports-color
+      - utf-8-validate
+
   '@opencode/protocol@2.0.19':
     dependencies:
       '@opencode/schema': 2.0.19
       effect: 4.0.0-rc.112
 
+  '@opencode/protocol@2.0.22':
+    dependencies:
+      '@opencode/schema': 2.0.22
+      effect: 4.0.0-rc.112
+
   '@opencode/schema@2.0.19':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      effect: 4.0.0-rc.112
+
+  '@opencode/schema@2.0.22':
     dependencies:
       '@standard-schema/spec': 1.1.0
       effect: 4.0.0-rc.112
@@ -10564,6 +10787,38 @@ snapshots:
     dependencies:
       '@effect/opentelemetry': 4.0.0-rc.112(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.0)(@opentelemetry/resources@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-logs@0.219.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-metrics@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-node@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(effect@4.0.0-rc.112)
       '@effect/platform-node': 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1(@opentelemetry/api@1.9.1))
+      '@effect/platform-node-shared': 4.0.0-rc.112(effect@4.0.0-rc.112)
+      '@npmcli/arborist': 9.4.0
+      '@npmcli/config': 10.8.1
+      '@opentelemetry/api': 1.9.0
+      '@opentelemetry/api-logs': 0.219.0
+      '@opentelemetry/context-async-hooks': 2.8.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/exporter-trace-otlp-http': 0.219.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/resources': 2.8.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-logs': 0.219.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-metrics': 2.8.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-base': 2.8.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-node': 2.8.0(@opentelemetry/api@1.9.0)
+      cross-spawn: 7.0.6
+      effect: 4.0.0-rc.112
+      glob: 13.0.5
+      mime-types: 3.0.2
+      minimatch: 10.2.5
+      npm-package-arg: 13.0.2
+      open: 11.0.4
+      pacote: 21.5.1
+    transitivePeerDependencies:
+      - '@opentelemetry/sdk-trace-web'
+      - '@opentelemetry/semantic-conventions'
+      - bufferutil
+      - redis
+      - supports-color
+      - utf-8-validate
+
+  '@opencode/util@2.0.22(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.0))(@opentelemetry/semantic-conventions@1.41.1)(redis@6.2.1(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@effect/opentelemetry': 4.0.0-rc.112(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.0)(@opentelemetry/resources@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-logs@0.219.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-metrics@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-node@2.8.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-web@2.10.0(@opentelemetry/api@1.9.0))(@opentelemetry/semantic-conventions@1.41.1)(effect@4.0.0-rc.112)
+      '@effect/platform-node': 4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@effect/platform-node-shared': 4.0.0-rc.112(effect@4.0.0-rc.112)
       '@npmcli/arborist': 9.4.0
       '@npmcli/config': 10.8.1
@@ -11784,12 +12039,12 @@ snapshots:
       '@opentelemetry/sdk-trace-web': 2.10.0(@opentelemetry/api@1.9.1)
       '@strada.sh/otlp-json': 0.1.0(@opentelemetry/api-logs@0.214.0)(@opentelemetry/api@1.9.1)
 
-  '@strada.sh/sdk@0.8.0(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.0)(better-auth@1.6.19(@cloudflare/workers-types@4.20260619.1)(@opentelemetry/api@1.9.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@1.0.0-beta.22)(drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5))(mysql2@3.15.3)(pg@8.22.0)(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))':
+  '@strada.sh/sdk@0.8.0(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.0)(better-auth@1.6.19(@cloudflare/workers-types@4.20260619.1)(@opentelemetry/api@1.9.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@1.0.0-beta.22)(drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5))(mysql2@3.15.3)(pg@8.22.0)(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))':
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/api-logs': 0.219.0
       better-auth: 1.6.19(@cloudflare/workers-types@4.20260619.1)(@opentelemetry/api@1.9.0)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@1.0.0-beta.22)(drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.6.5))(mysql2@3.15.3)(pg@8.22.0)(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0))
-      vite: 7.3.5(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)
+      vite: 8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
 
   '@strada.sh/sdk@0.8.0(@opentelemetry/api-logs@0.219.0)(@opentelemetry/api@1.9.1)(better-auth@1.6.19(@cloudflare/workers-types@4.20260619.1)(@opentelemetry/api@1.9.1)(@prisma/client@7.4.2(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3))(drizzle-kit@1.0.0-beta.22)(drizzle-orm@1.0.0-beta.22(@cloudflare/workers-types@4.20260619.1)(@electric-sql/pglite@0.3.15)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(bun-types@1.4.2)(mysql2@3.15.3)(pg@8.22.0)(postgres@3.4.7)(valibot@1.2.0(typescript@5.9.3))(zod@4.4.3))(mysql2@3.15.3)(pg@8.22.0)(prisma@7.4.2(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@24.13.2)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.22.4)(yaml@2.9.0)))(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))':
     optionalDependencies:
