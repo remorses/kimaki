@@ -242,6 +242,84 @@ test('first start imports the V1 database once and leaves it unchanged', async (
   reopened.close()
 })
 
+test('a stray kimaki.db without the version marker does not block the V1 import', async () => {
+  const dataDir = tempDataDir()
+  const schemaSql = fs.readFileSync(path.join(import.meta.dirname, 'fixtures/v1-schema.sql'), 'utf8')
+  // V1 has no foreign keys on these tables: real installs point at deleted channels and threads.
+  const orphans = `
+    INSERT INTO channel_agents (channel_id, agent_name) VALUES ('1422625308523100009', 'plan');
+    INSERT INTO scheduled_tasks (status, schedule_kind, next_run_at, payload_json, prompt_preview, channel_id, thread_id)
+      VALUES ('planned', 'at', '2026-10-05T09:00:00.000Z', '{}', 'orphan', '1422625308523100009', '1555112336879250009');
+  `
+  await writeLegacyDb({ dataDir, sql: `${schemaSql}\n${V1_ROWS}\n${orphans}` })
+  // Like a real report: an old kimaki.db not made by this code, in WAL mode.
+  const stray = createClient({ url: `file:${path.join(dataDir, 'kimaki.db')}` })
+  await stray.execute('PRAGMA journal_mode = WAL')
+  await stray.execute('PRAGMA wal_autocheckpoint = 0')
+  await stray.execute(`CREATE TABLE notes (text TEXT)`)
+  await stray.execute(`INSERT INTO notes VALUES ('keep me')`)
+  stray.close()
+
+  const opened = await openDb({ dataDir, migrate: true })
+  if (opened instanceof Error) throw opened
+  const bots = await opened.db.query.bot_tokens.findMany({ orderBy: { app_id: 'asc' } })
+  const version = await opened.client.execute('PRAGMA user_version')
+  const agents = await opened.db.query.channel_agents.findMany()
+  const tasks = await opened.db.query.scheduled_tasks.findMany({ orderBy: { id: 'asc' } })
+  expect({
+    bots: bots.map((row) => row.app_id),
+    version: version.rows[0]?.[0],
+    agents: agents.length,
+    tasks: tasks.map((row) => ({ preview: row.prompt_preview, channel: row.channel_id, thread: row.thread_id })),
+  }).toMatchInlineSnapshot(`
+    {
+      "agents": 0,
+      "bots": [
+        "1422625037164350001",
+        "1477605701202481173",
+      ],
+      "tasks": [
+        {
+          "channel": "1422625308523100001",
+          "preview": "weekly tests",
+          "thread": null,
+        },
+        {
+          "channel": null,
+          "preview": "orphan",
+          "thread": null,
+        },
+      ],
+      "version": 1,
+    }
+  `)
+  opened.close()
+
+  // The stray file is renamed, never deleted, and keeps its rows.
+  const aside = fs.readdirSync(dataDir).filter((name) => name.startsWith('kimaki.db.unknown-') && !name.endsWith('-wal') && !name.endsWith('-shm'))
+  expect(aside).toHaveLength(1)
+  const kept = createClient({ url: `file:${path.join(dataDir, aside[0] ?? '')}` })
+  expect((await kept.execute('SELECT text FROM notes')).rows.map((row) => row.text)).toEqual(['keep me'])
+  kept.close()
+
+  // The next start keeps the marked kimaki.db.
+  const reopened = await openDb({ dataDir, migrate: true })
+  if (reopened instanceof Error) throw reopened
+  reopened.close()
+  expect(fs.readdirSync(dataDir).filter((name) => name.startsWith('kimaki.db.unknown-') && !name.endsWith('-wal') && !name.endsWith('-shm'))).toHaveLength(1)
+})
+
+test('a kimaki.db that is not an SQLite file is set aside before the V1 import', async () => {
+  const dataDir = tempDataDir()
+  await writeLegacyDb({ dataDir, sql: `CREATE TABLE bot_tokens (app_id TEXT PRIMARY KEY, token TEXT NOT NULL); INSERT INTO bot_tokens VALUES ('1422625037164350001', 'fake-token');` })
+  fs.writeFileSync(path.join(dataDir, 'kimaki.db'), 'not a database, just text that is long enough to have a header'.repeat(10))
+  const opened = await openDb({ dataDir, migrate: true })
+  if (opened instanceof Error) throw opened
+  expect((await opened.db.query.bot_tokens.findMany()).map((row) => row.app_id)).toEqual(['1422625037164350001'])
+  opened.close()
+  expect(fs.readdirSync(dataDir).filter((name) => name.startsWith('kimaki.db.unknown-'))).toHaveLength(1)
+})
+
 test('a V1 database from an older version imports with defaults for missing columns', async () => {
   const dataDir = tempDataDir()
   // Early V1 shape: no source/updated_at on thread_sessions, no bot_mode columns.

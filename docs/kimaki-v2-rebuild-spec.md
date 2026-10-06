@@ -1717,7 +1717,10 @@ type, so the import is one `INSERT … SELECT` per table:
 |---|---|
 | V1 `discord-sessions.db` only | `kimaki.db.import` is built from `schema.sql` + the V1 rows, then renamed to `kimaki.db` (a crash leaves no half import). Columns an older V1 file lacks get defaults; `bot_mode` `'self-hosted'`/NULL becomes `'self_hosted'` |
 | nothing | empty `kimaki.db` |
-| `kimaki.db` exists | no import, even if V1 keeps writing its own file |
+| `kimaki.db` exists with `PRAGMA user_version` ≥ 1 | no import, even if V1 keeps writing its own file |
+| `kimaki.db` exists without the marker, V1 file present | not made by kimaki: renamed to `kimaki.db.unknown-<time>` (never deleted), then the V1 import runs |
+
+The import skips V1 rows whose required reference (channel, bot) no longer exists and sets optional references (`scheduled_tasks.channel_id`, `thread_id`) to NULL. V1 has no foreign keys on most tables, so real installs contain such rows.
 
 Rules for the V2 code:
 

@@ -126,7 +126,7 @@ sqlite preserves state between runs. the database must never have breaking chang
 
 - file: `<dataDir>/kimaki.db` (libSQL + Drizzle, `db.ts`). only the bot start migrates (`openDb({ migrate: true })`); subcommands never do.
 - schema: `kimaki/src/schema.ts`. `pnpm generate` inside kimaki writes `src/schema-sql.ts` (idempotent `CREATE ... IF NOT EXISTS`). never edit it by hand.
-- all migrations live in `kimaki/src/migrations.ts`. on first start it imports the V1 `discord-sessions.db` read-only into `kimaki.db`; the V1 file is never changed.
+- all migrations live in `kimaki/src/migrations.ts`. on first start it imports the V1 `discord-sessions.db` read-only into `kimaki.db`; the V1 file is never changed. `PRAGMA user_version` (`DB_VERSION`) marks a kimaki-made `kimaki.db`; an unmarked one next to a V1 file is renamed aside so it cannot block the import.
 
 **new tables**: add to `schema.ts`, run `pnpm generate`. schema-sql handles new and existing installs.
 
