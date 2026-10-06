@@ -303,16 +303,12 @@ export const lockRoutes = {
   }),
   sleep: route({
     input: z.object({
-      ...sessionTarget,
+      sessionId: z.string({ error: 'Use --session or run kimaki sleep inside an OpenCode session' }).min(1, { error: 'Use --session or run kimaki sleep inside an OpenCode session' }),
       duration: z.string({ error: 'Sleep fields must be strings' }).optional(),
       until: z.string({ error: 'Sleep fields must be strings' }).optional(),
       reason: z.string({ error: 'Sleep fields must be strings' }).optional(),
     }, { error: 'Expected a sleep object' }),
-    run: async (bot, { threadId, ...input }) => {
-      const sessionId = sessionOf(bot, { ...input, threadId })
-      if (sessionId instanceof Error) return sessionId
-      return createSleep(bot, { ...input, sessionId })
-    },
+    run: async (bot, input) => createSleep(bot, input),
   }),
   'task.edit': route({
     input: z.object({
