@@ -32,7 +32,6 @@ import * as schema from '../schema.ts'
 import { startBot, type BotHandle } from '../main.ts'
 import type { LockRouteInput, LockRouteName } from '../lock-routes.ts'
 import { listTasks, type Clock } from '../scheduler.ts'
-import { bundledOpencodeBinary } from '../opencode-server.ts'
 
 export const TEST_MODEL = 'deterministic-v2'
 
@@ -50,10 +49,12 @@ export function freePort(): Promise<number> {
   })
 }
 
-function opencodeBinary(): string {
-  const binary = bundledOpencodeBinary()
-  if (!binary) throw new Error('@opencode/cli is not installed')
-  return binary
+// The real native binary. node_modules/.bin/opencode is a sh wrapper that
+// survives SIGTERM and orphans the server.
+export function opencodeBinary(): string {
+  const require = createRequire(import.meta.url)
+  const packageJsonPath = require.resolve('@opencode/cli/package.json')
+  return path.join(path.dirname(packageJsonPath), 'bin/opencode.exe')
 }
 
 export type OpencodeTestServer = {

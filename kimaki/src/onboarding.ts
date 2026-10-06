@@ -22,8 +22,9 @@ import dedent from 'string-dedent'
 
 import { API } from '@discordjs/core/http-only'
 
-import { ConfigError, DbError, DiscordError } from './errors.ts'
+import { ConfigError, DbError, DiscordError, OpenCodeMissingError, type OpenCodeV1Error, type OpenCodeVersionError } from './errors.ts'
 import { createLogger } from './logger.ts'
+import { checkOpencode, findOpencodeBinary, installedOpencodeBinary, OPENCODE_INSTALL_COMMAND } from './opencode-server.ts'
 import type { Bot } from './bot.ts'
 import { startSession } from './sessions.ts'
 import { addProjectChannel, defaultChannelName, defaultProjectDirectory } from './project.ts'
@@ -76,6 +77,41 @@ export async function chooseGuild({
   })
   if (clack.isCancel(picked)) return new ConfigError({ reason: 'Onboarding cancelled' })
   return discord.guilds.cache.get(picked) ?? new ConfigError({ reason: `Unknown server ${picked}` })
+}
+
+// Before the Discord install: a running OpenCode service, or a V2 binary to
+// start one. When OpenCode is missing it installs V2 with the official script,
+// like V1 installed its tools (asks first in a terminal). An OpenCode 1 or an
+// old V2 is never replaced: the error tells the user how to install V2.
+export async function ensureOpencode({
+  serviceFile,
+}: {
+  serviceFile?: string
+}): Promise<OpenCodeMissingError | OpenCodeV1Error | OpenCodeVersionError | ConfigError | void> {
+  const checked = await checkOpencode({ serviceFile })
+  if (checked instanceof Error) return checked
+  if (checked === 'ready') return
+  const missing = new OpenCodeMissingError({ install: OPENCODE_INSTALL_COMMAND })
+  // The script is bash-only; OPENCODE_PATH points at a binary the user chose.
+  if (process.platform === 'win32' || process.env['OPENCODE_PATH']) return missing
+  if (process.stdin.isTTY) {
+    const confirmed = await clack.confirm({ message: `Kimaki requires OpenCode 2. Install it now with \`${OPENCODE_INSTALL_COMMAND}\`?` })
+    if (clack.isCancel(confirmed) || !confirmed) return missing
+  } else {
+    logger.log(`OpenCode 2 not found, installing: ${OPENCODE_INSTALL_COMMAND}`)
+  }
+  // Script output goes to stderr: stdout is for `data:` events (logging rules in AGENTS.md).
+  const exitCode = await new Promise<number | ConfigError>((resolve) => {
+    const child = spawn('/bin/bash', ['-c', OPENCODE_INSTALL_COMMAND], { stdio: ['ignore', 2, 2], signal: AbortSignal.timeout(600_000) })
+    child.on('error', (cause) => resolve(new ConfigError({ reason: 'OpenCode install failed to run', cause })))
+    child.on('close', (code) => resolve(code ?? 1))
+  })
+  if (exitCode instanceof Error) return exitCode
+  if (exitCode !== 0) return new ConfigError({ reason: `OpenCode install exited with code ${exitCode}. ${missing.message}` })
+  const installed = await findOpencodeBinary()
+  if (installed instanceof Error) return installed
+  if (installed === null) return new ConfigError({ reason: `OpenCode install finished but ${installedOpencodeBinary()} does not run. ${missing.message}` })
+  logger.log(`installed OpenCode 2 at ${installed}`)
 }
 
 // macOS: keep the machine awake while the bot runs (-s also on lid close on

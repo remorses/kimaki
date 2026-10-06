@@ -92,11 +92,11 @@ export function registerStartCommand(cli: Goke) {
       // Bot code loads only here: the other subcommands start without it.
       const [
         { startBot },
-        { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate },
+        { chooseGuild, ensureOpencode, kimakiShellCommand, runOnboarding, startCaffeinate },
         { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl },
         { openDb },
         { createAnalytics },
-        { checkOpencode, opencodeConfigDir },
+        { opencodeConfigDir },
         { defaultMachineName },
       ] = await Promise.all([
         import('../main.ts'),
@@ -131,9 +131,9 @@ export function registerStartCommand(cli: Goke) {
         return
       }
 
-      // Before onboarding: without OpenCode the bot cannot start, so fail before the Discord install.
-      const opencodeCheck = await checkOpencode({ serviceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'] })
-      if (opencodeCheck) {
+      // Before onboarding: without OpenCode the bot cannot start, so fail (or install it) before the Discord install.
+      const opencodeCheck = await ensureOpencode({ serviceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'] })
+      if (opencodeCheck instanceof Error) {
         opened.close()
         failStartup(opencodeCheck)
       }

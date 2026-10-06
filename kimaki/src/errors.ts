@@ -9,8 +9,18 @@ export class OpenCodeError extends errore.createTaggedError({
 
 export class OpenCodeUnavailableError extends errore.createTaggedError({
   name: 'OpenCodeUnavailableError',
-  // npm i -g @opencode/cli installs both `opencode` and `opencode2`, replacing a V1 `opencode`.
-  message: 'OpenCode service not reachable ($reason). Reinstall kimaki, or install OpenCode 2 with: npm i -g @opencode/cli',
+  message: 'OpenCode service not reachable ($reason)',
+}) {}
+
+export class OpenCodeMissingError extends errore.createTaggedError({
+  name: 'OpenCodeMissingError',
+  message: 'Kimaki requires OpenCode 2, which is not installed. Install it with: $install (or: npm i -g @opencode/cli). Then run kimaki again',
+}) {}
+
+// Both install commands put OpenCode 2 at `opencode` and `opencode2`.
+export class OpenCodeV1Error extends errore.createTaggedError({
+  name: 'OpenCodeV1Error',
+  message: 'Kimaki now requires OpenCode 2, but $binary is OpenCode $version. Install OpenCode 2 with: $install (or: npm i -g @opencode/cli). Then run kimaki again',
 }) {}
 
 export class OpenCodeVersionError extends errore.createTaggedError({

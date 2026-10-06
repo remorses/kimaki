@@ -5,9 +5,7 @@
 //
 // Service.ensure() defaults to `opencode` from PATH. While V2 is in beta it
 // installs as `opencode2` and `opencode` is usually V1, which prints help for
-// `serve --service` and exits. So the binary is resolved first: the first of
-// `opencode2`, `opencode` on PATH, then the bundled @opencode/cli binary,
-// whose `--version` is a supported V2.
+// `serve --service` and exits. So the binary is resolved first (findOpencodeBinary).
 // TODO: drop the lookup and use the Service.ensure() default once V2 ships as `opencode`.
 //
 // watchOpencode() owns the single /api/event subscription and implements the
@@ -22,7 +20,6 @@
 
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'
-import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -32,7 +29,7 @@ import { OpenCode, type OpenCodeClient, type V2Event } from '@opencode/client'
 import { Service } from '@opencode/client/service'
 import * as errore from 'errore'
 
-import { ConfigError, OpenCodeError, OpenCodeUnavailableError, OpenCodeVersionError } from './errors.ts'
+import { ConfigError, OpenCodeError, OpenCodeMissingError, OpenCodeUnavailableError, OpenCodeV1Error, OpenCodeVersionError } from './errors.ts'
 import { createLogger } from './logger.ts'
 
 export type { OpenCodeClient, V2Event }
@@ -73,40 +70,50 @@ export function parseVersionOutput(output: string): string | null {
   return output.match(/(\d+\.\d+\.\d+(?:-[\w.-]+)?)/)?.[1] ?? null
 }
 
-// The native binary of the @opencode/cli dependency (its postinstall puts it in
-// bin/opencode.exe), or null when the package or platform binary is missing.
-// Not node_modules/.bin/opencode: that sh wrapper survives SIGTERM.
-export function bundledOpencodeBinary(): string | null {
-  const packageJson = errore.try(() => createRequire(import.meta.url).resolve('@opencode/cli/package.json'))
-  if (packageJson instanceof Error) return null
-  return path.join(path.dirname(packageJson), 'bin', 'opencode.exe')
+// The official V2 install script: puts `opencode` and an `opencode2` shim in
+// ~/.opencode/bin and adds that folder to the shell config. Unix only.
+export const OPENCODE_INSTALL_COMMAND = 'curl -fsSL https://opencode.ai/v2/install | bash'
+
+// Where OPENCODE_INSTALL_COMMAND puts the binary. Not on PATH until a new shell.
+export function installedOpencodeBinary(): string {
+  return path.join(os.homedir(), '.opencode', 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode')
 }
 
-// The user's own install wins, so Kimaki and their TUI share one service
-// version. The bundled binary covers users without OpenCode 2 on PATH.
-export async function resolveOpencodeBinary({
-  candidates = ['opencode2', 'opencode', bundledOpencodeBinary()],
-}: { candidates?: readonly (string | null)[] } = {}): Promise<OpenCodeUnavailableError | string> {
-  const found: string[] = []
-  for (const candidate of candidates) {
-    if (!candidate) continue
-    const result = await execFileAsync(candidate, ['--version'], { timeout: 10_000 }).catch(() => null)
-    const version = result ? parseVersionOutput(result.stdout) : null
+async function opencodeVersion(binary: string): Promise<string | null> {
+  const result = await execFileAsync(binary, ['--version'], { timeout: 10_000 }).catch(() => null)
+  return result ? parseVersionOutput(result.stdout) : null
+}
+
+// OPENCODE_PATH alone when set. Otherwise `opencode2` first (V2 while V1 still owns
+// `opencode`), then `opencode`, then the install script location. The first
+// binary that answers --version decides: an OpenCode 1 or an old V2 is an error,
+// never a reason to install over it. null: no OpenCode at all.
+export async function findOpencodeBinary({
+  candidates = process.env['OPENCODE_PATH'] ? [process.env['OPENCODE_PATH']] : ['opencode2', 'opencode', installedOpencodeBinary()],
+}: { candidates?: readonly string[] } = {}): Promise<OpenCodeV1Error | OpenCodeVersionError | string | null> {
+  for (const binary of candidates) {
+    const version = await opencodeVersion(binary)
     if (!version) continue
-    if (isSupportedVersion(version)) return candidate
-    found.push(`${candidate} ${version}`)
+    if (isSupportedVersion(version)) return binary
+    if ((parseVersion(version)[0] ?? 0) < 2) return new OpenCodeV1Error({ binary, version, install: OPENCODE_INSTALL_COMMAND })
+    return new OpenCodeVersionError({ version, minimum: MIN_OPENCODE_VERSION })
   }
-  const seen = found.length > 0 ? `found ${found.join(', ')}` : 'no opencode binary on PATH or in the kimaki install'
-  return new OpenCodeUnavailableError({ reason: `no OpenCode >= ${MIN_OPENCODE_VERSION}: ${seen}` })
+  return null
 }
 
-// Startup preflight, before Discord onboarding: a running service, or a binary
-// that can start one. Its version is checked on connect.
-export async function checkOpencode({ serviceFile }: { serviceFile?: string }): Promise<OpenCodeUnavailableError | null> {
+export async function resolveOpencodeBinary(): Promise<OpenCodeV1Error | OpenCodeVersionError | OpenCodeMissingError | string> {
+  const binary = await findOpencodeBinary()
+  return binary ?? new OpenCodeMissingError({ install: OPENCODE_INSTALL_COMMAND })
+}
+
+// Startup preflight, before Discord onboarding. 'missing': nothing runs and no
+// binary exists, so the caller may install OpenCode 2.
+export async function checkOpencode({ serviceFile }: { serviceFile?: string }): Promise<OpenCodeV1Error | OpenCodeVersionError | 'ready' | 'missing'> {
   const discovered = await Service.discover({ file: serviceFile }).catch(() => null)
-  if (discovered) return null
-  const binary = await resolveOpencodeBinary()
-  return binary instanceof Error ? binary : null
+  if (discovered) return 'ready'
+  const binary = await findOpencodeBinary()
+  if (binary === null) return 'missing'
+  return binary instanceof Error ? binary : 'ready'
 }
 
 // Kimaki plugin registration. OpenCode auto-loads every entry of
@@ -183,7 +190,7 @@ export async function resolveOpencode({
 }: {
   serviceFile?: string
   ensure: boolean
-}): Promise<OpenCodeUnavailableError | OpenCodeVersionError | OpenCodeError | OpencodeEndpoint> {
+}): Promise<OpenCodeUnavailableError | OpenCodeMissingError | OpenCodeV1Error | OpenCodeVersionError | OpenCodeError | OpencodeEndpoint> {
   const discovered = await Service.discover({ file: serviceFile }).catch(
     (e) => new OpenCodeUnavailableError({ reason: 'discover failed', cause: e }),
   )
@@ -331,7 +338,7 @@ export function watchOpencode({
       if (controller.signal.aborted) return
       // Wrong version, or no service at startup: fatal, the user must act.
       // After a first connect, failures are restarts and upgrades: retry.
-      if (endpoint instanceof OpenCodeVersionError || (endpoint instanceof Error && state.endpoint === null)) {
+      if (endpoint instanceof OpenCodeVersionError || endpoint instanceof OpenCodeV1Error || (endpoint instanceof Error && state.endpoint === null)) {
         readyDeferred.resolve(endpoint)
         logger.error(endpoint.message)
         return
