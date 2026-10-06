@@ -72,6 +72,20 @@ const matchers: DeterministicMatcher[] = [
     ],
     finalText: 'Found the models.',
   }),
+  ...scriptedTurn({
+    marker: 'execute-error-marker',
+    steps: [
+      {
+        id: 'call-execute-error-1',
+        tool: 'execute',
+        input: {
+          code: "await Promise.allSettled([tools.opencode.session_rename({ sessionID: 'ses_missing', title: 'x' })]); throw new Error('broken on purpose')",
+          description: 'Rename a missing session',
+        },
+      },
+    ],
+    finalText: 'The code failed.',
+  }),
   {
     id: 'markdown',
     priority: 100,
@@ -168,6 +182,23 @@ test('Code Mode execute shows its description, then one line per inner tool call
     -# ┣ execute.opencode.list\\_mcp\\_resources
 
     Found the models.
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+})
+
+test('Code Mode execute shows failed inner calls and the code error', async () => {
+  const thread = await runTurn({ channelId: twin.channelId, content: 'Run code execute-error-marker' })
+  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Run code execute-error-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# ┣ execute _Rename a missing session_
+    -# ┣ execute.opencode.session\\_rename _x_
+    -# ⨯ execute.opencode.session\\_rename _failed_
+    -# ⨯ execute _Error: broken on purpose_
+
+    The code failed.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

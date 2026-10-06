@@ -34,6 +34,7 @@ import {
   asSubtext,
   button,
   executeCalls,
+  formatExecuteFailures,
   buttonRow,
   formatBanner,
   formatError,
@@ -430,15 +431,7 @@ function applyTool(context: Context & { event: V2Event; label: string | undefine
     }
     case 'session.tool.progress': {
       const tool = draft.tools[toolKey(event.data)]
-      if (tool?.name === 'execute') {
-        // Each progress event carries the whole list; post the calls that are new.
-        const calls = executeCalls(event.data.metadata).slice(tool.innerCalls)
-        tool.innerCalls += calls.length
-        for (const call of calls) {
-          if (render && isToolVisible(call, prefs.verbosity)) toolLine(context, formatToolLine(call, { label }))
-        }
-        return
-      }
+      if (tool?.name === 'execute') return showInnerCalls({ ...context, tool, metadata: event.data.metadata })
       const childId = event.data.metadata['sessionID']
       if (typeof childId !== 'string' || !tool?.subagent) return
       draft.children[childId] = { ...tool.subagent, running: draft.children[childId]?.running ?? false }
@@ -448,13 +441,38 @@ function applyTool(context: Context & { event: V2Event; label: string | undefine
     case 'session.tool.success':
     case 'session.tool.failed': {
       const key = toolKey(event.data)
-      const name = draft.tools[key]?.name ?? 'tool'
+      const tool = draft.tools[key]
+      const name = tool?.name ?? 'tool'
+      if (tool?.name === 'execute') {
+        // The final metadata has the full list: rows whose progress was missed, then failures.
+        const { metadata } = event.data
+        showInnerCalls({ ...context, tool, metadata })
+        if (render && event.type === 'session.tool.success') {
+          for (const line of formatExecuteFailures({ metadata, content: event.data.content, label })) toolLine(context, line)
+        }
+      }
       delete draft.tools[key]
       if (event.type === 'session.tool.success' || !render) return
       if (event.data.error.type === 'aborted' || name === 'question' || name.startsWith('kimaki_')) return
       toolLine(context, formatToolFailed({ name, message: event.data.error.message, label }))
       return
     }
+  }
+}
+
+// Each update carries the whole `toolCalls` list; post the calls that are new.
+function showInnerCalls({
+  tool,
+  metadata,
+  label,
+  render,
+  ...context
+}: Context & { tool: Draft<ToolCall>; metadata: Readonly<Record<string, unknown>> | undefined; label: string | undefined; render: boolean }) {
+  const calls = executeCalls(metadata).slice(tool.innerCalls)
+  tool.innerCalls += calls.length
+  if (!render) return
+  for (const call of calls) {
+    if (isToolVisible(call, context.prefs.verbosity)) toolLine(context, formatToolLine(call, { label }))
   }
 }
 
@@ -527,10 +545,12 @@ export function replayEffects({
       if (part.type === 'text') return part.text.trim() ? [{ kind: 'text', text: part.text.trim() }] : []
       if (part.type !== 'tool' || part.state.status === 'streaming') return []
       const { input, metadata } = part.state
-      const inner = part.name === 'execute' ? executeCalls(metadata) : []
-      return [{ name: part.name, input }, ...inner]
+      const isExecute = part.name === 'execute'
+      const lines = [{ name: part.name, input }, ...(isExecute ? executeCalls(metadata) : [])]
         .filter((call) => isToolVisible(call, prefs.verbosity))
-        .map((call): Block => ({ kind: 'tool', text: formatToolLine(call) }))
+        .map((call) => formatToolLine(call))
+      const failures = isExecute && part.state.status === 'completed' ? formatExecuteFailures({ metadata, content: part.state.content }) : []
+      return [...lines, ...failures].map((text): Block => ({ kind: 'tool', text }))
     })
   })
   const kept = blocks.slice(-REPLAY_LIMIT)

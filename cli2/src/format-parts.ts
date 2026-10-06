@@ -274,14 +274,41 @@ export function formatToolLine(call: ToolCall, { label }: { label?: string } = {
 
 // Code Mode `execute` runs tools inside its JS runtime. They never get tool
 // events: `metadata.toolCalls` lists them in start order, as `{ tool, status, input }`.
+// A row starts as `running` and changes status in place. A code error still
+// ends with session.tool.success, marked by `error: true`.
 const ExecuteMetadata = z.object({
-  toolCalls: z.array(z.object({ tool: z.string(), input: z.record(z.string(), z.json()).optional() })),
+  toolCalls: z.array(z.object({
+    tool: z.string(),
+    status: z.enum(['running', 'completed', 'error']),
+    input: z.record(z.string(), z.json()).optional(),
+  })),
+  error: z.literal(true).optional(),
 })
 
 export function executeCalls(metadata: Readonly<Record<string, unknown>> | undefined): ToolCall[] {
   const parsed = ExecuteMetadata.safeParse(metadata)
   if (!parsed.success) return []
   return parsed.data.toolCalls.map((call) => ({ name: `execute.${call.tool}`, input: call.input ?? {} }))
+}
+
+// Failure lines once `execute` ends: one per failed inner call, then the code error.
+export function formatExecuteFailures({
+  metadata,
+  content,
+  label,
+}: {
+  metadata: Readonly<Record<string, unknown>> | undefined
+  content: ReadonlyArray<{ readonly type: 'text'; readonly text: string } | { readonly type: 'file' }> | undefined
+  label?: string
+}): string[] {
+  const parsed = ExecuteMetadata.safeParse(metadata)
+  if (!parsed.success) return []
+  const failed = parsed.data.toolCalls
+    .filter((call) => call.status === 'error')
+    .map((call) => formatToolFailed({ name: `execute.${call.tool}`, message: 'failed', label }))
+  if (!parsed.data.error) return failed
+  const message = (content ?? []).flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
+  return [...failed, formatToolFailed({ name: 'execute', message, label })]
 }
 
 export function formatToolFailed({ name, message, label }: { name: string; message: string; label?: string }): string {

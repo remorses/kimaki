@@ -1,7 +1,7 @@
 // Reducer core cases on recorded OpenCode V2 events: banner, text, footer,
 // typing, and the explicit list of event types that produce effects.
 
-import type { V2Event } from '@opencode/client'
+import type { JsonValue, V2Event } from '@opencode/client'
 import { expect, test } from 'vitest'
 
 import { emptyView, reduce } from './thread-reducer.ts'
@@ -248,4 +248,43 @@ test('snapshot closes the ack of an item promoted while disconnected, without an
   expect(hydrated.effects.map((effect) => effect.type)).toEqual(['edit'])
   expect(hydrated.view.inbox[0]?.delivery).toBe('steer')
   expect(reduce({ view: hydrated.view, event: snapshot, prefs: DEFAULT_PREFS }).effects).toEqual([])
+})
+
+test('execute: final metadata shows inner calls whose progress was missed, then failures', () => {
+  const events = loadFixture('abort.events.jsonl')
+  const sessionID = rootSessionId(events)
+  const view = emptyView({ sessionId: sessionID, channelId: 'channel', directory: '/project', isNew: false })
+  const base = { created: 1_000 }
+  const durable = <V extends number>(version: V) => ({ aggregateID: sessionID, seq: 1, version })
+  const call = { sessionID, assistantMessageID: 'msg_a', id: 'call_1' }
+  const toolCalls: JsonValue[] = [
+    { tool: 'opencode.models', status: 'completed', input: { query: 'gpt' } },
+    { tool: 'opencode.session_move', status: 'error', input: { directory: '/wt' } },
+  ]
+  const progress = (count: number): V2Event => ({ ...base, id: `evt_progress_${count}`, type: 'session.tool.progress', data: { ...call, metadata: { toolCalls: toolCalls.slice(0, count) } } })
+  const { effects } = replay({
+    view,
+    events: [
+      { ...base, durable: durable(1), id: 'evt_input', type: 'session.tool.input.started', data: { ...call, name: 'execute' } },
+      { ...base, durable: durable(1), id: 'evt_called', type: 'session.tool.called', data: { ...call, executed: false, input: { code: 'x', description: 'Move to worktree' } } },
+      progress(1),
+      progress(1),
+      {
+        ...base,
+        durable: durable(2),
+        id: 'evt_success',
+        type: 'session.tool.success',
+        data: { ...call, executed: true, metadata: { toolCalls, error: true }, content: [{ type: 'text', text: 'Error: no such directory\nmore' }] },
+      },
+    ],
+  })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "-# ┣ execute _Move to worktree_",
+      "-# ┣ execute.opencode.models _gpt_",
+      "-# ┣ execute.opencode.session\\_move _/wt_",
+      "-# ⨯ execute.opencode.session\\_move _failed_",
+      "-# ⨯ execute _Error: no such directory_",
+    ]
+  `)
 })
