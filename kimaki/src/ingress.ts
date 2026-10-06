@@ -1,7 +1,13 @@
 // Discord ingress (spec 4): gates every messageCreate, parses it into a Route
 // and calls actions. Gates, in order: bots (including ourselves), channel
 // ownership (only channels mapped in this machine's SQLite), permission.
-// Messages of one channel are handled in arrival order.
+// Messages of one channel are handled in arrival order, after OpenCode is ready.
+//
+// Messages sent while the bot was offline are not fetched here: gateway-proxy
+// buffers MESSAGE_* and THREAD_* events for a disconnected client (200 max)
+// and replays them after the next READY, and discord.js RESUME replays short
+// drops. Both arrive as normal messageCreate events. The listener is
+// registered before login so the replayed events are not missed.
 //
 // Attachments become prompt files; voice messages are transcribed into the
 // same Route as text. Edits and deletes of queued messages update the queue.
@@ -246,7 +252,13 @@ export function registerIngress(bot: Bot) {
 
   function serialize(channelId: string, task: () => Promise<void>) {
     const previous = chains.get(channelId) ?? Promise.resolve()
-    const next = previous.then(() => task().catch((error: Error) => logger.error(`ingress failed: ${error.message}`)))
+    const next = previous.then(async () => {
+      // gateway-proxy replays messages missed while offline right after READY,
+      // often before the OpenCode connection and hydration are done.
+      const ready = await bot.opencode.ready
+      if (ready instanceof Error) return logger.warn(`ingress skipped, OpenCode not ready: ${ready.message}`)
+      await task().catch((error: Error) => logger.error(`ingress failed: ${error.message}`))
+    })
     chains.set(channelId, next)
   }
 

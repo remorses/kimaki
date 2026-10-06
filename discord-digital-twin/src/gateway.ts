@@ -37,11 +37,31 @@ interface ConnectedClient {
   intents: number
   // Guilds this connection may see. null = all (the real bot token).
   guilds: ReadonlySet<string> | null
+  token: string | null
+  // Live events that arrive while the READY sequence is sent; null once sent.
+  held: Array<{ event: string; data: unknown }> | null
 }
 
 // Result of authenticating a token: the guilds it may see, null = all guilds,
 // false = rejected.
 export type GatewayAuthorize = (token: string) => ReadonlySet<string> | null | false
+
+// gateway-proxy mode: every registered client token with its guilds. Events
+// for a client with no live connection are buffered and replayed on IDENTIFY.
+export type GatewayOfflineClients = () => Iterable<[token: string, guilds: ReadonlySet<string>]>
+
+// Same events and cap as gateway-proxy/src/dispatch.rs and state.rs.
+const BUFFERED_EVENTS = new Set<string>([
+  GatewayDispatchEvents.MessageCreate,
+  GatewayDispatchEvents.MessageUpdate,
+  GatewayDispatchEvents.MessageDelete,
+  GatewayDispatchEvents.ThreadCreate,
+  GatewayDispatchEvents.ThreadUpdate,
+  GatewayDispatchEvents.ThreadDelete,
+])
+const OFFLINE_EVENT_BUFFER_LIMIT = 200
+
+type BufferedEvent = { event: string; data: unknown; guildId: string }
 
 export interface GatewayGuildState {
   id: string
@@ -62,21 +82,28 @@ export class DiscordGateway {
   private loadState: () => Promise<GatewayState>
   private port: number
   private authorize: GatewayAuthorize
+  private offlineClients: GatewayOfflineClients | null
+  // Client token -> events it missed while offline, oldest first.
+  private offlineEvents = new Map<string, BufferedEvent[]>()
 
   constructor({
     httpServer,
     port,
     loadState,
     authorize,
+    offlineClients,
   }: {
     httpServer: http.Server
     port: number
     loadState: () => Promise<GatewayState>
     authorize: GatewayAuthorize
+    // Only in gateway-proxy mode. Real Discord has no offline buffer.
+    offlineClients?: GatewayOfflineClients
   }) {
     this.port = port
     this.loadState = loadState
     this.authorize = authorize
+    this.offlineClients = offlineClients ?? null
     // Use noServer mode so we can accept both /gateway and /gateway/
     // (twilight-gateway appends /?v=10&encoding=json, creating path /gateway/)
     this.wss = new WebSocketServer({ noServer: true })
@@ -104,7 +131,26 @@ export class DiscordGateway {
     for (const client of this.clients) {
       if (!client.identified) continue
       if (guildId && client.guilds && !client.guilds.has(guildId)) continue
+      // Still sending READY: deliver after it and after the missed events, in order.
+      if (client.held) {
+        client.held.push({ event, data })
+        continue
+      }
       this.sendDispatch(client, event, data)
+    }
+    if (guildId) this.bufferForOfflineClients({ event, data, guildId })
+  }
+
+  // Mirrors buffer_event_for_disconnected_clients in gateway-proxy dispatch.rs.
+  private bufferForOfflineClients(buffered: BufferedEvent): void {
+    if (!this.offlineClients || !BUFFERED_EVENTS.has(buffered.event)) return
+    for (const [token, guilds] of this.offlineClients()) {
+      if (!guilds.has(buffered.guildId)) continue
+      if (this.clients.some((client) => client.identified && client.token === token)) continue
+      const events = this.offlineEvents.get(token) ?? []
+      if (events.length >= OFFLINE_EVENT_BUFFER_LIMIT) events.shift()
+      events.push(buffered)
+      this.offlineEvents.set(token, events)
     }
   }
 
@@ -170,6 +216,8 @@ export class DiscordGateway {
       identified: false,
       intents: 0,
       guilds: null,
+      token: null,
+      held: [],
     }
     this.clients.push(client)
     this.sendHello(client)
@@ -202,12 +250,14 @@ export class DiscordGateway {
         // Switch on `op` narrows GatewaySendPayload to GatewayIdentify,
         // so payload.d is already GatewayIdentifyData -- no cast needed
         const { token, intents } = payload.d
-        const guilds = this.authorize(token.replace(/^Bot\s+/i, ''))
+        const bareToken = token.replace(/^Bot\s+/i, '')
+        const guilds = this.authorize(bareToken)
         if (guilds === false) {
           client.ws.close(4004, 'Authentication failed')
           return
         }
         client.guilds = guilds
+        client.token = bareToken
         client.identified = true
         client.intents = intents
         await this.sendReadySequence(client)
@@ -277,5 +327,17 @@ export class DiscordGateway {
       }
       this.sendDispatch(client, GatewayDispatchEvents.GuildCreate, guildData)
     }
+
+    // Like forward_shard in gateway-proxy server.rs: READY, GUILD_CREATEs,
+    // then the events missed while offline, then the live stream.
+    const missed = client.token ? (this.offlineEvents.get(client.token) ?? []) : []
+    if (client.token) this.offlineEvents.delete(client.token)
+    for (const buffered of missed) {
+      if (client.guilds && !client.guilds.has(buffered.guildId)) continue
+      this.sendDispatch(client, buffered.event, buffered.data)
+    }
+    const held = client.held ?? []
+    client.held = null
+    for (const live of held) this.sendDispatch(client, live.event, live.data)
   }
 }

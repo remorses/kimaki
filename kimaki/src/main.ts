@@ -141,6 +141,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   cleanup.defer(() => scheduler.stop())
   // The lock server only passes /kimaki/* paths.
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
+  // Before login: gateway-proxy replays missed messages right after READY.
   registerIngress(bot)
 
   // Resolves with the first fatal error, or null when both sides are ready.

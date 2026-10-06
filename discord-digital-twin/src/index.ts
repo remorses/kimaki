@@ -133,7 +133,9 @@ export interface DigitalDiscordOptions {
   // Act as kimaki's gateway-proxy: only `clientId:secret` tokens registered
   // with authorizeGatewayClient() connect, READY and events are filtered to
   // their guilds, and REST routes follow rest_proxy.rs (fail closed). A
-  // botToken containing ':' is authorized for every seeded guild.
+  // botToken containing ':' is authorized for every seeded guild. Message and
+  // thread events for a registered client with no connection are buffered and
+  // replayed after its next READY, like the proxy's offline buffer.
   gatewayProxy?: boolean
 }
 
@@ -250,6 +252,7 @@ export class DigitalDiscord {
       },
       loadGatewayState: () => this.loadGatewayState(),
       gatewayUrlOverride: this.options.gatewayUrlOverride,
+      ...(this.options.gatewayProxy && { offlineClients: () => this.gatewayClients.entries() }),
     })
 
     const port = await startServer(this.server)
