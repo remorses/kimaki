@@ -73,6 +73,9 @@ export const bashToolSchemaPlugin: Plugin = async () => {
     },
     'shell.env': async (input, output) => {
       injectKimakiSessionEnv({ sessionID: input.sessionID, env: output.env })
+      // TODO: drop once opencode stops writing --print-logs into process.env (packages/opencode/src/index.ts).
+      // It leaks to every shell, so editors or TUIs started from a session print opencode logs into the terminal.
+      output.env['OPENCODE_PRINT_LOGS'] = '0'
     },
   }
 }
