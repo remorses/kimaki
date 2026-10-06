@@ -220,6 +220,25 @@ test('retry notices are throttled to one per 10s', () => {
   `)
 })
 
+test('cache miss notice when the cached prefix shrinks, e.g. after the cache TTL', () => {
+  const events = loadFixture('tools.events.jsonl')
+  const sessionId = rootSessionId(events)
+  const steps = events.flatMap((event, index) => (event.type === 'session.step.ended' && event.data.sessionID === sessionId ? [index] : []))
+  const lastIndex = steps.at(-1)!
+  const last = events[lastIndex]
+  if (last?.type !== 'session.step.ended') return expect.fail('fixture has no root step.ended')
+  // Same turn, but the last request found nothing in cache 10 minutes later.
+  const missed = events.map((event, index) =>
+    index === lastIndex ? { ...last, created: last.created + 600_000, data: { ...last.data, tokens: { ...last.data.tokens, cache: { read: 0, write: 0 } } } } : event,
+  )
+  expect(effectLines(replay({ events: missed }).effects).filter((line) => line.includes('cache'))).toMatchInlineSnapshot(`
+    [
+      "\\n-# ⬦ prompt cache miss: 0 of 25k tokens cached, 10m 1s after the last request",
+    ]
+  `)
+  expect(effectLines(replay({ events }).effects).filter((line) => line.includes('cache'))).toEqual([])
+})
+
 test('snapshot closes the ack of an item promoted while disconnected, without an echo', () => {
   const events = loadFixture('queue-plain.events.jsonl')
   const index = events.findIndex((event) => event.type === 'session.inbox.enqueued' && event.data.item.delivery === 'queue')

@@ -37,6 +37,7 @@ import {
   formatExecuteFailures,
   buttonRow,
   formatBanner,
+  formatCacheMiss,
   formatError,
   formatRetry,
   formatShellEnded,
@@ -102,6 +103,8 @@ export type ThreadView = {
   // Blank line between text and tool blocks.
   lastKind: 'text' | 'tool' | null
   lastRetryAt: number | null
+  // Prompt tokens the provider holds in cache after the last root step, and when that step ended.
+  cached: { tokens: number; at: number } | null
   // Root inbox: user items not delivered yet, in order (queuedItems() for the queue).
   inbox: readonly PendingInput[]
   // Questions and permission requests waiting for the user (root and children).
@@ -160,6 +163,7 @@ export type Prefs = {
 }
 
 const RETRY_NOTICE_INTERVAL_MS = 10_000
+const CACHE_MISS_SLACK = 1_024
 const REPLAY_LIMIT = 30
 
 export function emptyView({
@@ -184,6 +188,7 @@ export function emptyView({
     children: {},
     lastKind: null,
     lastRetryAt: null,
+    cached: null,
     inbox: [],
     forms: {},
     permissions: {},
@@ -306,6 +311,13 @@ function applyRoot(context: Context & { event: V2Event }) {
       if (!draft.turn) return
       const { tokens } = event.data
       draft.turn.tokens = tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write
+      // The prompt only grows, so the cached prefix should too. A drop means the provider
+      // re-read it: changed prefix, other model, or cache expired (TTL). The slack absorbs cache block rounding.
+      const previous = draft.cached
+      if (previous && tokens.cache.read + CACHE_MISS_SLACK < previous.tokens) {
+        toolLine(context, formatCacheMiss({ read: tokens.cache.read, expected: previous.tokens, idleMs: event.created - previous.at }))
+      }
+      draft.cached = { tokens: tokens.cache.read + tokens.cache.write, at: event.created }
       return
     }
     case 'session.text.ended': {
@@ -337,6 +349,8 @@ function applyRoot(context: Context & { event: V2Event }) {
       return
     // `/compact` or automatic compaction when the context is full.
     case 'session.compaction.ended':
+      // A compacted history has a new prefix: its first miss is expected.
+      draft.cached = null
       return toolLine(context, asSubtext('⬦ context compacted'))
     case 'session.compaction.failed':
       return toolLine(context, formatError(`compaction failed: ${event.data.error.message}`))

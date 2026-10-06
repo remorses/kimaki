@@ -157,6 +157,11 @@ export function formatRetry({ attempt, delayMs, message }: { attempt: number; de
   return asSubtext(`⬦ retrying in ${seconds}s (attempt ${attempt}): ${inline(message, 200)}`)
 }
 
+export function formatCacheMiss({ read, expected, idleMs }: { read: number; expected: number; idleMs: number }): string {
+  const k = (tokens: number) => (tokens < 1_000 ? String(tokens) : `${Math.round(tokens / 1_000)}k`)
+  return asSubtext(`⬦ prompt cache miss: ${k(read)} of ${k(expected)} tokens cached, ${formatDuration(idleMs)} after the last request`)
+}
+
 // One line, no markdown control characters, so `_x_` and `*x*` stay intact.
 function inline(text: string, max = 80): string {
   const flat = text.replace(/\s+/g, ' ').trim()
