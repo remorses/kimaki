@@ -12,6 +12,7 @@ import {
   type APIButtonComponentWithCustomId,
   type APIComponentInMessageActionRow,
 } from 'discord.js'
+import { z } from 'zod'
 
 import type { Verbosity } from './db.ts'
 
@@ -255,7 +256,11 @@ function toolBody({ name, input }: ToolCall): { glyph: '┣' | '◼︎'; text: s
       text: `${inline(stringField(input, 'agent') ?? 'subagent')} **${inline(stringField(input, 'description') ?? '')}**${background}`,
     }
   }
-  const detail = ['path', 'pattern', 'url', 'query', 'command', 'name']
+  if (name === 'execute') {
+    const description = stringField(input, 'description')
+    return { glyph: '┣', text: description ? `execute _${inline(description)}_` : 'execute' }
+  }
+  const detail = ['path', 'pattern', 'url', 'query', 'command', 'name', 'directory', 'title']
     .map((key) => stringField(input, key))
     .find((value) => value !== null)
   return { glyph: '┣', text: `${inline(name)}${detail ? ` _${inline(detail)}_` : ''}` }
@@ -265,6 +270,18 @@ function toolBody({ name, input }: ToolCall): { glyph: '┣' | '◼︎'; text: s
 export function formatToolLine(call: ToolCall, { label }: { label?: string } = {}): string {
   const { glyph, text } = toolBody(call)
   return asSubtext(`${glyph} ${label ? `${inline(label)} ⋅ ` : ''}${text}`)
+}
+
+// Code Mode `execute` runs tools inside its JS runtime. They never get tool
+// events: `metadata.toolCalls` lists them in start order, as `{ tool, status, input }`.
+const ExecuteMetadata = z.object({
+  toolCalls: z.array(z.object({ tool: z.string(), input: z.record(z.string(), z.json()).optional() })),
+})
+
+export function executeCalls(metadata: Readonly<Record<string, unknown>> | undefined): ToolCall[] {
+  const parsed = ExecuteMetadata.safeParse(metadata)
+  if (!parsed.success) return []
+  return parsed.data.toolCalls.map((call) => ({ name: `execute.${call.tool}`, input: call.input ?? {} }))
 }
 
 export function formatToolFailed({ name, message, label }: { name: string; message: string; label?: string }): string {

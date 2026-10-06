@@ -58,6 +58,20 @@ const matchers: DeterministicMatcher[] = [
     ],
     finalText: 'Edited notes.md.',
   }),
+  ...scriptedTurn({
+    marker: 'execute-marker',
+    steps: [
+      {
+        id: 'call-execute-1',
+        tool: 'execute',
+        input: {
+          code: "await tools.opencode.models({ query: 'deterministic' }); return await tools.opencode.list_mcp_resources({})",
+          description: 'Look up models and MCP resources',
+        },
+      },
+    ],
+    finalText: 'Found the models.',
+  }),
   {
     id: 'markdown',
     priority: 100,
@@ -138,6 +152,22 @@ test('shell and edit lines are shown, read is hidden at the default verbosity', 
     -# ◼︎ edit *notes.md* (+1-0)
 
     Edited notes.md.
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+})
+
+test('Code Mode execute shows its description, then one line per inner tool call', async () => {
+  const thread = await runTurn({ channelId: twin.channelId, content: 'Run code execute-marker' })
+  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Run code execute-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# ┣ execute _Look up models and MCP resources_
+    -# ┣ execute.opencode.models _deterministic_
+    -# ┣ execute.opencode.list\\_mcp\\_resources
+
+    Found the models.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

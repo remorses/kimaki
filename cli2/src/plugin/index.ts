@@ -26,15 +26,22 @@ export default Plugin.define({
       event.system.push({ type: 'text', text: `[current working directory is ${ctx.location.directory}]` })
       const branch = await exec('git', ['branch', '--show-current'], { cwd: ctx.location.directory, timeout: 5000 }).catch(() => null)
       if (branch?.stdout.trim()) event.system.push({ type: 'text', text: `[current git branch is ${branch.stdout.trim()}]` })
-      const shell = event.tools['shell']
-      if (!shell) return
-      const input = shell.input
-      if (!input || typeof input !== 'object' || Array.isArray(input)) return
-      shell.input = { ...input, properties: {
-        ...('properties' in input && input.properties && typeof input.properties === 'object' ? input.properties : {}),
-        description: { type: 'string', description: 'Short 5-10 word summary shown in Discord' },
-        hasSideEffect: { type: 'boolean', description: 'True if the command writes files, modifies state, or triggers external effects' },
-      } }
+      // Extra inputs only for the Discord tool line. OpenCode decodes the real
+      // inputs with Schema.Struct, which ignores unknown keys.
+      const description = { type: 'string', description: 'Short 5-10 word summary shown in Discord' }
+      const extras = {
+        shell: { description, hasSideEffect: { type: 'boolean', description: 'True if the command writes files, modifies state, or triggers external effects' } },
+        execute: { description },
+      }
+      for (const [name, properties] of Object.entries(extras)) {
+        const tool = event.tools[name]
+        const input = tool?.input
+        if (!tool || !input || typeof input !== 'object' || Array.isArray(input)) continue
+        tool.input = { ...input, properties: {
+          ...(input.properties && typeof input.properties === 'object' ? input.properties : {}),
+          ...properties,
+        } }
+      }
     })
     await ctx.tool.hook('execute.before', async (event) => {
       if (event.tool !== 'shell' || !event.input || typeof event.input !== 'object' || Array.isArray(event.input)) return

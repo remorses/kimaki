@@ -33,6 +33,7 @@ import type { Verbosity } from './db.ts'
 import {
   asSubtext,
   button,
+  executeCalls,
   buttonRow,
   formatBanner,
   formatError,
@@ -79,6 +80,8 @@ export type ToolCall = {
   phase: 'input' | 'called'
   // A subagent call whose child session is not linked yet.
   subagent: { agent: string; description: string; background: boolean } | null
+  // Code Mode `execute`: inner tool calls that already got a line.
+  innerCalls: number
 }
 
 export type ThreadView = {
@@ -407,13 +410,13 @@ function applyTool(context: Context & { event: V2Event; label: string | undefine
   const { draft, event, prefs, label, render } = context
   switch (event.type) {
     case 'session.tool.input.started':
-      draft.tools[toolKey(event.data)] = { name: event.data.name, phase: 'input', subagent: null }
+      draft.tools[toolKey(event.data)] = { name: event.data.name, phase: 'input', subagent: null, innerCalls: 0 }
       return
     case 'session.tool.called': {
       const key = toolKey(event.data)
       const name = draft.tools[key]?.name ?? 'tool'
       const input = event.data.input
-      const tool: ToolCall = { name, phase: 'called', subagent: null }
+      const tool: ToolCall = { name, phase: 'called', subagent: null, innerCalls: 0 }
       if (name === 'subagent') {
         const reused = typeof input['sessionID'] === 'string' ? draft.children[input['sessionID']] : undefined
         const call = { agent: stringInput(input, 'agent'), description: stringInput(input, 'description'), background: input['background'] === true }
@@ -426,8 +429,17 @@ function applyTool(context: Context & { event: V2Event; label: string | undefine
       return
     }
     case 'session.tool.progress': {
-      const childId = event.data.metadata['sessionID']
       const tool = draft.tools[toolKey(event.data)]
+      if (tool?.name === 'execute') {
+        // Each progress event carries the whole list; post the calls that are new.
+        const calls = executeCalls(event.data.metadata).slice(tool.innerCalls)
+        tool.innerCalls += calls.length
+        for (const call of calls) {
+          if (render && isToolVisible(call, prefs.verbosity)) toolLine(context, formatToolLine(call, { label }))
+        }
+        return
+      }
+      const childId = event.data.metadata['sessionID']
       if (typeof childId !== 'string' || !tool?.subagent) return
       draft.children[childId] = { ...tool.subagent, running: draft.children[childId]?.running ?? false }
       tool.subagent = null
@@ -513,9 +525,12 @@ export function replayEffects({
     if (message.type !== 'assistant') return []
     return message.content.flatMap((part): Block[] => {
       if (part.type === 'text') return part.text.trim() ? [{ kind: 'text', text: part.text.trim() }] : []
-      if (part.type !== 'tool' || typeof part.state.input === 'string') return []
-      const call = { name: part.name, input: part.state.input }
-      return isToolVisible(call, prefs.verbosity) ? [{ kind: 'tool', text: formatToolLine(call) }] : []
+      if (part.type !== 'tool' || part.state.status === 'streaming') return []
+      const { input, metadata } = part.state
+      const inner = part.name === 'execute' ? executeCalls(metadata) : []
+      return [{ name: part.name, input }, ...inner]
+        .filter((call) => isToolVisible(call, prefs.verbosity))
+        .map((call): Block => ({ kind: 'tool', text: formatToolLine(call) }))
     })
   })
   const kept = blocks.slice(-REPLAY_LIMIT)
