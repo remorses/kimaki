@@ -1688,7 +1688,7 @@ pending-forms check. `session list --active` derives from execution events or
 **Decision (changed in P9):** V2 uses its **own file** `~/.kimaki/kimaki.db` with a
 **subset of the V1 tables and their columns**. On the first start, when `kimaki.db` is
 missing and `discord-sessions.db` exists, the bot imports the rows of these tables
-(`cli2/src/migrations.ts`, the only place for migrations). The V1 file is opened
+(`kimaki/src/migrations.ts`, the only place for migrations). The V1 file is opened
 read-only and never changed or deleted. **No downgrade:** changes made by V2 stay in
 `kimaki.db`.
 
@@ -1709,7 +1709,7 @@ scheduled_tasks     tasks
 session_sleeps      sleeps
 ```
 
-The V2 Drizzle schema (`cli2/src/schema.ts`) declares **only the used tables**, copied
+The V2 Drizzle schema (`kimaki/src/schema.ts`) declares **only the used tables**, copied
 from the V1 schema with identical column names, types, and the same custom `datetime`
 type, so the import is one `INSERT … SELECT` per table:
 
@@ -1895,12 +1895,12 @@ for await (const event of client.event.subscribe({ signal })) {
 14. **`session.shell` and `/abort`.** Check whether `interrupt` kills a running user shell;
     else call `client.shell.remove`.
 
-### Findings from building cli2 P0–P2 (OpenCode 2.0.19)
+### Findings from building kimaki P0–P2 (OpenCode 2.0.19)
 
 - **Test server port.** `serve --service` binds a fixed default port, so parallel test
   files collide. The harness passes `--port <free port>`; each restart gets a new port.
   In service mode `OPENCODE_PASSWORD` is ignored; the password is only in `service.json`.
-- **Version check.** `Service.discover()` returns no version. cli2 reads it from
+- **Version check.** `Service.discover()` returns no version. kimaki reads it from
   `client.server.info()`.
 - **Message listing.** 2.0.19 exposes `client.message.list({ sessionID })`, not
   `session.messages` (28.6 table).
@@ -1921,10 +1921,10 @@ for await (const event of client.event.subscribe({ signal })) {
 - **Footer after background children.** When the parent execution succeeds while a child
   runs, the turn is closed without a footer; the footer of the later parent execution
   measures only that execution.
-- **No reconnect gap fill (decided).** cli2 reconciles busy state and adopts running
+- **No reconnect gap fill (decided).** kimaki reconciles busy state and adopts running
   children on every connect (`session.active()` + parentID walk). Output missed while
   disconnected is intentionally not posted (6.8).
-- **No plugin file yet.** P0 asked for a no-op Kimaki plugin in the test config; cli2 adds
+- **No plugin file yet.** P0 asked for a no-op Kimaki plugin in the test config; kimaki adds
   none until P7 (no stubs).
 - **Onboarding without a project picker (decided).** The first start creates only the
   default `kimaki-<bot>` channel (`<dataDir>/projects/kimaki`) and a `Kimaki onboarding`
@@ -1933,19 +1933,19 @@ for await (const event of client.event.subscribe({ signal })) {
   tutorial thread. Since P4 the prompt asks with the question tool.
 - **Kimaki records session events (decided).** `session.log` has no history in 2.0.19 and
   `message.list` drops transient events (`session.retry.scheduled`), so `session read
-  --json` cannot replace `export-events-jsonl`. cli2 appends every event folded into a
+  --json` cannot replace `export-events-jsonl`. kimaki appends every event folded into a
   thread to `<dataDir>/session-events/<threadId>.jsonl` (no deltas, strings cut at 10k,
   file restarted past 20 MB). `kimaki session events <id>` prints it; `session read <id>`
   prints `message.list` as markdown (the CLI help lists both; `/session-id` does not).
 - **`Service.ensure()` binary.** Its default command is `opencode` from `PATH`, which is
-  often V1 while V2 installs as `opencode2`. cli2 picks the first of `opencode2`,
+  often V1 while V2 installs as `opencode2`. kimaki picks the first of `opencode2`,
   `opencode` whose `--version` is at least 2.0.19 and passes it as `command`.
 
-### Findings from building cli2 P3–P5 (OpenCode 2.0.19)
+### Findings from building kimaki P3–P5 (OpenCode 2.0.19)
 
 - **Interrupt before steer, not after.** `prompt(steer)` then `interrupt({ resume: true })`
   (9.1) parks queued items for good: the resumed drain is steer-scoped and never
-  promotes `queue` items (`execution.ts`, `steer-queue` fixture). cli2 calls
+  promotes `queue` items (`execution.ts`, `steer-queue` fixture). kimaki calls
   `interrupt({ resume: false })` first, then `prompt(steer)`: the prompt's wake has
   "input" scope, so the steer runs and then the queue (`queue-parked` fixture, e2e).
   Pending questions are cancelled and permissions rejected before the interrupt.
@@ -1978,7 +1978,7 @@ for await (const event of client.event.subscribe({ signal })) {
 - **Attachments** are saved in `<dataDir>/attachments/<messageId>/` (not in the project,
   to keep `git status` clean) and sent as `file://` URIs; OpenCode reads them.
 
-### Findings from building cli2 P6 (OpenCode 2.0.19)
+### Findings from building kimaki P6 (OpenCode 2.0.19)
 
 - **Agent ID vs name.** `agent.list` returns `{ id: 'plan', name: 'Plan' }`.
   `session.create`, `switchAgent` and `SessionInfo.agent` take the **ID**; the name is
@@ -2010,7 +2010,7 @@ for await (const event of client.event.subscribe({ signal })) {
   can use: OpenCode Zen free models always, plus providers from env keys. The harness
   strips `*_API_KEY` from the test server env so snapshots do not depend on the
   developer machine. `ModelInfo.id` (not `modelID`) matches `step.started.model.id`.
-- **Fork title.** `session.fork` titles the new session `<title> (fork #1)`; cli2 uses
+- **Fork title.** `session.fork` titles the new session `<title> (fork #1)`; kimaki uses
   it as the thread name. Forks inherit metadata, so `/fork` and `/resume` overwrite
   `metadata.kimaki` and put the instructions entry with the new thread ID (`. btw`
   keeps the parent entry for the prompt cache).
@@ -2026,7 +2026,7 @@ for await (const event of client.event.subscribe({ signal })) {
   hydration). Resuming a busy session puts the instructions entry mid-turn, which the
   model sees as an instructions update. The old thread's effects worker is disposed.
 - **`message.list`**: `limit` ≤ 200 and a `cursor` must not be combined with `order`.
-- **Compaction** runs as its own execution without a model step. cli2 posts
+- **Compaction** runs as its own execution without a model step. kimaki posts
   `-# ⬦ context compacted` (or `✗ compaction failed: …`) and no footer for an
   execution without a step. OpenCode rejects a summary without the template headings
   (`## Objective`, …), so the test matcher answers with one.
@@ -2043,7 +2043,7 @@ for await (const event of client.event.subscribe({ signal })) {
 - **`/diff`** is tested only for "No changes to show"; the critique.work upload needs
   the network.
 
-### Findings from implementing cli2 P7 (in progress, OpenCode 2.0.19)
+### Findings from implementing kimaki P7 (in progress, OpenCode 2.0.19)
 
 **P7 is mostly complete.** Open items are listed at the end of this section.
 
@@ -2104,7 +2104,7 @@ for await (const event of client.event.subscribe({ signal })) {
   an in-flight upload-cancellation regression test, and the shell-environment design
   review (Windows untested). Worktrees, scheduling, and onboarding stay P10/P8/P9.
 
-### Findings from building cli2 P9 (OpenCode 2.0.19)
+### Findings from building kimaki P9 (OpenCode 2.0.19)
 
 - **Own database file.** `kimaki.db` with a one-time read-only import of
   `discord-sessions.db` (section 17). Real V1 files are in WAL mode with rows still in
@@ -2126,7 +2126,7 @@ for await (const event of client.event.subscribe({ signal })) {
   `rest_proxy.rs` route scoping (401 unknown client, 403 outside the authorized guilds,
   404 + 10003 unknown channel), filters READY and guild events, and
   `authorizeGatewayClient()` plays the OAuth callback. `KIMAKI_TEST_GATEWAY=1` runs every
-  e2e file in gateway mode; it found no unscoped REST call in cli2.
+  e2e file in gateway mode; it found no unscoped REST call in kimaki.
 - **Programmatic onboarding.** Non-TTY events use V1's SSE framing
   (`data: {...}\n\n`: `install_url`, `authorized`, `ready`, `error`), the documented public
   format. The fixed 2s wait for the proxy is replaced by polling `GET /gateway/bot` with
@@ -2146,7 +2146,7 @@ for await (const event of client.event.subscribe({ signal })) {
   cache write: OpenCode 2.0.19 reports `output` without reasoning but bills both. Zero-token executions
   are skipped like V1. `turn_started` has no `source` prop yet.
 
-### Findings from building cli2 P8 (OpenCode 2.0.19)
+### Findings from building kimaki P8 (OpenCode 2.0.19)
 
 - **Fake clock.** `scheduler.ts` reads time only from `Clock.now()`. `dueTasks` and
   `nextRunOf` are pure; `runDueTasks` has no timers; the 5s loop runs only when
@@ -3632,7 +3632,7 @@ Cases each fixture must pin down in its snapshot:
 
 ## 30. Build phases
 
-The rebuild happens in a new `cli2/` package. Every phase ends in a **working bot** that
+The rebuild happens in a new `kimaki/` package. Every phase ends in a **working bot** that
 passes its end-to-end tests against `discord-digital-twin` and a real OpenCode V2 server
 running the deterministic provider. In production Kimaki uses the user's OpenCode
 service (28.2); each test file spawns its own isolated server with separate XDG dirs and
@@ -3657,7 +3657,7 @@ Rules for every phase:
   modals, message edit/delete events, attachments, voice messages, reactions, ...), add
   the missing route or actor method to `discord-digital-twin/src/index.ts` first, with a
   test in `discord-digital-twin/tests/`. Never skip the e2e test or fake the Discord
-  side in cli2 because the twin is missing something
+  side in kimaki because the twin is missing something
 - **no stubs for later phases**: a feature is either complete or absent. No `TODO`
   branches in the reducer
 - **only the modules of section 27**; a phase may add a module or extend one, never
@@ -3670,7 +3670,7 @@ P0 harness ─▶ P1 hello thread ─▶ P2 renderer ─▶ P3 interrupt+queue �
                                                                          │
 P9 onboarding ◀─ P8 schedule ◀─ P7 CLI+lock ◀─ P6 btw/fork/cmds ◀─ P5 shell+voice+files
    │
-   └─▶ P10 worktrees + projects ─▶ P11 swap cli2 → cli
+   └─▶ P10 worktrees + projects ─▶ P11 delete cli, publish kimaki
 ```
 
 ### Phase 0: harness
@@ -3682,8 +3682,8 @@ service, and reconnects when either restarts. No message handling yet.
 
 | File | Contents |
 |---|---|
-| `cli2/package.json` | deps: `@opencode/client`, `@opencode/plugin`, `discord.js`, `drizzle-orm`, `@libsql/client`, `zustand`, `errore`, `goke`, `string-dedent`, mdast libs (used in P2). devDeps: `@opencode/cli` (test server binary), `vitest`, `discord-digital-twin` (`workspace:^`), `opencode-deterministic-provider` (`workspace:^`) |
-| `cli2/tsconfig.json`, `vitest.config.ts` | ESM, strict, `.ts` imports; vitest `KIMAKI_VITEST=1`, logs off unless `KIMAKI_TEST_LOGS=1` |
+| `kimaki/package.json` | deps: `@opencode/client`, `@opencode/plugin`, `discord.js`, `drizzle-orm`, `@libsql/client`, `zustand`, `errore`, `goke`, `string-dedent`, mdast libs (used in P2). devDeps: `@opencode/cli` (test server binary), `vitest`, `discord-digital-twin` (`workspace:^`), `opencode-deterministic-provider` (`workspace:^`) |
+| `kimaki/tsconfig.json`, `vitest.config.ts` | ESM, strict, `.ts` imports; vitest `KIMAKI_VITEST=1`, logs off unless `KIMAKI_TEST_LOGS=1` |
 | `src/logger.ts` | prefixed logger to `<dataDir>/kimaki.log` + stderr |
 | `src/errors.ts` | errore tagged errors used across modules (`OpenCodeError`, `DiscordError`, `DbError`, `ConfigError`) |
 | `src/db.ts`, `src/schema.ts` | the V1 table subset (17), same file and DDL, `openDb({ migrate: boolean })`. Only `main.ts` passes `migrate: true` |
@@ -4001,8 +4001,8 @@ worktree; add project creates a channel.
 
 ### Phase 11: swap
 
-- run the full cli2 e2e suite; compare against the V1 suite for missing behaviors
-- move `cli2/` → `cli/`, update root scripts, skills sync, publish pipeline
+- run the full kimaki e2e suite; compare against the V1 suite for missing behaviors
+- delete `cli/`, publish `kimaki/` as the `kimaki` npm package, update root scripts, skills sync, publish pipeline
 - changeset describing the rebuild and the removed features (section 25)
 
 ### Size and ordering notes

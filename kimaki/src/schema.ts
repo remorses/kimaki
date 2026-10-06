@@ -1,5 +1,5 @@
 // Drizzle schema for Kimaki's local SQLite file (~/.kimaki/kimaki.db).
-// The tables are the V1 tables cli2 still uses, with identical columns, so
+// The tables are the V1 tables kimaki still uses, with identical columns, so
 // migrations.ts can import a V1 discord-sessions.db with INSERT ... SELECT.
 // Every schema change needs a step in migrations.ts.
 

@@ -1,6 +1,6 @@
 // Generates src/schema-sql.ts: the idempotent DDL (CREATE ... IF NOT EXISTS)
 // of src/schema.ts as a string constant, so the built package needs no .sql file.
-// Run: pnpm generate (inside cli2).
+// Run: pnpm generate (inside kimaki).
 
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'

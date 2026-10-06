@@ -16,7 +16,7 @@ import { LEGACY_DB_FILE } from './migrations.ts'
 const tempDirs: string[] = []
 
 function tempDataDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-cli2-db-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-db-'))
   tempDirs.push(dir)
   return dir
 }
@@ -72,7 +72,7 @@ async function writeLegacyDb({ dataDir, sql }: { dataDir: string; sql: string })
   return file
 }
 
-test('fresh install gets kimaki.db with the cli2 tables; subcommands never create it', async () => {
+test('fresh install gets kimaki.db with the kimaki tables; subcommands never create it', async () => {
   const dataDir = tempDataDir()
 
   // Subcommands never migrate: a missing file is reported, not created.

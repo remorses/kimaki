@@ -1,4 +1,4 @@
-// Tagged errors shared across cli2 modules (errore convention: return, don't throw).
+// Tagged errors shared across kimaki modules (errore convention: return, don't throw).
 
 import * as errore from 'errore'
 

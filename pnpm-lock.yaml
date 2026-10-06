@@ -212,7 +212,7 @@ importers:
         specifier: ^8.0.2
         version: 8.5.0
 
-  cli2:
+  kimaki:
     dependencies:
       '@clack/prompts':
         specifier: ^1.7.0

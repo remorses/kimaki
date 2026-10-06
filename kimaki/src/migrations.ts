@@ -1,16 +1,16 @@
-// Every SQLite migration of cli2, in one place. Only the bot start runs it
+// Every SQLite migration of kimaki, in one place. Only the bot start runs it
 // (openDb({ migrate: true })); subcommands never migrate.
 //
 //   <dataDir>/kimaki.db missing?
 //     └─ <dataDir>/discord-sessions.db (V1) present?
 //          yes ─▶ build kimaki.db.import from schema.sql + the V1 rows of the
-//                 tables cli2 uses, then rename it to kimaki.db (atomic: a
+//                 tables kimaki uses, then rename it to kimaki.db (atomic: a
 //                 crash leaves no half-imported kimaki.db, the next start retries)
 //          no  ─▶ empty kimaki.db
 //   then: schema.sql (CREATE ... IF NOT EXISTS) on kimaki.db
 //
 // The V1 file is opened read-only and never changed or deleted, so V1 keeps
-// working on its own data. There is no downgrade: changes made by cli2 stay in
+// working on its own data. There is no downgrade: changes made by kimaki stay in
 // kimaki.db. Future schema changes (ALTER TABLE ... ADD COLUMN) go in
 // migrateSchema() below.
 
@@ -44,8 +44,8 @@ const IMPORTED_TABLES = [
   'session_sleeps',
 ] as const
 
-// V1 values cli2 reads differently. Old V1 rows can carry the DDL default
-// 'self-hosted' (hyphen) or NULL; cli2 only knows 'self_hosted' | 'gateway'.
+// V1 values kimaki reads differently. Old V1 rows can carry the DDL default
+// 'self-hosted' (hyphen) or NULL; kimaki only knows 'self_hosted' | 'gateway'.
 const IMPORT_EXPRESSIONS: Partial<Record<(typeof IMPORTED_TABLES)[number], Record<string, string>>> = {
   bot_tokens: { bot_mode: `CASE WHEN bot_mode = 'gateway' THEN 'gateway' ELSE 'self_hosted' END` },
 }
@@ -76,7 +76,7 @@ async function copyLegacyRows({ client, legacyFile }: { client: Client; legacyFi
       logger.log(`import ${table}: not in ${LEGACY_DB_FILE}, skipped`)
       continue
     }
-    // Columns an older V1 file lacks get the cli2 default.
+    // Columns an older V1 file lacks get the kimaki default.
     const columns = (await columnsOf({ client, schema: 'main', table })).filter((column) => legacyColumns.includes(column))
     const expressions = columns.map((column) => IMPORT_EXPRESSIONS[table]?.[column] ?? `"${column}"`)
     const inserted = await client.execute(
