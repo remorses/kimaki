@@ -89,7 +89,7 @@ kimaki runs on native OpenCode V2. import the client from `@opencode/client` and
 
 in the bot, call OpenCode through `oc(bot, 'operation.name', (client) => ...)`, which turns rejections into `OpenCodeError` values.
 
-Kimaki uses the user's shared OpenCode service, not a bot-owned server. `opencode-server.ts` discovers it or starts it through `Service.ensure()` when none is running (binary `opencode2`, then `opencode`, minimum version `MIN_OPENCODE_VERSION`). it never pins a version, because that would replace the running server and kill the user's TUI sessions.
+Kimaki uses the user's shared OpenCode service, not a bot-owned server. `opencode-server.ts` discovers it or starts it through `Service.ensure()` when none is running (binary `opencode2`, then `opencode` on PATH, then the bundled `@opencode/cli` dependency; minimum version `MIN_OPENCODE_VERSION`). `kimaki` checks this before Discord onboarding (`checkOpencode`), so a user without OpenCode fails before the bot install. it never pins a version, because that would replace the running server and kill the user's TUI sessions.
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode (not opencode-ai/opencode, which is an unrelated repo).
 

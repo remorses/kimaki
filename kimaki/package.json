@@ -20,6 +20,7 @@
     "@clack/prompts": "^1.7.0",
     "@discordjs/core": "2.5.0",
     "@libsql/client": "^0.17.2",
+    "@opencode/cli": "2.0.19",
     "@opencode/client": "2.0.19",
     "@opencode/plugin": "2.0.19",
     "@strada.sh/sdk": "^0.8.0",
@@ -42,7 +43,6 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@opencode/cli": "2.0.19",
     "@types/mdast": "^4.0.4",
     "@types/node": "^24.3.0",
     "discord-digital-twin": "workspace:^",

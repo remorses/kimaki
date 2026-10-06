@@ -6,7 +6,8 @@
 // Service.ensure() defaults to `opencode` from PATH. While V2 is in beta it
 // installs as `opencode2` and `opencode` is usually V1, which prints help for
 // `serve --service` and exits. So the binary is resolved first: the first of
-// `opencode2`, `opencode` on PATH whose `--version` is a supported V2.
+// `opencode2`, `opencode` on PATH, then the bundled @opencode/cli binary,
+// whose `--version` is a supported V2.
 // TODO: drop the lookup and use the Service.ensure() default once V2 ships as `opencode`.
 //
 // watchOpencode() owns the single /api/event subscription and implements the
@@ -21,6 +22,7 @@
 
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -66,24 +68,45 @@ function errorText(error: Error): string {
   return `${error.message}${cause}`
 }
 
-const BINARY_CANDIDATES = ['opencode2', 'opencode']
-
 // "opencode v2.0.19" -> "2.0.19"
 export function parseVersionOutput(output: string): string | null {
   return output.match(/(\d+\.\d+\.\d+(?:-[\w.-]+)?)/)?.[1] ?? null
 }
 
-export async function resolveOpencodeBinary(): Promise<OpenCodeUnavailableError | string> {
+// The native binary of the @opencode/cli dependency (its postinstall puts it in
+// bin/opencode.exe), or null when the package or platform binary is missing.
+// Not node_modules/.bin/opencode: that sh wrapper survives SIGTERM.
+export function bundledOpencodeBinary(): string | null {
+  const packageJson = errore.try(() => createRequire(import.meta.url).resolve('@opencode/cli/package.json'))
+  if (packageJson instanceof Error) return null
+  return path.join(path.dirname(packageJson), 'bin', 'opencode.exe')
+}
+
+// The user's own install wins, so Kimaki and their TUI share one service
+// version. The bundled binary covers users without OpenCode 2 on PATH.
+export async function resolveOpencodeBinary({
+  candidates = ['opencode2', 'opencode', bundledOpencodeBinary()],
+}: { candidates?: readonly (string | null)[] } = {}): Promise<OpenCodeUnavailableError | string> {
   const found: string[] = []
-  for (const candidate of BINARY_CANDIDATES) {
+  for (const candidate of candidates) {
+    if (!candidate) continue
     const result = await execFileAsync(candidate, ['--version'], { timeout: 10_000 }).catch(() => null)
     const version = result ? parseVersionOutput(result.stdout) : null
     if (!version) continue
     if (isSupportedVersion(version)) return candidate
     found.push(`${candidate} ${version}`)
   }
-  const seen = found.length > 0 ? `found ${found.join(', ')}` : 'no opencode binary on PATH'
+  const seen = found.length > 0 ? `found ${found.join(', ')}` : 'no opencode binary on PATH or in the kimaki install'
   return new OpenCodeUnavailableError({ reason: `no OpenCode >= ${MIN_OPENCODE_VERSION}: ${seen}` })
+}
+
+// Startup preflight, before Discord onboarding: a running service, or a binary
+// that can start one. Its version is checked on connect.
+export async function checkOpencode({ serviceFile }: { serviceFile?: string }): Promise<OpenCodeUnavailableError | null> {
+  const discovered = await Service.discover({ file: serviceFile }).catch(() => null)
+  if (discovered) return null
+  const binary = await resolveOpencodeBinary()
+  return binary instanceof Error ? binary : null
 }
 
 // Kimaki plugin registration. OpenCode auto-loads every entry of

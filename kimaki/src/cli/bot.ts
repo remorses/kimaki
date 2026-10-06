@@ -96,7 +96,7 @@ export function registerStartCommand(cli: Goke) {
         { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl },
         { openDb },
         { createAnalytics },
-        { opencodeConfigDir },
+        { checkOpencode, opencodeConfigDir },
         { defaultMachineName },
       ] = await Promise.all([
         import('../main.ts'),
@@ -129,6 +129,13 @@ export function registerStartCommand(cli: Goke) {
         process.stdout.write(`${installUrlFor({ credentials, website: urls.website, callbackUrl: options.gatewayCallbackUrl })}\n`)
         if (credentials.mode === 'gateway') process.stderr.write('This URL contains your client credentials. Do not share it.\n')
         return
+      }
+
+      // Before onboarding: without OpenCode the bot cannot start, so fail before the Discord install.
+      const opencodeCheck = await checkOpencode({ serviceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'] })
+      if (opencodeCheck) {
+        opened.close()
+        failStartup(opencodeCheck)
       }
 
       startCaffeinate()
