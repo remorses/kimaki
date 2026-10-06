@@ -202,7 +202,9 @@ full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-pa
 `kimaki/src/plugin/` runs inside the **OpenCode server process**, not the bot. on start the bot writes a shim per plugin into `<opencode config dir>/plugins/<name>/index.js` that re-exports the module of the running Kimaki install (`installPluginShim` in `opencode-server.ts`). no opencode.json edit. writing the shim only when its content changes matters: any change in that folder reloads every location and cancels pending forms.
 
 - `plugin/index.ts` (`kimaki`): context lines, extra `description` / `hasSideEffect` tool inputs, shell env, file edit log.
-- `plugin/anthropic.ts` (`kimaki-anthropic`): Claude Pro/Max OAuth for every session, TUI included.
+- `plugin/anthropic/index.ts` (`kimaki-anthropic`): Claude Pro/Max OAuth for every session, TUI included.
+
+each plugin is a directory loaded through its `index` module. OpenCode only accepts directories in opencode.json `plugins`, so plain OpenCode users can list `<kimaki>/src/plugin/anthropic` there. OpenCode keeps one plugin per ID and reports a second one as failed (`Duplicate plugin ID`), so `installPluginShim` removes a shim when the global `opencode.json`/`opencode.jsonc` already lists the same plugin directory of any Kimaki install. the `anthropic` directory must import nothing from Kimaki outside itself except npm packages.
 
 each module has one `export default Plugin.define(...)`. keep utilities in separate files and import them.
 

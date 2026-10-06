@@ -13,6 +13,11 @@
 // unlike the `kimaki` plugin it is not limited to marked Kimaki sessions,
 // because a stored subscription credential must work in every session, TUI
 // included. API-key requests (x-api-key) are left untouched.
+//
+// Standalone in plain OpenCode without the bot: list this directory in
+// opencode.json `plugins` (OpenCode only accepts directories there). The bot
+// then skips its shim, see installPluginShim in opencode-server.ts.
+// It imports nothing from Kimaki outside this folder except npm packages.
 
 import * as errore from 'errore'
 import http from 'node:http'
@@ -27,7 +32,10 @@ const CALLBACK_PORT = 53692
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`
 const SCOPES = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload'
 const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.280 (external, cli)'
+// Browser: the localhost callback finishes the login. Headless: the user pastes
+// the callback URL, for a browser on another machine than OpenCode (Discord /login).
 const METHOD_ID = Integration.MethodID.make('claude-pro-max')
+const HEADLESS_METHOD_ID = Integration.MethodID.make('claude-pro-max-headless')
 export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 
 export class AnthropicOAuthError extends errore.createTaggedError({
@@ -35,7 +43,7 @@ export class AnthropicOAuthError extends errore.createTaggedError({
   message: 'Claude Pro/Max login failed: $reason',
 }) {}
 
-async function requestToken(body: Record<string, string>) {
+async function requestToken({ body, methodID }: { body: Record<string, string>; methodID: Integration.MethodID }) {
   const response = await fetch(TOKEN_URL, {
     method: 'POST',
     // OpenCode sets `user-agent: opencode/...` on every fetch; the token endpoint answers 429 to it.
@@ -50,7 +58,7 @@ async function requestToken(body: Record<string, string>) {
   if (!json.access_token || !json.refresh_token || !json.expires_in) return new AnthropicOAuthError({ reason: 'token response has no tokens' })
   return Credential.OAuth.make({
     type: 'oauth',
-    methodID: METHOD_ID,
+    methodID,
     access: json.access_token,
     refresh: json.refresh_token,
     expires: Date.now() + json.expires_in * 1000,
@@ -58,8 +66,8 @@ async function requestToken(body: Record<string, string>) {
 }
 
 // OAuth callbacks fail by rejecting; OpenCode then ends the attempt.
-const tokenEffect = (body: Record<string, string>) =>
-  Effect.promise(() => requestToken(body)).pipe(Effect.flatMap((result) => (result instanceof Error ? Effect.fail(result) : Effect.succeed(result))))
+const tokenEffect = (input: { body: Record<string, string>; methodID: Integration.MethodID }) =>
+  Effect.promise(() => requestToken(input)).pipe(Effect.flatMap((result) => (result instanceof Error ? Effect.fail(result) : Effect.succeed(result))))
 
 // The user pastes the final redirect URL, `code#state`, or the bare code.
 export function parseAuthorizationInput(input: string) {
@@ -70,10 +78,9 @@ export function parseAuthorizationInput(input: string) {
   return { code, state }
 }
 
-// Serves the localhost redirect so the browser shows a real page, and remembers its code.
-// The login still finishes with the pasted URL: Kimaki often runs on another machine than the browser.
+// Serves the localhost redirect and resolves with its code.
 async function startCallbackServer({ state }: { state: string }) {
-  const received: { code: string | null } = { code: null }
+  const received = Promise.withResolvers<string>()
   const server = http.createServer((request, response) => {
     const url = new URL(request.url ?? '/', REDIRECT_URI)
     const code = url.searchParams.get('code')
@@ -81,60 +88,73 @@ async function startCallbackServer({ state }: { state: string }) {
       response.writeHead(400, { 'content-type': 'text/plain' }).end('Claude login failed: missing code or wrong state. Start the login again.')
       return
     }
-    received.code = code
-    response.writeHead(200, { 'content-type': 'text/plain' }).end('Claude authorized. Copy the URL of this page and paste it where you started the login.')
+    received.resolve(code)
+    response.writeHead(200, { 'content-type': 'text/plain' }).end('Claude authorized. You can close this page.')
   })
   const error = await new Promise<Error | null>((resolve) => {
     server.once('error', (error) => resolve(error))
     server.listen(CALLBACK_PORT, '127.0.0.1', () => resolve(null))
   })
   if (error) return new AnthropicOAuthError({ reason: `cannot bind callback port ${CALLBACK_PORT}. Cancel any pending Claude login or free the port, then retry.`, cause: error })
-  return { received, close: () => server.close() }
+  return { code: received.promise, close: () => server.close() }
 }
+
+const pkce = Effect.gen(function* () {
+  const verifier = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
+  const state = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
+  const challenge = Buffer.from(yield* Effect.promise(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))).toString('base64url')
+  const params = new URLSearchParams({
+    code: 'true',
+    client_id: CLIENT_ID,
+    response_type: 'code',
+    redirect_uri: REDIRECT_URI,
+    scope: SCOPES,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state,
+  })
+  const exchange = ({ code, methodID }: { code: string; methodID: Integration.MethodID }) =>
+    tokenEffect({
+      body: { grant_type: 'authorization_code', client_id: CLIENT_ID, code, state, redirect_uri: REDIRECT_URI, code_verifier: verifier },
+      methodID,
+    })
+  return { state, url: `${AUTHORIZE_URL}?${params}`, exchange }
+})
 
 const authorize = () =>
   Effect.gen(function* () {
-    const verifier = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
-    const state = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
-    const challenge = Buffer.from(yield* Effect.promise(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))).toString('base64url')
-    const params = new URLSearchParams({
-      code: 'true',
-      client_id: CLIENT_ID,
-      response_type: 'code',
-      redirect_uri: REDIRECT_URI,
-      scope: SCOPES,
-      code_challenge: challenge,
-      code_challenge_method: 'S256',
-      state,
-    })
+    const { url, state, exchange } = yield* pkce
     const callbackServer = yield* Effect.promise(() => startCallbackServer({ state }))
     if (callbackServer instanceof Error) return yield* Effect.fail(callbackServer)
     // The attempt scope closes on success, failure, cancel, expiry, and plugin unload.
     yield* Effect.addFinalizer(() => Effect.sync(() => callbackServer.close()))
     return {
+      mode: 'auto' as const,
+      url,
+      instructions: 'Authorize in the browser. The login finishes by itself.',
+      callback: Effect.promise(() => callbackServer.code).pipe(Effect.flatMap((code) => exchange({ code, methodID: METHOD_ID }))),
+    }
+  })
+
+const authorizeHeadless = () =>
+  Effect.gen(function* () {
+    const { url, state, exchange } = yield* pkce
+    return {
       mode: 'code' as const,
-      url: `${AUTHORIZE_URL}?${params}`,
-      instructions: 'Authorize in the browser, then copy the full URL of the last page (localhost:53692) and paste it here.',
+      url,
+      instructions: 'Authorize in the browser. The last page (localhost:53692) does not load: copy its full URL and paste it here.',
       callback: (input: string) => {
         const pasted = parseAuthorizationInput(input)
         if (pasted.state !== undefined && pasted.state !== state) return Effect.fail(new AnthropicOAuthError({ reason: 'wrong state in the pasted text. Start the login again.' }))
-        const code = callbackServer.received.code ?? pasted.code
-        if (!code) return Effect.fail(new AnthropicOAuthError({ reason: 'no authorization code in the pasted text' }))
-        return tokenEffect({
-          grant_type: 'authorization_code',
-          client_id: CLIENT_ID,
-          code,
-          state,
-          redirect_uri: REDIRECT_URI,
-          code_verifier: verifier,
-        })
+        if (!pasted.code) return Effect.fail(new AnthropicOAuthError({ reason: 'no authorization code in the pasted text' }))
+        return exchange({ code: pasted.code, methodID: HEADLESS_METHOD_ID })
       },
     }
   })
 
 // TODO: concurrent sessions can refresh the same token twice; OpenCode's Integration connection.resolve has no single-flight lock.
 const refresh = (credential: Credential.OAuth) =>
-  tokenEffect({ grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: credential.refresh })
+  tokenEffect({ body: { grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: credential.refresh }, methodID: credential.methodID })
 
 // Anthropic bills subscription requests that carry OpenCode's exact environment
 // block as third-party usage ("Third-party apps now draw from your extra usage").
@@ -163,8 +183,14 @@ export default Plugin.define({
       yield* ctx.integration.transform((editor) => {
         editor.method.update({
           integrationID: 'anthropic',
-          method: { id: METHOD_ID, type: 'oauth', label: 'Claude Pro/Max' },
+          method: { id: METHOD_ID, type: 'oauth', label: 'Claude Pro/Max (browser)' },
           authorize,
+          refresh,
+        })
+        editor.method.update({
+          integrationID: 'anthropic',
+          method: { id: HEADLESS_METHOD_ID, type: 'oauth', label: 'Claude Pro/Max (headless)' },
+          authorize: authorizeHeadless,
           refresh,
         })
       })

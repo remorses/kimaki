@@ -37,10 +37,24 @@ Only the **server owner** or an **Administrator** can run `/login`. Logins are s
 
 | Provider | OAuth method | Notes |
 |---|---|---|
-| Anthropic | **Claude Pro/Max** | Added by the `kimaki-anthropic` plugin that Kimaki installs into OpenCode. Works in the TUI too. |
+| Anthropic | **Claude Pro/Max (browser)** or **(headless)** | Added by the `kimaki-anthropic` plugin that Kimaki installs into OpenCode. Works in the TUI too. Browser finishes by itself through the `localhost:53692` callback. Headless is for a browser on another machine: paste the URL of the last page. Use headless from Discord when the bot runs on another computer. |
 | OpenAI | **ChatGPT Pro/Plus** | Built into OpenCode. |
 
 After the login, pick the model with [`/model`](../getting-started/model-switching).
+
+### Claude Pro/Max in OpenCode without the bot
+
+The `kimaki-anthropic` plugin also works in **plain OpenCode**, with no bot running. List its folder in your global `~/.config/opencode/opencode.json`:
+
+```jsonc
+{
+  "plugins": ["/path/to/node_modules/kimaki/dist/plugin/anthropic"]
+}
+```
+
+Find the path with `npm root -g` (add `/kimaki/dist/plugin/anthropic`). OpenCode only accepts **folders** in `plugins`, not files.
+
+When the bot starts and sees this entry, it removes its own `plugins/kimaki-anthropic/` shim, so the plugin is **loaded once**.
 
 ## Several accounts per provider
 
@@ -59,9 +73,9 @@ kimaki login anthropic
 # connect with an API key
 kimaki login openai --key sk-...
 
-# start an OAuth login, then complete it with the code
-kimaki login anthropic --method claude-pro-max
-kimaki login anthropic --attempt <attemptId> --code <code>
+# start a headless OAuth login, then complete it with the pasted callback URL
+kimaki login anthropic --method claude-pro-max-headless
+kimaki login anthropic --attempt <attemptId> --code '<callback url>'
 
 # activate, remove, or label a saved login
 kimaki login credential <credentialId> --operation activate

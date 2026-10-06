@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { rewriteSubscriptionRequest } from './anthropic.ts'
+import { rewriteSubscriptionRequest } from './index.ts'
 
 // Regression: OpenCode's exact <env> block made Anthropic bill subscription requests as third-party usage.
 test('subscription rewrite adds the identity first and re-wraps the OpenCode env block once', () => {

@@ -16,6 +16,7 @@ import {
   startTwin,
   tempDataDir,
   TEST_USER_ID,
+  waitFor,
   waitForFooter,
   warmUp,
   type OpencodeTestServer,
@@ -77,4 +78,34 @@ test('bot start writes the plugin shim, OpenCode loads it, a restart does not re
   await bot.stop()
   bot = await startTestBot({ dataDir, twin, server })
   expect(fs.statSync(shim).mtimeMs).toBe(written)
+}, 30_000)
+
+// Plain OpenCode users list the anthropic plugin directory in opencode.json.
+// The bot must then drop its shim, or OpenCode loads the ID twice and reports
+// "Duplicate plugin ID" as a failed plugin.
+test('anthropic plugin listed in opencode.json loads once, the bot removes its shim', async () => {
+  const shimDirectory = path.join(server.configDir, 'plugins', 'kimaki-anthropic')
+  expect(fs.existsSync(shimDirectory)).toBe(true)
+  const pluginDirectory = path.join(import.meta.dirname, 'plugin', 'anthropic')
+  fs.writeFileSync(
+    path.join(server.configDir, 'opencode.jsonc'),
+    `{\n  // standalone Claude Pro/Max login\n  "plugins": [${JSON.stringify(pluginDirectory)}],\n}\n`,
+  )
+  await bot.stop()
+  bot = await startTestBot({ dataDir, twin, server })
+  expect(fs.existsSync(shimDirectory)).toBe(false)
+  expect(fs.existsSync(path.join(server.configDir, 'plugins', 'kimaki', 'index.js'))).toBe(true)
+
+  const client = await server.client()
+  const plugins = await waitFor({
+    label: 'kimaki-anthropic loaded once from opencode.jsonc',
+    check: async () => {
+      const list = await client.plugin.list({ location: { directory: server.projectDirectory } })
+      const anthropic = list.data.filter((plugin) => plugin.id === 'kimaki-anthropic')
+      const fromConfig = anthropic.length === 1 && anthropic[0]?.state.status === 'active' && anthropic[0].source?.type === 'local' && anthropic[0].source.path.startsWith(pluginDirectory)
+      return fromConfig && list.data
+    },
+  })
+  expect(plugins.filter((plugin) => plugin.state.status === 'failed').map((plugin) => plugin.id)).toEqual([])
+  expect(plugins.find((plugin) => plugin.id === 'kimaki')?.state.status).toBe('active')
 }, 30_000)
