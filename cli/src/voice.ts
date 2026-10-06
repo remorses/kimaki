@@ -708,6 +708,23 @@ export type TranscribeAudioErrors =
 
 export type TranscriptionProvider = 'openai' | 'gemini'
 
+// Any OpenAI key (stored, then env) wins over any Gemini key. Gemini's content
+// filter blocks harmless voice messages, so a stored Gemini key must not beat env OpenAI.
+export function pickAudioApiKey(
+  stored: { openai_api_key: string | null; gemini_api_key: string | null } | null | undefined,
+): { provider: TranscriptionProvider; apiKey: string } | undefined {
+  const candidates = [
+    { provider: 'openai' as const, apiKey: stored?.openai_api_key },
+    { provider: 'openai' as const, apiKey: process.env.OPENAI_API_KEY },
+    { provider: 'gemini' as const, apiKey: stored?.gemini_api_key },
+    { provider: 'gemini' as const, apiKey: process.env.GEMINI_API_KEY },
+  ]
+  for (const { provider, apiKey } of candidates) {
+    if (apiKey) return { provider, apiKey }
+  }
+  return undefined
+}
+
 export async function transcribeAudio({
   audio,
   prompt,

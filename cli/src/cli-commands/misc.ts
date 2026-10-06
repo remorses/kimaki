@@ -12,7 +12,9 @@ import { fileURLToPath } from 'node:url'
 import { spawn, execSync } from 'node:child_process'
 import { createLogger, LogPrefix, initLogFile } from '../logger.js'
 import { createDiscordClient, initDatabase, getChannelDirectory, initializeOpencodeForDirectory, createProjectChannels } from '../discord-bot.js'
-import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory, getAnyAudioApiKey } from '../database.js'
+import { getBotTokenWithMode, getThreadSession, getThreadIdBySessionId, getSessionEventSnapshot, createScheduledTask, listScheduledTasks, cancelScheduledTask, getScheduledTask, updateScheduledTask, getSessionStartSourcesBySessionIds, deleteChannelDirectoryById, findChannelsByDirectory } from '../database.js'
+import { getDb } from '../db.js'
+import { pickAudioApiKey } from '../voice.js'
 import { ShareMarkdown } from '../markdown.js'
 import { parseSessionSearchPattern, findFirstSessionSearchHit, buildSessionSearchSnippet, getPartSearchTexts } from '../session-search.js'
 import { formatWorktreeName, formatAutoWorktreeName } from '../commands/new-worktree.js'
@@ -46,7 +48,7 @@ const cli = goke()
 cli
   .command(
     'upload-to-discord [...files]',
-    'Upload files to a Discord thread for a session',
+    'Upload files to a Discord thread for a session. Attachment CDN URLs are signed and expire after about 24h, so do not share them as permanent links.',
   )
   .option('-s, --session <sessionId>', 'OpenCode session ID')
   .action(async (files: string[], options: { session?: string }) => {
@@ -156,20 +158,11 @@ cli
       : undefined
 
     if (!apiKey) {
-      const stored = await getAnyAudioApiKey()
-      if (stored) {
-        apiKey = stored.apiKey
-        provider = provider || stored.provider
-      }
-    }
-
-    if (!apiKey) {
-      if (process.env.OPENAI_API_KEY) {
-        apiKey = process.env.OPENAI_API_KEY
-        provider = provider || 'openai'
-      } else if (process.env.GEMINI_API_KEY) {
-        apiKey = process.env.GEMINI_API_KEY
-        provider = provider || 'gemini'
+      const stored = await (await getDb()).query.bot_api_keys.findFirst()
+      const picked = pickAudioApiKey(stored)
+      if (picked) {
+        apiKey = picked.apiKey
+        provider = provider || picked.provider
       }
     }
 

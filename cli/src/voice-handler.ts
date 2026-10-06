@@ -28,7 +28,6 @@ import { createGenAIWorker, type GenAIWorker } from './genai-worker-wrapper.js'
 import {
   getVoiceChannelDirectory,
   getGeminiApiKey,
-  getTranscriptionApiKey,
   getBotTokenWithMode,
   findTextChannelByVoiceChannel,
 } from './database.js'
@@ -40,8 +39,9 @@ import {
   hasKimakiBotPermission,
 } from './discord-utils.js'
 import { requestAudioApiKey } from './commands/gemini-apikey.js'
-import { transcribeAudio, type TranscriptionResult } from './voice.js'
-import { DiscordOperationError, FetchError, EmptyTranscriptionError, TranscriptionError } from './errors.js'
+import { pickAudioApiKey, transcribeAudio, type TranscriptionResult } from './voice.js'
+import { getDb } from './db.js'
+import { DiscordOperationError, FetchError, EmptyTranscriptionError, TranscriptionBlockedError, TranscriptionError } from './errors.js'
 import { store } from './store.js'
 import {
   getVoiceAttachmentMatchReason,
@@ -616,46 +616,38 @@ export async function processVoiceAttachment({
     }
   }
 
-  // Resolve transcription API key: prefer OpenAI, fall back to Gemini, then env vars.
-  let transcriptionApiKey: string | undefined
-  let transcriptionProvider: 'openai' | 'gemini' | undefined
-  if (appId) {
-    const stored = await getTranscriptionApiKey(appId)
-    if (stored) {
-      transcriptionApiKey = stored.apiKey
-      transcriptionProvider = stored.provider
-    }
-  }
-  if (!transcriptionApiKey && process.env.OPENAI_API_KEY) {
-    transcriptionApiKey = process.env.OPENAI_API_KEY
-    transcriptionProvider = 'openai'
-  }
-  if (!transcriptionApiKey && process.env.GEMINI_API_KEY) {
-    transcriptionApiKey = process.env.GEMINI_API_KEY
-    transcriptionProvider = 'gemini'
-  }
+  const storedKeys = appId
+    ? await (await getDb()).query.bot_api_keys.findFirst({ where: { app_id: appId } })
+    : undefined
+  const audioKey = pickAudioApiKey(storedKeys)
+  let transcriptionApiKey = audioKey?.apiKey
+  let transcriptionProvider = audioKey?.provider
 
   // No user-configured key: gateway-mode installs get one free transcription
   // via the kimaki.dev Whisper fallback before we bother the user with the
   // "add API key" dialog. This fallback has no tool-calling, so it can't
   // detect queueMessage/sessionAction/agent hints spoken in the voice message the way the
   // OpenAI/Gemini path can.
+  // Hosted Whisper through kimaki.dev. Gateway-mode installs only.
+  const transcribeWithHostedWhisper = async (): Promise<string | undefined> => {
+    const botRow = await getBotTokenWithMode().catch(() => undefined)
+    if (botRow?.mode !== 'gateway' || !botRow.clientId || !botRow.clientSecret) return undefined
+    const result = await transcribeViaKimakiGateway({
+      audio: audioBuffer,
+      mediaType: audioAttachment.contentType || undefined,
+      clientId: botRow.clientId,
+      clientSecret: botRow.clientSecret,
+    })
+    if (result instanceof Error) {
+      voiceLogger.log(`Kimaki gateway transcription fallback failed:`, result)
+      return undefined
+    }
+    return result
+  }
+
   let gatewayTranscription: string | undefined
   if (!transcriptionApiKey) {
-    const botRow = await getBotTokenWithMode().catch(() => undefined)
-    if (botRow?.mode === 'gateway' && botRow.clientId && botRow.clientSecret) {
-      const result = await transcribeViaKimakiGateway({
-        audio: audioBuffer,
-        mediaType: audioAttachment.contentType || undefined,
-        clientId: botRow.clientId,
-        clientSecret: botRow.clientSecret,
-      })
-      if (result instanceof Error) {
-        voiceLogger.log(`Kimaki gateway transcription fallback failed:`, result)
-      } else {
-        gatewayTranscription = result
-      }
-    }
+    gatewayTranscription = await transcribeWithHostedWhisper()
   }
 
   if (!transcriptionApiKey && !gatewayTranscription) {
@@ -677,7 +669,7 @@ export async function processVoiceAttachment({
     transcriptionProvider = requested.provider
   }
 
-  const transcription = gatewayTranscription
+  const keyedTranscription = gatewayTranscription
     ? { transcription: gatewayTranscription, queueMessage: false, agent: undefined }
     : await transcribeAudio({
         audio: audioBuffer,
@@ -690,6 +682,16 @@ export async function processVoiceAttachment({
         agents,
         canForkSession,
       })
+
+  // The provider content filter can refuse harmless audio. Retry with the
+  // hosted Whisper, which has no content filter but also no routing hints.
+  const transcription = await (async () => {
+    if (!(keyedTranscription instanceof TranscriptionBlockedError)) return keyedTranscription
+    voiceLogger.log(`Provider blocked the audio, retrying with kimaki.dev Whisper`)
+    const hosted = await transcribeWithHostedWhisper()
+    if (hosted === undefined) return keyedTranscription
+    return { transcription: hosted, queueMessage: false, agent: undefined }
+  })()
 
   if (transcription instanceof Error) {
     if (transcription instanceof EmptyTranscriptionError) {
