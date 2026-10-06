@@ -2,10 +2,10 @@
 // running bot, plus thread/user lookups and uploads with the saved bot token.
 
 import path from 'node:path'
-import { ChannelType } from 'discord.js'
+import { ChannelType } from 'discord-api-types/v10'
 import { wrapJsonSchema, type Goke } from 'goke'
 
-import { action, DATA_DIR_HELP, discordApi, fail, isThread, printRows, SESSION_HELP, sessionOrEnv } from './shared.ts'
+import { action, DATA_DIR_HELP, discordApi, fail, isThread, printRows, SESSION_HELP, targetOrEnv } from './shared.ts'
 
 // From an agent shell the bot waits for this shell's tool line, so the UI posts after it.
 function agentShell() {
@@ -19,7 +19,7 @@ export function registerAgentUiCommands(cli: Goke) {
     .option('-s, --session <id>', SESSION_HELP)
     .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[=command][:white|blue|green|red]" }))
     .action(async (options) => {
-      await action({ route: 'buttons', dataDir: options.dataDir, input: { sessionId: sessionOrEnv(options.session) ?? '', buttons: options.button ?? [], ...agentShell() } })
+      await action({ route: 'buttons', dataDir: options.dataDir, input: { ...targetOrEnv(options.session), buttons: options.button ?? [], ...agentShell() } })
     })
 
   cli.command('upload-request', 'Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes')
@@ -28,7 +28,7 @@ export function registerAgentUiCommands(cli: Goke) {
     .option('-p, --prompt <text>', 'Text above the upload button')
     .option('--max-files <n>', '1 to 10 (default: 5)')
     .action(async (options) => {
-      const input = { sessionId: sessionOrEnv(options.session) ?? '', prompt: options.prompt ?? '', maxFiles: Number(options.maxFiles ?? 5), ...agentShell() }
+      const input = { ...targetOrEnv(options.session), prompt: options.prompt ?? '', maxFiles: Number(options.maxFiles ?? 5), ...agentShell() }
       await action({ route: 'upload-request', dataDir: options.dataDir, input, signal: AbortSignal.timeout(7 * 60_000) })
     })
 }
@@ -84,7 +84,8 @@ export function registerDiscordCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
     .action(async (files, options) => {
-      const id = sessionOrEnv(options.session)
+      const target = targetOrEnv(options.session)
+      const id = target.sessionId ?? target.threadId
       if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
       await action({ route: 'upload', dataDir: options.dataDir, input: { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) } })
     })

@@ -84,6 +84,16 @@ export function baseInstructions({
       ${parentSessionId ? `${PARENT_SESSION_LINE}${parentSessionId}\nYou can send a message back to the parent session with:\nkimaki send --session ${parentSessionId} --prompt 'your update here' --agent <current_agent>\nDo NOT message the parent session unless the user explicitly asks you to.` : ''}
 
       Per-turn Discord metadata like the current user and the Discord thread title is delivered in a \`<discord-user ... />\` line at the end of each user message.
+
+      ## commit messages
+
+      When you commit, end the commit message with the Discord link of the thread that made the change, so anyone can open the conversation (and \`kimaki session read <link>\` works on the machine that ran it):
+
+      \`\`\`
+      Discord: https://discord.com/channels/${guildId}/${threadId}
+      \`\`\`
+
+      Links have the form \`https://discord.com/channels/<guild_id>/<thread_id>\`. For changes made by another session, use that session's link (see "who edited a file").
     `,
     dedent`
       ## permissions
@@ -156,7 +166,7 @@ export function baseInstructions({
 
       kimaki session archive ${threadId}
 
-      Or use \`kimaki session archive --session ${sessionId}\`. Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
+      Only do this when the user explicitly asks to close or archive the thread, and only after your final message.
 
       ## aborting a session
 
@@ -245,9 +255,7 @@ export function baseInstructions({
 
       kimaki send --thread <thread_id> --prompt 'follow-up prompt' --agent <current_agent>
 
-      Prefer \`--thread\` over \`--session\`. Discord thread IDs work on every computer. A session ID only exists on the computer that created it, so \`kimaki send --session\` and \`kimaki session read\` fail on another computer. Use \`--session\` only when you have just the OpenCode session ID and it was created on this machine:
-
-      kimaki send --session <session_id> --prompt 'follow-up prompt' --agent <current_agent>
+      Every command that takes a session (\`--session\`, \`--thread\`, or a positional ID) accepts a session ID, a Discord thread ID, or a Discord thread URL. Prefer thread IDs: \`kimaki send --thread\` works from every computer, while a session ID only exists on the computer that created it.
 
       To continue a thread from another computer, find its Discord channel, list its threads, then send with \`--thread\`:
 
@@ -396,7 +404,7 @@ export function baseInstructions({
 
       Output is newest first. Each row has the **session ID** (\`ses_xxx\`), the **title** (Discord thread name, so you can tell what that session was doing), and **time ago** (when it last edited the file).
 
-      Use this before committing a file this session did not edit. Put the original session ID as the last line of the commit message: \`Session: ses_xxx\`. If this session edited the file, use this session ID. If files come from different sessions, split the commit by session. Do not attribute another session's edits to this one.
+      Use this before committing a file this session did not edit. Get the original session's link with \`kimaki session url <session_id>\` and put it as the last line of the commit message: \`Discord: https://discord.com/channels/<guild_id>/<thread_id>\`. If that session has no Kimaki thread, use \`Session: ses_xxx\` instead. If this session edited the file, use this thread's link. If files come from different sessions, split the commit by session. Do not attribute another session's edits to this one.
 
       ## cross-project commands
 

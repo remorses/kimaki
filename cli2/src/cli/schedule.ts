@@ -6,15 +6,15 @@ import { pathToFileURL } from 'node:url'
 import { wrapJsonSchema, type Goke } from 'goke'
 
 import { callBot } from '../lock-server.ts'
-import { action, DATA_DIR_HELP, dataDirOrDefault, fail, openCliDb, printJson, readClient, sessionOrEnv, waitAndPrintSession } from './shared.ts'
+import { action, DATA_DIR_HELP, dataDirOrDefault, fail, openCliDb, parseTarget, printJson, readClient, SESSION_HELP, targetOrEnv, waitAndPrintSession } from './shared.ts'
 
 export function registerSendCommand(cli: Goke) {
   cli.command('send', 'Start a session in a channel, or continue a thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-c, --channel <id>', 'New thread in this channel')
     .option('-d, --project <path>', 'Project directory of the new thread')
-    .option('--thread <id>', 'Continue this thread')
-    .option('-s, --session <id>', 'Continue this local session')
+    .option('--thread <id>', 'Continue this thread (ID or URL)')
+    .option('-s, --session <id>', 'Continue this session: session ID, thread ID or thread URL')
     .option('-p, --prompt <text>', 'Prompt; thread suffixes . queue and . btw are supported')
     .option('-f, --file <path>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Attach a local file (repeatable)' }))
     .option('-n, --name <text>', 'Thread name')
@@ -33,12 +33,16 @@ export function registerSendCommand(cli: Goke) {
     .option('--allow-concurrency', 'Scheduled only: allow overlapping runs of this task')
     .action(async (options) => {
       if (options.wait && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the task runs later'))
+      if (options.thread !== undefined && options.session !== undefined) fail(new Error('Use exactly one of --channel, --thread, --session, --project'))
+      const continued = options.thread ?? options.session
+      const target = continued === undefined ? {} : parseTarget(continued)
+      if (target instanceof Error) fail(target)
       const result = await callBot({
         dataDir: dataDirOrDefault(options.dataDir),
         route: 'send',
         signal: AbortSignal.timeout(25 * 60_000),
         input: {
-          channelId: options.channel, project: options.project, threadId: options.thread, sessionId: options.session,
+          channelId: options.channel, project: options.project, ...target,
           prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
           cwd: options.cwd, worktree: options.worktree, baseBranch: options.baseBranch, parentSessionId: options.parentSession,
           permissions: options.permission, notifyOnly: options.notifyOnly,
@@ -113,11 +117,11 @@ export function registerScheduleCommands(cli: Goke) {
     .option('--duration <duration>', 'Relative wait, e.g. 30m, 2h, 1d')
     .option('--until <date>', 'UTC ISO date ending in Z')
     .option('--reason <text>', 'Shown in Discord and in the wake message')
-    .option('-s, --session <id>', 'Session to wake (default: OPENCODE_SESSION_ID)')
+    .option('-s, --session <id>', SESSION_HELP)
     .action(async (options) => {
       // The bot parses --duration/--until with its own clock (scheduler.ts parseWakeAt).
       const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'sleep', input: {
-        sessionId: sessionOrEnv(options.session) ?? '', duration: options.duration, until: options.until, reason: options.reason,
+        ...targetOrEnv(options.session), duration: options.duration, until: options.until, reason: options.reason,
       } })
       if (result instanceof Error) fail(result)
       process.stdout.write(`${result.data.output}\n`)

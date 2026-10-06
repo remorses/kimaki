@@ -108,7 +108,7 @@ test('CLI help documents the supported P7 commands', async () => {
 
       session diff                      Upload the git diff of the session folder to critique.work and print the URL
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
 
       session url <id>                  Print the Discord URL of a session or thread
         --data-dir <path>               Data directory (default: ~/.kimaki)
@@ -134,47 +134,46 @@ test('CLI help documents the supported P7 commands', async () => {
       session abort [id]                Stop the running turn and clear its queue
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      session archive [threadId]        Archive a session thread
+      session archive [id]              Archive a session thread
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
 
       session title <title>             Rename the session and its Discord thread
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
 
       session queue add <value>         add native queued prompts
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         --json                          Output as JSON
 
       session queue remove <value>      remove native queued prompts
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         --json                          Output as JSON
 
       session queue list                list native queued prompts
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         --json                          Output as JSON
 
       session queue clear               clear native queued prompts
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         --json                          Output as JSON
 
       session command <name> [...args]  Run an OpenCode command, skill, or MCP prompt
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         --queue                         Run after the current turn instead of interrupting
 
       session shell <text>              Run shell through the shared session action
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         --queue                         Queue an OpenCode command
 
       session btw <text>                Run btw through the shared session action
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         --queue                         Queue an OpenCode command
 
       session fork [id]                 Fork a root or child session into a new thread
@@ -188,12 +187,12 @@ test('CLI help documents the supported P7 commands', async () => {
 
       buttons                           Show 1-3 action buttons. Call last, after visible text
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         -b, --button <spec>             Repeatable: Label[=command][:white|blue|green|red]
 
       upload-request                    Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         -p, --prompt <text>             Text above the upload button
         --max-files <n>                 1 to 10 (default: 5)
 
@@ -214,8 +213,8 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -c, --channel <id>              New thread in this channel
         -d, --project <path>            Project directory of the new thread
-        --thread <id>                   Continue this thread
-        -s, --session <id>              Continue this local session
+        --thread <id>                   Continue this thread (ID or URL)
+        -s, --session <id>              Continue this session: session ID, thread ID or thread URL
         -p, --prompt <text>             Prompt; thread suffixes . queue and . btw are supported
         -f, --file <path>               Attach a local file (repeatable)
         -n, --name <text>               Thread name
@@ -244,8 +243,7 @@ test('CLI help documents the supported P7 commands', async () => {
 
       session cwd [directory]           Show or change the working directory at a native safe boundary
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
-        --thread <id>                   Discord thread
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
 
       Channel:
       channel worktrees <value>         Set automatic worktrees: on | off
@@ -304,7 +302,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --duration <duration>           Relative wait, e.g. 30m, 2h, 1d
         --until <date>                  UTC ISO date ending in Z
         --reason <text>                 Shown in Discord and in the wake message
-        -s, --session <id>              Session to wake (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
 
       Discord:
       thread list                       List active and optionally archived threads in a channel
@@ -321,7 +319,7 @@ test('CLI help documents the supported P7 commands', async () => {
 
       upload-to-discord <...files>      Attach local files to a session thread
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        -s, --session <id>              Session (default: OPENCODE_SESSION_ID)
+        -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
 
       Tools:
       tunnel                            Run a command and expose its local port with a public URL. The child gets TRAFORO_URL
@@ -390,8 +388,10 @@ test('CLI registry shares thread actions, preferences, title and archive', async
   await cli(['channel', 'agent', 'plan', '--channel', twin.channelId])
   await cli(['channel', 'model', 'deterministic-provider/deterministic-v2', '--channel', twin.channelId])
   await cli(['channel', 'verbosity', 'text', '--channel', twin.channelId])
-  await cli(['session', 'title', 'CLI renamed', '--session', started.sessionId])
-  await cli(['session', 'queue', 'add', 'Registry queued', '--session', started.sessionId])
+  // --session takes a session ID, a thread ID or a thread URL.
+  await cli(['session', 'title', 'CLI renamed', '--session', `https://discord.com/channels/${twin.discord.guildId}/${started.threadId}`])
+  await cli(['session', 'queue', 'add', 'Registry queued', '--session', started.threadId])
+  await expect(cli(['session', 'queue', 'list', '--session', 'not-an-id'])).rejects.toThrow('Not a session ID, Discord thread ID or thread URL: not-an-id')
   await waitForFooter({ discord: twin.discord, threadId: started.threadId, count: 2 })
   await cli(['session', 'abort', started.sessionId])
   await cli(['session', 'archive', started.threadId])

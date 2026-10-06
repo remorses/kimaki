@@ -5,15 +5,15 @@ import path from 'node:path'
 import type { Goke } from 'goke'
 
 import { createAnalytics } from '../analytics.ts'
-import { readSavedCredentials, restApiUrl } from '../credentials.ts'
 import type { KimakiDb } from '../db.ts'
 import { callBot } from '../lock-server.ts'
-import { addProjectChannel, countUserProjects, createApi, defaultMachineName, listProjects, resolveGuildId } from '../project.ts'
 import { action, DATA_DIR_HELP, dataDirOrDefault, fail, openCliDb, printJson } from './shared.ts'
 
 const WORKTREE_TIMEOUT_MS = 25 * 60_000
 
+// SQLite and Discord helpers load lazily: see the note in shared.ts.
 async function addProject({ db, dataDir, guild, directory, machine }: { db: KimakiDb; dataDir: string; guild: string | undefined; directory: string; machine: string }) {
+  const [{ readSavedCredentials, restApiUrl }, { addProjectChannel, countUserProjects, createApi, resolveGuildId }] = await Promise.all([import('../credentials.ts'), import('../project.ts')])
   const credentials = await readSavedCredentials({ db })
   if (credentials instanceof Error) return credentials
   if (!credentials) return new Error('No saved bot credentials. Start kimaki once to onboard.')
@@ -37,6 +37,7 @@ export function registerProjectCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--json', 'Output as JSON')
     .action(async (options) => {
+      const { listProjects } = await import('../project.ts')
       const opened = await openCliDb(options.dataDir)
       const rows = await listProjects({ db: opened.db })
       opened.close()
@@ -50,6 +51,7 @@ export function registerProjectCommands(cli: Goke) {
     .option('-g, --guild <guildId>', 'Server (default: the one with Kimaki channels)')
     .option('--machine-name <name>', 'Machine name of a new category and of a channel name suffix (default: hostname)')
     .action(async (directory, options) => {
+      const { defaultMachineName } = await import('../project.ts')
       const opened = await openCliDb(options.dataDir)
       const result = await addProject({
         db: opened.db,

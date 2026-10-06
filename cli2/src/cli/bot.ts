@@ -1,6 +1,7 @@
 // Bot lifecycle and setup: the root command (start + onboarding), provider
 // login, tools (tunnel, tts), and bot status, logs, credentials and keys.
-// main.ts, onboarding.ts and traforo are loaded only by the commands that run them.
+// main.ts, onboarding.ts, traforo, SQLite and voice are loaded only by the
+// commands that run them (see the note in shared.ts).
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
@@ -9,24 +10,12 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import dedent from 'string-dedent'
 import type { Goke } from 'goke'
 
-import { createAnalytics } from '../analytics.ts'
-import { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl } from '../credentials.ts'
-import { openDb } from '../db.ts'
 import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
 import { createLogger } from '../logger.ts'
-import { opencodeConfigDir } from '../opencode-server.ts'
-import { defaultMachineName } from '../project.ts'
-import { audioKeyCandidates, generateSpeech, saveAudioKeys } from '../voice.ts'
 import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, openCliDb, printJson } from './shared.ts'
 
 const logger = createLogger('CLI')
-
-// Non-TTY hosts get the failure as an `error` event too (programmatic onboarding).
-function failStartup(error: Error, installUrl?: string): never {
-  if (!process.stdin.isTTY) emitEvent({ type: 'error', message: error.message, ...(installUrl && { install_url: installUrl }) })
-  fail(error)
-}
 
 // null when the file vanished meanwhile (bot restart).
 async function readRange({ file, start, end }: { file: string; start: number; end: number }): Promise<Buffer | null> {
@@ -101,7 +90,29 @@ export function registerStartCommand(cli: Goke) {
     .action(async (options) => {
       if (process.env['KIMAKI_SUPERVISED'] !== '1') return supervise()
       // Bot code loads only here: the other subcommands start without it.
-      const [{ startBot }, { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate }] = await Promise.all([import('../main.ts'), import('../onboarding.ts')])
+      const [
+        { startBot },
+        { chooseGuild, kimakiShellCommand, runOnboarding, startCaffeinate },
+        { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl },
+        { openDb },
+        { createAnalytics },
+        { opencodeConfigDir },
+        { defaultMachineName },
+      ] = await Promise.all([
+        import('../main.ts'),
+        import('../onboarding.ts'),
+        import('../credentials.ts'),
+        import('../db.ts'),
+        import('../analytics.ts'),
+        import('../opencode-server.ts'),
+        import('../project.ts'),
+      ])
+      // Non-TTY hosts get the failure as an `error` event too (programmatic onboarding).
+      // Explicit type: TS narrows after a `never` call only for annotated consts.
+      const failStartup: (error: Error, installUrl?: string) => never = (error, installUrl) => {
+        if (!process.stdin.isTTY) emitEvent({ type: 'error', message: error.message, ...(installUrl && { install_url: installUrl }) })
+        fail(error)
+      }
       const dataDir = dataDirOrDefault(options.dataDir)
       const urls = gatewayUrlsFromEnv()
       const machine = options.machineName ?? defaultMachineName()
@@ -234,6 +245,7 @@ export function registerToolCommands(cli: Goke) {
       if (options.provider && options.provider !== 'openai' && options.provider !== 'gemini') fail(new Error('--provider must be openai or gemini'))
       const speed = options.speed ? Number(options.speed) : 1.25
       if (!(speed >= 0.25 && speed <= 4)) fail(new Error('--speed must be between 0.25 and 4'))
+      const [{ openDb }, { audioKeyCandidates, generateSpeech }] = await Promise.all([import('../db.ts'), import('../voice.ts')])
       // Any stored bot_api_keys row (imported from V1 /transcription-key); a missing database only skips it.
       const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
       const stored = opened instanceof Error ? null : await opened.db.query.bot_api_keys.findFirst().catch(() => null)
@@ -324,6 +336,7 @@ export function registerBotCommands(cli: Goke) {
     .option('--openai <key>', 'OpenAI API key')
     .option('--gemini <key>', 'Gemini API key')
     .action(async (options) => {
+      const [{ readSavedCredentials }, { saveAudioKeys }] = await Promise.all([import('../credentials.ts'), import('../voice.ts')])
       const opened = await openCliDb(options.dataDir)
       const result = await (async () => {
         const credentials = await readSavedCredentials({ db: opened.db })
@@ -340,6 +353,7 @@ export function registerBotCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--gateway-callback-url <url>', 'Gateway only: redirect here after the install')
     .action(async (options) => {
+      const { installUrlFor, gatewayUrlsFromEnv } = await import('../credentials.ts')
       const { credentials } = await discordApi(options.dataDir)
       process.stdout.write(`${installUrlFor({ credentials, website: gatewayUrlsFromEnv().website, callbackUrl: options.gatewayCallbackUrl })}\n`)
     })

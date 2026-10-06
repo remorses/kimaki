@@ -8,11 +8,10 @@ import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { wrapJsonSchema, type Goke } from 'goke'
 
-import { openDb } from '../db.ts'
 import { parseDuration } from '../duration.ts'
 import { OpenCodeError } from '../errors.ts'
 import { editorsForFile, loadFileEditEvents } from '../file-edit-log.ts'
-import { allMessages, allSessions, readSessionMarkdown, resolveSession, sessionEventsFile } from '../session-events.ts'
+import { allMessages, allSessions, readSessionMarkdown, sessionEventsFile } from '../session-events.ts'
 import {
   action,
   DATA_DIR_HELP,
@@ -20,14 +19,13 @@ import {
   discordApi,
   fail,
   isThread,
-  openCliDb,
   printJson,
   printRows,
   projectDirectory,
   readClient,
   SESSION_HELP,
-  sessionIdFor,
-  sessionOrEnv,
+  resolveTarget,
+  targetOrEnv,
   waitAndPrintSession,
 } from './shared.ts'
 
@@ -119,7 +117,7 @@ export function registerSessionQueryCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--timeout <duration>', 'Timeout, for example 30m or 2h')
     .action(async (id, options) => {
-      const sessionId = await sessionIdFor(id, options.dataDir)
+      const { sessionId } = await resolveTarget(id, options.dataDir)
       const timeout = options.timeout ? parseDuration(options.timeout) : undefined
       if (timeout instanceof Error) fail(new Error('Use --timeout 30m, 2h, or another positive duration'))
       const client = await readClient()
@@ -139,6 +137,7 @@ export function registerSessionQueryCommands(cli: Goke) {
       if (editors.length === 0) fail(new Error(`No recorded editors for ${path.resolve(file)}`))
       // Titles are optional: a missing database only hides them.
       const titles = new Map<string, string>()
+      const { openDb } = await import('../db.ts')
       const opened = await openDb({ dataDir: dataDirOrDefault(options.dataDir), migrate: false })
       if (!(opened instanceof Error)) {
         const threads = await opened.db.query.thread_sessions.findMany({ where: { session_id: { in: editors.map((editor) => editor.sessionId) } }, orderBy: { updated_at: 'desc' } }).catch(() => [])
@@ -153,10 +152,11 @@ export function registerSessionQueryCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
     .action(async (options) => {
-      const id = sessionOrEnv(options.session)
+      const id = options.session ?? process.env['OPENCODE_SESSION_ID']
       if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
       const client = await readClient()
-      const session = await client.session.get({ sessionID: await sessionIdFor(id, options.dataDir) }).catch((cause) => new OpenCodeError({ operation: 'session.get', cause }))
+      const { sessionId } = await resolveTarget(id, options.dataDir)
+      const session = await client.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'session.get', cause }))
       if (session instanceof Error) fail(session)
       const result = await execFileAsync('critique', ['--web', session.title ?? 'Session diff'], { cwd: session.location.directory })
         .catch((cause: Error & { stderr?: string }) => new Error(`critique failed: ${cause.stderr?.trim() || cause.message}`, { cause }))
@@ -167,10 +167,8 @@ export function registerSessionQueryCommands(cli: Goke) {
   cli.command('session url <id>', 'Print the Discord URL of a session or thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .action(async (id, options) => {
-      const opened = await openCliDb(options.dataDir)
-      const result = await resolveSession({ db: opened.db, id })
-      opened.close()
-      if (result instanceof Error) fail(result)
+      const result = await resolveTarget(id, options.dataDir)
+      if (!result.threadId) fail(new Error(`No Kimaki thread for ${id}. Pass a root session ID or thread ID.`))
       const { api } = await discordApi(options.dataDir)
       const thread = await api.channels.get(result.threadId).catch((error: Error) => error)
       if (thread instanceof Error) fail(thread)
@@ -184,17 +182,16 @@ export function registerSessionQueryCommands(cli: Goke) {
 export function registerSessionActionCommands(cli: Goke) {
   cli.command('session abort [id]', 'Stop the running turn and clear its queue')
     .option('--data-dir <path>', DATA_DIR_HELP)
-    .action(async (id, options) => action({ route: 'session.abort', dataDir: options.dataDir, input: { sessionId: sessionOrEnv(id) } }))
+    .action(async (id, options) => action({ route: 'session.abort', dataDir: options.dataDir, input: targetOrEnv(id) }))
 
-  cli.command('session archive [threadId]', 'Archive a session thread')
+  cli.command('session archive [id]', 'Archive a session thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
-    .option('-s, --session <id>', SESSION_HELP)
-    .action(async (threadId, options) => action({ route: 'session.archive', dataDir: options.dataDir, input: { threadId, sessionId: threadId ? undefined : sessionOrEnv(options.session) } }))
+    .action(async (id, options) => action({ route: 'session.archive', dataDir: options.dataDir, input: targetOrEnv(id) }))
 
   cli.command('session title <title>', 'Rename the session and its Discord thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
-    .action(async (title, options) => action({ route: 'session.title', dataDir: options.dataDir, input: { text: title, sessionId: sessionOrEnv(options.session) } }))
+    .action(async (title, options) => action({ route: 'session.title', dataDir: options.dataDir, input: { text: title, ...targetOrEnv(options.session) } }))
 
   for (const name of ['add', 'remove'] as const) {
     cli.command(`session queue ${name} <value>`, `${name} native queued prompts`)
@@ -202,9 +199,9 @@ export function registerSessionActionCommands(cli: Goke) {
       .option('-s, --session <id>', SESSION_HELP)
       .option('--json', 'Output as JSON')
       .action(async (value, options) => {
-        const sessionId = sessionOrEnv(options.session)
-        if (name === 'add') return action({ route: 'queue.add', dataDir: options.dataDir, input: { sessionId, text: value } })
-        return action({ route: 'queue.remove', dataDir: options.dataDir, input: { sessionId, inboxId: value } })
+        const target = targetOrEnv(options.session)
+        if (name === 'add') return action({ route: 'queue.add', dataDir: options.dataDir, input: { ...target, text: value } })
+        return action({ route: 'queue.remove', dataDir: options.dataDir, input: { ...target, inboxId: value } })
       })
   }
   for (const name of ['list', 'clear'] as const) {
@@ -212,7 +209,7 @@ export function registerSessionActionCommands(cli: Goke) {
       .option('--data-dir <path>', DATA_DIR_HELP)
       .option('-s, --session <id>', SESSION_HELP)
       .option('--json', 'Output as JSON')
-      .action(async (options) => action({ route: `queue.${name}`, dataDir: options.dataDir, input: { sessionId: sessionOrEnv(options.session) } }))
+      .action(async (options) => action({ route: `queue.${name}`, dataDir: options.dataDir, input: targetOrEnv(options.session) }))
   }
 
   cli.command('session command <name> [...args]', 'Run an OpenCode command, skill, or MCP prompt')
@@ -221,7 +218,7 @@ export function registerSessionActionCommands(cli: Goke) {
     .option('--queue', 'Run after the current turn instead of interrupting')
     .action(async (name, args, options) => {
       const text = [name, ...args, ...(options['--'] ?? [])].join(' ')
-      await action({ route: 'session.command', dataDir: options.dataDir, input: { sessionId: sessionOrEnv(options.session), text, queue: options.queue } })
+      await action({ route: 'session.command', dataDir: options.dataDir, input: { ...targetOrEnv(options.session), text, queue: options.queue } })
     })
 
   for (const name of ['shell', 'btw'] as const) {
@@ -229,14 +226,14 @@ export function registerSessionActionCommands(cli: Goke) {
       .option('--data-dir <path>', DATA_DIR_HELP)
       .option('-s, --session <id>', SESSION_HELP)
       .option('--queue', 'Queue an OpenCode command')
-      .action(async (text, options) => action({ route: `session.${name}`, dataDir: options.dataDir, input: { sessionId: sessionOrEnv(options.session), text } }))
+      .action(async (text, options) => action({ route: `session.${name}`, dataDir: options.dataDir, input: { ...targetOrEnv(options.session), text } }))
   }
 
   cli.command('session fork [id]', 'Fork a root or child session into a new thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--before <messageId>', 'Fork before this user message')
     .option('-n, --name <name>', 'Thread name')
-    .action(async (id, options) => action({ route: 'session.fork', dataDir: options.dataDir, input: { sessionId: sessionOrEnv(id), before: options.before, name: options.name } }))
+    .action(async (id, options) => action({ route: 'session.fork', dataDir: options.dataDir, input: { ...targetOrEnv(id), before: options.before, name: options.name } }))
 
   cli.command('session resume <id>', 'Bind an existing session to a new thread in its project channel')
     .option('--data-dir <path>', DATA_DIR_HELP)
@@ -251,10 +248,8 @@ export function registerSessionHistoryCommands(cli: Goke) {
     .example('kimaki2 session events ses_abc | jq -r .event.type | sort | uniq -c')
     .example(`kimaki2 session events ses_abc | jq 'select(.event.type == "session.retry.scheduled")'`)
     .action(async (id, options) => {
-      const opened = await openCliDb(options.dataDir)
-      const resolved = await resolveSession({ db: opened.db, id })
-      opened.close()
-      if (resolved instanceof Error) fail(resolved)
+      const resolved = await resolveTarget(id, options.dataDir)
+      if (!resolved.threadId) fail(new Error(`No Kimaki thread for ${id}. Pass a root session ID or thread ID.`))
       const file = sessionEventsFile({ dataDir: dataDirOrDefault(options.dataDir), threadId: resolved.threadId })
       if (!fs.existsSync(file)) fail(new Error(`No events recorded for thread ${resolved.threadId} yet (${file})`))
       await pipeline(fs.createReadStream(file), process.stdout)
@@ -266,11 +261,8 @@ export function registerSessionHistoryCommands(cli: Goke) {
     .option('--verbose', 'Include full tool inputs and outputs')
     .option('--json', 'Print raw OpenCode messages')
     .action(async (id, options) => {
-      const opened = await openCliDb(options.dataDir)
-      const resolved = await resolveSession({ db: opened.db, id })
-      opened.close()
-      // Subagent sessions are not in SQLite: read them directly.
-      const sessionId = resolved instanceof Error ? id : resolved.sessionId
+      // Subagent sessions are not in SQLite: resolveTarget keeps their ID.
+      const { sessionId } = await resolveTarget(id, options.dataDir)
       const client = await readClient()
       if (options.json) {
         const messages = await allMessages({ client, sessionId })
@@ -285,8 +277,7 @@ export function registerSessionHistoryCommands(cli: Goke) {
   cli.command('session cwd [directory]', 'Show or change the working directory at a native safe boundary')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
-    .option('--thread <id>', 'Discord thread')
     .action(async (directory, options) => {
-      await action({ route: 'session.cwd', dataDir: options.dataDir, input: { sessionId: sessionOrEnv(options.session), threadId: options.thread, directory } })
+      await action({ route: 'session.cwd', dataDir: options.dataDir, input: { ...targetOrEnv(options.session), directory } })
     })
 }

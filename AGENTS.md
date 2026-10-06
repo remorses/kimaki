@@ -8,6 +8,10 @@ the important package in this repo is cli. it contains the discord bot code.
 
 after making important changes to queueing or message handling always run the full test suite inside cli to make sure our changes did not break anything. use `pnpm run test --run -u`, then inspect snapshot updates in git diff. for one file, use `pnpm run test --run src/example.test.ts`. always include `run` after `pnpm`; `pnpm test --run` makes pnpm consume the flag, and `pnpm run test -- --run` passes a literal `--` that can make vitest ignore the filter.
 
+each cli2 e2e test file starts its own OpenCode server (~400 MB). `cli2/vitest.config.ts` caps parallel files at a third of the CPUs; override with `KIMAKI_TEST_WORKERS`. other agents may run suites at the same time, so run single files while iterating and the full suite once at the end. timeouts in a full run on a loaded machine are load, not bugs: rerun the failing file alone before debugging.
+
+cli2 CLI startup must stay light (~0.06s, ~70 MB): agents and tests call `kimaki` many times. `cli2/src/cli/*.ts` must not import SQLite (`db.ts`, `schema.ts`, `credentials.ts`, `project.ts`, `voice.ts`) or `discord.js` at top level; `await import()` them inside the actions that need them. use `discord-api-types/v10` for enums like `ChannelType`.
+
 for checkout validation requests, prefer non-recursive checks unless the user asks otherwise.
 
 ## task-specific docs
@@ -73,6 +77,19 @@ kimaki runs native OpenCode 2. import the client from `@opencode/client` and plu
 full v2 architecture and migration invariants: `docs/opencode-v2-in-place-migration.md`.
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode (not opencode-ai/opencode, which is an unrelated repo).
+
+## prompt cache and system prompt changes
+
+OpenCode V2 keeps the system prompt stable for the whole session, so the provider prompt cache keeps hitting:
+
+```
+session start ──▶ instructions (AGENTS.md, skills, entries, env) frozen as the system prompt baseline
+later change  ──▶ session.instructions.updated ──▶ appended to history as a system message (delta only)
+```
+
+source: `packages/core/src/session/instruction-state.ts` and `message-updater.ts` in opencode v2. so put session-level text in **instruction entries**, never in the plugin `context` hook. `event.system.push(...)` in `session.hook('context')` runs on every request and sits before all messages: any change to that text (for example the git branch line) invalidates the whole cached prompt. only push text there that stays the same during a session.
+
+cli2 posts `-# ⬦ prompt cache miss: ...` in the thread when the cached prefix of a root step shrinks (`thread-reducer.ts`, `session.step.ended`). causes: changed prefix, model switch, or provider cache TTL expiry (about 5 minutes idle on Anthropic).
 
 # restarting the discord bot
 
@@ -165,7 +182,11 @@ this project uses goke (not cac) for CLI parsing. goke auto-infers option types 
 
 ## logging
 
-always use logger instead of console so cli logs look uniform, with short log prefixes. logs go to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`), reset on every bot startup. event jsonl env vars, jq recipes, and profiling: `docs/debugging-kimaki.md`.
+always use logger instead of console so cli logs look uniform, with short log prefixes.
+
+**logs go to stderr, never stdout.** stdout is only for command results: CLI subcommand output (`--json`, tables, markdown), onboarding prompts and install URLs, and the programmatic `data: {...}` events. anything else on stdout breaks piped commands and shows up inside the OpenCode TUI. plugin code (`cli2/src/plugin/`) writes nothing to stdout or stderr.
+
+logs go to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`), reset on every bot startup. event jsonl env vars, jq recipes, and profiling: `docs/debugging-kimaki.md`.
 
 ## product analytics (Strada)
 

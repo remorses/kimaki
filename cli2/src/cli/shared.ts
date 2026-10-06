@@ -1,25 +1,24 @@
 // Helpers shared by the CLI command modules. Commands exit through `fail` on
 // errors, so their bodies read top to bottom without error plumbing.
 // Never import bot modules (main.ts, onboarding.ts, scheduler.ts) here:
-// every CLI process loads this file at startup.
+// every CLI process loads this file at startup. SQLite (drizzle) and
+// discord.js are imported lazily too: loading them costs ~0.4s and ~250 MB per
+// CLI call, and most commands only talk to the bot over the lock port.
 
 import os from 'node:os'
 import path from 'node:path'
 import type { OpenCodeClient } from '@opencode/client'
-import { ChannelType } from 'discord.js'
+import { ChannelType } from 'discord-api-types/v10'
 
-import { openDb } from '../db.ts'
 import { DbError } from '../errors.ts'
 import { canonicalPath } from '../file-edit-log.ts'
 import type { LockRouteInput, LockRouteName } from '../lock-routes.ts'
 import { callBot } from '../lock-server.ts'
 import { resolveOpencode } from '../opencode-server.ts'
-import { readSavedCredentials, restApiUrl } from '../credentials.ts'
-import { createApi } from '../project.ts'
 import { readSessionMarkdown, resolveSession, waitForSessionReady } from '../session-events.ts'
 
 export const DATA_DIR_HELP = 'Data directory (default: ~/.kimaki)'
-export const SESSION_HELP = 'Session (default: OPENCODE_SESSION_ID)'
+export const SESSION_HELP = 'Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)'
 
 // Prints the error and its cause chain: "Discord login failed" alone hides why.
 export function fail(error: Error, code = 1): never {
@@ -33,13 +32,31 @@ export function dataDirOrDefault(dataDir: string | undefined): string {
   return path.resolve(dataDir ?? process.env['KIMAKI_DATA_DIR'] ?? path.join(os.homedir(), '.kimaki'))
 }
 
-// The session a command targets inside an agent shell when no flag is passed.
-export function sessionOrEnv(id: string | undefined): string | undefined {
-  return id ?? process.env['OPENCODE_SESSION_ID']
+export type SessionTarget = { sessionId: string; threadId?: undefined } | { threadId: string; sessionId?: undefined }
+
+// One argument for every session command: `ses_…`, a thread snowflake, or a
+// Discord thread URL (https://discord.com/channels/<guild>/<thread>).
+export function parseTarget(value: string): SessionTarget | Error {
+  const trimmed = value.trim()
+  const url = trimmed.match(/^https?:\/\/(?:\w+\.)?discord(?:app)?\.com\/channels\/\d+\/(\d+)(?:\/\d+)?\/?$/)
+  if (url) return { threadId: url[1]! }
+  if (/^\d{17,20}$/.test(trimmed)) return { threadId: trimmed }
+  if (trimmed.startsWith('ses_')) return { sessionId: trimmed }
+  return new Error(`Not a session ID, Discord thread ID or thread URL: ${value}`)
+}
+
+// The target of a session command; inside an agent shell OPENCODE_SESSION_ID is the default.
+export function targetOrEnv(value: string | undefined): SessionTarget | Record<string, never> {
+  const id = value ?? process.env['OPENCODE_SESSION_ID']
+  if (!id) return {}
+  const target = parseTarget(id)
+  if (target instanceof Error) fail(target)
+  return target
 }
 
 // Opens the existing database; the CLI never migrates (only the bot start does).
 export async function openCliDb(dataDir: string | undefined) {
+  const { openDb } = await import('../db.ts')
   const opened = await openDb({ dataDir: dataDirOrDefault(dataDir), migrate: false })
   if (opened instanceof Error) fail(opened)
   return opened
@@ -61,14 +78,16 @@ export async function readClient(errorCode = 1): Promise<OpenCodeClient> {
   return endpoint.client
 }
 
-// A `ses_` id as is, else a thread ID resolved through SQLite.
-export async function sessionIdFor(id: string, dataDir: string | undefined) {
-  if (id.startsWith('ses_')) return id
+// Thread and session of any target. Subagent sessions have no row: they keep threadId null.
+export async function resolveTarget(value: string, dataDir: string | undefined): Promise<{ sessionId: string; threadId: string | null }> {
+  const target = parseTarget(value)
+  if (target instanceof Error) fail(target)
   const opened = await openCliDb(dataDir)
-  const result = await resolveSession({ db: opened.db, id })
+  const result = await resolveSession({ db: opened.db, id: target.sessionId ?? target.threadId })
   opened.close()
-  if (result instanceof Error) fail(result)
-  return result.sessionId
+  if (!(result instanceof Error)) return result
+  if (target.sessionId) return { sessionId: target.sessionId, threadId: null }
+  fail(result)
 }
 
 export async function waitAndPrintSession({ client, sessionId, signal }: { client: OpenCodeClient; sessionId: string; signal?: AbortSignal }) {
@@ -80,6 +99,7 @@ export async function waitAndPrintSession({ client, sessionId, signal }: { clien
 }
 
 export async function discordApi(dataDir: string | undefined) {
+  const [{ readSavedCredentials, restApiUrl }, { createApi }] = await Promise.all([import('../credentials.ts'), import('../project.ts')])
   const opened = await openCliDb(dataDir)
   const credentials = await readSavedCredentials({ db: opened.db })
   opened.close()

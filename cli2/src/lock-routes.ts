@@ -163,7 +163,7 @@ function worktreeRoute(operation: 'remove' | 'merge') {
   })
 }
 
-// --- `kimaki session|queue …`: a local session, from --thread or --session.
+// --- `kimaki session|queue …`: a local session, from a session or thread ID (cli/shared.ts parseTarget).
 
 const sessionTarget = {
   sessionId: text('sessionId').optional(),
@@ -174,9 +174,17 @@ function localSession(bot: Bot, input: { sessionId?: string; threadId?: string }
   const { sessionThreads, roots } = bot.store.getState()
   const threadId = input.threadId ?? (input.sessionId ? sessionThreads[input.sessionId] : undefined)
   const sessionId = threadId ? roots[threadId] : undefined
-  if (!threadId || !sessionId) return new ConfigError({ reason: 'No local session. Use --session or --thread.' })
+  if (!threadId || !sessionId) return new ConfigError({ reason: 'No local session. Pass a session ID, thread ID or thread URL.' })
   if (!bot.opencode.endpoint) return new OpenCodeUnavailableError({ reason: 'not connected' })
   return { threadId, sessionId }
+}
+
+// A session ID as is (it can be a subagent), else the root session of the thread.
+function sessionOf(bot: Bot, input: { sessionId?: string; threadId?: string }) {
+  if (input.sessionId) return input.sessionId
+  const root = input.threadId ? bot.store.getState().roots[input.threadId] : undefined
+  if (!root) return new ConfigError({ reason: 'No local session. Use --session or run inside an OpenCode session.' })
+  return root
 }
 
 const sessionInput = <T extends z.ZodRawShape>(shape: T) => z.object({ ...sessionTarget, ...shape }, { error: 'Expected action arguments' })
@@ -188,7 +196,7 @@ const cliAuthor = (bot: Bot) => ({ id: bot.discord.user!.id, username: 'CLI' })
 // --- Agent UI (`kimaki buttons`, `kimaki upload-request`).
 
 const agentUiFields = {
-  sessionId: z.string({ error: 'Use --session or run inside an OpenCode session' }).min(1, { error: 'Use --session or run inside an OpenCode session' }),
+  ...sessionTarget,
   fromShell: z.boolean().optional(),
   toolCall: z.string().optional(),
 }
@@ -303,12 +311,16 @@ export const lockRoutes = {
   }),
   sleep: route({
     input: z.object({
-      sessionId: z.string({ error: 'Use --session or run kimaki sleep inside an OpenCode session' }).min(1, { error: 'Use --session or run kimaki sleep inside an OpenCode session' }),
+      ...sessionTarget,
       duration: z.string({ error: 'Sleep fields must be strings' }).optional(),
       until: z.string({ error: 'Sleep fields must be strings' }).optional(),
       reason: z.string({ error: 'Sleep fields must be strings' }).optional(),
     }, { error: 'Expected a sleep object' }),
-    run: async (bot, input) => createSleep(bot, input),
+    run: async (bot, { threadId, ...input }) => {
+      const sessionId = sessionOf(bot, { ...input, threadId })
+      if (sessionId instanceof Error) return sessionId
+      return createSleep(bot, { ...input, sessionId })
+    },
   }),
   'task.edit': route({
     input: z.object({
@@ -345,7 +357,11 @@ export const lockRoutes = {
         .max(3, { error: 'Use 1 to 3 --button flags' })
         .refine((buttons) => buttons.map((item) => item.command ?? '').join('\n').length <= 1800, { error: 'Button commands must fit in one Discord message' }),
     }, { error: 'Expected agent UI input' }),
-    run: async (bot, { buttons, ...input }, signal) => bot.features.agentUi.request({ ...input, content: { buttons }, signal }),
+    run: async (bot, { buttons, threadId, ...input }, signal) => {
+      const sessionId = sessionOf(bot, { ...input, threadId })
+      if (sessionId instanceof Error) return sessionId
+      return bot.features.agentUi.request({ ...input, sessionId, content: { buttons }, signal })
+    },
   }),
   'upload-request': route({
     input: z.object({
@@ -354,7 +370,11 @@ export const lockRoutes = {
       maxFiles: z.number({ error: 'Use --prompt and --max-files 1 to 10' }).int({ error: 'Use --prompt and --max-files 1 to 10' })
         .min(1, { error: 'Use --prompt and --max-files 1 to 10' }).max(10, { error: 'Use --prompt and --max-files 1 to 10' }).default(5),
     }, { error: 'Expected agent UI input' }),
-    run: async (bot, { prompt, maxFiles, ...input }, signal) => bot.features.agentUi.request({ ...input, content: { prompt, maxFiles }, signal }),
+    run: async (bot, { prompt, maxFiles, threadId, ...input }, signal) => {
+      const sessionId = sessionOf(bot, { ...input, threadId })
+      if (sessionId instanceof Error) return sessionId
+      return bot.features.agentUi.request({ ...input, sessionId, content: { prompt, maxFiles }, signal })
+    },
   }),
   login: route({
     input: z.object({
