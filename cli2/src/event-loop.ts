@@ -40,6 +40,8 @@ const logger = createLogger('EVENTS')
 const LOAD_RETRIES = 5
 const LOAD_RETRY_MS = 2_000
 const MAX_HELD_EVENTS = 1_000
+// Events that can change model context windows (opencode client data.ts does the same).
+const CATALOG_EVENTS: ReadonlySet<string> = new Set(['model.updated', 'provider.updated', 'integration.updated', 'credential.updated', 'credential.switched'])
 
 type Held = { events: ThreadEvent[]; loading: boolean; failures: number }
 
@@ -71,23 +73,25 @@ export function createEventLoop({
 }) {
   // The client of the current connection, set before hydration starts.
   const connection: { client: OpenCodeClient | null } = { client: null }
-  // Context window sizes ("providerID/modelID" -> tokens) by directory, read
-  // once per connection: project config can add providers. `limits` is null
-  // while loading; failed loads are removed so the next call retries.
+  // Context window sizes ("providerID/modelID" -> tokens) by directory.
+  // Cleared on connect; reloaded when the catalog changes (a /login adds a
+  // provider). `limits` is null while the first load runs; a reload keeps the
+  // old limits until it finishes. Failed loads are removed so the next call retries.
   const modelLimits = new Map<string, { load: Promise<void>; limits: Readonly<Record<string, number>> | null }>()
   const coldThreads = new Map<string, Held>()
   const unknownSessions = new Map<string, Held>()
   const ignoredSessions = new Set<string>()
 
   // Resolves when the limits of `directory` are known (or failed to load).
-  function loadModelLimits(directory: string): Promise<void> {
+  // `reload`: read them again even when cached or loading.
+  function loadModelLimits(directory: string, { reload = false } = {}): Promise<void> {
     const client = connection.client
     if (!client) return Promise.resolve()
     const existing = modelLimits.get(directory)
-    if (existing) return existing.load
+    if (existing && !reload) return existing.load
     const models = client.model.list({ location: { directory } }).catch((e) => new OpenCodeError({ operation: 'model.list', cause: e }))
     const load = models.then((result) => {
-      // A reconnect cleared the map meanwhile: this result is stale.
+      // A reconnect or a newer reload replaced this load: its result is stale.
       if (modelLimits.get(directory)?.load !== load) return
       if (result instanceof Error) {
         modelLimits.delete(directory)
@@ -97,7 +101,7 @@ export function createEventLoop({
       const limits = Object.fromEntries(result.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context]))
       modelLimits.set(directory, { load, limits })
     })
-    modelLimits.set(directory, { load, limits: null })
+    modelLimits.set(directory, { load, limits: existing?.limits ?? null })
     return load
   }
 
@@ -389,6 +393,14 @@ export function createEventLoop({
     },
 
     onEvent(event: V2Event): void {
+      if (CATALOG_EVENTS.has(event.type)) {
+        // Credential events have no location: they can change every directory.
+        const directories = event.location ? [event.location.directory] : [...modelLimits.keys()]
+        for (const directory of directories) {
+          if (modelLimits.has(directory)) void loadModelLimits(directory, { reload: true })
+        }
+        return
+      }
       const sessionId = eventSessionId(event)
       if (!sessionId) return
       const { sessionThreads } = store.getState()

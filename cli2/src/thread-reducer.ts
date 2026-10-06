@@ -513,6 +513,8 @@ function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEve
       for (const [id, child] of Object.entries(draft.children)) child.running = active.has(id)
       if (!active.has(draft.sessionId)) draft.turn = null
       else draft.turn ??= { startedAt: event.at, model: null, agent: null, tokens: 0 }
+      // Nothing runs: tool calls whose end was missed while disconnected are over.
+      if (!isBusy(draft)) draft.tools = {}
       for (const session of event.sessions) {
         const isRoot = session.sessionId === draft.sessionId
         const child = draft.children[session.sessionId]

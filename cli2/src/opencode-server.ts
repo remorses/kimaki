@@ -209,6 +209,9 @@ class StreamClosedError extends errore.createTaggedError({
   message: 'OpenCode event stream closed: $reason',
 }) {}
 
+// Same as the OpenCode web client (3 missed keepalives).
+const STREAM_IDLE_TIMEOUT_MS = 45_000
+
 async function nextEvent(iterator: AsyncIterator<V2Event>) {
   return iterator.next().catch((e) => new StreamClosedError({ reason: 'read failed', cause: e }))
 }
@@ -241,7 +244,18 @@ export function watchOpencode({
   async function runAttempt({ endpoint, reconnect }: { endpoint: OpencodeEndpoint; reconnect: boolean }) {
     const attempt = new AbortController()
     const signal = AbortSignal.any([controller.signal, attempt.signal])
-    const iterator = endpoint.client.event.subscribe({ signal })[Symbol.asyncIterator]()
+    // The server writes a keepalive every 15s: a silent stream is half-open
+    // (sleep/wake, hung server), so drop it and reconnect.
+    const watchdog: { timer?: NodeJS.Timeout } = {}
+    const touch = () => {
+      clearTimeout(watchdog.timer)
+      watchdog.timer = setTimeout(() => {
+        logger.warn(`no OpenCode stream activity for ${STREAM_IDLE_TIMEOUT_MS / 1000}s, reconnecting`)
+        attempt.abort()
+      }, STREAM_IDLE_TIMEOUT_MS)
+    }
+    touch()
+    const iterator = endpoint.client.event.subscribe({ signal, onActivity: touch })[Symbol.asyncIterator]()
     const hydrating = { started: false }
     const result = await (async () => {
       const first = await nextEvent(iterator)
@@ -278,6 +292,7 @@ export function watchOpencode({
       logger.log(`connected to OpenCode ${endpoint.version} at ${endpoint.url}`)
       return consume
     })()
+    clearTimeout(watchdog.timer)
     attempt.abort()
     void iterator.return?.(undefined).catch(() => {})
     state.connected = false
