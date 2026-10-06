@@ -1,4 +1,4 @@
-the important package in this repo is `cli2/`: the Kimaki Discord bot and `kimaki` CLI, rebuilt on OpenCode V2. it replaces `cli/` (V1), which will be deleted. do not add features to `cli/`.
+the important package in this repo is `cli2/`: the Kimaki Discord bot and `kimaki` CLI, rebuilt on OpenCode V2. it replaces `cli/` (V1), which will be deleted. do not add features to `cli/`. during the rebuild the package binary is `kimaki2`; agent shells use the `kimaki` shim.
 
 after every change run `pnpm build` (tsc) inside `cli2` to validate it. try to never use `as any`.
 
@@ -8,7 +8,7 @@ never use `spawnSync` or `execSync`. use async `execFile` (`promisify(execFile)`
 
 after changes to message handling, queueing or the reducer run the full test suite inside `cli2`: `pnpm run test --run -u`, then inspect snapshot updates in git diff. for one file, use `pnpm run test --run src/example.test.ts`. always include `run` after `pnpm`; `pnpm test --run` makes pnpm consume the flag, and `pnpm run test -- --run` passes a literal `--` that can make vitest ignore the filter.
 
-each cli2 e2e test file starts its own OpenCode server (~400 MB). `cli2/vitest.config.ts` caps parallel files at a third of the CPUs; override with `KIMAKI_TEST_WORKERS`. other agents may run suites at the same time, so run single files while iterating and the full suite once at the end. timeouts in a full run on a loaded machine are load, not bugs: rerun the failing file alone before debugging.
+each cli2 e2e test file starts its own OpenCode server (~400 MB). `cli2/vitest.config.ts` caps parallel files at a third of the CPUs; override with `KIMAKI_TEST_WORKERS`. other agents may run suites at the same time, so run single files while iterating and the full suite once at the end. timeouts in a full run on a loaded machine may be load-related: rerun the failing file alone before debugging.
 
 cli2 CLI startup must stay light (~0.06s, ~70 MB): agents and tests call `kimaki` many times. `cli2/src/cli/*.ts` must not import SQLite (`db.ts`, `schema.ts`, `credentials.ts`, `project.ts`, `voice.ts`) or `discord.js` at top level; `await import()` them inside the actions that need them. use `discord-api-types/v10` for enums like `ChannelType`.
 
@@ -35,7 +35,7 @@ cli2/ (bot + CLI, local SQLite) ──REST+WS (clientId:secret)──▶ gateway
    │    │                                                             ▲ polls every 1s
    │    └─ polls /api/onboarding/status ──▶ website/ (CF Worker) ──▶ shared Postgres (db/)
    │
-   └── one /api/event stream + HTTP client ──▶ user's OpenCode V2 service (never spawned by Kimaki)
+   └── one /api/event stream + HTTP client ──▶ user's shared OpenCode V2 service (not a bot-owned server)
 ```
 
 cli2 bot, in order of the data flow:
@@ -80,7 +80,7 @@ multi-tenant REST safety invariant:
 
 ## opencode SDK
 
-kimaki runs on native OpenCode V2. import the client from `@opencode/client` and plugin types from `@opencode/plugin`. never import `@opencode-ai/sdk` (v1, including its `/v2` export). calls use flat inputs and return unwrapped values or reject; there is no `.data` / `.error`.
+kimaki runs on native OpenCode V2. import the client from `@opencode/client` and plugin types from `@opencode/plugin`. never import `@opencode-ai/sdk` (v1, including its `/v2` export). calls use flat inputs and return endpoint results or reject; there is no V1 `.data` / `.error` wrapper. paginated results contain `data` and `cursor`.
 
 - `session.create({ location: { directory }, permissions })`
 - `session.prompt({ sessionID, text, files, delivery })` returns the inbox item, not the reply
@@ -89,13 +89,13 @@ kimaki runs on native OpenCode V2. import the client from `@opencode/client` and
 
 in the bot, call OpenCode through `oc(bot, 'operation.name', (client) => ...)`, which turns rejections into `OpenCodeError` values.
 
-Kimaki never spawns OpenCode. `opencode-server.ts` reads the service registration file or calls `Service.ensure()` (binary `opencode2`, then `opencode`, minimum version `MIN_OPENCODE_VERSION`). it never pins a version, because that would replace the running server and kill the user's TUI sessions.
+Kimaki uses the user's shared OpenCode service, not a bot-owned server. `opencode-server.ts` discovers it or starts it through `Service.ensure()` when none is running (binary `opencode2`, then `opencode`, minimum version `MIN_OPENCODE_VERSION`). it never pins a version, because that would replace the running server and kill the user's TUI sessions.
 
 if I ask you questions about opencode you can opensrc it from anomalyco/opencode (not opencode-ai/opencode, which is an unrelated repo).
 
 ## prompt cache and system prompt changes
 
-OpenCode V2 keeps the system prompt stable for the whole session, so the provider prompt cache keeps hitting:
+OpenCode V2 keeps the system prompt stable until compaction starts a new instruction epoch, so the provider prompt cache keeps hitting:
 
 ```
 session start ──▶ instructions (AGENTS.md, skills, entries, env) frozen as the system prompt baseline
@@ -146,7 +146,7 @@ the user-facing bug report workflow (export events, share evidence in a gist, is
 
 ## git submodules
 
-submodules: `errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`. their configured branches are in `.gitmodules`.
+submodules: `errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`, `subrouter`. their configured branches are in `.gitmodules`.
 
 **never rewrite or force-push a submodule branch in a way that drops commits kimaki still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
 
@@ -174,7 +174,7 @@ always use `createLogger('PREFIX')` from `logger.ts` instead of console so logs 
 
 **logs go to stderr, never stdout.** stdout is only for command results: CLI subcommand output (`--json`, tables, markdown), onboarding prompts and install URLs, and the programmatic `data: {...}` events. anything else on stdout breaks piped commands and shows up inside the OpenCode TUI. plugin code (`cli2/src/plugin/`) writes nothing to stdout or stderr.
 
-logs also go to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`), reset on every bot start. `kimaki logs` prints it.
+logs also go to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`), reset on every bot start. `kimaki logs` prints the path; `kimaki logs --follow` prints the log and follows new lines.
 
 ## debugging a session
 
@@ -185,11 +185,11 @@ kimaki session events <sessionId|threadId> > ./tmp/events.jsonl
 jq -r .event.type ./tmp/events.jsonl | sort | uniq -c
 ```
 
-every event the reducer saw (root, subagents and `kimaki.*` internal events) is appended to `<dataDir>/session-events/<threadId>.jsonl` (`session-events.ts`). the file is also a reducer fixture: replay it with `test/replay.ts` to reproduce the bug in a test. `kimaki session read <id>` prints the messages as markdown.
+thread events (root, subagents and `kimaki.*` internal events) are recorded in `<dataDir>/session-events/<threadId>.jsonl` (`session-events.ts`). streaming deltas and `session.step.streamed` are skipped, long strings are truncated, and files restart at 20 MiB. the file can be replayed with `test/replay.ts` to reproduce a bug; a recording without `session.created` needs an explicit initial `view`. `kimaki session read <id>` prints the messages as markdown.
 
 ## product analytics (Strada)
 
-anonymous install-level product events go to Strada via `cli2/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` sums the durable `session.step.ended` usage of each execution (root and subagents), so a bot restart never double counts.
+anonymous install-level product events go to Strada via `cli2/src/analytics.ts` (`bot_started`, `project_registered`, `session_created`, `turn_started`, `turn_completed`, `tokens_used`). no Discord IDs, paths, prompts, or secrets. metrics are **active installs**, not people. `tokens_used` sums `session.step.ended` and `session.step.failed` usage per execution (root and subagents), then emits on success, failure or interruption. executions not observed from their start are skipped after a bot restart.
 
 - prod project slug: `kimaki`
 - disable: `kimaki --no-analytics` or `KIMAKI_STRADA_ENABLED=0`. off under vitest.
@@ -210,7 +210,7 @@ each module has one `export default Plugin.define(...)`. keep utilities in separ
 
 the plugin gets bot state from the marker, not from env vars: `dataDir` and `lockPort`. its `execute.before` hook prefixes each shell command with `PATH=<dataDir>/bin:$PATH`, `KIMAKI_DATA_DIR`, `KIMAKI_LOCK_PORT` and `KIMAKI_TOOL_CALL`, so agents call the `<dataDir>/bin/kimaki` shim (`installShim` in `lock-server.ts`) and reach the right bot.
 
-the plugin never gets the bot token. Discord operations from agents (`kimaki user list`, `kimaki session archive`, `kimaki buttons`, `kimaki upload-request`, `kimaki sleep`) are CLI commands that call the bot through the lock port.
+the plugin never gets the bot token. `kimaki user list` reads saved credentials and calls Discord REST directly. `kimaki session archive`, `kimaki buttons`, `kimaki upload-request` and `kimaki sleep` call the bot through the lock port.
 
 plugin files must not import `logger.ts`, `db.ts` or anything that pulls in discord.js or SQLite, and must never write to stdout or stderr. fail silently and return.
 
@@ -291,7 +291,7 @@ limits and rules:
 - `Action Row` can contain up to **5 buttons** or a single select menu
 - `Container` can hold `Action Row`, `Text Display`, `Section`, `Media Gallery`, `Separator`, and `File`
 
-markdown tables and callouts render as a Components V2 `Container` (`markdown/components.ts`). plain rows stay a single `TextDisplay`; rows with actions render as `TextDisplay` + `ActionRow`, not a `Section` for the whole row.
+markdown tables and callouts render as a Components V2 `Container` (`markdown/components.ts`). rows render as `TextDisplay` and `Separator` children.
 
 ## how kimaki messages look like in Discord
 
@@ -354,9 +354,9 @@ if mutable state is really needed, centralize it.
 
 ## sending, queueing and interrupting
 
-- a user message goes to the native OpenCode inbox via `session.prompt({ delivery: 'steer' })`; OpenCode admits it at the next safe step boundary.
+- a plain user message cancels pending questions and permissions, interrupts the current run with `resume: false`, then sends `session.prompt({ delivery: 'steer' })` (`steer()` in `prompt.ts`).
 - `/queue` sends with `delivery: 'queue'`: OpenCode runs it after the current run. Kimaki keeps no queue of its own; `queue.ts` only renders inbox events.
-- `/abort` and interrupts use `session.interrupt`. it does not stop user shells (`!cmd`).
+- native `session.interrupt` does not stop user shells (`!cmd`). `/abort` also clears the queue, cancels pending questions and permissions, and kills running user shells.
 
 # testing
 
@@ -403,9 +403,9 @@ always add `expect(await discord.thread(id).text()).toMatchInlineSnapshot()` (or
 realistic assistant output shapes:
 
 - text message: `stream-start` → `text-start` → one or more `text-delta` → `text-end` → `finish`
-- tool-invoking message: `stream-start` → `tool-call` → `finish` (`finishReason: "tool-calls"`)
+- tool-invoking message: `stream-start` → `tool-call` → `finish` (`finishReason: { unified: 'tool-calls', raw: 'tool-calls' }`; deterministic matchers also accept `'tool-calls'`)
 
-represent opencode tool usage in matchers as `tool-call` parts with `toolName` and JSON `input` (for example `read`, `edit`, `write`, `shell`, `task`). do not fake them as plain text when the test is about tool execution or routing.
+represent opencode tool usage in matchers as `tool-call` parts with `toolName` and JSON `input` (for example `read`, `edit`, `write`, `shell`, `subagent`). do not fake them as plain text when the test is about tool execution or routing.
 
 # not ported from V1 yet
 
