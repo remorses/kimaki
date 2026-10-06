@@ -202,8 +202,10 @@ export class DigitalDiscord {
   constructor(options: DigitalDiscordOptions = {}) {
     this.options = options
     this.prisma = createPrismaClient(options.dbUrl)
-    this.botToken = options.botToken ?? 'fake-bot-token'
     this.botUserId = options.botUser?.id ?? generateSnowflake()
+    // Shaped like a real bot token: the first segment is base64(application id),
+    // so clients that derive the app ID from the token work against the twin.
+    this.botToken = options.botToken ?? `${Buffer.from(this.botUserId).toString('base64')}.twin.fake-bot-token`
 
     if (options.guilds && options.guilds.length > 0) {
       this.guildIds = options.guilds.map((g) => g.id ?? generateSnowflake())

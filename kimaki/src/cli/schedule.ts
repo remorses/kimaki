@@ -5,8 +5,9 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { wrapJsonSchema, type Goke } from 'goke'
 
+import { BotNotRunningError } from '../errors.ts'
 import { callBot } from '../lock-server.ts'
-import { action, DATA_DIR_HELP, dataDirOrDefault, fail, openCliDb, parseTarget, printJson, readClient, SESSION_HELP, targetOrEnv, waitAndPrintSession } from './shared.ts'
+import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, openCliDb, parseTarget, printJson, readClient, SESSION_HELP, targetOrEnv, waitAndPrintSession } from './shared.ts'
 
 export function registerSendCommand(cli: Goke) {
   cli.command('send', 'Start a session in a channel, or continue a thread')
@@ -37,19 +38,31 @@ export function registerSendCommand(cli: Goke) {
       const continued = options.thread ?? options.session
       const target = continued === undefined ? {} : parseTarget(continued)
       if (target instanceof Error) fail(target)
+      const input = {
+        channelId: options.channel, project: options.project, ...target,
+        prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
+        cwd: options.cwd, worktree: options.worktree, baseBranch: options.baseBranch, parentSessionId: options.parentSession,
+        permissions: options.permission, notifyOnly: options.notifyOnly,
+        files: (options.file ?? []).map((file) => ({ uri: pathToFileURL(path.resolve(file)).href, name: path.basename(file) })),
+      }
       const result = await callBot({
         dataDir: dataDirOrDefault(options.dataDir),
         route: 'send',
         signal: AbortSignal.timeout(25 * 60_000),
-        input: {
-          channelId: options.channel, project: options.project, ...target,
-          prompt: options.prompt, name: options.name, agent: options.agent, model: options.model, user: options.user,
-          cwd: options.cwd, worktree: options.worktree, baseBranch: options.baseBranch, parentSessionId: options.parentSession,
-          permissions: options.permission, notifyOnly: options.notifyOnly,
-          files: (options.file ?? []).map((file) => ({ uri: pathToFileURL(path.resolve(file)).href, name: path.basename(file) })),
-          sendAt: options.sendAt, preRun: options.preRun, allowConcurrency: options.allowConcurrency,
-        },
+        input: { ...input, sendAt: options.sendAt, preRun: options.preRun, allowConcurrency: options.allowConcurrency },
       })
+      if (result instanceof BotNotRunningError) {
+        // No local bot (CI, another machine): the bot that owns the channel runs it (remote-send.ts).
+        if (options.sendAt || options.wait) fail(new Error('Kimaki bot is not running here. --send-at and --wait need a local bot.'))
+        const [{ sendInput }, { sendWithoutBot }] = await Promise.all([import('../lock-routes.ts'), import('../remote-send.ts')])
+        const parsed = sendInput.safeParse(input)
+        if (!parsed.success) fail(new Error(parsed.error.issues.map((issue) => issue.message).join('; ')))
+        const { api } = await discordApi(options.dataDir)
+        const sent = await sendWithoutBot({ api, input: parsed.data })
+        if (sent instanceof Error) fail(sent)
+        process.stdout.write(`${JSON.stringify(sent)}\n`)
+        return
+      }
       if (result instanceof Error) fail(result)
       process.stdout.write(`${JSON.stringify(result.data)}\n`)
       if (!options.wait) return

@@ -28,6 +28,12 @@ export class OpenCodeVersionError extends errore.createTaggedError({
   message: 'OpenCode $version is older than the minimum $minimum. Run: opencode upgrade',
 }) {}
 
+// The CLI found no running bot (no lock token, or nothing answers on the lock port).
+export class BotNotRunningError extends errore.createTaggedError({
+  name: 'BotNotRunningError',
+  message: 'Kimaki bot is not running. Start kimaki first.',
+}) {}
+
 export class DiscordError extends errore.createTaggedError({
   name: 'DiscordError',
   message: 'Discord $operation failed',

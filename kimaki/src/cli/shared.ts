@@ -98,13 +98,19 @@ export async function waitAndPrintSession({ client, sessionId, signal }: { clien
   process.stdout.write(`${markdown}\n`)
 }
 
+// Discord REST with the bot token: KIMAKI_BOT_TOKEN (no kimaki.db needed, e.g. CI), else saved credentials.
 export async function discordApi(dataDir: string | undefined) {
-  const [{ readSavedCredentials, restApiUrl }, { createApi }] = await Promise.all([import('../credentials.ts'), import('../project.ts')])
-  const opened = await openCliDb(dataDir)
-  const credentials = await readSavedCredentials({ db: opened.db })
-  opened.close()
+  const [{ envCredentials, gatewayUrlsFromEnv, readSavedCredentials, restApiUrl }, { createApi }] = await Promise.all([import('../credentials.ts'), import('../project.ts')])
+  const credentials = await (async () => {
+    const fromEnv = envCredentials({ urls: gatewayUrlsFromEnv() })
+    if (fromEnv) return fromEnv
+    const opened = await openCliDb(dataDir)
+    const saved = await readSavedCredentials({ db: opened.db })
+    opened.close()
+    return saved
+  })()
   if (credentials instanceof Error) fail(credentials)
-  if (!credentials) fail(new Error('No saved bot credentials. Start Kimaki first.'))
+  if (!credentials) fail(new Error('No saved bot credentials. Start Kimaki first, or set KIMAKI_BOT_TOKEN.'))
   return { credentials, api: createApi({ token: credentials.token, restUrl: process.env['KIMAKI_DISCORD_REST_URL'] ?? restApiUrl(credentials) }) }
 }
 

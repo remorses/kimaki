@@ -82,6 +82,17 @@ export function credentialsFromRow(row: typeof schema.bot_tokens.$inferSelect): 
   return { mode: 'gateway', appId: row.app_id, token, baseUrl: row.proxy_url || gatewayUrlsFromEnv().proxy }
 }
 
+// KIMAKI_BOT_TOKEN (headless and CI): a bot token, or a gateway clientId:secret pair.
+// It wins over saved credentials for the bot start and for CLI subcommands.
+export function envCredentials({ urls }: { urls: GatewayUrls }): ConfigError | Credentials | null {
+  const token = process.env['KIMAKI_BOT_TOKEN']?.trim()
+  if (!token) return null
+  if (token.includes(':')) return { mode: 'gateway', appId: GATEWAY_APP_ID, token, baseUrl: urls.proxy }
+  const appId = appIdFromToken(token)
+  if (!appId) return new ConfigError({ reason: 'KIMAKI_BOT_TOKEN is not a bot token or clientId:secret pair' })
+  return { mode: 'self_hosted', appId, token, baseUrl: null }
+}
+
 export async function readSavedCredentials({
   db,
   mode,
@@ -362,17 +373,12 @@ export async function resolveCredentials({
   // --gateway-callback-url
   callbackUrl?: string
 }): Promise<ConfigError | DbError | ResolvedCredentials> {
-  const envToken = process.env['KIMAKI_BOT_TOKEN']?.trim()
-  if (envToken && !gateway && !restartOnboarding) {
-    const credentials: Credentials | null = envToken.includes(':')
-      ? { mode: 'gateway', appId: GATEWAY_APP_ID, token: envToken, baseUrl: urls.proxy }
-      : appIdFromToken(envToken)
-        ? { mode: 'self_hosted', appId: appIdFromToken(envToken)!, token: envToken, baseUrl: null }
-        : null
-    if (!credentials) return new ConfigError({ reason: 'KIMAKI_BOT_TOKEN is not a bot token or clientId:secret pair' })
-    const saved = await saveCredentials({ db, credentials })
+  const fromEnv = envCredentials({ urls })
+  if (fromEnv instanceof Error) return fromEnv
+  if (fromEnv && !gateway && !restartOnboarding) {
+    const saved = await saveCredentials({ db, credentials: fromEnv })
     if (saved instanceof Error) return saved
-    return { credentials, install: null }
+    return { credentials: fromEnv, install: null }
   }
 
   if (!restartOnboarding) {

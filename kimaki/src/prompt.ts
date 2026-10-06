@@ -14,7 +14,6 @@
 
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import { Events, type Message, type ThreadChannel } from 'discord.js'
 import * as errore from 'errore'
 
@@ -37,6 +36,7 @@ import { formatError } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { SendInput } from './lock-routes.ts'
 import { formatEcho } from './queue.ts'
+import { noAnswerError, parseRemoteResult, remoteEnvelope, promptFilePath, REMOTE_TIMEOUT_MS, type RemoteResult } from './remote-send.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import { allMessages } from './session-events.ts'
 import { ensureSessionMarker, forkBtw, startSession, threadProject } from './sessions.ts'
@@ -48,9 +48,6 @@ import { resolveWorkingDirectory } from './worktrees.ts'
 
 const logger = createLogger('PROMPT')
 
-export const REMOTE_SEND_PREFIX = 'kimaki-send-v2:'
-export const REMOTE_PROMPT_FILE = 'kimaki-prompt.md'
-export const REMOTE_RESULT_PREFIX = 'kimaki-result-v2:'
 
 // Prompt IDs map a Discord message to its inbox item without stored state (spec 9.2.2).
 export function promptIdForMessage(messageId: string): string {
@@ -459,12 +456,8 @@ export async function redo(bot: Bot, { threadId }: { threadId: string }) {
 
 // --- `kimaki send` and remote sends.
 
-function attachmentPath(file: PromptFile): string {
-  return file.uri.startsWith('file:') ? fileURLToPath(file.uri) : file.uri
-}
-
 // The target channel belongs to another machine: post an envelope there and
-// wait for that machine's bot to answer with the result (ingress.ts).
+// wait for that machine's bot to answer with the result (remote-send.ts).
 async function remoteSend(bot: Bot, input: SendInput) {
   const targetId = input.threadId ?? input.channelId
   if (!targetId) return new ConfigError({ reason: 'Remote sends require --channel or --thread' })
@@ -473,47 +466,24 @@ async function remoteSend(bot: Bot, input: SendInput) {
     .catch((cause) => new DiscordError({ operation: 'fetch remote target', cause }))
   if (target instanceof Error) return target
   if (!target?.isSendable()) return new ConfigError({ reason: 'Remote target is not sendable' })
-  const requestId = crypto.randomBytes(8).toString('hex')
-  const { files, prompt: text, ...options } = input
-  // A prompt over the message limit travels as an attachment; the content keeps a preview.
-  const long = text.length > 2000
-  const footer = `${REMOTE_SEND_PREFIX}${JSON.stringify({ requestId, options, ...(long && { promptFile: REMOTE_PROMPT_FILE }) })}`
-  if (footer.length > 2048) return new ConfigError({ reason: 'Remote send options exceed the Discord embed limit. Send fewer options.' })
-  // The prompt file goes first: the receiver reads the first attachment, so a user file with the same name cannot replace it.
-  const attachments = [
-    ...(long ? [{ name: REMOTE_PROMPT_FILE, attachment: Buffer.from(text) }] : []),
-    ...(files ?? []).map((file) => ({ name: file.name, attachment: attachmentPath(file) })),
-  ]
-  type RemoteResult = Error | { threadId: string; sessionId: string | null }
-  return new Promise<RemoteResult>((resolve) => {
-    const finish = (result: RemoteResult) => {
+  const envelope = remoteEnvelope(input)
+  if (envelope instanceof Error) return envelope
+  type Result = Error | RemoteResult
+  return new Promise<Result>((resolve) => {
+    const finish = (result: Result) => {
       clearTimeout(timer)
       bot.discord.off(Events.MessageCreate, receive)
       resolve(result)
     }
     const receive = (message: Message) => {
       if (message.author.id !== bot.discord.user?.id || message.channelId !== targetId) return
-      const reply = message.embeds[0]?.footer?.text
-      const prefix = `${REMOTE_RESULT_PREFIX}${requestId}:`
-      if (!reply?.startsWith(prefix)) return
-      const parsed = errore.try(
-        () => ({ value: JSON.parse(reply.slice(prefix.length)) as unknown }),
-        (cause) => new ConfigError({ reason: 'Invalid remote response', cause }),
-      )
-      if (parsed instanceof Error) return finish(parsed)
-      const result = parsed.value
-      if (!result || typeof result !== 'object') return finish(new ConfigError({ reason: 'Remote send failed' }))
-      const threadId = 'threadId' in result && typeof result.threadId === 'string' ? result.threadId : null
-      const sessionId = 'sessionId' in result && (typeof result.sessionId === 'string' || result.sessionId === null) ? result.sessionId : undefined
-      if (threadId && sessionId !== undefined) return finish({ threadId, sessionId })
-      finish(new ConfigError({ reason: 'error' in result && typeof result.error === 'string' ? result.error : 'Remote send failed' }))
+      const result = parseRemoteResult({ footer: message.embeds[0]?.footer?.text, requestId: envelope.requestId })
+      if (result) finish(result)
     }
-    const timer = setTimeout(() => {
-      finish(new ConfigError({ reason: 'No owning Kimaki bot answered this remote send. Start Kimaki on that machine.' }))
-    }, 20_000)
+    const timer = setTimeout(() => finish(noAnswerError()), REMOTE_TIMEOUT_MS)
     bot.discord.on(Events.MessageCreate, receive)
     void target
-      .send({ content: long ? `${text.slice(0, 1990)}…` : text, embeds: [{ footer: { text: footer } }], files: attachments, allowedMentions: { parse: [] } })
+      .send({ content: envelope.content, embeds: [{ footer: { text: envelope.footer } }], files: envelope.attachments, allowedMentions: { parse: [] } })
       .catch((cause) => finish(new DiscordError({ operation: 'send remote envelope', cause })))
   })
 }
@@ -574,7 +544,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
     const shown = await thread
       .send({
         content: input.prompt,
-        files: input.files?.map((file) => ({ attachment: attachmentPath(file), name: file.name })),
+        files: input.files?.map((file) => ({ attachment: promptFilePath(file), name: file.name })),
         allowedMentions: { parse: [] },
       })
       .catch((cause) => new DiscordError({ operation: 'post notification', cause }))

@@ -57,6 +57,26 @@ test('CLI remote envelope runs only on the owning bot and returns its IDs', asyn
   expect(first?.type === 'user' && first.files?.length).toBe(1)
 })
 
+test('CI send with only KIMAKI_BOT_TOKEN and no local bot reaches the owning bot', async () => {
+  // Empty data dir and an unused lock port: no kimaki.db, no bot, like a CI runner.
+  const ciDataDir = tempDataDir()
+  const sent = await exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'send', '--channel', twin.quietChannelId, '-p', 'From CI', '--data-dir', ciDataDir], {
+    env: { ...process.env, KIMAKI_LOCK_PORT: '1', KIMAKI_BOT_TOKEN: twin.discord.botToken, KIMAKI_DISCORD_REST_URL: twin.discord.restUrl },
+  })
+  const ids = JSON.parse(sent.stdout) as { threadId: string; sessionId: string }
+  await waitForFooter({ discord: twin.discord, threadId: ids.threadId })
+  expect(await twin.discord.thread(ids.threadId).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    » **CLI:** From CI
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+  `)
+  expect(b.store.getState().roots[ids.threadId]).toBe(ids.sessionId)
+  expect(fs.readdirSync(ciDataDir)).toEqual([])
+  fs.rmSync(ciDataDir, { recursive: true, force: true })
+})
+
 test('CLI remote prompt over 2000 chars arrives whole; a same-named user file stays a file', async () => {
   const prompt = `Remote long ${'x'.repeat(2500)} end`
   // A user file with the reserved name must stay a file, not become the prompt.

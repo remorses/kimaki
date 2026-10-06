@@ -7,7 +7,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import * as errore from 'errore'
 
-import { ConfigError, LockPortError } from './errors.ts'
+import { BotNotRunningError, ConfigError, LockPortError } from './errors.ts'
 import type { LockRouteInput, LockRouteName, LockRouteOutput } from './lock-routes.ts'
 import { createLogger } from './logger.ts'
 
@@ -132,15 +132,19 @@ export async function callBot<N extends LockRouteName>({ dataDir, route, input, 
   route: N
   input: LockRouteInput<N>
   signal?: AbortSignal
-}): Promise<ConfigError | { data: LockRouteOutput<N> }> {
+}): Promise<BotNotRunningError | ConfigError | { data: LockRouteOutput<N> }> {
   const token = await fs.promises.readFile(path.join(dataDir, 'lock-token'), 'utf8')
-    .catch((cause) => new ConfigError({ reason: 'Kimaki bot is not running. Start kimaki first.', cause }))
+    .catch((cause) => new BotNotRunningError({ cause }))
   if (token instanceof Error) return token
   const port = Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT)
   const response = await fetch(`http://127.0.0.1:${port}/kimaki/${route}`, {
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify(input), signal: signal ?? AbortSignal.timeout(30_000),
-  }).catch((cause) => new ConfigError({ reason: 'Kimaki bot is not running. Start kimaki first.', cause }))
+  }).catch((cause: Error) =>
+    // A timeout means the bot runs but is slow: only a refused connection means no bot.
+    cause.name === 'TimeoutError' || cause.name === 'AbortError'
+      ? new ConfigError({ reason: `Kimaki bot did not answer ${route} in time. Check kimaki logs`, cause })
+      : new BotNotRunningError({ cause }))
   if (response instanceof Error) return response
   const body = await response.json().then((data: unknown) => ({ data }))
     .catch((cause) => new ConfigError({ reason: 'Invalid bot response. Check kimaki logs.', cause }))

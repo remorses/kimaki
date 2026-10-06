@@ -210,7 +210,7 @@ each module has one `export default Plugin.define(...)`. keep utilities in separ
 
 the plugin gets bot state from the marker, not from env vars: `dataDir` and `lockPort`. its `execute.before` hook prefixes each shell command with `PATH=<dataDir>/bin:$PATH`, `KIMAKI_DATA_DIR`, `KIMAKI_LOCK_PORT` and `KIMAKI_TOOL_CALL`, so agents call the `<dataDir>/bin/kimaki` shim (`installShim` in `lock-server.ts`) and reach the right bot.
 
-the plugin never gets the bot token. `kimaki user list` reads saved credentials and calls Discord REST directly. `kimaki session archive`, `kimaki buttons`, `kimaki upload-request` and `kimaki sleep` call the bot through the lock port.
+the plugin never gets the bot token. `kimaki user list` reads `KIMAKI_BOT_TOKEN` or saved credentials and calls Discord REST directly. `kimaki send` with no local bot (CI) posts a remote-send envelope with that token; the bot that owns the channel runs it (`remote-send.ts`). `kimaki session archive`, `kimaki buttons`, `kimaki upload-request` and `kimaki sleep` call the bot through the lock port.
 
 plugin files must not import `logger.ts`, `db.ts` or anything that pulls in discord.js or SQLite, and must never write to stdout or stderr. fail silently and return.
 
