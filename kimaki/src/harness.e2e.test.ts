@@ -9,6 +9,7 @@ import { createRequire } from 'node:module'
 import dedent from 'string-dedent'
 import { afterAll, beforeAll, expect, onTestFinished, test } from 'vitest'
 
+import { startLockServer } from './lock-server.ts'
 import type { BotHandle } from './main.ts'
 import {
   startOpencodeTestServer,
@@ -44,7 +45,7 @@ afterAll(async () => {
 
 test('bot answers /health and reaches the OpenCode service', async () => {
   const health = await fetch(`http://127.0.0.1:${bot.lock.port}/health`).then((response) => response.json())
-  expect(health).toEqual({ status: 'ok', pid: process.pid })
+  expect(health).toEqual({ status: 'ok', pid: process.pid, wrapperPid: null })
   expect(bot.discord.isReady()).toBe(true)
   expect(bot.opencode.connected).toBe(true)
   const client = bot.opencode.endpoint?.client
@@ -61,14 +62,27 @@ test('bot reconnects after the OpenCode service restarts with a new port', async
   expect(await bot.opencode.endpoint?.client.session.active()).toEqual({})
 }, 30_000)
 
-test('an occupied lock port rejects a second bot; it starts after the first stops', async () => {
+test('the lock server creates a missing data dir (fresh install)', async () => {
+  const root = tempDataDir()
+  onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }))
+  const missing = path.join(root, 'not', 'created')
+  const lock = await startLockServer({ port: await freePort(), dataDir: missing })
+  if (lock instanceof Error) throw lock
+  expect(fs.statSync(path.join(missing, 'lock-token')).mode & 0o777).toBe(0o600)
+  await lock.close()
+})
+
+test('a second bot on the same lock port stops the running one and takes over', async () => {
   const otherData = tempDataDir()
   const port = await freePort()
   await seedProjectChannel({ dataDir: otherData, channelId: twin.quietChannelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   const code = dedent`
     import { startBot } from ${JSON.stringify(path.resolve('src/main.ts'))}
+    import { startLockServer } from ${JSON.stringify(path.resolve('src/lock-server.ts'))}
     import { disabledAnalytics } from ${JSON.stringify(path.resolve('src/analytics.ts'))}
-    const result = await startBot({ analytics: disabledAnalytics, ...${JSON.stringify({ dataDir: otherData, token: twin.discord.botToken, lockPort: port, discordRestUrl: twin.discord.restUrl, opencodeServiceFile: server.serviceFile, opencodeConfigDir: server.configDir, ensureOpencode: false, kimakiCommand: 'kimaki' })} })
+    const lock = await startLockServer({ port: ${port}, dataDir: ${JSON.stringify(otherData)} })
+    if (lock instanceof Error) throw lock
+    const result = await startBot({ analytics: disabledAnalytics, lock, ...${JSON.stringify({ dataDir: otherData, token: twin.discord.botToken, discordRestUrl: twin.discord.restUrl, opencodeServiceFile: server.serviceFile, opencodeConfigDir: server.configDir, ensureOpencode: false, kimakiCommand: 'kimaki' })} })
     if (result instanceof Error) throw result
     process.send({ ready: true })
     process.once('SIGTERM', async () => { await result.stop(); process.exit(0) })
@@ -81,15 +95,13 @@ test('an occupied lock port rejects a second bot; it starts after the first stop
   })
   const ready = new Promise<void>((resolve, reject) => { child.once('message', () => resolve()); child.once('error', reject); child.once('exit', () => reject(new Error('Old bot exited before ready'))) })
   await ready
-  await expect(startTestBot({ dataDir: otherData, twin, server, lockPort: port }))
-    .rejects.toMatchObject({ message: expect.stringContaining('Stop the other process') })
-  expect(child.exitCode).toBeNull()
-  expect(await fetch(`http://127.0.0.1:${port}/health`).then((response) => response.json())).toEqual({ status: 'ok', pid: child.pid })
-  child.kill('SIGTERM')
-  await exited
-  expect(child.exitCode).toBe(0)
+  expect(await fetch(`http://127.0.0.1:${port}/health`).then((response) => response.json())).toEqual({ status: 'ok', pid: child.pid, wrapperPid: null })
+  // The old bot gets SIGTERM, shuts down cleanly, then the new one binds the port.
   const replacement = await startTestBot({ dataDir: otherData, twin, server, lockPort: port })
   onTestFinished(() => replacement.stop())
+  await exited
+  expect(child.exitCode).toBe(0)
+  expect(await fetch(`http://127.0.0.1:${port}/health`).then((response) => response.json())).toEqual({ status: 'ok', pid: process.pid, wrapperPid: null })
   await twin.discord.channel(twin.quietChannelId).user(TEST_USER_ID).sendMessage({ content: 'Lock takeover prompt' })
   const thread = await twin.discord.channel(twin.quietChannelId).waitForThread({ timeout: 8000 })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })

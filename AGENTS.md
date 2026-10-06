@@ -112,7 +112,7 @@ ONLY restart the discord bot if the user explicitly asks for it. run `kimaki res
 
 ## running parallel kimaki processes
 
-the bot holds a single-instance lock on `KIMAKI_LOCK_PORT` (default 29988). a second bot on the same port fails to start. to run another bot next to the main one (for example a test install), use a free port and a separate data dir:
+the bot holds a single-instance lock on `KIMAKI_LOCK_PORT` (default 29988). a second bot on the same port **stops the running one** (V1 or V2: SIGTERM to its wrapper from `/health`, SIGKILL after 20s) and takes the port, before migration and onboarding (`evictRunningBot` in `lock-server.ts`). to run another bot next to the main one (for example a test install), use a free port and a separate data dir:
 
 ```bash
 KIMAKI_LOCK_PORT=31001 kimaki --data-dir ~/.kimaki-test

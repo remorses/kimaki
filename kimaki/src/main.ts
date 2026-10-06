@@ -1,4 +1,4 @@
-// Bot wiring. Order: lock port -> SQLite (migrate) -> OpenCode service and
+// Bot wiring. Order: lock port (bound by the caller) -> SQLite (migrate) -> OpenCode service and
 // Discord login in parallel. Returns a handle so tests can drive the bot
 // in-process and stop it cleanly.
 
@@ -14,8 +14,8 @@ import { DiscordError } from './errors.ts'
 import { createEventLoop } from './event-loop.ts'
 import { registerIngress } from './ingress.ts'
 import { runLockRoute } from './lock-routes.ts'
-import { installShim, startLockServer, type LockServer } from './lock-server.ts'
-import { createLogger, setLogFile } from './logger.ts'
+import { installShim, type LockServer } from './lock-server.ts'
+import { createLogger } from './logger.ts'
 import { installPluginShim, watchOpencode, type OpencodeEndpoint } from './opencode-server.ts'
 import { countUserProjects } from './project.ts'
 import { createScheduler, systemClock, type Clock } from './scheduler.ts'
@@ -31,7 +31,8 @@ const logger = createLogger('MAIN')
 export type StartBotOptions = {
   dataDir: string
   token: string
-  lockPort: number
+  // Bound by the caller before migration and onboarding; startBot owns it from here.
+  lock: LockServer
   // discord.js REST `api` URL: gateway-proxy in gateway mode, the digital twin
   // in tests. The WebSocket URL comes from GET /gateway/bot on that host.
   discordRestUrl?: string | null
@@ -70,16 +71,11 @@ async function loginDiscord({ discord, token }: { discord: Client; token: string
 }
 
 export async function startBot(options: StartBotOptions): Promise<Error | BotHandle> {
-  const logFile = setLogFile({ dataDir: options.dataDir })
-  if (logFile instanceof Error) return logFile
-
   // Each resource registers its cleanup when acquired; disposal runs in reverse
   // (commands and scheduler first, the db and the lock port last). A startup
   // failure disposes it on return; a started bot moves it into stop().
   await using cleanup = new errore.AsyncDisposableStack()
-
-  const lock = await startLockServer({ port: options.lockPort, dataDir: options.dataDir })
-  if (lock instanceof Error) return lock
+  const lock = options.lock
   cleanup.defer(() => lock.close())
 
   const opened = await openDb({ dataDir: options.dataDir, migrate: true })

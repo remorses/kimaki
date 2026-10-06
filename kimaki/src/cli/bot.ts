@@ -10,9 +10,9 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import dedent from 'string-dedent'
 import type { Goke } from 'goke'
 
-import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE } from '../lock-server.ts'
+import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE, startLockServer } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
-import { createLogger } from '../logger.ts'
+import { createLogger, setLogFile } from '../logger.ts'
 import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, openCliDb, printJson } from './shared.ts'
 
 const logger = createLogger('CLI')
@@ -116,10 +116,10 @@ export function registerStartCommand(cli: Goke) {
       const dataDir = dataDirOrDefault(options.dataDir)
       const urls = gatewayUrlsFromEnv()
       const machine = options.machineName ?? defaultMachineName()
-      const opened = await openDb({ dataDir, migrate: true })
-      if (opened instanceof Error) failStartup(opened)
 
       if (options.installUrl) {
+        const opened = await openDb({ dataDir, migrate: true })
+        if (opened instanceof Error) fail(opened)
         const credentials = options.gateway
           ? await gatewayCredentials({ db: opened.db, urls })
           : await readSavedCredentials({ db: opened.db })
@@ -130,6 +130,16 @@ export function registerStartCommand(cli: Goke) {
         if (credentials.mode === 'gateway') process.stderr.write('This URL contains your client credentials. Do not share it.\n')
         return
       }
+
+      // Creates the data dir, so the eviction, import and onboarding logs land in kimaki.log.
+      const logFile = setLogFile({ dataDir })
+      if (logFile instanceof Error) failStartup(logFile)
+      // Then: stops a running bot of this port (V1 or V2) before the
+      // migration and onboarding, which must not run while it still writes.
+      const lock = await startLockServer({ port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT), dataDir })
+      if (lock instanceof Error) failStartup(lock)
+      const opened = await openDb({ dataDir, migrate: true })
+      if (opened instanceof Error) failStartup(opened)
 
       // Before onboarding: without OpenCode the bot cannot start, so fail (or install it) before the Discord install.
       const opencodeCheck = await ensureOpencode({ serviceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'] })
@@ -161,7 +171,7 @@ export function registerStartCommand(cli: Goke) {
         dataDir,
         token: credentials.token,
         discordRestUrl: restApiUrl(credentials),
-        lockPort: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT),
+        lock,
         opencodeServiceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'],
         ensureOpencode: true,
         opencodeConfigDir: opencodeConfigDir(),

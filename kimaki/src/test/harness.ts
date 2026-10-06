@@ -29,6 +29,7 @@ import { GATEWAY_APP_ID, saveCredentials, type Credentials } from '../credential
 import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
 import type { ToolInput } from '../format-parts.ts'
 import * as schema from '../schema.ts'
+import { startLockServer } from '../lock-server.ts'
 import { startBot, type BotHandle } from '../main.ts'
 import type { LockRouteInput, LockRouteName } from '../lock-routes.ts'
 import { listTasks, type Clock } from '../scheduler.ts'
@@ -319,11 +320,13 @@ export async function startTestBot({
     opened.close()
     if (saved instanceof Error) throw saved
   }
+  const lock = await startLockServer({ port: lockPort ?? await freePort(), dataDir })
+  if (lock instanceof Error) throw lock
   const bot = await startBot({
     dataDir,
     kimakiCommand: `'${process.execPath}' --import '${createRequire(import.meta.url).resolve('tsx')}' '${path.resolve('src/cli.ts')}' --data-dir '${dataDir}'`,
     token: credentials.token,
-    lockPort: lockPort ?? await freePort(),
+    lock,
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,
     opencodeConfigDir: server.configDir,

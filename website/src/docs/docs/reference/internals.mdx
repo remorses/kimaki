@@ -24,7 +24,7 @@ Kimaki is **one bot process per machine**. It connects Discord to the OpenCode 2
 
 **Channels and machines.** Each machine gets a Discord category named `Kimaki <machine>` (default: the hostname, override with `--machine-name`). A channel belongs to the machine whose database has it. Other Kimaki bots ignore it.
 
-**Lock port.** The bot holds a single-instance lock on `KIMAKI_LOCK_PORT` (default `29988`). A second bot on the same port fails to start. CLI subcommands like `kimaki send` and `kimaki session archive` talk to the bot through this port. To run a second bot, use a free port and a separate data dir:
+**Lock port.** The bot holds a single-instance lock on `KIMAKI_LOCK_PORT` (default `29988`). Starting a second bot on the same port stops the running one, then takes over. CLI subcommands like `kimaki send` and `kimaki session archive` talk to the bot through this port. To run a second bot, use a free port and a separate data dir:
 
 ```bash
 KIMAKI_LOCK_PORT=31001 kimaki --data-dir ~/.kimaki-test

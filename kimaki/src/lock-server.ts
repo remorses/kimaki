@@ -1,10 +1,19 @@
 // Single-instance lock on a fixed local port (KIMAKI_LOCK_PORT, default 29988).
-// An occupied port fails startup; never trust an HTTP-supplied PID for takeover.
+// A new bot takes the port over from the running one (V1 or V2), like V1 did:
+//
+//   new bot ─GET /health─▶ old bot: { pid, wrapperPid }   (no answer: nothing to stop)
+//           ─SIGTERM wrapperPid ?? pid─▶ wait for pid to exit (20s) ─▶ SIGKILL both
+//           ─▶ bind the port
+//
+// The wrapper (V2: the supervisor in cli/bot.ts) gets the signal, not the
+// bot: a killed bot alone looks like a crash. Both wrappers forward SIGTERM
+// and then exit without spawning the bot again.
 
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import * as errore from 'errore'
 
 import { BotNotRunningError, ConfigError, LockPortError } from './errors.ts'
@@ -52,6 +61,58 @@ function listen(server: http.Server, port: number): Promise<NodeJS.ErrnoExceptio
   })
 }
 
+// PID of the supervisor while it is alive (IPC connected); an orphan bot reports none.
+function wrapperPid(): number | null {
+  if (process.env['KIMAKI_SUPERVISED'] !== '1' || !process.connected) return null
+  return process.ppid
+}
+
+function isAlive(pid: number): boolean {
+  const probed = errore.try(() => process.kill(pid, 0), (cause) => new ConfigError({ reason: `probe PID ${pid}`, cause }))
+  if (!(probed instanceof Error)) return true
+  // EPERM: the PID exists but belongs to another user.
+  return probed.cause instanceof Error && Reflect.get(probed.cause, 'code') === 'EPERM'
+}
+
+async function waitForExit({ pid, timeoutMs }: { pid: number; timeoutMs: number }): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true
+    await sleep(100)
+  }
+  return !isAlive(pid)
+}
+
+function signal({ pid, name }: { pid: number; name: NodeJS.Signals }): void {
+  const sent = errore.try(() => process.kill(pid, name), (cause) => new ConfigError({ reason: `${name} to PID ${pid}`, cause }))
+  if (sent instanceof Error) logger.warn(`cannot send ${sent.message}: ${String(sent.cause)}`)
+}
+
+// Stops the kimaki bot on the port, if one answers /health. Its own shutdown
+// has a deadline, so a bot still alive after the grace period is stuck.
+export async function evictRunningBot({ port, graceMs = 20_000 }: { port: number; graceMs?: number }): Promise<void> {
+  const health = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1_000) })
+    .then((response) => response.json())
+    .catch(() => null)
+  const field = (name: 'pid' | 'wrapperPid') => {
+    if (!health || typeof health !== 'object') return null
+    const value = Reflect.get(health, name)
+    return typeof value === 'number' && value > 0 ? value : null
+  }
+  const pid = field('pid')
+  if (!pid || pid === process.pid) return
+  const reportedWrapper = field('wrapperPid')
+  const wrapper = reportedWrapper && reportedWrapper !== process.ppid ? reportedWrapper : null
+  logger.log(`stopping the kimaki bot on port ${port} (PID ${pid}, wrapper ${wrapper ?? 'none'})`)
+  signal({ pid: wrapper ?? pid, name: 'SIGTERM' })
+  if (await waitForExit({ pid, timeoutMs: graceMs })) return
+  logger.warn(`PID ${pid} still runs after ${graceMs / 1000}s, sending SIGKILL`)
+  // Wrapper first, so it cannot spawn the bot again.
+  if (wrapper) signal({ pid: wrapper, name: 'SIGKILL' })
+  signal({ pid, name: 'SIGKILL' })
+  await waitForExit({ pid, timeoutMs: 5_000 })
+}
+
 export async function startLockServer({ port, dataDir }: { port: number; dataDir: string }): Promise<LockPortError | LockServer> {
   const token = crypto.randomBytes(32).toString('hex')
   const state: { handler: LockHandler | null } = { handler: null }
@@ -83,7 +144,7 @@ export async function startLockServer({ port, dataDir }: { port: number; dataDir
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', pid: process.pid }))
+      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: wrapperPid() }))
       return
     }
     if (!req.url?.startsWith('/kimaki/')) {
@@ -98,17 +159,22 @@ export async function startLockServer({ port, dataDir }: { port: number; dataDir
     })
   })
 
+  // Before listening, not on EADDRINUSE: on macOS 127.0.0.1:port binds even
+  // while a V1 bot holds 0.0.0.0:port (KIMAKI_INTERNET_REACHABLE_URL).
+  await evictRunningBot({ port })
   const bound = await listen(server, port)
   if (bound instanceof Error) {
     const reason = bound.code === 'EADDRINUSE'
-      ? 'port is in use. Stop the other process or set KIMAKI_LOCK_PORT to a free port'
+      ? 'port is in use and the process on it did not stop. Stop it or set KIMAKI_LOCK_PORT to a free port'
       : bound.message
     return new LockPortError({ port, reason, cause: bound })
   }
 
   logger.log(`lock server listening on 127.0.0.1:${port}`)
   const tokenFile = path.join(dataDir, 'lock-token')
-  const written = await fs.promises.writeFile(tokenFile, token, { mode: 0o600 }).then(() => fs.promises.chmod(tokenFile, 0o600))
+  const written = await fs.promises.mkdir(dataDir, { recursive: true, mode: 0o700 })
+    .then(() => fs.promises.writeFile(tokenFile, token, { mode: 0o600 }))
+    .then(() => fs.promises.chmod(tokenFile, 0o600))
     .catch((cause) => new LockPortError({ port, reason: 'cannot write lock-token', cause }))
   if (written instanceof Error) {
     await new Promise<void>((resolve) => server.close(() => resolve()))
