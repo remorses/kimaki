@@ -64,7 +64,7 @@ import { dispatch } from './prompt.ts'
 import { createQuestionHandlers } from './questions.ts'
 import type { Route } from './routes.ts'
 import { taskRoutes } from './scheduler.ts'
-import { startSession } from './sessions.ts'
+import { catalogReady, startSession } from './sessions.ts'
 
 const logger = createLogger('COMMANDS')
 
@@ -306,6 +306,11 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
       skills: [],
     }
     for (const directory of directories) {
+      const ready = await catalogReady(bot, directory)
+      if (ready instanceof Error) {
+        logger.warn(ready.message)
+        continue
+      }
       const location = { directory }
       const [agents, commands, skills] = await Promise.all([
         oc(bot, 'agent.list', (client) => client.agent.list({ location })),

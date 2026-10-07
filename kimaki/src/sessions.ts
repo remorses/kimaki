@@ -111,8 +111,18 @@ async function bindThread(
   logger.log(`session ${sessionId} bound to thread ${threadId}`)
 }
 
+// A cold (or evicted) location loads plugin and markdown agents a moment after
+// it answers. integration.list waits for that activation.
+// TODO: drop this once agent/command/skill.list wait too. https://github.com/anomalyco/opencode/issues/51282
+export async function catalogReady(bot: Pick<Bot, 'opencode'>, directory: string) {
+  const ready = await oc(bot, 'integration.list', (client) => client.integration.list({ location: { directory } }))
+  if (ready instanceof Error) return ready
+}
+
 // Agents a session may switch to (not subagents, not hidden ones).
 export async function primaryAgents(bot: Bot, directory: string) {
+  const ready = await catalogReady(bot, directory)
+  if (ready instanceof Error) return ready
   const agents = await oc(bot, 'agent.list', (client) => client.agent.list({ location: { directory } }))
   if (agents instanceof Error) return agents
   return agents.data.filter((agent) => agent.mode !== 'subagent' && !agent.hidden)
