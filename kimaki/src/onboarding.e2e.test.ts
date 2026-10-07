@@ -158,3 +158,15 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
   await waitForFooter({ discord, threadId: retried.threadId })
   expect((await guildChannels()).length).toBe(6)
 }, 30_000)
+
+test('an upgraded setup with project mappings skips onboarding without selecting a server', async () => {
+  const before = await guildChannels()
+  expect(await runOnboarding({
+    bot,
+    dataDir: path.join(dataDir, 'upgraded-layout'),
+    kimaki,
+    gateway: true,
+    machine: 'test-machine',
+  })).toBe(null)
+  expect(await guildChannels()).toEqual(before)
+})

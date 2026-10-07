@@ -8,8 +8,7 @@
 //     installed one) ─▶ "Kimaki <machine>" category + #kimaki channel ─▶ welcome message
 //     ─▶ "Kimaki onboarding" thread + session with ONBOARDING prompt
 //
-// Runs once per data dir: when the default directory already has a mapping
-// (also if the user later deleted that channel) nothing happens.
+// Existing project mappings also mark an upgraded install as already configured.
 
 import { execFile, spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -183,12 +182,14 @@ async function createDefaultDirectory(directory: string): Promise<GitInitError |
   if (init instanceof Error) logger.warn(`git init failed in ${directory}: ${init.message}`)
 }
 
-export type OnboardingResult = { channelId: string; threadId: string } | null
+export type OnboardingResult = { guildId: string; channelId: string; threadId: string } | null
 
 export async function runOnboarding({
   bot,
   dataDir,
   guild,
+  guildId,
+  installUrl,
   kimaki,
   gateway,
   installerId,
@@ -196,7 +197,9 @@ export async function runOnboarding({
 }: {
   bot: Bot
   dataDir: string
-  guild: Guild
+  guild?: Guild
+  guildId?: string
+  installUrl?: string
   // Shell command for `kimaki`, from kimakiShellCommand().
   kimaki: string
   gateway: boolean
@@ -209,10 +212,12 @@ export async function runOnboarding({
 > {
   const { db } = bot
   const directory = defaultProjectDirectory({ dataDir })
-  const mapped = await db.query.channel_directories
-    .findFirst({ where: { directory } })
+  const projects = await db.query.channel_directories
+    .findMany({ where: { channel_type: 'text' } })
     .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
-  if (mapped instanceof Error) return mapped
+  if (projects instanceof Error) return projects
+  const mapped = projects.find((project) => project.directory === directory)
+  if (!mapped && projects.length > 0) return null
   // Done once the default channel has a message (the welcome). An empty channel
   // means an earlier onboarding failed: retry in it. A deleted one stays deleted.
   if (mapped) {
@@ -225,13 +230,22 @@ export async function runOnboarding({
     if (messages.size > 0) return null
   }
 
+  const selectedGuild = await (async () => {
+    if (guild) return guild
+    const saved = mapped?.guild_id ? bot.discord.guilds.cache.get(mapped.guild_id) : null
+    if (saved) return saved
+    if (!installUrl) return new ConfigError({ reason: 'No server configured for onboarding. Run kimaki --guild <id>.' })
+    return chooseGuild({ discord: bot.discord, guildId, installUrl, gateway })
+  })()
+  if (selectedGuild instanceof Error) return selectedGuild
+
   const directoryReady = await createDefaultDirectory(directory)
   if (directoryReady instanceof Error) return directoryReady
   const botName = bot.discord.user?.username ?? 'kimaki'
   const channel = await addProjectChannel({
     api: new API(bot.discord.rest),
     db,
-    guildId: guild.id,
+    guildId: selectedGuild.id,
     directory,
     name: defaultChannelName({ botName, gateway }),
     topic: DEFAULT_CHANNEL_TOPIC,
@@ -247,8 +261,8 @@ export async function runOnboarding({
   if (textChannel?.type !== ChannelType.GuildText) {
     return new DiscordError({ operation: `default channel ${channel.channelId} is not a text channel` })
   }
-  const owner = await guild.members
-    .fetch(installerId ?? guild.ownerId)
+  const owner = await selectedGuild.members
+    .fetch(installerId ?? selectedGuild.ownerId)
     .catch((e) => new DiscordError({ operation: 'fetch installer', cause: e }))
   if (owner instanceof Error) return owner
   const welcome = await textChannel
@@ -278,5 +292,5 @@ export async function runOnboarding({
     return session
   }
   logger.log(`onboarding thread ${session.threadId} in channel ${channel.channelId}`)
-  return { channelId: channel.channelId, threadId: session.threadId }
+  return { guildId: selectedGuild.id, channelId: channel.channelId, threadId: session.threadId }
 }

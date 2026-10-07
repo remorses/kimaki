@@ -92,7 +92,7 @@ export function registerStartCommand(cli: Goke) {
       // Bot code loads only here: the other subcommands start without it.
       const [
         { startBot },
-        { chooseGuild, ensureOpencode, kimakiShellCommand, runOnboarding, startCaffeinate },
+        { ensureOpencode, kimakiShellCommand, runOnboarding, startCaffeinate },
         { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl },
         { openDb },
         { createAnalytics },
@@ -189,19 +189,14 @@ export function registerStartCommand(cli: Goke) {
       process.once('disconnect', shutdown)
 
       const gateway = credentials.mode === 'gateway'
-      const guild = await chooseGuild({ discord: bot.discord, guildId: options.guild ?? install?.guildId, installUrl, gateway })
-      if (guild instanceof Error) {
-        await bot.stop()
-        failStartup(guild, installUrl)
-      }
-      const onboarded = await runOnboarding({ bot, dataDir, guild, kimaki, gateway, installerId: install?.installerId, machine })
+      const onboarded = await runOnboarding({ bot, dataDir, guildId: options.guild ?? install?.guildId, installUrl, kimaki, gateway, installerId: install?.installerId, machine })
       // The bot keeps running; the next start retries onboarding.
       if (onboarded instanceof Error) {
         logger.error(`onboarding failed: ${onboarded.message}`)
         if (!process.stdin.isTTY) emitEvent({ type: 'error', message: `Onboarding failed: ${onboarded.message}. The bot is running; restart kimaki to retry.` })
         return
       }
-      if (onboarded) process.stderr.write(`Onboarding thread: https://discord.com/channels/${guild.id}/${onboarded.threadId}\n`)
+      if (onboarded) process.stderr.write(`Onboarding thread: https://discord.com/channels/${onboarded.guildId}/${onboarded.threadId}\n`)
       if (!process.stdin.isTTY) emitEvent({ type: 'ready', app_id: credentials.appId, guild_ids: [...bot.discord.guilds.cache.keys()] })
     })
 }
