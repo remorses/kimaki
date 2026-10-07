@@ -162,7 +162,7 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
   )
   await waitForFooter({ discord: twin.discord, threadId: fresh.id })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'voice queue ok' })
-  await waitForFooter({ discord: twin.discord, threadId: thread.id })
+  await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 2 })
 
   const hide = (text: string) => text.replace(/<#\d+>/g, '<#THREAD>')
   expect(hide(await twin.discord.thread(thread.id).text())).toMatchInlineSnapshot(`
@@ -186,6 +186,7 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     » **tommy:** Fresh start voice-new
     Started a new session in <#THREAD>
     slow-done
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     » **tommy:** Afterwards voice-queue
     voice queue ok
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"

@@ -175,7 +175,7 @@ test('parallel children created out of call order get the right label and mode',
   `)
 })
 
-test('queue-plain: acks with positions while busy, echo per delivered item, one footer', () => {
+test('queue-plain: acks with positions while busy, silent footer before each delivered item', () => {
   const { effects, view } = replay({ events: loadFixture('queue-plain.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
@@ -185,14 +185,16 @@ test('queue-plain: acks with positions while busy, echo per delivered item, one 
       "[show queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1",
       "[show queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued at position 2. Delete the original message to remove it, or use /clear-queue position:2",
       "\\nDone.",
+      "[silent] -# *project ⋅ main ⋅ 10s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued message sent",
       "» **queued:** QUEUED-1: reply with the word apple.",
       "apple",
+      "[silent] -# *project ⋅ main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued message sent",
       "» **queued:** QUEUED-2: reply with the word cherry.",
       "cherry",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 15s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *project ⋅ main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
   expect(view.inbox).toMatchInlineSnapshot(`[]`)
@@ -226,7 +228,7 @@ test('steer-queue: cancelled item edits its ack, interrupted run has no footer',
   `)
 })
 
-test('queue-parked: parked item runs and echoes after the next prompt', () => {
+test('queue-parked: parked item runs and echoes after the next prompt, with a footer between', () => {
   const { effects } = replay({ events: loadFixture('queue-parked.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
@@ -237,11 +239,12 @@ test('queue-parked: parked item runs and echoes after the next prompt', () => {
       "[typing off]",
       "[typing on]",
       "kiwi",
+      "[silent] -# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued message sent",
       "» **queued:** PARKED-1: reply with the word apple.",
       "apple",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 6s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
 })

@@ -53,7 +53,7 @@ import {
 } from './format-parts.ts'
 import { closePermission, hydratePermissions, showPermission, STATUS, type PendingPermission } from './permissions.ts'
 import { closeForm, formatAnswer, hydrateForms, showForm, withAnswer, type PendingForm } from './questions.ts'
-import { cancelQueued, deliverQueued, enqueueInput, hydrateQueue, promoteQueued, type PendingInput } from './queue.ts'
+import { cancelQueued, deliverQueued, enqueueInput, hydrateQueue, promoteQueued, queuedItems, type PendingInput } from './queue.ts'
 
 export type Turn = {
   startedAt: number
@@ -252,6 +252,23 @@ function contextPercent({ turn, prefs }: { turn: Draft<Turn>; prefs: Prefs }): n
   return Math.round((turn.tokens / limit) * 100)
 }
 
+// The footer closing the answer of `turn` at `at`.
+function emitFooter({ draft, prefs, emit, turn, at, notify }: Context & { turn: Draft<Turn>; at: number; notify: boolean }) {
+  // No model step ran (a compaction-only execution): nothing to summarize.
+  if (!turn.model) return
+  // A child still runs: the answer comes later.
+  if (Object.values(draft.children).some((child) => child.running)) return
+  emit({
+    type: 'footer',
+    directory: draft.directory,
+    durationMs: at - turn.startedAt,
+    contextPercent: contextPercent({ turn, prefs }),
+    model: { providerID: turn.model.providerID, id: turn.model.id },
+    agent: turn.agent,
+    notify,
+  })
+}
+
 function applyOpencode({ draft, event, prefs, emit }: Context & { event: V2Event }) {
   // A subagent session is created, then the parent's tool.progress (with
   // metadata.sessionID) links it to the exact call, before any child tool
@@ -359,20 +376,7 @@ function applyRoot(context: Context & { event: V2Event }) {
       const turn = draft.turn
       draft.turn = null
       draft.lastKind = null
-      // No model step ran (a compaction-only execution): nothing to summarize.
-      if (!turn?.model) return
-      // A child still runs: the answer comes in a later parent execution.
-      if (Object.values(draft.children).some((child) => child.running)) return
-      emit({
-        type: 'footer',
-        directory: draft.directory,
-        durationMs: event.created - turn.startedAt,
-        contextPercent: contextPercent({ turn, prefs }),
-        model: { providerID: turn.model.providerID, id: turn.model.id },
-        agent: turn.agent,
-        // Pending input starts another turn: notify at the end of that one.
-        notify: draft.inbox.length === 0,
-      })
+      if (turn) emitFooter({ ...context, turn, at: event.created, notify: true })
       return
     }
     case 'session.execution.failed':
@@ -386,8 +390,17 @@ function applyRoot(context: Context & { event: V2Event }) {
       return
     case 'session.inbox.enqueued':
       return enqueueInput({ draft, emit, data: event.data, busy: isBusy(draft) })
-    case 'session.inbox.delivered':
+    case 'session.inbox.delivered': {
+      // OpenCode runs queued items in the same execution: close the answer
+      // before each one with a silent footer, like V1 did per turn.
+      const queued = queuedItems(draft).some((item) => item.inboxID === event.data.inboxID)
+      if (queued && draft.turn?.model) {
+        emitFooter({ ...context, turn: draft.turn, at: event.created, notify: false })
+        draft.turn.startedAt = event.created
+        draft.lastKind = null
+      }
       return deliverQueued({ draft, emit, inboxID: event.data.inboxID })
+    }
     case 'session.inbox.cancelled':
       return cancelQueued({ draft, emit, inboxID: event.data.inboxID })
     case 'session.inbox.delivery.changed':

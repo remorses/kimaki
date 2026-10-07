@@ -18,6 +18,7 @@ import { pathToFileURL } from 'node:url'
 import {
   Events,
   GuildMember,
+  MessageFlags,
   PermissionFlagsBits,
   type Attachment,
   type Guild,
@@ -173,6 +174,8 @@ async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: 
       content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`,
       embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${answer}` } }],
       allowedMentions: { parse: [] },
+      // The data is in the embed: SuppressEmbeds would hide it.
+      flags: MessageFlags.SuppressNotifications,
     })
     .catch((error: Error) => logger.warn(`remote acknowledgment: ${error.message}`))
 }
@@ -244,7 +247,7 @@ async function handleMessage(bot: Bot, message: Message) {
   if (!result) return
   const note =
     route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-  await message.reply({ content: note, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
+  await message.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
 }
 
 // Registers the message listeners. Messages of one channel are handled in arrival order.

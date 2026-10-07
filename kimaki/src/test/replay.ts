@@ -80,7 +80,10 @@ export function effectLines(effects: Effect[]): string[] {
     }
     if (effect.type === 'edit') return `[edit ${effect.key}] ${effect.messages.map(uiLine).join(' | ')}`
     // Tests have no git checkout: the branch is always main.
-    if (effect.type === 'footer') return formatFooter({ ...effect, folder: path.basename(effect.directory), branch: 'main' })
+    if (effect.type === 'footer') {
+      const footer = formatFooter({ ...effect, folder: path.basename(effect.directory), branch: 'main' })
+      return effect.notify ? footer : `[silent] ${footer}`
+    }
     return effect.text.replace(/^\n/, '\\n')
   })
 }

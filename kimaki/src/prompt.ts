@@ -14,7 +14,7 @@
 
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { Events, type Message, type ThreadChannel } from 'discord.js'
+import { Events, MessageFlags, type Message, type ThreadChannel } from 'discord.js'
 import * as errore from 'errore'
 
 import {
@@ -483,7 +483,7 @@ async function remoteSend(bot: Bot, input: SendInput) {
     const timer = setTimeout(() => finish(noAnswerError()), REMOTE_TIMEOUT_MS)
     bot.discord.on(Events.MessageCreate, receive)
     void target
-      .send({ content: envelope.content, embeds: [{ footer: { text: envelope.footer } }], files: envelope.attachments, allowedMentions: { parse: [] } })
+      .send({ content: envelope.content, embeds: [{ footer: { text: envelope.footer } }], files: envelope.attachments, allowedMentions: { parse: [] }, flags: MessageFlags.SuppressNotifications })
       .catch((cause) => finish(new DiscordError({ operation: 'send remote envelope', cause })))
   })
 }

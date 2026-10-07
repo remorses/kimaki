@@ -14,6 +14,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { API } from '@discordjs/core/http-only'
+import { MessageFlags } from 'discord-api-types/v10'
 import * as errore from 'errore'
 
 import { ConfigError, DiscordError } from './errors.ts'
@@ -82,7 +83,14 @@ export async function sendWithoutBot({ api, input }: { api: API; input: SendInpu
   ).catch((cause) => new ConfigError({ reason: 'Cannot read a --file attachment', cause }))
   if (files instanceof Error) return files
   const posted = await api.channels
-    .createMessage(channelId, { content: envelope.content, embeds: [{ footer: { text: envelope.footer } }], files, allowed_mentions: { parse: [] } })
+    .createMessage(channelId, {
+      content: envelope.content,
+      embeds: [{ footer: { text: envelope.footer } }],
+      files,
+      allowed_mentions: { parse: [] },
+      // The data is in the embed: SuppressEmbeds would hide it.
+      flags: MessageFlags.SuppressNotifications,
+    })
     .catch((cause) => new DiscordError({ operation: 'send remote envelope', cause }))
   if (posted instanceof Error) return posted
   const deadline = Date.now() + REMOTE_TIMEOUT_MS
