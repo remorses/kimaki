@@ -1,9 +1,11 @@
-// Questions feature (spec 10.1, 27.6): the `question` tool creates a V2 form
-// (metadata.kind "question"); Kimaki shows one message with a dropdown per
-// question, like V1. Subagent questions show in the parent thread with a
-// "From: <agent>" line.
+// Questions feature (spec 10.1, 27.6): every V2 form with choice fields, from
+// the `question` tool or OpenCode itself (web search setup: metadata.kind
+// "websearch.provider"). Kimaki shows one message with a dropdown per field,
+// like V1 and OpenCode Mini. Subagent forms show in the parent thread with a
+// "From: <agent>" line. Forms with number, external or conditional fields are
+// not shown; OpenCode cancels them after its timeout.
 //
-//   form.created ─▶ one dropdown message per field (+ "Other" when custom)
+//   form.created ─▶ one dropdown message per field (+ "Other" when custom or free text)
 //   select       ─▶ message shows "✓ answer"; last field answered ─▶ form.reply
 //   "Other"      ─▶ modal with a text input ─▶ same as a select
 //   form.replied / form.cancelled ─▶ every message of the form is edited: answer or cancelled, no dropdown
@@ -42,12 +44,14 @@ const MAX_OPTIONS = 24
 
 export type QuestionField = {
   key: string
+  type: 'string' | 'multiselect' | 'boolean'
   title: string
   description: string
-  multiple: boolean
   custom: boolean
   options: ReadonlyArray<{ value: string; label: string; description: string }>
 }
+
+type FieldValue = string | readonly string[] | boolean
 
 export type PendingForm = {
   sessionId: string
@@ -61,6 +65,7 @@ export type PendingForm = {
 type FormLike = {
   id: string
   sessionID: string
+  title: string
   metadata?: { readonly [key: string]: JsonValue }
   fields: FormInfo['fields'] | Extract<V2Event, { type: 'form.created' }>['data']['form']['fields']
 }
@@ -69,30 +74,35 @@ function uiKey(formID: string): string {
   return `form:${formID}`
 }
 
-// null when the form is not a question form Kimaki can render.
+const BOOLEAN_OPTIONS = [
+  { value: 'true', label: 'Yes', description: '' },
+  { value: 'false', label: 'No', description: '' },
+]
+
+// null when a field cannot be answered with a dropdown (number, external, conditional, pattern).
 function questionFields(form: FormLike): QuestionField[] | null {
-  if (form.metadata?.['kind'] !== 'question') return null
   const fields = form.fields.map((field): QuestionField | null => {
-    if (field.type !== 'string' && field.type !== 'multiselect') return null
-    return {
-      key: field.key,
-      title: field.title ?? '',
-      description: field.description ?? '',
-      multiple: field.type === 'multiselect',
-      custom: field.custom === true,
-      options: (field.options ?? []).slice(0, MAX_OPTIONS).map((option) => ({
-        value: option.value,
-        label: option.label,
-        description: option.description ?? '',
-      })),
-    }
+    if (field.type !== 'string' && field.type !== 'multiselect' && field.type !== 'boolean') return null
+    if (field.when?.length) return null
+    // Fields without a title (web search setup) use the form title, like Mini.
+    const base = { key: field.key, title: field.title ?? form.title, description: field.description ?? '' }
+    if (field.type === 'boolean') return { ...base, type: 'boolean', custom: false, options: BOOLEAN_OPTIONS }
+    if (field.type === 'string' && field.pattern !== undefined) return null
+    const options = (field.options ?? []).slice(0, MAX_OPTIONS).map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: option.description ?? '',
+    }))
+    // A string field without options is free text: only the "Other" modal.
+    return { ...base, type: field.type, custom: field.custom === true || options.length === 0, options }
   })
   return fields.every((field) => field !== null) ? fields : null
 }
 
 function header({ field, label }: { field: QuestionField; label: string | null }): string {
   const from = label ? `**From:** \`${label}\`\n` : ''
-  return `${from}**${field.title.slice(0, 200)}**\n${field.description.slice(0, 1_500)}`
+  const title = field.title ? `**${field.title.slice(0, 200)}**\n` : ''
+  return `${from}${title}${field.description.slice(0, 1_500)}`.trimEnd()
 }
 
 function questionMessage({
@@ -112,7 +122,9 @@ function questionMessage({
       value: String(optionIndex),
       ...(option.description && { description: option.description.slice(0, 100) }),
     })),
-    ...(field.custom ? [{ label: 'Other', value: OTHER_VALUE, description: 'Type your own answer' }] : []),
+    ...(field.custom
+      ? [field.options.length ? { label: 'Other', value: OTHER_VALUE, description: 'Type your own answer' } : { label: 'Type your answer', value: OTHER_VALUE }]
+      : []),
   ]
   return {
     content: header({ field, label }),
@@ -126,7 +138,7 @@ function questionMessage({
             placeholder: 'Select an option',
             options,
             min_values: 1,
-            max_values: field.multiple ? options.length : 1,
+            max_values: field.type === 'multiselect' ? options.length : 1,
           },
         ],
       },
@@ -134,10 +146,13 @@ function questionMessage({
   }
 }
 
-export function formatAnswer(value: string | readonly string[] | number | boolean | undefined): string {
+// Option labels instead of values ("Disable web search", not "disable").
+export function formatAnswer({ field, value }: { field: QuestionField; value: string | readonly string[] | number | boolean | undefined }): string {
   if (value === undefined) return 'no answer'
-  if (Array.isArray(value)) return value.join(', ')
-  return String(value)
+  const label = (item: string | number | boolean) =>
+    field.options.find((option) => option.value === String(item))?.label ?? String(item)
+  if (typeof value === 'object') return value.map(label).join(', ')
+  return label(value)
 }
 
 const MESSAGE_LIMIT = 2_000
@@ -219,7 +234,7 @@ async function expired(interaction: StringSelectMenuInteraction | ModalSubmitInt
 // The dropdown and "Other" modal handlers of question forms. One per bot.
 export function createQuestionHandlers(): InteractionRoutes {
   // formID -> answers so far, for forms with several fields.
-  const answers = new Map<string, { readonly [key: string]: string | readonly string[] }>()
+  const answers = new Map<string, { readonly [key: string]: FieldValue }>()
   // "formID:key" -> options picked together with "Other", while the modal asks for the text.
   const otherPicks = new Map<string, readonly string[]>()
 
@@ -248,14 +263,14 @@ export function createQuestionHandlers(): InteractionRoutes {
       formID: string
       form: PendingForm
       field: QuestionField
-      value: string | readonly string[]
+      value: FieldValue
     },
   ) {
     const answer = { ...answers.get(formID), [field.key]: value }
     const complete = form.fields.every((candidate) => answer[candidate.key] !== undefined)
     if (complete) answers.delete(formID)
     if (!complete) answers.set(formID, answer)
-    const answered = answeredMessage({ field, label: form.label, answer: formatAnswer(value) })
+    const answered = answeredMessage({ field, label: form.label, answer: formatAnswer({ field, value }) })
     await acknowledge({ interaction, content: answered.content })
     if (!complete) return
     const result = await oc(bot, 'session.form.reply', (client) =>
@@ -289,7 +304,8 @@ export function createQuestionHandlers(): InteractionRoutes {
       )
       return
     }
-    await record(bot, { interaction, ...pending, value: field.multiple ? values : (values[0] ?? '') })
+    const value = field.type === 'multiselect' ? values : field.type === 'boolean' ? values[0] === 'true' : (values[0] ?? '')
+    await record(bot, { interaction, ...pending, value })
   }
 
   async function other(bot: Bot, interaction: ModalSubmitInteraction): Promise<void> {
@@ -299,7 +315,7 @@ export function createQuestionHandlers(): InteractionRoutes {
     const key = `${pending.formID}:${pending.field.key}`
     const picked = otherPicks.get(key) ?? []
     otherPicks.delete(key)
-    await record(bot, { interaction, ...pending, value: pending.field.multiple ? [...picked, text] : text })
+    await record(bot, { interaction, ...pending, value: pending.field.type === 'multiselect' ? [...picked, text] : text })
   }
 
   return { selects: { [FORM_SELECT_PREFIX]: select }, modals: { [FORM_OTHER_PREFIX]: other } }

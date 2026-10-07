@@ -200,6 +200,67 @@ test('Other opens a modal and sends the typed answer', async () => {
   `)
 })
 
+test('OpenCode forms without the question tool (web search setup, yes/no) show labels and send typed values', async () => {
+  const thread = await startThread('Hello instead-marker')
+  await waitForFooter({ discord: twin.discord, threadId: thread.id })
+  const sessionId = bot.store.getState().roots[thread.id]!
+  const client = await server.client()
+  // Same shape as the form of OpenCode's websearch tool: no field title, kind "websearch.provider".
+  const form = await client.session.form.create({
+    sessionID: sessionId,
+    title: 'Web Search',
+    metadata: { kind: 'websearch.provider' },
+    fields: [
+      {
+        key: 'choice',
+        description: 'Allow OpenCode to search the web for up-to-date information?',
+        type: 'string',
+        required: true,
+        custom: false,
+        options: [
+          { value: 'allow', label: 'Allow search via Exa' },
+          { value: 'disable', label: 'Disable web search' },
+        ],
+      },
+      { key: 'remember', title: 'Remember', description: 'Keep this choice?', type: 'boolean' },
+    ],
+  })
+  const [choice, remember] = await waitForSelects({ threadId: thread.id, count: 2 })
+  const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
+  await user.selectMenu({ messageId: choice!.message.id, customId: choice!.customId, values: ['1'] })
+  await user.selectMenu({ messageId: remember!.message.id, customId: remember!.customId, values: ['0'] })
+  const detail = await waitFor({
+    label: 'form answered',
+    check: async () => {
+      const result = await client.session.form.get({ sessionID: sessionId, formID: form.id })
+      return result.state.status === 'answered' ? result.state : null
+    },
+  })
+  expect(detail).toMatchInlineSnapshot(`
+    {
+      "answer": {
+        "choice": "disable",
+        "remember": true,
+      },
+      "status": "answered",
+    }
+  `)
+  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Hello instead-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    did the other thing
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    **Web Search**
+    Allow OpenCode to search the web for up-to-date information?
+    ✓ _Disable web search_
+    **Remember**
+    Keep this choice?
+    ✓ _Yes_"
+  `)
+})
+
 test('a new message cancels the pending question and is answered', async () => {
   const thread = await startThread('Ask then change ask-cancel')
   await waitForSelects({ threadId: thread.id, count: 1 })

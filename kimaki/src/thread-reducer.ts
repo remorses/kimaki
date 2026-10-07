@@ -277,7 +277,7 @@ function applyOpencode({ draft, event, prefs, emit }: Context & { event: V2Event
     case 'form.created':
       return showForm({ draft, emit, form: event.data.form, label })
     case 'form.replied':
-      return closeForm({ draft, emit, formID: event.data.id, render: (field, text) => withAnswer({ header: text, answer: formatAnswer(event.data.answer[field.key]) }) })
+      return closeForm({ draft, emit, formID: event.data.id, render: (field, text) => withAnswer({ header: text, answer: formatAnswer({ field, value: event.data.answer[field.key] }) }) })
     case 'form.cancelled':
       return closeForm({ draft, emit, formID: event.data.id, render: (_field, text) => `${text}\n✗ _cancelled_` })
     case 'permission.asked':
