@@ -53,6 +53,8 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
       "model-variant",
       "verbosity",
       "tasks",
+      "command",
+      "skill",
       "gpt5-4-agent",
       "a-very-long-command-name-tha-cmd",
       "queue-cmd",

@@ -8,6 +8,7 @@ import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
+import { readCatalog } from './slash-commands.ts'
 import {
   TEST_USER_ID,
   seedProjectChannel,
@@ -77,6 +78,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/btw: Ask something without polluting or blocking the current session",
       "/build-agent: The default agent. Executes tools based on configured permissions.",
       "/clear-queue: Remove queued messages",
+      "/command: Run any OpenCode command in this project",
       "/compact: Compact the session context by summarizing the history",
       "/context-usage: Show token usage and context window percentage",
       "/cwd: Show or change this session working directory",
@@ -87,7 +89,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/later-cmd: Runs later",
       "/login: Connect an OpenCode provider",
       "/merge-worktree: Merge this worktree into a local branch",
-      "/model: Set the model for this session or channel",
+      "/model: Set the model for this session, channel or all channels",
       "/model-variant: Change the thinking level of the current model",
       "/new-session: Start a new OpenCode session",
       "/new-worktree: Start an isolated Git worktree session; fork context when used in a thread",
@@ -100,6 +102,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/resume: Resume an existing OpenCode session in a new thread",
       "/review-cmd: review changes [commit|branch|pr], defaults to uncommitted",
       "/session-id: Show the OpenCode session ID of this thread and how to open it in OpenCode",
+      "/skill: Run any OpenCode skill in this project",
       "/tasks: List scheduled tasks, run one now, or delete it",
       "/transcription-key: Set the OpenAI or Gemini API key for voice transcription and speech",
       "/undo: Undo the last turn (file changes are kept)",
@@ -108,6 +111,46 @@ test('the bot registers exactly the static and catalog commands in the guild', a
     ]
   `)
   expect(await twin.discord.getRegisteredCommands({ guildId: null })).toEqual([])
+})
+
+test('catalog discovery skips missing folders and file paths while keeping valid projects', async () => {
+  expect(await readCatalog(bot, path.join(server.root, 'missing-project'))).toBeNull()
+  const file = path.join(server.root, 'not-a-directory.txt')
+  fs.writeFileSync(file, 'not a project')
+  expect(await readCatalog(bot, file)).toBeNull()
+  const catalog = await readCatalog(bot, server.projectDirectory)
+  expect(catalog).not.toBeInstanceOf(Error)
+  if (!catalog || catalog instanceof Error) throw new Error('valid project catalog missing')
+  expect(catalog.commands.some((command) => command.name === 'hello')).toBe(true)
+})
+
+test('/skill and /command run catalog entries through project autocomplete', async () => {
+  const { discord, channelId } = twin
+  const thread = await newThread(() => discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Catalog picker thread' }))
+  await waitForFooter({ discord, threadId: thread.id })
+  const user = discord.thread(thread.id).user(TEST_USER_ID)
+  expect(await user.autocomplete({ name: 'skill', options: [{ name: 'name', type: 3, value: 'openc' }], focused: 'name' }))
+    .toEqual([expect.objectContaining({ value: 'opencode' })])
+  await user.runSlashCommand({ name: 'skill', options: [{ name: 'name', type: 3, value: 'opencode' }, { name: 'arguments', type: 3, value: 'explain skill-marker' }] })
+  await waitForFooter({ discord, threadId: thread.id, count: 2 })
+  expect(await user.autocomplete({ name: 'command', options: [{ name: 'name', type: 3, value: 'hel' }], focused: 'name' }))
+    .toEqual([{ name: '/hello - Say hello', value: 'hello' }])
+  await user.runSlashCommand({ name: 'command', options: [{ name: 'name', type: 3, value: 'hello' }, { name: 'arguments', type: 3, value: 'world' }] })
+  await waitForFooter({ discord, threadId: thread.id, count: 3 })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Catalog picker thread
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    » **tommy:** /opencode explain skill-marker
+    skill reply
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    » **tommy:** /hello world
+    command reply
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
 })
 
 function hideIds(text: string): string {
@@ -134,7 +177,9 @@ test('/<agent>-agent sets the channel agent, or starts a session with a prompt',
   )
   await waitForFooter({ discord, threadId: built.id })
   expect(hideIds(await discord.channel(channelId).text())).toMatchInlineSnapshot(`
-    "--- from: assistant (TestBot)
+    "--- from: user (tommy)
+    Catalog picker thread
+    --- from: assistant (TestBot)
     Switched to **plan** agent for this channel
     All new sessions will use this agent.
     --- from: user (tommy)

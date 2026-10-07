@@ -23,6 +23,7 @@
 //
 // Discord allows 100 commands per guild; skills are cut first.
 
+import fs from 'node:fs'
 import {
   Events,
   MessageFlags,
@@ -45,7 +46,7 @@ import { applyAgent, createPreferenceRoutes, switchModel, variantChoices, varian
 import { sessionRoutes } from './commands/session-commands.ts'
 import { SKIPPED_COMMANDS, threadRoutes } from './commands/thread-commands.ts'
 import { worktreeRoutes } from './commands/worktree-commands.ts'
-import { DbError, DiscordError } from './errors.ts'
+import { ConfigError, DbError, DiscordError, FilesystemError } from './errors.ts'
 import { canUseKimaki } from './ingress.ts'
 import {
   authorOf,
@@ -135,6 +136,7 @@ export function createInteractionRegistry(): InteractionRegistry {
     agentUiRoutes,
     permissionRoutes,
     createQuestionHandlers(),
+    catalogRoutes(),
   ])
 }
 
@@ -149,6 +151,78 @@ export type Catalog = {
   agents: ReadonlyArray<{ id: string; name: string; description?: string; mode: string; hidden: boolean }>
   commands: ReadonlyArray<{ name: string; description?: string }>
   skills: ReadonlyArray<{ id: string; description?: string }>
+}
+
+export async function readCatalog(bot: Pick<Bot, 'opencode'>, directory: string) {
+  const stat = await fs.promises.stat(directory).catch((cause: NodeJS.ErrnoException) => {
+    if (cause.code === 'ENOENT' || cause.code === 'ENOTDIR') return null
+    return new FilesystemError({ operation: `read project directory ${directory}`, cause })
+  })
+  if (stat instanceof Error) return stat
+  if (!stat?.isDirectory()) return null
+  const ready = await catalogReady(bot, directory)
+  if (ready instanceof Error) return ready
+  const location = { directory }
+  const [agents, commands, skills] = await Promise.all([
+    oc(bot, 'agent.list', (client) => client.agent.list({ location })),
+    oc(bot, 'command.list', (client) => client.command.list({ location })),
+    oc(bot, 'skill.list', (client) => client.skill.list({ location })),
+  ])
+  if (agents instanceof Error) return agents
+  if (commands instanceof Error) return commands
+  if (skills instanceof Error) return skills
+  return { agents: agents.data, commands: commands.data, skills: skills.data }
+}
+
+// Autocomplete keeps the whole project catalog reachable beyond Discord's shortcut limit.
+function catalogRoutes(): InteractionRoutes {
+  const commands: Record<string, SlashCommand> = {}
+  for (const kind of ['command', 'skill'] as const) {
+    const entries = async (bot: Bot, directory: string) => {
+      const location = { directory }
+      if (kind === 'skill') {
+        const skills = await oc(bot, 'skill.list', (client) => client.skill.list({ location }))
+        if (skills instanceof Error) return skills
+        return skills.data.map((skill) => ({ name: skill.id, description: skill.description }))
+      }
+      const list = await oc(bot, 'command.list', (client) => client.command.list({ location }))
+      if (list instanceof Error) return list
+      return list.data.filter((command) => !SKIPPED_COMMANDS.has(command.name))
+    }
+    commands[kind] = {
+      definition: new SlashCommandBuilder()
+        .setName(kind)
+        .setDescription(`Run any OpenCode ${kind} in this project`)
+        .addStringOption((option) => option.setName('name').setDescription(`${kind} name`).setRequired(true).setAutocomplete(true))
+        .addStringOption((option) => option.setName('arguments').setDescription(`Arguments to pass to the ${kind}`)),
+      async autocomplete(bot, interaction) {
+        const where = await resolveTarget(bot, interaction.channelId)
+        if (where instanceof Error) return respondChoices(interaction, where)
+        const list = await entries(bot, where.directory)
+        if (list instanceof Error) return respondChoices(interaction, list)
+        const query = interaction.options.getFocused().toLowerCase()
+        return respondChoices(interaction, list.filter((entry) => entry.name.toLowerCase().includes(query)).map((entry) => ({
+          name: `/${entry.name}${entry.description ? ` - ${entry.description}` : ''}`,
+          value: entry.name,
+        })))
+      },
+      async run(bot, interaction) {
+        const where = await resolveTarget(bot, interaction.channelId)
+        if (where instanceof Error) return replyError(interaction, where)
+        const list = await entries(bot, where.directory)
+        if (list instanceof Error) return replyError(interaction, list)
+        const name = interaction.options.getString('name', true).trim().replace(/^\//, '')
+        if (!list.some((entry) => entry.name === name)) return replyError(interaction, new ConfigError({ reason: `Unknown ${kind} \`${name}\`. Use /${kind} autocomplete to select one.` }))
+        const args = (interaction.options.getString('arguments') ?? '').trim()
+        return sendInput(bot, {
+          interaction,
+          route: kind === 'skill' ? { kind, id: name, arguments: args } : { kind, name, arguments: args, queue: false },
+          echo: `/${name} ${args}`.trim(),
+        })
+      },
+    }
+  }
+  return { commands }
 }
 
 // Lowercase letters, digits and hyphens; the suffix always survives the 32-char limit.
@@ -299,31 +373,27 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
 
-  async function catalogFor(directories: readonly string[]): Promise<Catalog> {
+  async function catalogFor(directories: readonly string[], reads: Map<string, Promise<Catalog | null>>): Promise<Catalog> {
     const catalog: { agents: Catalog['agents'][number][]; commands: Catalog['commands'][number][]; skills: Catalog['skills'][number][] } = {
       agents: [],
       commands: [],
       skills: [],
     }
     for (const directory of directories) {
-      const ready = await catalogReady(bot, directory)
-      if (ready instanceof Error) {
-        logger.warn(ready.message)
-        continue
-      }
-      const location = { directory }
-      const [agents, commands, skills] = await Promise.all([
-        oc(bot, 'agent.list', (client) => client.agent.list({ location })),
-        oc(bot, 'command.list', (client) => client.command.list({ location })),
-        oc(bot, 'skill.list', (client) => client.skill.list({ location })),
-      ])
+      const pending = reads.get(directory) ?? readCatalog(bot, directory).then((result) => {
+        if (result instanceof Error) {
+          logger.warn(`${directory}: ${result.message}${result.cause instanceof Error ? `: ${result.cause.message}` : ''}`)
+          return null
+        }
+        return result
+      })
+      reads.set(directory, pending)
+      const found = await pending
+      if (!found) continue
       // Union by name: the first project that has a name wins.
-      if (agents instanceof Error) logger.warn(agents.message)
-      else catalog.agents.push(...agents.data.filter((agent) => catalog.agents.every((known) => known.id !== agent.id)))
-      if (commands instanceof Error) logger.warn(commands.message)
-      else catalog.commands.push(...commands.data.filter((command) => catalog.commands.every((known) => known.name !== command.name)))
-      if (skills instanceof Error) logger.warn(skills.message)
-      else catalog.skills.push(...skills.data.filter((skill) => catalog.skills.every((known) => known.id !== skill.id)))
+      catalog.agents.push(...found.agents.filter((agent) => catalog.agents.every((known) => known.id !== agent.id)))
+      catalog.commands.push(...found.commands.filter((command) => catalog.commands.every((known) => known.name !== command.name)))
+      catalog.skills.push(...found.skills.filter((skill) => catalog.skills.every((known) => known.id !== skill.id)))
     }
     return catalog
   }
@@ -332,7 +402,7 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
   // limits command creates to 200 per day per guild).
   const registered = new Map<string, string>()
 
-  async function registerGuild(guild: Guild): Promise<void> {
+  async function registerGuild(guild: Guild, reads: Map<string, Promise<Catalog | null>>): Promise<void> {
     const rows = await db.query.channel_directories
       .findMany({ where: { channel_type: 'text' } })
       .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
@@ -342,7 +412,7 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
     }
     // Rows from before guild_id was stored belong to any guild.
     const directories = [...new Set(rows.filter((row) => !row.guild_id || row.guild_id === guild.id).map((row) => row.directory))]
-    const built = buildCommands({ fixed: registry.definitions, catalog: await catalogFor(directories) })
+    const built = buildCommands({ fixed: registry.definitions, catalog: await catalogFor(directories, reads) })
     if (passes.closed) return
     const signature = JSON.stringify(built.commands)
     if (registered.get(guild.id) === signature) {
@@ -350,7 +420,7 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
       return
     }
     if (built.dropped > 0) {
-      logger.warn(`${built.commands.length + built.dropped} commands exceed the Discord limit of ${MAX_COMMANDS}; ${built.dropped} dropped`)
+      logger.log(`${built.dropped} catalog shortcuts do not fit in guild ${guild.id}; all entries remain available through /agent, /command and /skill`)
     }
     const result = await discord.application?.commands
       .set(built.commands, guild.id)
@@ -439,7 +509,8 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
       try {
         while (passes.dirty && !passes.closed) {
           passes.dirty = false
-          await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild)))
+          const reads = new Map<string, Promise<Catalog | null>>()
+          await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild, reads)))
         }
       } finally {
         passes.active = null
