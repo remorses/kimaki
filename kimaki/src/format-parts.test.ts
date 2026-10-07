@@ -22,6 +22,10 @@ const calls: ToolCall[] = [
   { name: 'subagent', input: { agent: 'explore', description: 'Find auth files', prompt: '...' } },
   { name: 'subagent', input: { agent: 'general', description: 'List repo folders', prompt: '...', background: true } },
   { name: 'webfetch', input: { url: 'https://kimaki.dev/docs', format: 'markdown' } },
+  { name: 'skill', input: { id: 'zele' } },
+  { name: 'execute.opencode.read_mcp_resource', input: { server: 'docs', uri: 'file:///notes/a_long_resource_name_that_keeps_going_and_going.md' } },
+  { name: 'linear_create_issue', input: { team: 'ENG', priority: 2, labels: ['bug'], body: null } },
+  { name: 'execute.opencode.list_mcp_resources', input: {} },
   { name: 'question', input: { questions: [] } },
   { name: 'kimaki_sleep', input: { duration: '2h' } },
 ]
@@ -96,12 +100,32 @@ test('tool lines and visibility per verbosity', () => {
         "tools": true,
       },
       {
-        "line": "-# ┣ question",
+        "line": "-# ┣ skill _zele_",
+        "text": false,
+        "tools": true,
+      },
+      {
+        "line": "-# ┣ execute.opencode.read\\_mcp\\_resource (server: docs, uri: file:///notes/a\\_long\\_resource\\_name\\_that\\_keeps\\_goi…)",
+        "text": false,
+        "tools": true,
+      },
+      {
+        "line": "-# ┣ linear\\_create\\_issue (team: ENG, priority: 2, labels: ["bug"])",
+        "text": false,
+        "tools": true,
+      },
+      {
+        "line": "-# ┣ execute.opencode.list\\_mcp\\_resources",
+        "text": false,
+        "tools": true,
+      },
+      {
+        "line": "-# ┣ question (questions: [])",
         "text": false,
         "tools": false,
       },
       {
-        "line": "-# ┣ kimaki\\_sleep",
+        "line": "-# ┣ kimaki\\_sleep (duration: 2h)",
         "text": false,
         "tools": false,
       },

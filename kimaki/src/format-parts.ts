@@ -267,6 +267,10 @@ function toolBody({ name, input }: ToolCall): { glyph: '┣' | '◼︎'; text: s
       text: `${inline(stringField(input, 'agent') ?? 'subagent')} **${inline(stringField(input, 'description') ?? '')}**${background}`,
     }
   }
+  if (name === 'skill') {
+    const id = stringField(input, 'id')
+    return { glyph: '┣', text: id ? `skill _${inline(id)}_` : 'skill' }
+  }
   if (name === 'execute') {
     const description = stringField(input, 'description')
     return { glyph: '┣', text: description ? `execute _${inline(description)}_` : 'execute' }
@@ -274,7 +278,20 @@ function toolBody({ name, input }: ToolCall): { glyph: '┣' | '◼︎'; text: s
   const detail = ['path', 'pattern', 'url', 'query', 'command', 'name', 'directory', 'title']
     .map((key) => stringField(input, key))
     .find((value) => value !== null)
-  return { glyph: '┣', text: `${inline(name)}${detail ? ` _${inline(detail)}_` : ''}` }
+  if (detail) return { glyph: '┣', text: `${inline(name)} _${inline(detail)}_` }
+  const fields = inputFields(input)
+  return { glyph: '┣', text: `${inline(name)}${fields ? ` (${inline(fields, 200)})` : ''}` }
+}
+
+// MCP and plugin tools have arbitrary keys: "server: docs, uri: file://a.md".
+function inputFields(input: ToolInput): string {
+  return Object.entries(input)
+    .flatMap(([key, value]) => {
+      if (value === null || value === '') return []
+      const text = typeof value === 'string' ? value : JSON.stringify(value)
+      return [`${key}: ${truncate(text.replace(/\s+/g, ' ').trim(), 50)}`]
+    })
+    .join(', ')
 }
 
 // Child session lines carry the agent label: "┣ general ⋅ glob _*.md_".
