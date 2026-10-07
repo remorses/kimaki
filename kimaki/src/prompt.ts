@@ -32,7 +32,7 @@ import {
 } from './bot.ts'
 import { switchModel } from './commands/preference-commands.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
-import { formatError } from './format-parts.ts'
+import { formatError, NOTIFY_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { SendInput } from './lock-routes.ts'
 import { formatEcho } from './queue.ts'
@@ -226,7 +226,7 @@ export function shell(bot: Bot, { threadId, sessionId, command }: { threadId: st
     .then((result) => {
       if (!(result instanceof Error)) return
       logger.error(`shell in ${threadId} failed: ${result.message}`)
-      bot.effects.run(threadId, [{ type: 'send', text: formatError(result.message) }])
+      bot.effects.run(threadId, [{ type: 'send', text: formatError(result.message), notify: true }])
     })
 }
 
@@ -546,6 +546,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
         content: input.prompt,
         files: input.files?.map((file) => ({ attachment: promptFilePath(file), name: file.name })),
         allowedMentions: { parse: [] },
+        flags: NOTIFY_MESSAGE_FLAGS,
       })
       .catch((cause) => new DiscordError({ operation: 'post notification', cause }))
     if (shown instanceof Error) return shown

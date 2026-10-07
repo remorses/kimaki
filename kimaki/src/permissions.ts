@@ -76,7 +76,7 @@ export function showPermission({ draft, emit, request, label }: Slice & { reques
   if (draft.permissions[request.id]) return
   const pending: PendingPermission = { sessionId: request.sessionID, action: request.action, resources: [...request.resources], label }
   draft.permissions[request.id] = castDraft(pending)
-  emit({ type: 'show', key: uiKey(request.id), messages: [requestMessage({ requestID: request.id, request: pending })], replyTo: null })
+  emit({ type: 'show', key: uiKey(request.id), messages: [requestMessage({ requestID: request.id, request: pending })], replyTo: null, notify: true })
 }
 
 export function closePermission({ draft, emit, requestID, status }: Slice & { requestID: string; status: string }) {

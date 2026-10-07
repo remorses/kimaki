@@ -3,6 +3,7 @@
 
 import fs from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { MessageFlags } from 'discord.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
@@ -112,6 +113,45 @@ test('channel message creates a thread with reply and footer, follow-up continue
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(thread.name).toBe('Say hello hello-marker')
+
+  // Like V1: bot messages hide link previews; only the footer notifies.
+  const messages = await discord.thread(thread.id).getMessages()
+  const flags = messages
+    .filter((message) => message.author.bot)
+    .map((message) => ({
+      text: message.content.slice(0, 20),
+      suppressEmbeds: Boolean((message.flags ?? 0) & MessageFlags.SuppressEmbeds),
+      silent: Boolean((message.flags ?? 0) & MessageFlags.SuppressNotifications),
+    }))
+  expect(flags).toMatchInlineSnapshot(`
+    [
+      {
+        "silent": true,
+        "suppressEmbeds": true,
+        "text": "-# *using determinis",
+      },
+      {
+        "silent": true,
+        "suppressEmbeds": true,
+        "text": "Hello from the deter",
+      },
+      {
+        "silent": false,
+        "suppressEmbeds": true,
+        "text": "-# *project ⋅ main ⋅",
+      },
+      {
+        "silent": true,
+        "suppressEmbeds": true,
+        "text": "Second answer, same ",
+      },
+      {
+        "silent": false,
+        "suppressEmbeds": true,
+        "text": "-# *project ⋅ main ⋅",
+      },
+    ]
+  `)
 
   const rows = await bot.db.query.thread_sessions.findMany()
   expect(rows.map((row) => ({ thread: row.thread_id === thread.id, source: row.source }))).toEqual([

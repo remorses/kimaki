@@ -38,6 +38,7 @@ test('text-only turn: banner, text, typing, footer with context percent', () => 
           "id": "gpt-6-luna",
           "providerID": "openai",
         },
+        "notify": true,
         "type": "footer",
       },
     ]
@@ -69,6 +70,7 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
         "type": "typing",
       },
       {
+        "notify": true,
         "text": "✗ rate limited by provider",
         "type": "send",
       },
@@ -110,6 +112,7 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
           "id": "gpt-6-luna",
           "providerID": "openai",
         },
+        "notify": true,
         "type": "footer",
       },
     ]

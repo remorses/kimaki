@@ -23,6 +23,7 @@ import dedent from 'string-dedent'
 import { API } from '@discordjs/core/http-only'
 
 import { ConfigError, DbError, DiscordError, OpenCodeMissingError, type OpenCodeV1Error, type OpenCodeVersionError } from './errors.ts'
+import { NOTIFY_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { checkOpencode, findOpencodeBinary, installedOpencodeBinary, OPENCODE_INSTALL_COMMAND } from './opencode-server.ts'
 import type { Bot } from './bot.ts'
@@ -257,6 +258,7 @@ export async function runOnboarding({
         Reply in the thread below to add channels for your projects. <@${owner.id}>
       `,
       allowedMentions: { users: [owner.id] },
+      flags: NOTIFY_MESSAGE_FLAGS,
     })
     .catch((e) => new DiscordError({ operation: 'send welcome message', cause: e }))
   if (welcome instanceof Error) return welcome

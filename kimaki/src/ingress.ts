@@ -26,7 +26,7 @@ import {
 import * as errore from 'errore'
 
 import { projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts'
-import { formatError } from './format-parts.ts'
+import { formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { parseInput, sendInput } from './lock-routes.ts'
 import { cancelQueuedPrompt, dispatch, requeueEdited, send } from './prompt.ts'
@@ -199,7 +199,7 @@ async function handleMessage(bot: Bot, message: Message) {
   const author = { id: message.author.id, username: message.author.username }
   const reportError = async (error: Error) => {
     logger.error(`message ${message.id} failed: ${error.message}`)
-    await message.reply(formatError(error.message)).catch(() => undefined)
+    await message.reply({ content: formatError(error.message), flags: NOTIFY_MESSAGE_FLAGS }).catch(() => undefined)
   }
 
   const attachments = [...message.attachments.values()]
@@ -219,7 +219,7 @@ async function handleMessage(bot: Bot, message: Message) {
   if (!route) return
   // The transcription is not visible anywhere else.
   if (voice && thread && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
-    await message.reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] } })
+    await message.reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
   }
 
   if (!thread) {
@@ -244,7 +244,7 @@ async function handleMessage(bot: Bot, message: Message) {
   if (!result) return
   const note =
     route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-  await message.reply(note).catch(() => undefined)
+  await message.reply({ content: note, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
 }
 
 // Registers the message listeners. Messages of one channel are handled in arrival order.

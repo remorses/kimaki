@@ -8,6 +8,7 @@ import type { JsonValue } from '@opencode/client'
 import {
   ButtonStyle,
   ComponentType,
+  MessageFlags,
   type APIActionRowComponent,
   type APIButtonComponentWithCustomId,
   type APIComponentInMessageActionRow,
@@ -15,6 +16,11 @@ import {
 import { z } from 'zod'
 
 import type { Verbosity } from './db.ts'
+
+// Bot messages never show link previews. Only messages that need the user
+// (errors, prompts, the end of a turn) skip SuppressNotifications.
+export const SILENT_MESSAGE_FLAGS = MessageFlags.SuppressEmbeds | MessageFlags.SuppressNotifications
+export const NOTIFY_MESSAGE_FLAGS = MessageFlags.SuppressEmbeds
 
 export function asSubtext(text: string): string {
   return `-# ${text}`

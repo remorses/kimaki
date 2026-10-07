@@ -114,16 +114,17 @@ export type ThreadView = {
 
 export type Effect =
   // Bot-formatted Discord content (tool lines, banner, errors).
-  | { type: 'send'; text: string }
+  // Effects are silent unless `notify` is set (format-parts.ts message flags).
+  | { type: 'send'; text: string; notify?: boolean }
   // Model markdown, rendered and split by the executor.
   | { type: 'markdown'; text: string; blankLineBefore: boolean }
   | { type: 'typing'; on: boolean }
   // Files from `kimaki upload-to-discord` (never from the reducer).
   | { type: 'attachments'; files: readonly { path: string; name: string }[] }
   // The executor adds folder and git branch of `directory` when it posts.
-  | { type: 'footer'; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null }
+  | { type: 'footer'; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null; notify: boolean }
   // Posts the messages in order; the first replies to `replyTo` when set.
-  | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null }
+  | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null; notify: boolean }
   // Edits the messages `show` posted under `key` (by index; the last one covers the rest).
   | { type: 'edit'; key: string; messages: readonly UiMessage[] }
 
@@ -369,13 +370,15 @@ function applyRoot(context: Context & { event: V2Event }) {
         contextPercent: contextPercent({ turn, prefs }),
         model: { providerID: turn.model.providerID, id: turn.model.id },
         agent: turn.agent,
+        // Pending input starts another turn: notify at the end of that one.
+        notify: draft.inbox.length === 0,
       })
       return
     }
     case 'session.execution.failed':
       draft.turn = null
       draft.lastKind = null
-      emit({ type: 'send', text: formatError(event.data.error.message) })
+      emit({ type: 'send', text: formatError(event.data.error.message), notify: true })
       return
     case 'session.execution.interrupted':
       draft.turn = null
@@ -497,7 +500,7 @@ function showAgentPrompt({ draft, emit, prompt }: Pick<Context, 'draft' | 'emit'
     ?? [button({ customId: `file_upload_btn:${prompt.id}`, label: 'Upload files' })]
   const commands = prompt.buttons?.flatMap((item) => (item.command ? [`${item.label}: \`${item.command}\``] : [])) ?? []
   draft.agentUi.push(prompt)
-  emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, messages: [{ content: prompt.prompt ?? commands.join('\n'), components: [buttonRow(buttons)] }] })
+  emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, notify: true, messages: [{ content: prompt.prompt ?? commands.join('\n'), components: [buttonRow(buttons)] }] })
 }
 
 function dismissAgentPrompts({ draft, emit, ids }: Pick<Context, 'draft' | 'emit'> & { ids: readonly string[] }) {

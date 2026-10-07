@@ -21,7 +21,7 @@ import {
 
 import { projectOf, sessionDirectory, type Author, type Bot } from './bot.ts'
 import { ConfigError, DiscordError } from './errors.ts'
-import { formatError } from './format-parts.ts'
+import { formatError, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { formatEcho } from './queue.ts'
 
@@ -116,7 +116,7 @@ export async function replyError(
 
 // The visible reply stands in for the user message: acks and prompts point at its ID.
 export async function replyWithEcho(interaction: ChatInputCommandInteraction, { author, text }: { author: Author; text: string }) {
-  await interaction.reply({ content: formatEcho({ username: author.username, text }), allowedMentions: { parse: [] } })
+  await interaction.reply({ content: formatEcho({ username: author.username, text }), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
   return interaction.fetchReply().catch((e: Error) => e)
 }
 

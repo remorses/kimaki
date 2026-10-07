@@ -160,7 +160,7 @@ export function showForm({ draft, emit, form, label }: Slice & { form: FormLike;
   if (!fields || draft.forms[form.id]) return
   draft.forms[form.id] = castDraft({ sessionId: form.sessionID, fields, label })
   const messages = fields.map((field, index) => questionMessage({ formID: form.id, index, field, label }))
-  emit({ type: 'show', key: uiKey(form.id), messages, replyTo: null })
+  emit({ type: 'show', key: uiKey(form.id), messages, replyTo: null, notify: true })
 }
 
 // `render` builds each question's final text from its header.

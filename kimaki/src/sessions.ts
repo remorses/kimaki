@@ -25,6 +25,7 @@ import {
   type PromptFile,
 } from './bot.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
+import { SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { OpenCodeClient, OpencodeEndpoint } from './opencode-server.ts'
 import { prompt, runInSession } from './prompt.ts'
@@ -377,6 +378,7 @@ export async function startSession(
       .send({
         content: `Worktree ready: \`${directory}\`\nBranch: \`${checkout?.branch ?? 'detached'}\`\nSend a message to start working.`,
         allowedMentions: { parse: [] },
+        flags: SILENT_MESSAGE_FLAGS,
       })
       .catch((cause) => new DiscordError({ operation: 'post worktree ready', cause }))
     if (posted instanceof Error) return posted
@@ -386,7 +388,7 @@ export async function startSession(
     const names = files.map((file) => file.name).join(', ')
     const shown = names ? `${text}\nFiles: ${names}` : text
     const echo = await thread
-      .send({ content: formatEcho({ username: author.username, text: shown }), allowedMentions: { parse: [] } })
+      .send({ content: formatEcho({ username: author.username, text: shown }), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
       .catch((cause) => new DiscordError({ operation: 'send first input', cause }))
     if (echo instanceof Error) return echo
   }
@@ -452,7 +454,7 @@ async function adoptSession(
 
   const prepared = await (async () => {
     const posted = await thread
-      .send({ content: intro.slice(0, 2_000), allowedMentions: { parse: [] } })
+      .send({ content: intro.slice(0, 2_000), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
       .catch((cause) => new DiscordError({ operation: 'send intro', cause }))
     if (posted instanceof Error) return posted
     // Merge: other metadata stays. Task fields stay only for a resumed task session.
@@ -705,7 +707,7 @@ export async function forkBtw(
   if (bound instanceof Error) return bound
   await thread.members.add(author.id).catch((e: Error) => logger.warn(`add btw member: ${e.message}`))
   const intro = await thread
-    .send({ content: `Reusing context from <#${sourceThread.id}> to answer prompt...\n${text}`.slice(0, 2_000) })
+    .send({ content: `Reusing context from <#${sourceThread.id}> to answer prompt...\n${text}`.slice(0, 2_000), flags: SILENT_MESSAGE_FLAGS })
     .catch((cause) => new DiscordError({ operation: 'send btw intro', cause }))
   if (intro instanceof Error) return intro
   if (agent) {

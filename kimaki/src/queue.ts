@@ -98,7 +98,7 @@ export function enqueueInput(
   if (!acked) return
   const position = queuedItems(draft).length
   const ack = textOnly(asSubtext(`Queued at position ${position}. Delete the original message to remove it, or use /clear-queue position:${position}`))
-  emit({ type: 'show', key: ackKey(inboxID), messages: [ack], replyTo: meta.messageId })
+  emit({ type: 'show', key: ackKey(inboxID), messages: [ack], replyTo: meta.messageId, notify: false })
 }
 
 export function deliverQueued(slice: Slice & { inboxID: string }) {

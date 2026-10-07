@@ -16,9 +16,9 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { type Client, type MessageCreateOptions, type SendableChannels } from 'discord.js'
+import { type Client, type MessageCreateOptions, type MessageFlags, type SendableChannels } from 'discord.js'
 
-import { formatFooter, type UiMessage } from './format-parts.ts'
+import { formatFooter, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS, type UiMessage } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { segmentPayloads, type DiscordPayload } from './markdown/components.ts'
 import { DISCORD_TEXT_LIMIT, renderMarkdown } from './markdown/render-markdown.ts'
@@ -39,6 +39,9 @@ async function footerText(effect: Extract<Effect, { type: 'footer' }>): Promise<
   const branch = await gitBranch(directory)
   return formatFooter({ folder: path.basename(directory), branch, durationMs, contextPercent, model, agent })
 }
+
+// post() adds the notification flags to the payload's own flag.
+type PostOptions = Omit<MessageCreateOptions, 'flags'> & { flags?: MessageFlags.IsComponentsV2 }
 
 type ThreadWorker = {
   queue: Effect[]
@@ -94,11 +97,12 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     thread.typing = null
   }
 
-  async function post({ threadId, options }: { threadId: string; options: MessageCreateOptions }) {
+  async function post({ threadId, options, notify }: { threadId: string; options: PostOptions; notify: boolean }) {
     if (lifecycle.closed) return null
     const channel = await sendableChannel(threadId)
     if (!channel || lifecycle.closed) return null
-    const sent = await channel.send({ ...options, allowedMentions: { parse: ['users'] } }).catch((e: Error) => e)
+    const flags = (options.flags ?? 0) | (notify ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS)
+    const sent = await channel.send({ ...options, flags, allowedMentions: { parse: ['users'] } }).catch((e: Error) => e)
     if (!(sent instanceof Error)) return sent.id
     logger.error(`send failed in ${threadId}: ${sent.message}`)
     return null
@@ -121,7 +125,11 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     const thread = worker(threadId)
     if (effect.type === 'attachments') {
       for (let offset = 0; offset < effect.files.length; offset += 10) {
-        await post({ threadId, options: { files: effect.files.slice(offset, offset + 10).map((file) => ({ attachment: file.path, name: file.name })) } })
+        await post({
+          threadId,
+          options: { files: effect.files.slice(offset, offset + 10).map((file) => ({ attachment: file.path, name: file.name })) },
+          notify: false,
+        })
       }
       return
     }
@@ -158,6 +166,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
             components: [...message.components],
             ...(replyTo && { reply: { messageReference: replyTo, failIfNotExists: false } }),
           },
+          notify: effect.notify,
         })
         if (id) ids.push(id)
       }
@@ -166,7 +175,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
       return
     }
     for (const payload of markdownMessages(effect)) {
-      await post({ threadId, options: payload })
+      await post({ threadId, options: payload, notify: false })
     }
     await refreshTyping(threadId)
   }
@@ -177,12 +186,13 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     const thread = worker(threadId)
     const generation = thread.generation
     const live = () => thread.generation === generation
-    let lines: string | null = null
+    // A merged message notifies when any of its lines does.
+    let lines: { text: string; notify: boolean } | null = null
     const flush = async () => {
-      const text = lines
+      const pending = lines
       lines = null
-      if (text === null || !live()) return
-      await post({ threadId, options: { content: text } })
+      if (pending === null || !live()) return
+      await post({ threadId, options: { content: pending.text }, notify: pending.notify })
       await refreshTyping(threadId)
     }
     for (const effect of batch) {
@@ -193,13 +203,14 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
         continue
       }
       const text = effect.type === 'send' ? effect.text : await footerText(effect)
-      const joined: string | null = lines === null ? null : `${lines}\n${text}`
-      if (joined !== null && joined.length <= DISCORD_TEXT_LIMIT) {
-        lines = joined
+      const notify = effect.notify === true
+      const joined: string | null = lines === null ? null : `${lines.text}\n${text}`
+      if (lines !== null && joined !== null && joined.length <= DISCORD_TEXT_LIMIT) {
+        lines = { text: joined, notify: lines.notify || notify }
         continue
       }
       await flush()
-      lines = text
+      lines = { text, notify }
     }
     await flush()
   }
