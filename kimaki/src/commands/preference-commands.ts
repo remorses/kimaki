@@ -1,11 +1,12 @@
 // Agent, model and display preferences. In a session thread they change the
 // session in OpenCode (switchAgent / switchModel, applied from the next
 // step); in a project channel they set the default for new sessions
-// (channel_agents / channel_models). Verbosity is always per channel.
+// (channel_agents / channel_models). /model can also set the default of
+// channels without their own model (global_models). Verbosity is always per channel.
 //
 //   /agent          ─▶ agent select ─▶ session or channel
 //   /<agent>-agent  ─▶ same, without the select
-//   /model          ─▶ provider ─▶ model ─▶ variant (if any) ─▶ scope: session | channel
+//   /model          ─▶ provider ─▶ model ─▶ variant (if any) ─▶ scope: session | channel | global
 //   /model-variant  ─▶ variant of the current model ─▶ scope
 //   /verbosity      ─▶ text | tools for the channel
 //
@@ -20,13 +21,13 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js'
 
-import { oc, type Bot, type ModelChoice } from '../bot.ts'
+import { globalModel, oc, parseModel, type Bot, type ModelChoice } from '../bot.ts'
 import { verbosityFromV1, verbosityToV1, type Verbosity } from '../db.ts'
 import { ConfigError, DbError } from '../errors.ts'
 import { paginate, selectedPage, selectRow } from '../format-parts.ts'
 import { replyError, resolveTarget, type InteractionRoutes, type InteractionTarget } from '../interaction-context.ts'
 import * as schema from '../schema.ts'
-import { primaryAgents } from '../sessions.ts'
+import { agentSelection, primaryAgents, switchAgent } from '../sessions.ts'
 
 const AGENT_PREFIX = 'agent:'
 const MODEL_PREFIX = 'model:'
@@ -73,6 +74,17 @@ export async function setChannelModel(bot: Bot, { channelId, model }: { channelI
   if (result instanceof Error) return result
 }
 
+// Default model of new sessions in channels without a channel model.
+export async function setGlobalModel(bot: Bot, { model }: { model: ModelChoice }): Promise<DbError | void> {
+  const values = { model_id: `${model.providerID}/${model.id}`, variant: model.variant ?? null }
+  const result = await bot.db
+    .insert(schema.global_models)
+    .values({ app_id: bot.appId, ...values })
+    .onConflictDoUpdate({ target: schema.global_models.app_id, set: values })
+    .catch((cause) => new DbError({ operation: 'write global_models', cause }))
+  if (result instanceof Error) return result
+}
+
 // Applies to running sessions of the channel too, from their next event.
 export async function setVerbosity(bot: Bot, { channelId, verbosity }: { channelId: string; verbosity: Verbosity }): Promise<DbError | void> {
   const value = verbosityToV1(verbosity)
@@ -97,21 +109,24 @@ export async function setChannelAgent(bot: Bot, { channelId, agent }: { channelI
 // --- Reads
 
 // The agent and model a session or channel uses now, for the menu headers.
+// A channel without its own model shows the global one (modelScope 'global').
 async function current(bot: Bot, target: InteractionTarget) {
   const sessionId = target.sessionId
   if (sessionId) {
     const info = await oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId }))
     if (info instanceof Error) return info
-    return { scope: 'session' as const, agent: info.agent ?? null, model: info.model ?? null }
+    return { scope: 'session' as const, modelScope: 'session' as const, agent: info.agent ?? null, model: info.model ?? null }
   }
   const row = await bot.db.query.channel_directories
     .findFirst({ where: { channel_id: target.channelId }, with: { channel_agent: true, channel_model: true } })
     .catch((cause) => new DbError({ operation: 'read channel preferences', cause }))
   if (row instanceof Error) return row
-  const saved = row?.channel_model?.model_id.split('/') ?? []
-  const [providerID, ...rest] = saved
-  const model = providerID && rest.length > 0 ? { providerID, id: rest.join('/'), variant: row?.channel_model?.variant ?? undefined } : null
-  return { scope: 'channel' as const, agent: row?.channel_agent?.agent_name ?? null, model }
+  const agent = row?.channel_agent?.agent_name ?? null
+  const model = parseModel(row?.channel_model?.model_id, row?.channel_model?.variant)
+  if (model) return { scope: 'channel' as const, modelScope: 'channel' as const, agent, model }
+  const global = await globalModel(bot)
+  if (global instanceof Error) return global
+  return { scope: 'channel' as const, modelScope: 'global' as const, agent, model: global }
 }
 
 async function enabledModels(bot: Bot, directory: string) {
@@ -128,9 +143,10 @@ async function enabledModels(bot: Bot, directory: string) {
     .map((model) => ({ ...model, providerName: names.get(model.providerID) ?? model.providerID }))
 }
 
-// The model a session or channel runs with: its own, else the OpenCode default.
-// (V2 runs the session model; an agent's configured model only picks titles.)
-async function baseModel(bot: Bot, target: InteractionTarget) {
+// An agent shortcut uses its configured model; /model-variant uses the current model.
+async function baseModel(bot: Bot, { target, agent }: { target: InteractionTarget; agent?: string }) {
+  const selected = agent ? await agentSelection(bot, { directory: target.directory, agent }) : null
+  if (selected instanceof Error) return selected
   const [now, models, fallback] = await Promise.all([
     current(bot, target),
     enabledModels(bot, target.directory),
@@ -139,15 +155,15 @@ async function baseModel(bot: Bot, target: InteractionTarget) {
   if (now instanceof Error) return now
   if (models instanceof Error) return models
   if (fallback instanceof Error) return fallback
-  const model = now.model ?? (fallback.data ? { providerID: fallback.data.providerID, id: fallback.data.id } : null)
+  const model = selected?.model ?? now.model ?? (fallback.data ? { providerID: fallback.data.providerID, id: fallback.data.id } : null)
   const info = model ? models.find((candidate) => candidate.providerID === model.providerID && candidate.id === model.id) : null
   if (!model || !info) return new ConfigError({ reason: 'No model configured. Use /model to set one first.' })
   return { model, info }
 }
 
 // The base model with thinking level `variant`, for `/<agent>-agent variant:`.
-export async function variantModel(bot: Bot, { target, variant }: { target: InteractionTarget; variant: string }): Promise<Error | ModelChoice> {
-  const base = await baseModel(bot, target)
+export async function variantModel(bot: Bot, { target, variant, agent }: { target: InteractionTarget; variant: string; agent?: string }): Promise<Error | ModelChoice> {
+  const base = await baseModel(bot, { target, agent })
   if (base instanceof Error) return base
   const { info } = base
   if (!info.variants.some((candidate) => candidate.id === variant)) {
@@ -158,8 +174,8 @@ export async function variantModel(bot: Bot, { target, variant }: { target: Inte
 }
 
 // Autocomplete of `variant`: the thinking levels of the model in use.
-export async function variantChoices(bot: Bot, { target, query }: { target: InteractionTarget; query: string }): Promise<Error | Array<{ name: string; value: string }>> {
-  const base = await baseModel(bot, target)
+export async function variantChoices(bot: Bot, { target, query, agent }: { target: InteractionTarget; query: string; agent?: string }): Promise<Error | Array<{ name: string; value: string }>> {
+  const base = await baseModel(bot, { target, agent })
   if (base instanceof Error) return base
   return base.info.variants
     .filter((variant) => variant.id.includes(query.toLowerCase()))
@@ -168,20 +184,31 @@ export async function variantChoices(bot: Bot, { target, query }: { target: Inte
 
 // --- /agent and /<agent>-agent
 
-async function setAgent(bot: Bot, { target, agent }: { target: InteractionTarget; agent: string }): Promise<Error | string> {
+async function setAgent(bot: Bot, { target, agent, model }: { target: InteractionTarget; agent: string; model?: ModelChoice | null }): Promise<Error | string> {
   const before = await current(bot, target)
   if (before instanceof Error) return before
   const sessionId = target.sessionId
-  const result = sessionId
-    ? await oc(bot, 'session.switchAgent', (client) => client.session.switchAgent({ sessionID: sessionId, agent }))
-    : await setChannelAgent(bot, { channelId: target.channelId, agent })
-  if (result instanceof Error) return result
+  const selected = sessionId
+    ? await switchAgent(bot, { sessionId, directory: target.directory, agent, model })
+    : await agentSelection(bot, { directory: target.directory, agent })
+  if (selected instanceof Error) return selected
+  if (!sessionId) {
+    const choice = model ?? selected.model
+    if (choice) {
+      const written = await setChannelModel(bot, { channelId: target.channelId, model: choice })
+      if (written instanceof Error) return written
+    }
+    const written = await setChannelAgent(bot, { channelId: target.channelId, agent: selected.agent })
+    if (written instanceof Error) return written
+  }
+  const choice = model ?? selected.model
+  const modelText = choice ? `\nModel: \`${modelLabel(choice)}\`` : ''
   const previous = before.agent && before.agent !== agent ? ` (was **${before.agent}**)` : ''
   const verb = before.agent === agent ? 'Using' : 'Switched to'
   if (before.scope === 'session') {
-    return `${verb} **${agent}** agent for this session${previous}\nThe agent changes from the next step.`
+    return `${verb} **${agent}** agent for this session${previous}${modelText}\nThe agent changes from the next step.`
   }
-  return `${verb} **${agent}** agent for this channel${previous}\nAll new sessions will use this agent.`
+  return `${verb} **${agent}** agent for this channel${previous}${modelText}\nAll new sessions will use this agent.`
 }
 
 // /<agent>-agent without a prompt: agent and thinking level for the session or channel.
@@ -190,13 +217,7 @@ export async function applyAgent(
   { interaction, target, agent, model }: { interaction: ChatInputCommandInteraction; target: InteractionTarget; agent: string; model: ModelChoice | null },
 ): Promise<void> {
   await interaction.deferReply()
-  if (model) {
-    const switched = target.sessionId
-      ? await switchModel(bot, { sessionId: target.sessionId, model })
-      : await setChannelModel(bot, { channelId: target.channelId, model })
-    if (switched instanceof Error) return replyError(interaction, switched)
-  }
-  const content = await setAgent(bot, { target, agent })
+  const content = await setAgent(bot, { target, agent, model })
   if (content instanceof Error) return replyError(interaction, content)
   const thinking = model ? `\nThinking level: **${model.variant}** (\`${modelLabel(model)}\`)` : ''
   await interaction.editReply({ content: `${content}${thinking}` })
@@ -274,7 +295,7 @@ async function renderStep(
     }
     const now = await current(bot, wizard.target)
     if (now instanceof Error) return replyError(interaction, now)
-    const currentText = now.model ? `**Current (${now.scope}):** \`${modelLabel(now.model)}\`` : '**Current:** OpenCode default'
+    const currentText = now.model ? `**Current (${now.modelScope}):** \`${modelLabel(now.model)}\`` : '**Current:** OpenCode default'
     return reply(
       `${header}\n${currentText}\nSelect a provider:`,
       providers.map(([id, name]) => {
@@ -305,6 +326,7 @@ async function renderStep(
     [
       ...(wizard.target.sessionId ? [{ label: 'This session', value: 'session', description: 'From the next step of this session' }] : []),
       { label: 'This channel', value: 'channel', description: 'New sessions in this channel' },
+      { label: 'All channels', value: 'global', description: 'New sessions in channels without their own model' },
     ],
     'Apply to...',
   )
@@ -320,13 +342,17 @@ async function applyModel(
   const result =
     scope === 'session' && sessionId
       ? await switchModel(bot, { sessionId, model })
-      : await setChannelModel(bot, { channelId: wizard.target.channelId, model })
+      : scope === 'global'
+        ? await setGlobalModel(bot, { model })
+        : await setChannelModel(bot, { channelId: wizard.target.channelId, model })
   if (result instanceof Error) return replyError(interaction, result)
   const label = `**${wizard.providerName}** / **${wizard.modelID}**${model.variant ? ` (${model.variant})` : ''}\n\`${modelLabel(model)}\``
   const content =
     scope === 'session'
       ? `Model set for this session:\n${label}\nApplies from the next step.`
-      : `Model preference set for this channel:\n${label}\nAll new sessions in this channel will use this model.`
+      : scope === 'global'
+        ? `Model preference set for all channels:\n${label}\nNew sessions use this model, except in channels with their own model.`
+        : `Model preference set for this channel:\n${label}\nAll new sessions in this channel will use this model.`
   await interaction.editReply({ content, components: [] })
 }
 
@@ -398,7 +424,7 @@ export function createPreferenceRoutes(): InteractionRoutes {
     const target = await resolveTarget(bot, interaction.channelId)
     if (target instanceof Error) return replyError(interaction, target)
     await interaction.deferReply()
-    const base = await baseModel(bot, target)
+    const base = await baseModel(bot, { target })
     if (base instanceof Error) return replyError(interaction, base)
     const { model, info } = base
     if (info.variants.length === 0) {
@@ -450,7 +476,7 @@ export function createPreferenceRoutes(): InteractionRoutes {
   return {
     commands: {
       agent: { definition: new SlashCommandBuilder().setName('agent').setDescription('Set the agent for this session or channel'), run: agentMenu },
-      model: { definition: new SlashCommandBuilder().setName('model').setDescription('Set the model for this session or channel'), run: modelMenu },
+      model: { definition: new SlashCommandBuilder().setName('model').setDescription('Set the model for this session, channel or all channels'), run: modelMenu },
       'model-variant': {
         definition: new SlashCommandBuilder().setName('model-variant').setDescription('Change the thinking level of the current model'),
         run: variantMenu,

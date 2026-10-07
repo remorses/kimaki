@@ -1700,7 +1700,8 @@ bot_api_keys        audio keys                 thread_queue_items  ipc_requests
 guild_categories    category per guild         session_models      session_agents
 channel_directories channel → directory        thread_worktrees    thread_workspaces
 channel_models      channel default model      scheduled_task_runs session_start_sources
-channel_agents      channel default agent      forum_sync_configs  global_models
+channel_agents      channel default agent      forum_sync_configs
+global_models       default model, all channels
 channel_verbosity   channel verbosity
 channel_worktrees   auto-worktree toggle
 channel_mention_mode mention-only toggle
@@ -1733,7 +1734,7 @@ Rules for the V2 code:
 | `thread_sessions` | one session per thread. V2 writes `source = 'kimaki'` and leaves `last_synced_name`, `parent_session_id` null. "One thread per session" is enforced in code: `/resume` deletes other rows with the same `session_id` in the same transaction (no UNIQUE index, so no table rebuild). The existing `updated_at` stays the tiebreaker |
 | `scheduled_tasks` | same columns and status enum. `payload_json` keeps the V1 `ScheduledTaskPayload` shape; V2 ignores `injectionGuardPatterns`. V2 does not write `scheduled_task_runs`; `session_id`/`thread_id` columns hold the last run |
 | `session_sleeps` | same columns. The bot writes the row when it sees `kimaki sleep`; `delivery_id` is used as the idempotent prompt ID (`msg_sleep_<delivery_id>`), so a retried wake cannot wake twice; `status` stays `planned → consumed / cancelled` |
-| `global_models` | not used (global default = OpenCode config) |
+| `global_models` | default model of new sessions in channels without a `channel_models` row, keyed by `Bot.appId` |
 
 Session IDs in existing `thread_sessions` rows: OpenCode V2 migrates V1 sessions into
 its own database (`packages/core/src/database/v1-migration.bun.ts`) and appears to keep
@@ -2005,10 +2006,12 @@ for await (const event of client.event.subscribe({ signal })) {
   thread it calls `switchModel` before the prompt or agent switch; in a channel without
   a prompt it saves `channel_models` with the agent; with a prompt it is used for that
   new session only. An unknown variant replies with the available ones.
-- **`/model` scopes are session and channel.** Session = `switchModel`, applied from the
-  next step, no restart of the running turn. Channel = `channel_models` for new
-  sessions only (V1 also switched the current session). No global scope: that is
-  OpenCode config.
+- **`/model` scopes are session, channel and all channels.** Session = `switchModel`,
+  applied from the next step, no restart of the running turn. Channel = `channel_models`
+  for new sessions only (V1 also switched the current session). All channels =
+  `global_models` (OpenCode has no API to write its `model` config). New sessions pick:
+  explicit model, steer agent model, channel model, channel agent model, global model,
+  then OpenCode `model.default`.
 - **Model catalog.** `model.list` returns the enabled models of every provider OpenCode
   can use: OpenCode Zen free models always, plus providers from env keys. The harness
   strips `*_API_KEY` from the test server env so snapshots do not depend on the
@@ -2699,7 +2702,7 @@ kimaki CLI ──POST /kimaki/action/<name> { args, sessionID? }──┘
 | `!cmd` | `session shell <command>` | `shell` |
 | `/abort` | `session abort` | `abort` |
 | `/agent`, `/<agent>-agent` | session: `opencode api session.switchAgent`; channel: `kimaki channel agent <name>` | `agent.set` |
-| `/model`, `/model-variant` | session: `opencode api session.switchModel`; channel: `kimaki channel model …`; global: OpenCode config | `model.set` |
+| `/model`, `/model-variant` | session: `opencode api session.switchModel`; channel: `kimaki channel model …`; global: `kimaki channel model … --global` | `model.set` |
 | `/verbosity` | `channel verbosity <text\|tools>` | `channel.set` |
 | mention mode | `channel mention-only <on\|off>` | `channel.set` |
 | `/worktrees` toggle | `channel worktrees <on\|off>` | `channel.set` |
@@ -2770,6 +2773,7 @@ kimaki CLI ──POST /kimaki/action/<name> { args, sessionID? }──┘
 
     --variant <name>                   Model variant
     -c, --channel <channelId>          Target channel (default: channel of the current folder)
+    --global                           (model) Default of all channels without their own model
     --clear                            Remove the channel default
 
   channel verbosity <text|tools>       What the bot shows in a channel

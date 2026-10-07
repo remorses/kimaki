@@ -79,6 +79,15 @@ export const channel_models = s.sqliteTable('channel_models', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
+// Default model of new sessions in channels without a channel_models row.
+export const global_models = s.sqliteTable('global_models', {
+  app_id: s.text('app_id').primaryKey().notNull().references(() => bot_tokens.app_id, { onUpdate: 'cascade' }),
+  model_id: s.text('model_id').notNull(),
+  variant: s.text('variant'),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
+})
+
 export const channel_agents = s.sqliteTable('channel_agents', {
   channel_id: s.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
   agent_name: s.text('agent_name').notNull(),
@@ -152,6 +161,7 @@ export const relations = defineRelations({
   channel_directories,
   guild_categories,
   channel_models,
+  global_models,
   channel_agents,
   channel_worktrees,
   channel_verbosity,
@@ -164,9 +174,13 @@ export const relations = defineRelations({
   },
   bot_tokens: {
     api_keys: r.one.bot_api_keys({ from: r.bot_tokens.app_id, to: r.bot_api_keys.app_id }),
+    global_model: r.one.global_models({ from: r.bot_tokens.app_id, to: r.global_models.app_id }),
   },
   bot_api_keys: {
     bot: r.one.bot_tokens({ from: r.bot_api_keys.app_id, to: r.bot_tokens.app_id }),
+  },
+  global_models: {
+    bot: r.one.bot_tokens({ from: r.global_models.app_id, to: r.bot_tokens.app_id }),
   },
   guild_categories: {},
   channel_directories: {

@@ -316,11 +316,11 @@ async function sendInput(
   if (target.thread && target.sessionId) {
     const reply = await replyWithEcho(interaction, { author, text: echo })
     if (reply instanceof Error) return replyError(interaction, reply)
-    if (model) {
+    if (model && !(route.kind === 'steer' && route.agent)) {
       const switched = await switchModel(bot, { sessionId: target.sessionId, model })
       if (switched instanceof Error) return replyError(interaction, switched)
     }
-    const result = await dispatch(bot, { thread: target.thread, route, author, messageId: reply.id })
+    const result = await dispatch(bot, { thread: target.thread, route, author, messageId: reply.id, model })
     if (result instanceof Error) return replyError(interaction, result)
     return
   }
@@ -348,7 +348,7 @@ async function handleDynamic(bot: Bot, { interaction, target }: { interaction: C
     const variant = interaction.options.getString('variant')?.trim()
     const where = await resolveTarget(bot, interaction.channelId)
     if (where instanceof Error) return replyError(interaction, where)
-    const model = variant ? await variantModel(bot, { target: where, variant }) : null
+    const model = variant ? await variantModel(bot, { target: where, variant, agent: target.name }) : null
     if (model instanceof Error) return replyError(interaction, model)
     if (!text) return applyAgent(bot, { interaction, target: where, agent: target.name, model })
     const label = model ? `${target.name}, ${model.variant}` : target.name
@@ -450,10 +450,11 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
   async function autocomplete(interaction: AutocompleteInteraction) {
     const command = registry.commands.get(interaction.commandName)
     if (command?.autocomplete) return command.autocomplete(bot, interaction)
-    if (dynamicCommand(interaction)?.kind !== 'agent') return respondChoices(interaction, [])
+    const target = dynamicCommand(interaction)
+    if (target?.kind !== 'agent') return respondChoices(interaction, [])
     const where = await resolveTarget(bot, interaction.channelId)
     if (where instanceof Error) return respondChoices(interaction, where)
-    return respondChoices(interaction, await variantChoices(bot, { target: where, query: interaction.options.getFocused() }))
+    return respondChoices(interaction, await variantChoices(bot, { target: where, query: interaction.options.getFocused(), agent: target.name }))
   }
 
   // Provider logins and audio keys are secrets of the whole bot.

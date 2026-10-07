@@ -42,6 +42,7 @@ const IMPORTED_TABLES = [
   'guild_categories',
   'channel_directories',
   'channel_models',
+  'global_models',
   'channel_agents',
   'channel_worktrees',
   'channel_verbosity',

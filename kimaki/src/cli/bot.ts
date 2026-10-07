@@ -170,6 +170,7 @@ export function registerStartCommand(cli: Goke) {
         kimakiCommand: kimaki,
         dataDir,
         token: credentials.token,
+        appId: credentials.appId,
         discordRestUrl: restApiUrl(credentials),
         lock,
         opencodeServiceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'],

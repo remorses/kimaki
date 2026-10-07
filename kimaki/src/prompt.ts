@@ -28,6 +28,7 @@ import {
   threadOfSession,
   type Author,
   type Bot,
+  type ModelChoice,
   type PromptFile,
 } from './bot.ts'
 import { switchModel } from './commands/preference-commands.ts'
@@ -39,7 +40,7 @@ import { formatEcho } from './queue.ts'
 import { noAnswerError, parseRemoteResult, remoteEnvelope, promptFilePath, REMOTE_TIMEOUT_MS, type RemoteResult } from './remote-send.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import { allMessages } from './session-events.ts'
-import { ensureSessionMarker, forkBtw, startSession, threadProject } from './sessions.ts'
+import { ensureSessionMarker, forkBtw, startSession, switchAgent, threadProject } from './sessions.ts'
 import { cancelSleep } from './sleeps.ts'
 import type { ScheduledRun } from './system-prompt.ts'
 import { turnContext, withTurnContext } from './system-prompt.ts'
@@ -297,6 +298,7 @@ export async function runInSession(
     messageId,
     files,
     echo,
+    model,
   }: {
     sessionId: string
     threadId: string
@@ -307,6 +309,7 @@ export async function runInSession(
     messageId: string
     files: readonly PromptFile[]
     echo?: string
+    model?: ModelChoice | null
   },
 ) {
   const base = { sessionId, threadId, threadName, author, messageId, files, echo }
@@ -324,7 +327,7 @@ export async function runInSession(
     case 'steer': {
       const agent = route.agent
       if (agent) {
-        const switched = await oc(bot, 'session.switchAgent', (client) => client.session.switchAgent({ sessionID: sessionId, agent }))
+        const switched = await switchAgent(bot, { sessionId, directory, agent, model })
         if (switched instanceof Error) return switched
       }
       return steer(bot, { ...base, text: route.text })
@@ -342,6 +345,7 @@ export async function dispatch(
     messageId,
     files = [],
     echo,
+    model,
   }: {
     thread: ThreadChannel
     route: Route
@@ -349,6 +353,7 @@ export async function dispatch(
     messageId: string
     files?: readonly PromptFile[]
     echo?: string
+    model?: ModelChoice | null
   },
 ) {
   const sessionId = rootSession(bot, thread.id)
@@ -390,6 +395,7 @@ export async function dispatch(
         messageId,
         files,
         echo,
+        model,
       })
   }
 }

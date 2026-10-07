@@ -116,20 +116,18 @@ test('CLI help documents the supported P7 commands', async () => {
       channel agent [value]             Set channel agent through the running bot
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -c, --channel <id>              Target channel (default: current project)
-        --variant <name>                Thinking variant for model
-        --clear                         Clear a saved agent or model
+        --clear                         Clear the saved agent
 
       channel model [value]             Set channel model through the running bot
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -c, --channel <id>              Target channel (default: current project)
         --variant <name>                Thinking variant for model
-        --clear                         Clear a saved agent or model
+        --global                        Default of all channels without their own model
+        --clear                         Clear the saved model
 
       channel verbosity [value]         Set channel verbosity through the running bot
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -c, --channel <id>              Target channel (default: current project)
-        --variant <name>                Thinking variant for model
-        --clear                         Clear a saved agent or model
 
       session abort [id]                Stop the running turn and clear its queue
         --data-dir <path>               Data directory (default: ~/.kimaki)
@@ -388,6 +386,17 @@ test('CLI registry shares thread actions, preferences, title and archive', async
   await cli(['channel', 'agent', 'plan', '--channel', twin.channelId])
   await cli(['channel', 'model', 'deterministic-provider/deterministic-v2', '--channel', twin.channelId])
   await cli(['channel', 'verbosity', 'text', '--channel', twin.channelId])
+  await cli(['channel', 'model', 'deterministic-provider/deterministic-v2', '--global', '--variant', 'fast'])
+  const global = await bot.db.query.global_models.findFirst()
+  expect({ app: global?.app_id === bot.appId, model: global?.model_id, variant: global?.variant }).toMatchInlineSnapshot(`
+    {
+      "app": true,
+      "model": "deterministic-provider/deterministic-v2",
+      "variant": "fast",
+    }
+  `)
+  await cli(['channel', 'model', '--global', '--clear'])
+  expect(await bot.db.query.global_models.findFirst()).toBeUndefined()
   // --session takes a session ID, a thread ID or a thread URL.
   await cli(['session', 'title', 'CLI renamed', '--session', `https://discord.com/channels/${twin.discord.guildId}/${started.threadId}`])
   await cli(['session', 'queue', 'add', 'Registry queued', '--session', started.threadId])

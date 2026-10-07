@@ -11,6 +11,7 @@ import * as orm from 'drizzle-orm'
 
 import {
   cliContext,
+  globalModel,
   oc,
   parseModel,
   projectOf,
@@ -126,6 +127,35 @@ export async function primaryAgents(bot: Bot, directory: string) {
   const agents = await oc(bot, 'agent.list', (client) => client.agent.list({ location: { directory } }))
   if (agents instanceof Error) return agents
   return agents.data.filter((agent) => agent.mode !== 'subagent' && !agent.hidden)
+}
+
+export async function agentSelection(bot: Bot, { directory, agent }: { directory: string; agent: string }) {
+  const agents = await primaryAgents(bot, directory)
+  if (agents instanceof Error) return agents
+  const selected = agents.find((candidate) => candidate.id.toLowerCase() === agent.toLowerCase() || candidate.name.toLowerCase() === agent.toLowerCase())
+  if (!selected) return new ConfigError({ reason: `Agent \`${agent}\` is not available in this project. Use /agent to select one.` })
+  const model: ModelChoice | null = selected.model ? { ...selected.model, variant: selected.model.variant ?? null } : null
+  return { agent: selected.id, model }
+}
+
+// OpenCode switches the agent and model separately, including the configured variant.
+export async function switchAgent(
+  bot: Bot,
+  { sessionId, directory, agent, model }: { sessionId: string; directory: string; agent: string; model?: ModelChoice | null },
+) {
+  const selected = await agentSelection(bot, { directory, agent })
+  if (selected instanceof Error) return selected
+  const choice = model ?? selected.model
+  if (choice) {
+    const switched = await oc(bot, 'session.switchModel', (client) => client.session.switchModel({
+      sessionID: sessionId,
+      model: { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) },
+    }))
+    if (switched instanceof Error) return switched
+  }
+  const switched = await oc(bot, 'session.switchAgent', (client) => client.session.switchAgent({ sessionID: sessionId, agent: selected.agent }))
+  if (switched instanceof Error) return switched
+  return { ...selected, model: choice }
 }
 
 // The one durable system instruction of a session (spec 5.4).
@@ -337,6 +367,18 @@ export async function startSession(
   const plugin = await bot.features.waitForPlugin(directory)
   if (plugin instanceof Error) return plugin
 
+  const requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
+  const selected = requestedAgent ? await agentSelection(bot, { directory, agent: requestedAgent }) : null
+  if (selected instanceof Error) return selected
+  const agentModel = route.kind === 'steer' && route.agent ? selected?.model : null
+  const global = await globalModel(bot)
+  if (global instanceof Error) return global
+  const choice = explicitModel ?? agentModel ?? parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant) ?? selected?.model ?? global
+  const model = choice
+    ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
+    : undefined
+  const agent = selected?.agent
+
   const channel = await textChannel(bot, channelId)
   if (channel instanceof Error) return channel
   const threadName = explicitName ?? (checkout ? `⬦ ${slug}` : text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
@@ -345,10 +387,6 @@ export async function startSession(
     .catch((cause) => new DiscordError({ operation: 'create thread', cause }))
   if (thread instanceof Error) return thread
 
-  const model = explicitModel
-    ? { providerID: explicitModel.providerID, id: explicitModel.id, ...(explicitModel.variant && { variant: explicitModel.variant }) }
-    : parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant)
-  const agent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
   const kimaki = {
     threadId: thread.id,
     channelId,
@@ -679,7 +717,7 @@ export async function forkBtw(
     // A voice message asked for this agent.
     agent?: string
   },
-): Promise<OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }> {
+): Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }> {
   const parentSessionId = rootSession(bot, sourceThread.id)
   if (parentSessionId instanceof Error) return parentSessionId
   const project = await threadProject(bot, sourceThread)
@@ -717,11 +755,11 @@ export async function forkBtw(
   if (bound instanceof Error) return bound
   await thread.members.add(author.id).catch((e: Error) => logger.warn(`add btw member: ${e.message}`))
   const intro = await thread
-    .send({ content: `Reusing context from <#${sourceThread.id}> to answer prompt...\n${text}`.slice(0, 2_000), flags: SILENT_MESSAGE_FLAGS })
+    .send({ content: `Reusing context from <#${sourceThread.id}> to answer prompt...\n${text}`.slice(0, 2_000), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
     .catch((cause) => new DiscordError({ operation: 'send btw intro', cause }))
   if (intro instanceof Error) return intro
   if (agent) {
-    const switched = await oc(bot, 'session.switchAgent', (client) => client.session.switchAgent({ sessionID: forked.id, agent }))
+    const switched = await switchAgent(bot, { sessionId: forked.id, directory: project.directory, agent })
     if (switched instanceof Error) return switched
   }
 

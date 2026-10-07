@@ -7,7 +7,7 @@ icon: repeat
 Pick a model with **`/model`**, a thinking level with **`/model-variant`**, and an agent with **`/agent`** or its own **`/<name>-agent`** command.
 
 ```diagram
-/model          ──▶ provider ──▶ model ──▶ thinking level ──▶ this session | this channel
+/model          ──▶ provider ──▶ model ──▶ thinking level ──▶ this session | this channel | all channels
 /model-variant  ──▶ thinking level of the current model  ──▶ this session | this channel
 /agent          ──▶ agent dropdown                        ──▶ session (in a thread) | channel
 /plan-agent     ──▶ same as /agent, one step, optional prompt and variant
@@ -21,8 +21,9 @@ Run `/model` and pick a provider, a model, and a thinking level (only shown when
 
 - **This session**: only in a thread. The session switches model from its next step.
 - **This channel**: new sessions in this channel use this model.
+- **All channels**: new sessions in every channel without its own model use this model.
 
-With no channel model, Kimaki uses the **OpenCode default model**. Set it in your `opencode.json`:
+With no channel or global model, Kimaki uses the **OpenCode default model**. Set it in your `opencode.json`:
 
 ```json
 {
@@ -103,11 +104,15 @@ Set channel defaults without Discord. The bot must be running.
 # default model and thinking level of the current project's channel
 kimaki channel model anthropic/claude-opus-4-6 --variant high
 
+# default model of all channels without their own
+kimaki channel model anthropic/claude-opus-4-6 --global
+
 # default agent of a specific channel
 kimaki channel agent plan --channel 1234567890
 
 # back to the OpenCode defaults
 kimaki channel model --clear
+kimaki channel model --global --clear
 kimaki channel agent --clear
 ```
 

@@ -44,6 +44,7 @@ const V1_ROWS = `
   INSERT INTO bot_tokens (app_id, token, created_at, bot_mode, client_id, client_secret, proxy_url, last_used_at)
     VALUES ('1477605701202481173', 'client-1:secret-1', '2026-03-06T22:55:21.334+00:00', 'gateway', 'client-1', 'secret-1', 'https://discord-gateway.kimaki.dev', '2026-10-01T06:45:31.252Z');
   INSERT INTO bot_api_keys (app_id, gemini_api_key) VALUES ('1422625037164350001', 'fake-gemini-key');
+  INSERT INTO global_models (app_id, model_id, variant) VALUES ('1477605701202481173', 'openai/gpt-5.4', 'xhigh');
   INSERT INTO guild_categories (guild_id, category_id, created_at) VALUES ('1422625037164351000', '1479220924090670000', '2026-09-17 09:41:32');
   INSERT INTO channel_directories (channel_id, directory, channel_type, created_at)
     VALUES ('1422625308523100001', '/Users/fake/projects/website', 'text', '2025-09-30 16:45:03');
@@ -92,6 +93,7 @@ test('fresh install gets kimaki.db with the kimaki tables; subcommands never cre
       "channel_models",
       "channel_verbosity",
       "channel_worktrees",
+      "global_models",
       "guild_categories",
       "scheduled_tasks",
       "session_sleeps",
@@ -121,7 +123,7 @@ test('first start imports the V1 database once and leaves it unchanged', async (
   expect({ db: fileHash(legacyFile), wal: fileHash(`${legacyFile}-wal`) }).toEqual(before)
   v1.close()
   const { db } = opened
-  const bots = await db.query.bot_tokens.findMany({ orderBy: { app_id: 'asc' }, with: { api_keys: true } })
+  const bots = await db.query.bot_tokens.findMany({ orderBy: { app_id: 'asc' }, with: { api_keys: true, global_model: true } })
   const channels = await db.query.channel_directories.findMany({
     orderBy: { channel_id: 'asc' },
     with: { channel_verbosity: true, channel_model: true },
@@ -131,7 +133,7 @@ test('first start imports the V1 database once and leaves it unchanged', async (
   const sleeps = await db.query.session_sleeps.findMany({ orderBy: { session_id: 'asc' } })
   const categories = await db.query.guild_categories.findMany()
   expect({
-    bots: bots.map((row) => ({ app: row.app_id, mode: row.bot_mode, lastUsed: row.last_used_at?.toISOString() ?? null, gemini: row.api_keys?.gemini_api_key ?? null })),
+    bots: bots.map((row) => ({ app: row.app_id, mode: row.bot_mode, lastUsed: row.last_used_at?.toISOString() ?? null, gemini: row.api_keys?.gemini_api_key ?? null, globalModel: row.global_model ? `${row.global_model.model_id} ${row.global_model.variant}` : null })),
     categories: categories.map((row) => ({ guild: row.guild_id, category: row.category_id, created: row.created_at?.toISOString() })),
     channels: channels.map((row) => ({
       directory: row.directory,
@@ -149,12 +151,14 @@ test('first start imports the V1 database once and leaves it unchanged', async (
         {
           "app": "1422625037164350001",
           "gemini": "fake-gemini-key",
+          "globalModel": null,
           "lastUsed": null,
           "mode": "self_hosted",
         },
         {
           "app": "1477605701202481173",
           "gemini": null,
+          "globalModel": "openai/gpt-5.4 xhigh",
           "lastUsed": "2026-10-01T06:45:31.252Z",
           "mode": "gateway",
         },

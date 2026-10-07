@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { parseButton } from './agent-ui.ts'
 import { fetchThread, oc, parseModel, projectOf, type Bot } from './bot.ts'
 import { credential, loginCli } from './commands/login-commands.ts'
-import { setChannelAgent, setChannelModel, setVerbosity } from './commands/preference-commands.ts'
+import { setChannelAgent, setChannelModel, setGlobalModel, setVerbosity } from './commands/preference-commands.ts'
 import { channelWorktrees, manageWorktree, newWorktree, setAutoWorktrees } from './commands/worktree-commands.ts'
 import { ConfigError, DbError, DiscordError, FilesystemError, OpenCodeUnavailableError } from './errors.ts'
 import { RESTART_EXIT_CODE } from './lock-server.ts'
@@ -139,6 +139,13 @@ async function clearChannel(bot: Bot, { channelId, table }: { channelId: string;
   const target = table === 'agent' ? schema.channel_agents : schema.channel_models
   const result = await bot.db.delete(target).where(orm.eq(target.channel_id, channelId))
     .catch((cause) => new DbError({ operation: `clear ${table}`, cause }))
+  if (result instanceof Error) return result
+  return { cleared: true }
+}
+
+async function clearGlobalModel(bot: Bot) {
+  const result = await bot.db.delete(schema.global_models).where(orm.eq(schema.global_models.app_id, bot.appId))
+    .catch((cause) => new DbError({ operation: 'clear global model', cause }))
   if (result instanceof Error) return result
   return { cleared: true }
 }
@@ -427,6 +434,18 @@ export const lockRoutes = {
       const model = parseModel(input.model, input.variant)
       if (!model) return new ConfigError({ reason: 'Use provider/model' })
       const saved = await setChannelModel(bot, { channelId, model: { ...model, variant: input.variant ?? null } })
+      if (saved instanceof Error) return saved
+      return { model }
+    },
+  }),
+  'global.model': route({
+    input: z.object({ model: text('model').optional(), variant: text('variant').optional(), clear: z.boolean().optional() }, { error: 'Expected action arguments' })
+      .refine((input) => input.clear === true || input.model !== undefined, { error: invalidChannelValue }),
+    run: async (bot, input) => {
+      if (input.clear || !input.model) return clearGlobalModel(bot)
+      const model = parseModel(input.model, input.variant)
+      if (!model) return new ConfigError({ reason: 'Use provider/model' })
+      const saved = await setGlobalModel(bot, { model: { ...model, variant: input.variant ?? null } })
       if (saved instanceof Error) return saved
       return { model }
     },

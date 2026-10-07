@@ -89,7 +89,7 @@ export async function startOpencodeTestServer({
   // More deterministic models next to TEST_MODEL, e.g. with thinking variants.
   models?: Record<string, { name: string; variants?: Array<{ id: string }> }>
   // Agent overrides and custom agents (config `agents`).
-  agents?: Record<string, { description?: string; mode?: 'primary' | 'subagent' | 'all'; hidden?: boolean }>
+  agents?: Record<string, { description?: string; mode?: 'primary' | 'subagent' | 'all'; hidden?: boolean; model?: string }>
   // MCP servers (config `mcp.servers`).
   mcp?: { servers: Record<string, { type: 'local'; command: string[] }> }
   plugins?: string[]
@@ -326,6 +326,7 @@ export async function startTestBot({
     dataDir,
     kimakiCommand: `'${process.execPath}' --import '${createRequire(import.meta.url).resolve('tsx')}' '${path.resolve('src/cli.ts')}' --data-dir '${dataDir}'`,
     token: credentials.token,
+    appId: credentials.appId,
     lock,
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,

@@ -31,6 +31,8 @@ const logger = createLogger('MAIN')
 export type StartBotOptions = {
   dataDir: string
   token: string
+  // Credentials.appId; must have a bot_tokens row.
+  appId: string
   // Bound by the caller before migration and onboarding; startBot owns it from here.
   lock: LockServer
   // discord.js REST `api` URL: gateway-proxy in gateway mode, the digital twin
@@ -126,6 +128,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     dataDir: options.dataDir,
     lockPort: lock.port,
     token: options.token,
+    appId: options.appId,
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi },

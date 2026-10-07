@@ -53,6 +53,8 @@ export type Bot = {
   lockPort: number
   // Discord bot token: selects the bot_tokens row with the audio API keys.
   token: string
+  // bot_tokens.app_id of these credentials: key of the global_models row.
+  appId: string
   transcriptionBaseUrls: TranscriptionBaseUrls
   // Default for channels without a channel_worktrees row.
   autoWorktrees: boolean
@@ -153,6 +155,16 @@ export function readMarker(metadata: SessionMetadata | undefined): SessionMarker
 // The marker fields that point the agent's `kimaki` calls at this bot.
 export function cliContext(bot: Bot) {
   return { dataDir: bot.dataDir, lockPort: bot.lockPort }
+}
+
+// Default model of new sessions in channels without their own (/model "All channels").
+export async function globalModel(bot: Bot): Promise<DbError | ModelChoice | null> {
+  const row = await bot.db.query.global_models
+    .findFirst({ where: { app_id: bot.appId } })
+    .catch((cause) => new DbError({ operation: 'read global_models', cause }))
+  if (row instanceof Error) return row
+  const model = parseModel(row?.model_id, row?.variant)
+  return model ? { ...model, variant: row?.variant ?? null } : null
 }
 
 export function parseModel(value: string | null | undefined, variant: string | null | undefined) {

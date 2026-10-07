@@ -68,20 +68,34 @@ export function registerProjectCommands(cli: Goke) {
 
 // channel agent / model / verbosity
 export function registerChannelPreferenceCommands(cli: Goke) {
-  for (const command of ['agent', 'model', 'verbosity'] as const) {
-    cli.command(`channel ${command} [value]`, `Set channel ${command} through the running bot`)
-      .option('--data-dir <path>', DATA_DIR_HELP)
-      .option('-c, --channel <id>', 'Target channel (default: current project)')
-      .option('--variant <name>', 'Thinking variant for model')
-      .option('--clear', 'Clear a saved agent or model')
-      .action(async (value, options) => {
-        const target = { channelId: options.channel, directory: process.cwd() }
-        // A missing verbosity gets the bot's "Invalid channel action or value".
-        if (command === 'verbosity') return action({ route: 'channel.verbosity', dataDir: options.dataDir, input: { ...target, text: value ?? '' } })
-        if (command === 'agent') return action({ route: 'channel.agent', dataDir: options.dataDir, input: { ...target, agent: value, clear: options.clear } })
-        return action({ route: 'channel.model', dataDir: options.dataDir, input: { ...target, model: value, variant: options.variant, clear: options.clear } })
-      })
-  }
+  cli.command('channel agent [value]', 'Set channel agent through the running bot')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .option('-c, --channel <id>', 'Target channel (default: current project)')
+    .option('--clear', 'Clear the saved agent')
+    .action(async (value, options) => {
+      await action({ route: 'channel.agent', dataDir: options.dataDir, input: { channelId: options.channel, directory: process.cwd(), agent: value, clear: options.clear } })
+    })
+  cli.command('channel model [value]', 'Set channel model through the running bot')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .option('-c, --channel <id>', 'Target channel (default: current project)')
+    .option('--variant <name>', 'Thinking variant for model')
+    .option('--global', 'Default of all channels without their own model')
+    .option('--clear', 'Clear the saved model')
+    .action(async (value, options) => {
+      const model = { model: value, variant: options.variant, clear: options.clear }
+      if (options.global) {
+        await action({ route: 'global.model', dataDir: options.dataDir, input: model })
+        return
+      }
+      await action({ route: 'channel.model', dataDir: options.dataDir, input: { channelId: options.channel, directory: process.cwd(), ...model } })
+    })
+  // A missing verbosity gets the bot's "Invalid channel action or value".
+  cli.command('channel verbosity [value]', 'Set channel verbosity through the running bot')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .option('-c, --channel <id>', 'Target channel (default: current project)')
+    .action(async (value, options) => {
+      await action({ route: 'channel.verbosity', dataDir: options.dataDir, input: { channelId: options.channel, directory: process.cwd(), text: value ?? '' } })
+    })
 }
 
 export function registerChannelWorktreeCommand(cli: Goke) {

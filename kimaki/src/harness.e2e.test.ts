@@ -82,7 +82,7 @@ test('a second bot on the same lock port stops the running one and takes over', 
     import { disabledAnalytics } from ${JSON.stringify(path.resolve('src/analytics.ts'))}
     const lock = await startLockServer({ port: ${port}, dataDir: ${JSON.stringify(otherData)} })
     if (lock instanceof Error) throw lock
-    const result = await startBot({ analytics: disabledAnalytics, lock, ...${JSON.stringify({ dataDir: otherData, token: twin.discord.botToken, discordRestUrl: twin.discord.restUrl, opencodeServiceFile: server.serviceFile, opencodeConfigDir: server.configDir, ensureOpencode: false, kimakiCommand: 'kimaki' })} })
+    const result = await startBot({ analytics: disabledAnalytics, lock, ...${JSON.stringify({ dataDir: otherData, token: twin.discord.botToken, appId: twin.discord.botUserId, discordRestUrl: twin.discord.restUrl, opencodeServiceFile: server.serviceFile, opencodeConfigDir: server.configDir, ensureOpencode: false, kimakiCommand: 'kimaki' })} })
     if (result instanceof Error) throw result
     process.send({ ready: true })
     process.once('SIGTERM', async () => { await result.stop(); process.exit(0) })
