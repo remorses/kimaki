@@ -45,16 +45,21 @@ Instead, find the source repository where the skill originates and edit the SKIL
 When you publish skills in a GitHub repository, other users can install them with the `skills` CLI:
 
 ```bash
-npx skills add owner/repo
+npx -y skills add owner/repo -g -y
 ```
 
-This downloads the skills from the repo and symlinks them into the user's agent directories. Add this to your repo's README so users know how to install:
+This downloads the skills from the repo and links them into the user's agent directories. Always recommend **`-g -y`** in install instructions:
+
+- `-g` installs globally (user-level), so the skill works in every project. Without it the CLI writes `./.agents/skills/` into the current folder.
+- `-y` skips prompts. Without it, an agent running the command in a non-TTY shell fails with `Interactive prompt required but stdin is not a TTY` unless the CLI detects the agent from env vars like `AGENT=1`.
+
+Add this to your repo's README so users know how to install:
 
 ```markdown
 ## Install skill for AI agents
 
 \`\`\`bash
-npx -y skills add owner/repo
+npx -y skills add owner/repo -g -y
 \`\`\`
 
 This installs [skills](https://skills.sh) for AI coding agents like
@@ -67,7 +72,7 @@ workflows, patterns, and tools specific to this project.
 Use this when the project does **not have a public GitHub repo** (private repos, closed-source SaaS products) or when you want the install command to use your own domain:
 
 ```bash
-npx skills add https://example.com
+npx -y skills add https://example.com -g -y
 ```
 
 The `skills` CLI treats any non-GitHub/GitLab HTTP(S) URL as a **well-known discovery endpoint** (RFC 8615). It fetches `/.well-known/agent-skills/index.json` and expects the v0.2.0 discovery schema:
@@ -167,7 +172,7 @@ description: >
 ```
 
 - **name**: kebab-case identifier matching the folder name
-- **repo**: the GitHub repository that owns this skill in `owner/repo` format (e.g. `remorses/critique`). This lets users reinstall the skill later with `npx skills add owner/repo`. Always use the canonical source repository, not a synced copy or generated package path.
+- **repo**: the GitHub repository that owns this skill in `owner/repo` format (e.g. `remorses/critique`). This lets users reinstall the skill later with `npx -y skills add owner/repo -g -y`. Always use the canonical source repository, not a synced copy or generated package path.
 - **description**: this is the most important field. The agent reads descriptions of all available skills and decides which to load based on this text. Be specific about when the skill applies. Include keywords the user might say.
 
 Good description example:

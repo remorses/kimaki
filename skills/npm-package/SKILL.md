@@ -389,7 +389,7 @@ matches the convention used by the [`skills`](https://skills.sh) CLI so users
 can install it with:
 
 ```bash
-npx -y skills add owner/repo
+npx -y skills add owner/repo -g -y
 ```
 
 Add this installation snippet to the README so users know how to get the skill:
@@ -401,7 +401,7 @@ This package ships a skill file that teaches AI coding agents how and when to
 use it. Install it with:
 
 \`\`\`bash
-npx -y skills add owner/repo
+npx -y skills add owner/repo -g -y
 \`\`\`
 ```
 
