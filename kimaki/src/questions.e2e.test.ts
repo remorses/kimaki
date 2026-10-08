@@ -8,6 +8,7 @@ import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
+import { send } from './prompt.ts'
 import {
   TEST_USER_ID,
   scriptedTurn,
@@ -57,6 +58,7 @@ const matchers: DeterministicMatcher[] = [
   ...askTurn({ marker: 'ask-other', questions: [COLOR] }),
   ...askTurn({ marker: 'ask-cancel', questions: [COLOR] }),
   ...askTurn({ marker: 'ask-restart', questions: [COLOR] }),
+  ...askTurn({ marker: 'ask-denied', questions: [COLOR] }),
   { id: 'instead', priority: 500, when: { latestUserTextIncludes: 'instead-marker' }, then: { parts: textParts('did the other thing') } },
 ]
 
@@ -111,11 +113,11 @@ async function waitForSelects({ threadId, count }: { threadId: string; count: nu
   })
 }
 
+// Kimaki sessions deny the question tool; `--permission question:allow` turns it back on.
 async function startThread(content: string) {
-  const { discord, channelId } = twin
-  const before = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
-  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content })
-  return discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (thread) => !before.has(thread.id) })
+  const started = await send(bot, { channelId: twin.channelId, prompt: content, user: TEST_USER_ID, permissions: ['question:allow'] })
+  if (started instanceof Error) throw started
+  return { id: started.threadId }
 }
 
 test('single question answered from the dropdown', async () => {
@@ -135,9 +137,8 @@ test('single question answered from the dropdown', async () => {
   })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text({ showInteractions: true })).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Pick a color ask-one
-    --- from: assistant (TestBot)
+    "--- from: assistant (TestBot)
+    » **CLI:** Pick a color ask-one
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -161,9 +162,8 @@ test('two questions: the form is answered after both, multi-select keeps options
   await user.selectMenu({ messageId: color!.message.id, customId: color!.customId, values: [color!.values[0]!] })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Two questions ask-two
-    --- from: assistant (TestBot)
+    "--- from: assistant (TestBot)
+    » **CLI:** Two questions ask-two
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -188,9 +188,8 @@ test('Other opens a modal and sends the typed answer', async () => {
   await user.submitModal({ customId: modalId, messageId: select!.message.id, fields: [{ customId: 'answer', value: 'Teal' }] })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Custom color ask-other
-    --- from: assistant (TestBot)
+    "--- from: assistant (TestBot)
+    » **CLI:** Custom color ask-other
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -246,9 +245,8 @@ test('OpenCode forms without the question tool (web search setup, yes/no) show l
     }
   `)
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Hello instead-marker
-    --- from: assistant (TestBot)
+    "--- from: assistant (TestBot)
+    » **CLI:** Hello instead-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     did the other thing
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -267,9 +265,8 @@ test('a new message cancels the pending question and is answered', async () => {
   await twin.discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'Forget it instead-marker' })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Ask then change ask-cancel
-    --- from: assistant (TestBot)
+    "--- from: assistant (TestBot)
+    » **CLI:** Ask then change ask-cancel
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -296,9 +293,8 @@ test('a restarted bot shows the pending question again and it still works', asyn
   })
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: user (tommy)
-    Survive restart ask-restart
-    --- from: assistant (TestBot)
+    "--- from: assistant (TestBot)
+    » **CLI:** Survive restart ask-restart
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     **Color**
     Which color do you prefer?
@@ -308,4 +304,25 @@ test('a restarted bot shows the pending question again and it still works', asyn
     answers received ask-restart
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
+})
+
+test('Kimaki sessions hide the question tool by default', async () => {
+  const { discord, channelId } = twin
+  const before = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'No dropdowns ask-denied' })
+  const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (thread) => !before.has(thread.id) })
+  await waitForFooter({ discord: twin.discord, threadId: thread.id })
+  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    No dropdowns ask-denied
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    answers received ask-denied
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  const messages = await twin.discord.thread(thread.id).getMessages()
+  expect(messages.flatMap(selectsOf)).toEqual([])
+  const sessionId = bot.store.getState().roots[thread.id]!
+  const info = await (await server.client()).session.get({ sessionID: sessionId })
+  expect(info.permissions).toEqual([{ action: 'question', resource: '*', effect: 'deny' }])
 })

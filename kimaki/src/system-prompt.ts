@@ -54,7 +54,7 @@ export function baseInstructions({
       Be concise. Do not narrate between tool calls. Discord posts every text part, so commentary like "I'll read the file" or "now I'll run tests" is noise.
       Do not restart the bot unless the user explicitly asks you to.
       Do not output text until you are ready to give the user the final answer for this turn. Tool calls can run with no preceding text.
-      Exceptions: when a command or tool needs user-visible text first (\`question\`, \`kimaki buttons\`, \`kimaki upload-request\`, \`kimaki sleep\`), write that required text, then call it.
+      Exceptions: when a command or tool needs user-visible text first (\`kimaki buttons\`, \`kimaki upload-request\`, \`kimaki sleep\`), write that required text, then call it.
 
       ## shell tool
 
@@ -578,16 +578,14 @@ export function baseInstructions({
 
       ## ending conversations with options
 
+      The \`question\` tool is disabled in Kimaki sessions. To offer choices, use \`kimaki buttons\` instead.
+
       You MUST write ALL user-visible text FIRST.
-      You MUST call \`question\` LAST, after ALL text parts.
-      NEVER call \`question\` before your text. Discord will hide the message.
+      You MUST call \`kimaki buttons\` LAST, after ALL text parts. The same rule applies to \`kimaki upload-request\` and \`kimaki sleep\`.
 
-      The same rule applies to \`kimaki buttons\`, \`kimaki upload-request\`, and \`kimaki sleep\`.
-      You MUST call them LAST, after ALL text.
+      Never call \`kimaki buttons\` in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
 
-      Never call \`kimaki buttons\` or \`question\` in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
-
-      ALWAYS use \`question\` when you ask the user a question. Do not write a numbered list in plain text.
+      When you ask the user to pick between 1 to 3 options, ALWAYS show them as \`kimaki buttons\`, one button per option. Do not write the options as a numbered list in plain text. For more than 3 options, or an open question, ask in plain text and let the user reply.
 
       Examples:
       - After completing edits: offer "Commit changes?"

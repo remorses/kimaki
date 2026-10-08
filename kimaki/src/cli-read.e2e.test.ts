@@ -57,7 +57,7 @@ test('session read, list, search, wait, url and events read real session history
 })
 
 test('session wait returns for a real pending question; active discovery errors use exit 64', async () => {
-  const first = await send(bot, { channelId: twin.channelId, prompt: 'wait-form-marker' })
+  const first = await send(bot, { channelId: twin.channelId, prompt: 'wait-form-marker', permissions: ['question:allow'] })
   if (first instanceof Error || !first.sessionId) throw new Error('Expected a session')
   await waitForSelectMenu({ discord: twin.discord, channelId: first.threadId, prefix: 'form:' })
   const result = await cli(['session', 'wait', first.sessionId, '--timeout', '3s'])

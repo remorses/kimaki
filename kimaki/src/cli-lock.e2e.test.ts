@@ -431,7 +431,10 @@ test('send settings reach native session creation; notifications create no sessi
   `)
   const info = await (await server.client()).session.get({ sessionID: ids.sessionId })
   expect(info.location.directory).toBe(subdir)
-  expect(info.permissions).toContainEqual({ action: 'shell', resource: '*', effect: 'deny' })
+  expect(info.permissions).toEqual([
+    { action: 'question', resource: '*', effect: 'deny' },
+    { action: 'shell', resource: '*', effect: 'deny' },
+  ])
   await expect(cli(['send', '--thread', ids.threadId, '-p', 'Must not run', '--permission', 'shell:deny']))
     .rejects.toMatchObject({ stderr: expect.stringContaining('--permission applies only to new sessions') })
   expect(info.metadata?.['kimaki']).toMatchObject({ parentSessionId: 'ses_parent' })

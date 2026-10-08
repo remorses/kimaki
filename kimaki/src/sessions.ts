@@ -38,6 +38,13 @@ import { createWorktree, resolveWorkingDirectory } from './worktrees.ts'
 
 const logger = createLogger('SESSIONS')
 
+type PermissionRules = NonNullable<NonNullable<Parameters<OpenCodeClient['session']['create']>[0]>['permissions']>
+
+// Kimaki sessions ask with `kimaki buttons`. A wildcard deny removes the tool
+// from the model's tool list; forks and subagents inherit it, and later rules
+// (`--permission question:allow`) still win.
+const NO_QUESTION_TOOL = { action: 'question', resource: '*', effect: 'deny' } as const
+
 export function btwPrompt({
   text,
   parentSessionId,
@@ -339,7 +346,7 @@ export async function startSession(
     files?: readonly PromptFile[]
     // Overrides the channel model for this session.
     model?: ModelChoice
-    permissions?: NonNullable<Parameters<OpenCodeClient['session']['create']>[0]>['permissions']
+    permissions?: PermissionRules
     parentSessionId?: string
     // A scheduled run (scheduler.ts): marks the session as started by this task.
     task?: ScheduledRun
@@ -401,7 +408,7 @@ export async function startSession(
       location: { directory },
       ...(model && { model }),
       ...(agent && { agent }),
-      ...(permissions && { permissions }),
+      permissions: [NO_QUESTION_TOOL, ...(permissions ?? [])],
       metadata: { kimaki },
     }),
   )
@@ -481,7 +488,7 @@ async function adoptSession(
     discard,
   }: {
     channel: TextChannel
-    session: { id: string; metadata?: SessionMetadata; location: { directory: string } }
+    session: { id: string; metadata?: SessionMetadata; permissions?: PermissionRules; location: { directory: string } }
     threadName: string
     intro: string
     note: string
@@ -509,8 +516,11 @@ async function adoptSession(
     const { task: _task, taskId: _taskId, ...rest } = readMarker(session.metadata)?.fields ?? {}
     const marker = scheduledTask ? { ...rest, taskId: scheduledTask.id, task: scheduledTask } : rest
     const kimaki = { ...marker, source: scheduledTask ? 'task' : 'discord', ...cliContext(bot), threadId: thread.id, channelId: channel.id }
+    // A session with its own question rule (a fork, or --permission) keeps it.
+    const rules = session.permissions ?? []
+    const permissions = rules.some((rule) => rule.action === 'question') ? rules : [NO_QUESTION_TOOL, ...rules]
     const marked = await oc(bot, 'session.update', (client) =>
-      client.session.update({ sessionID: sessionId, metadata: { ...session.metadata, kimaki } }),
+      client.session.update({ sessionID: sessionId, metadata: { ...session.metadata, kimaki }, permissions }),
     )
     if (marked instanceof Error) return marked
     const instructions = await putInstructions(bot, {
