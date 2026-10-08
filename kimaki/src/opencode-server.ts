@@ -381,15 +381,16 @@ export function watchOpencode({
       const hydrated = await Promise.race([onConnect({ client: endpoint.client, reconnect, signal }), consume])
       if (hydrated instanceof Error) return hydrated
       if (signal.aborted) return new StreamClosedError({ reason: 'stopped' })
+      // The endpoint switches before any event is delivered, so listeners
+      // (and held events) read from the new server. server.connected tells
+      // listeners to refetch: ephemeral events sent while disconnected are lost.
+      state.connected = true
+      state.endpoint = endpoint
+      for (const listener of listeners) listener(first.value)
       for (const event of held.splice(0)) {
         emit(event)
       }
       phase.booting = false
-      state.connected = true
-      state.endpoint = endpoint
-      // After the endpoint switch, so listeners refetch from the new server:
-      // ephemeral events sent while disconnected are lost.
-      for (const listener of listeners) listener(first.value)
       readyDeferred.resolve(endpoint)
       logger.log(`connected to OpenCode ${endpoint.version} at ${endpoint.url}`)
       return consume

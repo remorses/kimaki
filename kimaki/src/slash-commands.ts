@@ -11,8 +11,8 @@
 // ...); session output comes from events.
 //
 // Dynamic commands come from the global OpenCode catalog: one location (the
-// Kimaki data dir) that has no project config, so every guild gets the same
-// list. Project-only entries stay reachable through /agent, /command, /skill.
+// OpenCode global config dir) that loads no project config, so every guild
+// gets the same list. Project-only entries stay reachable through /agent, /command, /skill.
 //
 //   agent.list    primary agents  ─▶ /<agent>-agent prompt?
 //   command.list  commands        ─▶ /<cmd>-cmd arguments?
@@ -32,7 +32,6 @@
 //
 // Discord allows 100 commands per guild; skills are cut first.
 
-import path from 'node:path'
 import {
   Events,
   MessageFlags,
@@ -377,12 +376,21 @@ async function handleDynamic(bot: Bot, { interaction, target }: { interaction: C
 
 // Registers the interaction listener and keeps every guild's commands in line
 // with the OpenCode catalog. Returns registerAll and stop.
-export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
+export function registerSlashCommands(
+  bot: Bot,
+  registry: InteractionRegistry,
+  {
+    globalDirectory,
+  }: {
+    // OpenCode's global config dir. As a location, OpenCode skips the project
+    // config walk for it (core/src/config/discovery.ts), so its catalog is the
+    // global one. Any other directory also loads the config of its ancestors.
+    globalDirectory: string
+  },
+) {
   const { discord } = bot
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
-  // A location with no project config: its catalog is the global one.
-  const globalDirectory = path.resolve(bot.dataDir)
 
   // Last commands set per guild: an unchanged list is not sent again (Discord
   // limits command creates to 200 per day per guild).
@@ -485,9 +493,9 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
           const read = await readCatalog(bot, globalDirectory)
           if (passes.closed) return
           if (read instanceof Error) {
-            // The next catalog event or reconnect retries.
+            // An event that arrived during the read still gets its pass; else the next event or reconnect retries.
             logger.warn(`global catalog: ${read.message}${read.cause instanceof Error ? `: ${read.cause.message}` : ''}`)
-            return
+            continue
           }
           const built = buildCommands({ fixed: registry.definitions, catalog: read })
           if (built.dropped > 0) {

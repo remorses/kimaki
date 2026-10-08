@@ -164,7 +164,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   if (failure) return failure
   const refreshed = await refreshCliContext(bot)
   if (refreshed instanceof Error) return refreshed
-  const commands = registerSlashCommands(bot, createInteractionRegistry())
+  const commands = registerSlashCommands(bot, createInteractionRegistry(), { globalDirectory: options.opencodeConfigDir })
   cleanup.defer(() => commands.stop())
   // Awaited so the handle is only returned once every guild has its commands.
   await commands.registerAll()
