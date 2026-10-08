@@ -48,10 +48,6 @@ Add the [queue suffix](./queue) to run the command **after** the agent's current
 
 It waits in the queue like a normal message, with the same Remove button. When its turn comes, the output streams as a reply to your message and the queue continues. `/queue !pnpm build` works too.
 
-## Shell command buttons
-
-The agent can show **action buttons** that run a shell command, for example a **Build** button that runs `pnpm build`. The message above the buttons shows each command, so you see what runs before you click. Clicking one runs the command at once, the same as sending `!pnpm build` yourself. There is no model turn between the click and the output, so the feedback loop is fast.
-
 ## Where it runs
 
 - **In a thread** with a [worktree](../features/worktrees) that is ready, the command runs in the **worktree directory**.

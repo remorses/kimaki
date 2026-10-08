@@ -958,10 +958,6 @@ describe('system-message', () => {
       - If a plan has multiple strategy of implementation show these as options
       - After a genuinely ambiguous request where you cannot infer intent: offer the different approaches
 
-      ## shell command buttons
-
-      An action button with a \`command\` field runs that shell command when clicked, the same as a \`!command\` Discord message. It runs in the project directory, streams output to Discord, and starts no model turn. Offer one when the user's next step is a command, for example \`{"label":"Run tests","command":"pnpm test --run"}\` after a fix. The label is display text only (max 80 chars); never put the command in it. All labels and commands must fit in one 2000-char Discord message; put long commands in a script file. You do not see the output unless the user replies to it.
-
 
 
 

@@ -1,9 +1,6 @@
 // Action button tool handler - Shows Discord buttons for quick model actions.
 // Used by the kimaki_action_buttons tool to render up to 3 buttons and route
-// button clicks back into the session as a new user message. Buttons with a
-// `command` run that shell command instead, same as a `!cmd` Discord message.
-// The command lives only in memory (pendingActionButtonContexts), never in the
-// custom_id, which Discord caps at 100 chars.
+// button clicks back into the session as a new user message.
 
 import {
   ActionRowBuilder,
@@ -24,8 +21,6 @@ import {
 import { createLogger } from '../logger.js'
 import { QUEUE_PREFIX } from '../message-formatting.js'
 import { notifyError } from '../sentry.js'
-import { runShellCommandInChannel } from './run-command.js'
-import { formatActionButtonsContent } from '../ipc-tools-plugin.js'
 import {
   getOrCreateRuntime,
 } from '../session-handler/thread-session-runtime.js'
@@ -37,8 +32,6 @@ export type ActionButtonColor = 'white' | 'blue' | 'green' | 'red'
 
 export type ActionButtonOption = {
   label: string
-  /** Shell command run on click. label is display text only. */
-  command?: string
   color?: ActionButtonColor
 }
 
@@ -204,7 +197,6 @@ export async function showActionButtons({
   silent?: boolean
 }): Promise<void> {
   // Buttons are validated by parseActionButtons() before they get here.
-  // Never truncate: a cut command could run a different command.
   if (buttons.length === 0) {
     throw new Error('No buttons to display')
   }
@@ -242,9 +234,8 @@ export async function showActionButtons({
 
   try {
     const message = await thread.send({
-      content: formatActionButtonsContent(buttons),
+      content: '**Action Required**',
       components: [row],
-      allowedMentions: { parse: [] },
       flags: silent ? SILENT_MESSAGE_FLAGS : NOTIFY_MESSAGE_FLAGS,
     })
 
@@ -328,26 +319,10 @@ export async function handleActionButton(
   const username = interaction.user.globalName || interaction.user.username
   const prompt = `User clicked: ${button.label}`
 
-  const clickMessage = await sendThreadMessage(
+  await sendThreadMessage(
     thread,
     `${QUEUE_PREFIX}**${username}:** ${button.label}`,
   )
-
-  // Command buttons run right away, like a `!cmd` message.
-  if (button.command) {
-    const resolved = await resolveWorkingDirectory({ channel: thread })
-    if (!resolved) {
-      await sendThreadMessage(thread, 'Could not resolve project directory for this thread.')
-      return
-    }
-    await runShellCommandInChannel({
-      channel: thread,
-      replyToMessageId: clickMessage.id,
-      command: button.command,
-      directory: resolved.workingDirectory,
-    })
-    return
-  }
 
   try {
     await sendClickedActionToModel({
