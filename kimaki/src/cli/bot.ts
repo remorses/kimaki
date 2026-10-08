@@ -88,7 +88,11 @@ export function registerStartCommand(cli: Goke) {
     .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
     .action(async (options) => {
-      if (process.env['KIMAKI_SUPERVISED'] !== '1') return supervise()
+      // The IPC check ignores a KIMAKI_SUPERVISED leaked into a shell by an older bot.
+      if (process.env['KIMAKI_SUPERVISED'] !== '1' || !process.connected) return supervise()
+      // OpenCode and agent shells inherit process.env: a bot started from a
+      // session (tests) would otherwise think it is supervised and SIGTERM itself on restart.
+      delete process.env['KIMAKI_SUPERVISED']
       // Bot code loads only here: the other subcommands start without it.
       const [
         { startBot },
@@ -136,7 +140,7 @@ export function registerStartCommand(cli: Goke) {
       if (logFile instanceof Error) failStartup(logFile)
       // Then: stops a running bot of this port (V1 or V2) before the
       // migration and onboarding, which must not run while it still writes.
-      const lock = await startLockServer({ port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT), dataDir })
+      const lock = await startLockServer({ port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT), dataDir, supervised: true })
       if (lock instanceof Error) failStartup(lock)
       const opened = await openDb({ dataDir, migrate: true })
       if (opened instanceof Error) failStartup(opened)

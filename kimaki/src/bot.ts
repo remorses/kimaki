@@ -51,6 +51,8 @@ export type Bot = {
   dataDir: string
   // Port of this bot's lock server; written into session markers for the agent's `kimaki` calls.
   lockPort: number
+  // Started by the `kimaki` supervisor: `kimaki restart` can respawn it.
+  supervised: boolean
   // Discord bot token: selects the bot_tokens row with the audio API keys.
   token: string
   // bot_tokens.app_id of these credentials: key of the global_models row.

@@ -127,6 +127,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     clock: options.clock ?? systemClock,
     dataDir: options.dataDir,
     lockPort: lock.port,
+    supervised: lock.supervised,
     token: options.token,
     appId: options.appId,
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},

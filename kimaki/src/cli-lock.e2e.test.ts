@@ -295,7 +295,7 @@ test('CLI help documents the supported P7 commands', async () => {
       task run <taskId>                 Run a scheduled task now
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      sleep                             Wake this session later with a new message in the same thread. Run it last, after your text
+      sleep                             Wake this session later with a new message in the same thread. Run it last, after your text. To monitor slow events (email replies, PR reviews), wait 2h or more; never poll every few minutes
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --duration <duration>           Relative wait, e.g. 30m, 2h, 1d
         --until <date>                  UTC ISO date ending in Z

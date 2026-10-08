@@ -298,8 +298,8 @@ export const lockRoutes = {
   }),
   restart: route({
     input: z.object({}),
-    run: async () => {
-      if (process.env['KIMAKI_SUPERVISED'] !== '1') {
+    run: async (bot) => {
+      if (!bot.supervised) {
         return new ConfigError({ reason: 'This bot was not started by the `kimaki` command, so nothing would start it again. Stop it and start it yourself.' })
       }
       // After the response: the SIGTERM handler stops the bot and exits with this code.

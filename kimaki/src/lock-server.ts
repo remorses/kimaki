@@ -39,6 +39,8 @@ export async function installShim({ dataDir, command }: { dataDir: string; comma
 
 export type LockServer = {
   port: number
+  // Started by the `kimaki` supervisor (cli/bot.ts): `kimaki restart` can respawn it.
+  supervised: boolean
   handle: (handler: LockHandler) => void
   close: () => Promise<void>
 }
@@ -62,8 +64,8 @@ function listen(server: http.Server, port: number): Promise<NodeJS.ErrnoExceptio
 }
 
 // PID of the supervisor while it is alive (IPC connected); an orphan bot reports none.
-function wrapperPid(): number | null {
-  if (process.env['KIMAKI_SUPERVISED'] !== '1' || !process.connected) return null
+function wrapperPid(supervised: boolean): number | null {
+  if (!supervised || !process.connected) return null
   return process.ppid
 }
 
@@ -113,7 +115,7 @@ export async function evictRunningBot({ port, graceMs = 20_000 }: { port: number
   await waitForExit({ pid, timeoutMs: 5_000 })
 }
 
-export async function startLockServer({ port, dataDir }: { port: number; dataDir: string }): Promise<LockPortError | LockServer> {
+export async function startLockServer({ port, dataDir, supervised = false }: { port: number; dataDir: string; supervised?: boolean }): Promise<LockPortError | LockServer> {
   const token = crypto.randomBytes(32).toString('hex')
   const state: { handler: LockHandler | null } = { handler: null }
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -144,7 +146,7 @@ export async function startLockServer({ port, dataDir }: { port: number; dataDir
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: wrapperPid() }))
+      res.end(JSON.stringify({ status: 'ok', pid: process.pid, wrapperPid: wrapperPid(supervised) }))
       return
     }
     if (!req.url?.startsWith('/kimaki/')) {
@@ -182,6 +184,7 @@ export async function startLockServer({ port, dataDir }: { port: number; dataDir
   }
   return {
     port,
+    supervised,
     handle: (handler) => { state.handler = handler },
     close: async () => {
       server.closeAllConnections()
