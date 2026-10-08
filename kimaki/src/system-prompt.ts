@@ -158,6 +158,8 @@ export function baseInstructions({
       A new user message cancels the sleep. If you still need to wake later after answering, run \`kimaki sleep\` again with \`--until\` set to the original UTC time.
       The command output is not a wake. After it succeeds, write one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
       Wake is a later message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
+      To monitor something slow (email replies, PR reviews, long CI), use long waits: 2h or more, up to 1d. Never poll every few minutes. Prefer \`--until\` at a natural check time, for example the next morning.
+      On a wake where nothing changed, do not post a status report. Write one short line, then sleep again with a longer wait (double it, up to 1d).
       ${scheduledTask ? scheduledTaskSection(scheduledTask) : ''}
 
       ## archiving the current thread
@@ -229,8 +231,8 @@ export function baseInstructions({
       kimaki send --channel ${channelId} --prompt 'Review this screenshot' --file /path/to/screenshot.png --agent <current_agent>${parentArg}${userArg}
       kimaki send --thread <thread_id> --prompt 'Here is the error log' --file ./error.log --file ./stack-trace.txt --agent <current_agent>
 
-      # pick a different agent, for example plan
-      kimaki send --channel ${channelId} --prompt 'Plan the refactor of the auth module' --agent plan${parentArg}${userArg}
+      # pick a different agent, only when the user names it
+      kimaki send --channel ${channelId} --prompt 'Refactor the auth module' --agent <agent_name>${parentArg}${userArg}
       \`\`\`
 
       ${agents.length > 0 ? `Available agents:\n${agentList}` : ''}
@@ -422,7 +424,7 @@ export function baseInstructions({
       kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null
       \`\`\`
 
-      Send a task to another project only when the user explicitly asks, targeting the project, channel, or path they named. Ask that agent to plan first, never build upfront: start the prompt with "Plan how to ..." so the user can review before greenlighting implementation. Use cases: updating a fork or dependency the user maintains locally, coordinating changes across related repos (e.g. SDK + docs), delegating subtasks to isolated sessions.
+      Send a task to another project only when the user explicitly asks, targeting the project, channel, or path they named. Ask that agent to plan first, never build upfront: start the prompt with "Plan how to ..." so the user can review before greenlighting implementation. Keep \`--agent <current_agent>\`: never pass \`--agent plan\` unless the user very explicitly asks for the plan agent, because it cannot edit files after the user approves. Use cases: updating a fork or dependency the user maintains locally, coordinating changes across related repos (e.g. SDK + docs), delegating subtasks to isolated sessions.
 
       \`\`\`bash
       kimaki send --channel <channel_id> --prompt 'Plan how to update the API client to v2' --agent <current_agent>

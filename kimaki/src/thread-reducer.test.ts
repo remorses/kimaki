@@ -46,6 +46,20 @@ test('text-only turn: banner, text, typing, footer with context percent', () => 
   expect(view.turn).toBe(null)
 })
 
+test('kimaki sleep in a turn makes its footer silent, the next turn notifies again', () => {
+  const turn = loadFixture('tools.events.jsonl').filter((event) => !event.type.startsWith('session.tool.'))
+  const end = turn.findIndex((event) => event.type === 'session.execution.succeeded')
+  const slept = replay({ events: [...turn.slice(0, end), { type: 'kimaki.sleep' }, ...turn.slice(end)] })
+  const next = replay({ events: turn, view: slept.view })
+  const footers = [...slept.effects, ...next.effects].flatMap((effect) => (effect.type === 'footer' ? [effect.notify] : []))
+  expect(footers).toMatchInlineSnapshot(`
+    [
+      false,
+      true,
+    ]
+  `)
+})
+
 test('execution failure shows the error and no footer, interrupt shows nothing', () => {
   const events = loadFixture('abort.events.jsonl')
   const sessionID = rootSessionId(events)

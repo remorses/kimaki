@@ -61,6 +61,7 @@ export function sleepOutput({ wakeAt, reason }: { wakeAt: number; reason: string
     'Reply with one short line that you are waiting until that time, then stop.',
     'The real wake is a later message that starts with "Woke after sleeping until". Only then continue the wait reason.',
     'A new user message in this thread cancels the sleep. If you still need that later wake after answering, run kimaki sleep again with --until set to the same UTC time.',
+    'When monitoring something slow (email replies, PR reviews), wait 2h or more and never post a status report on a wake where nothing changed.',
   ].join(' ')
 }
 
@@ -138,6 +139,7 @@ export async function createSleep(
         .catch((cause) => new DbError({ operation: 'write session_sleeps', cause })),
   })
   if (saved instanceof Error) return saved
+  bot.eventLoop.dispatch(threadId, { type: 'kimaki.sleep' })
   logger.log(`session ${root} sleeps until ${new Date(wakeAt).toISOString()}`)
   return { sessionId: root, threadId, wakeAt: new Date(wakeAt).toISOString(), output: sleepOutput({ wakeAt, reason: why }) }
 }

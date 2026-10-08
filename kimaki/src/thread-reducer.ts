@@ -61,6 +61,8 @@ export type Turn = {
   agent: string | null
   // Tokens of the last finished step: the context size the model saw.
   tokens: number
+  // `kimaki sleep` ran in this turn: the session wakes later, so the footer is silent.
+  slept: boolean
 }
 
 export type Child = {
@@ -143,6 +145,8 @@ export type SessionSnapshot = {
 export type KimakiEvent =
   | { type: 'kimaki.agent-ui'; prompt: AgentPrompt }
   | { type: 'kimaki.agent-ui-dismiss'; id: string }
+  // `kimaki sleep` planned a wake of the root session (sleeps.ts).
+  | { type: 'kimaki.sleep' }
   // A session found by walking parentID after a bot restart.
   | { type: 'kimaki.child'; sessionId: string; agent: string }
   // History of a resumed or forked session, oldest first, then a closing note.
@@ -314,11 +318,11 @@ function applyRoot(context: Context & { event: V2Event }) {
       emit({ type: 'send', text: asSubtext(`Working directory changed to ${event.data.location.directory}`) })
       return
     case 'session.execution.started':
-      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0 }
+      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0, slept: false }
       return
     case 'session.step.started': {
       const model = { providerID: event.data.model.providerID, id: event.data.model.id }
-      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0 }
+      draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0, slept: false }
       draft.turn.model = model
       draft.turn.agent = event.data.agent
       if (draft.bannerPending) emit({ type: 'send', text: formatBanner({ model, agent: event.data.agent }) })
@@ -376,7 +380,7 @@ function applyRoot(context: Context & { event: V2Event }) {
       const turn = draft.turn
       draft.turn = null
       draft.lastKind = null
-      if (turn) emitFooter({ ...context, turn, at: event.created, notify: true })
+      if (turn) emitFooter({ ...context, turn, at: event.created, notify: !turn.slept })
       return
     }
     case 'session.execution.failed':
@@ -397,6 +401,7 @@ function applyRoot(context: Context & { event: V2Event }) {
       if (queued && draft.turn?.model) {
         emitFooter({ ...context, turn: draft.turn, at: event.created, notify: false })
         draft.turn.startedAt = event.created
+        draft.turn.slept = false
         draft.lastKind = null
       }
       return deliverQueued({ draft, emit, inboxID: event.data.inboxID })
@@ -528,6 +533,9 @@ function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEve
       return showAgentPrompt({ draft, emit, prompt: event.prompt })
     case 'kimaki.agent-ui-dismiss':
       return dismissAgentPrompts({ draft, emit, ids: [event.id] })
+    case 'kimaki.sleep':
+      if (draft.turn) draft.turn.slept = true
+      return
     case 'kimaki.replay':
       for (const effect of replayEffects({ messages: event.messages, prefs, note: event.note })) emit(effect)
       draft.lastKind = null
@@ -542,7 +550,7 @@ function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEve
       const active = new Set(event.activeSessionIds)
       for (const [id, child] of Object.entries(draft.children)) child.running = active.has(id)
       if (!active.has(draft.sessionId)) draft.turn = null
-      else draft.turn ??= { startedAt: event.at, model: null, agent: null, tokens: 0 }
+      else draft.turn ??= { startedAt: event.at, model: null, agent: null, tokens: 0, slept: false }
       // Nothing runs: tool calls whose end was missed while disconnected are over.
       if (!isBusy(draft)) draft.tools = {}
       for (const session of event.sessions) {
