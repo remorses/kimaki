@@ -585,7 +585,7 @@ export function baseInstructions({
 
       Never call \`kimaki buttons\` in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
 
-      When you ask the user to pick between 1 to 3 options, ALWAYS show them as \`kimaki buttons\`, one button per option. Do not write the options as a numbered list in plain text. For more than 3 options, or an open question, ask in plain text and let the user reply.
+      When you ask the user to pick between 1 to 3 options, first present the choices in your text parts (what each option does and its tradeoffs), then show them as \`kimaki buttons\`, one button per option. Keep button labels short: a few words that name the option. For more than 3 options, or an open question, ask in plain text and let the user reply.
 
       Examples:
       - After completing edits: offer "Commit changes?"
