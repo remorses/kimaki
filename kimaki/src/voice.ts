@@ -93,18 +93,59 @@ export type AttachmentLike = {
   height: number | null
 }
 
+// Discord reports non-standard aliases (audio/mpeg3) and video/mp4 for
+// audio-only .m4a files. https://github.com/remorses/kimaki/issues/235
+const AUDIO_TYPE_ALIASES: Record<string, string> = {
+  'audio/mpeg': 'audio/mpeg',
+  'audio/mp3': 'audio/mpeg',
+  'audio/mpeg3': 'audio/mpeg',
+  'audio/x-mpeg': 'audio/mpeg',
+  'audio/x-mpeg-3': 'audio/mpeg',
+  'audio/mpg': 'audio/mpeg',
+  'audio/wav': 'audio/wav',
+  'audio/x-wav': 'audio/wav',
+  'audio/wave': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
+  'audio/ogg': 'audio/ogg',
+  'audio/opus': 'audio/ogg',
+  'application/ogg': 'audio/ogg',
+  'audio/mp4': 'audio/mp4',
+  'audio/m4a': 'audio/mp4',
+  'audio/x-m4a': 'audio/mp4',
+}
+
+const EXTENSION_AUDIO_TYPES: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+}
+
+function baseContentType(contentType: string | null) {
+  return contentType?.split(';')[0]?.trim().toLowerCase() ?? ''
+}
+
 // iOS videos also have a duration: visual media is never a voice message.
+// An audio extension wins over a video/* type: .m4a has no video track.
 export function isVoiceAttachment(attachment: AttachmentLike): boolean {
-  const contentType = attachment.contentType?.trim().toLowerCase() ?? ''
+  const contentType = baseContentType(attachment.contentType)
   const extension = path.extname(attachment.name).toLowerCase()
-  const visual =
-    contentType.startsWith('video/') ||
-    VIDEO_EXTENSIONS.has(extension) ||
-    ((attachment.width ?? 0) > 0 && (attachment.height ?? 0) > 0)
-  if (visual) return false
+  if ((attachment.width ?? 0) > 0 && (attachment.height ?? 0) > 0) return false
+  if (VOICE_EXTENSIONS.has(extension)) return true
+  if (contentType.startsWith('video/') || VIDEO_EXTENSIONS.has(extension)) return false
   if (contentType.startsWith('audio/')) return true
-  if ((attachment.duration ?? 0) > 0 || attachment.waveform?.trim()) return true
-  return VOICE_EXTENSIONS.has(extension)
+  return (attachment.duration ?? 0) > 0 || Boolean(attachment.waveform?.trim())
+}
+
+// One canonical media type per container, so every provider path matches it.
+// Discord voice messages are Ogg Opus.
+export function voiceMediaType(attachment: Pick<AttachmentLike, 'contentType' | 'name'>): string {
+  const contentType = baseContentType(attachment.contentType)
+  const known = AUDIO_TYPE_ALIASES[contentType] ?? EXTENSION_AUDIO_TYPES[path.extname(attachment.name).toLowerCase()]
+  if (known) return known
+  return contentType.startsWith('audio/') ? contentType : 'audio/ogg'
 }
 
 // --- tool schema and prompt
@@ -318,11 +359,11 @@ async function m4aToWav(input: Buffer): Promise<TranscriptionError | Buffer> {
 }
 
 async function openAIAudio({ audio, mediaType }: { audio: Buffer; mediaType: string }) {
-  if (mediaType === 'audio/mpeg' || mediaType === 'audio/mp3') return { data: audio, format: 'mp3' }
-  if (mediaType === 'audio/wav' || mediaType === 'audio/x-wav') return { data: audio, format: 'wav' }
+  if (mediaType === 'audio/mpeg') return { data: audio, format: 'mp3' }
+  if (mediaType === 'audio/wav') return { data: audio, format: 'wav' }
   const converted = await (() => {
-    if (mediaType === 'audio/ogg' || mediaType === 'audio/opus') return oggToWav(audio)
-    if (mediaType === 'audio/mp4' || mediaType === 'audio/m4a' || mediaType === 'audio/x-m4a') return m4aToWav(audio)
+    if (mediaType === 'audio/ogg') return oggToWav(audio)
+    if (mediaType === 'audio/mp4') return m4aToWav(audio)
     return new TranscriptionError({ reason: `unsupported audio type ${mediaType}` })
   })()
   if (converted instanceof Error) return converted
@@ -488,6 +529,7 @@ export async function transcribe({
   token: string
   baseUrls?: TranscriptionBaseUrls
   audio: Buffer
+  // Canonical type from voiceMediaType().
   mediaType: string
   directory: string
   agents: ReadonlyArray<{ name: string; description: string }>
@@ -495,11 +537,10 @@ export async function transcribe({
 }): Promise<DbError | NoTranscriptionKeyError | TranscriptionFailure | TranscriptionResult> {
   const selected = await transcriptionProvider({ db, token })
   if (selected instanceof Error) return selected
-  const type = mediaType.trim().toLowerCase() || 'audio/ogg'
-  if (selected.kind === 'gateway') return transcribeViaGateway({ audio, mediaType: type, ...selected })
+  if (selected.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...selected })
   const tool = buildTranscriptionTool({ agentNames: agents.map((agent) => agent.name), inSession })
   const prompt = transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
-  const request = { apiKey: selected.apiKey, prompt, audio, mediaType: type, tool }
+  const request = { apiKey: selected.apiKey, prompt, audio, mediaType, tool }
   const result =
     selected.kind === 'openai'
       ? await withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
@@ -507,7 +548,7 @@ export async function transcribe({
   // A provider content filter can refuse harmless audio: retry with hosted Whisper (always steer).
   if (result instanceof TranscriptionBlockedError && selected.gateway) {
     logger.warn(`provider blocked the audio (${result.message}), retrying with kimaki.dev Whisper`)
-    const hosted = await transcribeViaGateway({ audio, mediaType: type, ...selected.gateway })
+    const hosted = await transcribeViaGateway({ audio, mediaType, ...selected.gateway })
     if (!(hosted instanceof Error)) return hosted
     logger.warn(`kimaki.dev Whisper fallback failed: ${hosted.message}`)
   }

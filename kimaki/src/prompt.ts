@@ -12,6 +12,7 @@
 // execution with "input" scope, which runs queued items after it. The other
 // order (prompt, then interrupt with resume) parks queued items for good.
 
+import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { Events, MessageFlags, type Message, type ThreadChannel } from 'discord.js'
@@ -43,8 +44,8 @@ import { allMessages } from './session-events.ts'
 import { ensureSessionMarker, forkBtw, startSession, switchAgent, threadProject } from './sessions.ts'
 import { cancelSleep } from './sleeps.ts'
 import type { ScheduledRun } from './system-prompt.ts'
-import { turnContext, withTurnContext } from './system-prompt.ts'
-import { isBusy } from './thread-reducer.ts'
+import { localFilesBlock, turnContext, withTurnContext } from './system-prompt.ts'
+import { isBusy, type UploadFile } from './thread-reducer.ts'
 import { resolveWorkingDirectory } from './worktrees.ts'
 
 const logger = createLogger('PROMPT')
@@ -87,19 +88,42 @@ export async function prompt(
     echo?: string
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
-  const context = turnContext({ username: author.username, userId: author.id, messageId, threadId, threadName })
+  const { attached, localPaths } = await splitPromptFiles(files)
+  const context = localFilesBlock(localPaths) + turnContext({ username: author.username, userId: author.id, messageId, threadId, threadName })
   const result = await oc(bot, 'session.prompt', (client) =>
     client.session.prompt({
       sessionID: sessionId,
       id,
       text: withTurnContext({ text, context }),
-      files: files.map((file) => ({ uri: file.uri, name: file.name })),
+      files: attached,
       ...(skills.length > 0 && { skills: skills.map((skill) => ({ id: skill })) }),
       delivery,
       metadata: { discord: { userId: author.id, username: author.username, messageId, threadId, ...(echo && { echo }) } },
     }),
   )
   if (result instanceof Error) return result
+}
+
+// OpenCode V2 shows the model only png/jpeg/gif/webp images, PDFs and text
+// files; it drops other files silently, and one file over 20 MB fails the
+// whole prompt (core/src/session/prompt.ts, session/runner/to-llm-message.ts).
+// Those go to the model as local paths instead.
+const OPENCODE_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+const INLINE_MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'])
+
+async function splitPromptFiles(files: readonly PromptFile[]) {
+  const attached: Array<{ uri: string; name: string }> = []
+  const localPaths: string[] = []
+  for (const file of files) {
+    const local = promptFilePath(file)
+    const stat = await fs.promises.stat(local).catch(() => null)
+    const tooBig = stat !== null && stat.size > OPENCODE_MAX_ATTACHMENT_BYTES
+    const inline = INLINE_MEDIA_EXTENSIONS.has(path.extname(file.name).toLowerCase())
+    if (!tooBig) attached.push({ uri: file.uri, name: file.name })
+    // Text files also get the path: the extension cannot tell text from binary.
+    if (tooBig || !inline) localPaths.push(local)
+  }
+  return { attached, localPaths }
 }
 
 // Questions and permissions of the thread (root and children) that wait for the user.
@@ -273,12 +297,14 @@ async function command(
     const interrupted = await interrupt(bot, input.sessionId)
     if (interrupted instanceof Error) return interrupted
   }
+  const { attached, localPaths } = await splitPromptFiles(input.files)
+  const block = localFilesBlock(localPaths)
   const result = await oc(bot, 'session.command', (client) =>
     client.session.command({
       sessionID: input.sessionId,
       name: route.name,
-      text: route.arguments,
-      files: input.files.map((file) => ({ uri: file.uri, name: file.name })),
+      text: block ? `${route.arguments}\n\n${block}`.trim() : route.arguments,
+      files: attached,
       delivery: route.queue ? 'queue' : 'steer',
     }),
   )
@@ -611,11 +637,20 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
   return started
 }
 
-// `kimaki upload`: posts local files into the session's thread.
-export function upload(bot: Bot, { id, files }: { id: string; files: Array<{ path: string; name: string }> }) {
+// `kimaki upload-to-discord`: posts local files into the session's thread,
+// after the output already queued there. Answers once Discord has them.
+export async function upload(bot: Bot, { id, files }: { id: string; files: Array<{ path: string; name: string }> }) {
   const { sessionThreads, roots } = bot.store.getState()
   const threadId = sessionThreads[id] ?? (roots[id] ? id : undefined)
   if (!threadId) return new ConfigError({ reason: 'No local session thread for this upload' })
-  bot.effects.run(threadId, [{ type: 'attachments', files }])
+  if (files.length === 0) return new ConfigError({ reason: 'Upload needs at least one file' })
+  const sized: UploadFile[] = []
+  for (const file of files) {
+    const stat = await fs.promises.stat(file.path).catch(() => null)
+    if (!stat?.isFile()) return new ConfigError({ reason: `File not found: ${file.path}` })
+    sized.push({ ...file, size: stat.size })
+  }
+  const error = await new Promise<Error | null>((settle) => bot.effects.run(threadId, [{ type: 'attachments', files: sized, settle }]))
+  if (error) return error
   return { uploaded: files.map((file) => file.name) }
 }

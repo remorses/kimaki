@@ -87,6 +87,8 @@ export function registerDiscordCommands(cli: Goke) {
       const target = targetOrEnv(options.session)
       const id = target.sessionId ?? target.threadId
       if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
-      await action({ route: 'upload', dataDir: options.dataDir, input: { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) } })
+      const input = { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) }
+      // Waits for Discord: big files and a busy thread take longer than the 30s default.
+      await action({ route: 'upload', dataDir: options.dataDir, input, signal: AbortSignal.timeout(5 * 60_000) })
     })
 }

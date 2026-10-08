@@ -114,6 +114,8 @@ export type ThreadView = {
   permissions: Readonly<Record<string, PendingPermission>>
 }
 
+export type UploadFile = { path: string; name: string; size: number }
+
 export type Effect =
   // Bot-formatted Discord content (tool lines, banner, errors).
   // Effects are silent unless `notify` is set (format-parts.ts message flags).
@@ -121,8 +123,9 @@ export type Effect =
   // Model markdown, rendered and split by the executor.
   | { type: 'markdown'; text: string; blankLineBefore: boolean }
   | { type: 'typing'; on: boolean }
-  // Files from `kimaki upload-to-discord` (never from the reducer).
-  | { type: 'attachments'; files: readonly { path: string; name: string }[] }
+  // Files from `kimaki upload-to-discord` (never from the reducer). `settle`
+  // answers the waiting CLI call: null once posted, or why not.
+  | { type: 'attachments'; files: readonly UploadFile[]; settle: (error: Error | null) => void }
   // The executor adds folder and git branch of `directory` when it posts.
   | { type: 'footer'; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null; notify: boolean }
   // Posts the messages in order; the first replies to `replyTo` when set.

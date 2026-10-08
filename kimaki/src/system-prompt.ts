@@ -619,7 +619,13 @@ function escapeAttribute(value: string): string {
 
 // Prompt text as the user wrote it: withTurnContext() appends the block.
 export function stripTurnContext(text: string): string {
-  return text.replace(/\n\n<discord-user [^\n]*\/>$/, '')
+  return text.replace(/\n\n(<local-files>\n[\s\S]*?<\/local-files>\n)?<discord-user [^\n]*\/>$/, '')
+}
+
+// Attachments the model cannot see inline: it reads them with tools.
+export function localFilesBlock(paths: readonly string[]): string {
+  if (paths.length === 0) return ''
+  return `<local-files>\nAttachments saved on disk. OpenCode cannot show these inline; use tools to read them.\n${paths.join('\n')}\n</local-files>\n`
 }
 
 export function withTurnContext({ text, context }: { text: string; context: string }): string {

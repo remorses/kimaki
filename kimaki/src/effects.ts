@@ -22,7 +22,8 @@ import { formatFooter, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS, type UiMessag
 import { createLogger } from './logger.ts'
 import { segmentPayloads, type DiscordPayload } from './markdown/components.ts'
 import { DISCORD_TEXT_LIMIT, renderMarkdown } from './markdown/render-markdown.ts'
-import type { Effect } from './thread-reducer.ts'
+import { DiscordError } from './errors.ts'
+import type { Effect, UploadFile } from './thread-reducer.ts'
 
 const logger = createLogger('EFFECTS')
 
@@ -59,6 +60,34 @@ function markdownMessages({ text, blankLineBefore }: { text: string; blankLineBe
   const [first, ...rest] = segments
   if (!blankLineBefore || first?.kind !== 'text') return segmentPayloads(segments)
   return segmentPayloads([{ kind: 'text', markdown: `\n${first.markdown}` }, ...rest])
+}
+
+// Discord takes at most 10 files and 25 MiB per message request; the margin
+// leaves room for the multipart envelope. A file over the per-file limit
+// (20 MiB unless boosted) is sent alone and Discord's error goes back.
+// https://docs.discord.com/developers/resources/message#create-message
+const MAX_FILES_PER_MESSAGE = 10
+const MAX_UPLOAD_REQUEST_BYTES = 24 * 1024 * 1024
+
+function uploadBatches(files: readonly UploadFile[]): UploadFile[][] {
+  const batches: Array<{ files: UploadFile[]; bytes: number }> = []
+  for (const file of files) {
+    const last = batches.at(-1)
+    if (last && last.files.length < MAX_FILES_PER_MESSAGE && last.bytes + file.size <= MAX_UPLOAD_REQUEST_BYTES) {
+      last.files.push(file)
+      last.bytes += file.size
+    } else {
+      batches.push({ files: [file], bytes: file.size })
+    }
+  }
+  return batches.map((batch) => batch.files)
+}
+
+// Effects that will never run: an upload still waits for its answer.
+function drop(effects: readonly Effect[]) {
+  for (const effect of effects) {
+    if (effect.type === 'attachments') effect.settle(new DiscordError({ operation: 'upload (the thread no longer shows a session)' }))
+  }
 }
 
 export function createEffectsRunner({ discord }: { discord: Client }) {
@@ -108,6 +137,24 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     return null
   }
 
+  // Unlike post(), the error goes back to the agent that uploaded.
+  async function postFiles(threadId: string, files: readonly UploadFile[]): Promise<Error | null> {
+    for (const batch of uploadBatches(files)) {
+      if (lifecycle.closed) return new DiscordError({ operation: 'upload (bot stopped)' })
+      const channel = await sendableChannel(threadId)
+      if (!channel) return new DiscordError({ operation: `upload to thread ${threadId}` })
+      const sent = await channel
+        .send({
+          files: batch.map((file) => ({ attachment: file.path, name: file.name })),
+          flags: SILENT_MESSAGE_FLAGS,
+          allowedMentions: { parse: [] },
+        })
+        .catch((cause: Error) => new DiscordError({ operation: `upload of ${batch.map((file) => file.name).join(', ')} (${cause.message})`, cause }))
+      if (sent instanceof Error) return sent
+    }
+    return null
+  }
+
   async function edit({ channel, messageId, message }: { channel: SendableChannels; messageId: string; message: UiMessage }) {
     const edited = await channel.messages
       .edit(messageId, { content: message.content, components: [...message.components] })
@@ -124,13 +171,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
   async function runOne(threadId: string, effect: Exclude<Effect, { type: 'send' | 'footer' }>) {
     const thread = worker(threadId)
     if (effect.type === 'attachments') {
-      for (let offset = 0; offset < effect.files.length; offset += 10) {
-        await post({
-          threadId,
-          options: { files: effect.files.slice(offset, offset + 10).map((file) => ({ attachment: file.path, name: file.name })) },
-          notify: false,
-        })
-      }
+      effect.settle(await postFiles(threadId, effect.files))
       return
     }
     if (effect.type === 'typing') {
@@ -195,11 +236,12 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
       await post({ threadId, options: { content: pending.text }, notify: pending.notify })
       await refreshTyping(threadId)
     }
-    for (const effect of batch) {
-      if (!live()) return
+    for (const [index, effect] of batch.entries()) {
+      if (!live()) return drop(batch.slice(index))
       if (effect.type !== 'send' && effect.type !== 'footer') {
         await flush()
-        if (live()) await runOne(threadId, effect)
+        if (!live()) return drop(batch.slice(index))
+        await runOne(threadId, effect)
         continue
       }
       const text = effect.type === 'send' ? effect.text : await footerText(effect)
@@ -225,7 +267,8 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
 
   return {
     run(threadId: string, effects: Effect[]): void {
-      if (effects.length === 0 || lifecycle.closed) return
+      if (effects.length === 0) return
+      if (lifecycle.closed) return drop(effects)
       worker(threadId).queue.push(...effects)
       void drain(threadId)
     },
@@ -233,7 +276,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     dispose(threadId: string): void {
       const thread = workers.get(threadId)
       if (!thread) return
-      thread.queue.length = 0
+      drop(thread.queue.splice(0))
       thread.generation++
       thread.prompts.clear()
       stopTyping(threadId)
@@ -241,7 +284,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     stop(): void {
       lifecycle.closed = true
       for (const [threadId, thread] of workers) {
-        thread.queue.length = 0
+        drop(thread.queue.splice(0))
         stopTyping(threadId)
       }
     },

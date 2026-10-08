@@ -35,7 +35,7 @@ import { REMOTE_PROMPT_FILE, REMOTE_RESULT_PREFIX, REMOTE_SEND_PREFIX } from './
 import { formatEcho, queuedItemFor } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
 import { primaryAgents, startSession } from './sessions.ts'
-import { isVoiceAttachment, parseVoiceMessage, transcribe, type AttachmentLike } from './voice.ts'
+import { isVoiceAttachment, parseVoiceMessage, transcribe, voiceMediaType, type AttachmentLike } from './voice.ts'
 
 const logger = createLogger('INGRESS')
 
@@ -130,7 +130,7 @@ async function voiceRoute(
     token: bot.token,
     baseUrls: bot.transcriptionBaseUrls,
     audio,
-    mediaType: attachment.contentType ?? 'audio/ogg',
+    mediaType: voiceMediaType(attachment),
     directory,
     // The ID is what switchAgent and session.create take.
     agents: agents.map((agent) => ({ name: agent.id, description: agent.description ?? '' })),

@@ -105,6 +105,14 @@ test('image and text attachments reach the model as files', async () => {
           proxy_url: '',
           content_type: 'text/plain',
         },
+        {
+          id: '3',
+          filename: 'archive.zip',
+          size: 6,
+          url: `data:application/zip;base64,${Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0]).toString('base64')}`,
+          proxy_url: '',
+          content_type: 'application/zip',
+        },
       ],
     }),
   )
@@ -114,6 +122,7 @@ test('image and text attachments reach the model as files', async () => {
     What is this image-marker
     [attachment: dot.png]
     [attachment: notes.txt]
+    [attachment: archive.zip]
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     I see an image
@@ -124,6 +133,15 @@ test('image and text attachments reach the model as files', async () => {
   const user = messages.data.find((message) => message.type === 'user')
   expect(JSON.stringify(user)).toContain('image/png')
   expect(JSON.stringify(user)).toContain('notes.txt')
+  // OpenCode drops binary files: the model gets their local paths instead.
+  const text = user?.type === 'user' ? user.text : ''
+  expect(text.slice(text.indexOf('<local-files>'), text.indexOf('</local-files>')).replaceAll(dataDir, '<data>').replace(/\/\d+\//g, '/<message>/')).toMatchInlineSnapshot(`
+    "<local-files>
+    Attachments saved on disk. OpenCode cannot show these inline; use tools to read them.
+    <data>/attachments/<message>/1-notes.txt
+    <data>/attachments/<message>/2-archive.zip
+    "
+  `)
 })
 
 test('voice in a channel starts a session with the transcription and the spoken agent', async () => {
@@ -143,6 +161,41 @@ test('voice in a channel starts a session with the transcription and the spoken 
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     voice plan ok
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+  `)
+})
+
+// https://github.com/remorses/kimaki/issues/235
+test('uploaded audio files with odd Discord media types are transcribed', async () => {
+  const user = twin.discord.channel(twin.channelId).user(TEST_USER_ID)
+  const before = gemini.requests.length
+  const m4a = await newThread(() =>
+    user.sendVoiceMessage({ url: voiceUrl({ transcription: 'From m4a voice-steer', route: 'steer' }), contentType: 'video/mp4', filename: 'memo.m4a' }),
+  )
+  await waitForFooter({ discord: twin.discord, threadId: m4a.id })
+  const mp3 = await newThread(() =>
+    user.sendVoiceMessage({ url: voiceUrl({ transcription: 'From mp3 voice-steer', route: 'steer' }), contentType: 'audio/mpeg3', filename: 'memo.mp3' }),
+  )
+  await waitForFooter({ discord: twin.discord, threadId: mp3.id })
+  expect(await twin.discord.thread(m4a.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    [attachment: memo.m4a]
+    --- from: assistant (TestBot)
+    » **tommy:** From m4a voice-steer
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    voice steer ok
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  expect([m4a.name, mp3.name]).toMatchInlineSnapshot(`
+    [
+      "From m4a voice-steer",
+      "From mp3 voice-steer",
+    ]
+  `)
+  expect(gemini.requests.slice(before).map((request) => request.mimeType)).toMatchInlineSnapshot(`
+    [
+      "audio/mp4",
+      "audio/mpeg",
+    ]
   `)
 })
 
@@ -214,6 +267,14 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
   // The transcription request offers btw and queue only inside a session thread.
   expect(gemini.requests.map((request) => request.routes)).toMatchInlineSnapshot(`
     [
+      [
+        "steer",
+        "new-session",
+      ],
+      [
+        "steer",
+        "new-session",
+      ],
       [
         "steer",
         "new-session",

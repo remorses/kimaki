@@ -37,6 +37,12 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
   const threads = await cli(['thread', 'list', '--channel', twin.channelId, '--json'])
   const users = await cli(['user', 'list', '--guild', twin.discord.guildId, '--query', 'tommy', '--json'])
   await cli(['upload-to-discord', path.join(server.root, 'report.txt'), '--session', started.sessionId])
+  // The agent learns that nothing was posted.
+  const missing = await cli(['upload-to-discord', path.join(server.root, 'missing.png'), '--session', started.sessionId]).catch((error: { stderr: string }) => error)
+  expect(missing.stderr.replace(server.root, '<root>')).toMatchInlineSnapshot(`
+    "File not found: <root>/missing.png
+    "
+  `)
   const token = await cli(['bot', 'token'])
   const install = await cli(['bot', 'install-url'])
   expect(await twin.discord.thread(started.threadId).text()).toMatchInlineSnapshot(`

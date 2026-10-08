@@ -415,8 +415,8 @@ export function voiceUrl(result: FakeTranscription): string {
 
 export type FakeGemini = {
   baseUrl: string
-  // Route enum offered by each transcription request (tool schema).
-  requests: Array<{ routes: unknown }>
+  // Route enum offered by each transcription request (tool schema), and the audio media type.
+  requests: Array<{ routes: unknown; mimeType: string }>
   stop: () => Promise<void>
 }
 
@@ -430,13 +430,13 @@ export async function startFakeGemini(): Promise<FakeGemini> {
     request.on('data', (chunk: Buffer) => chunks.push(chunk))
     request.on('end', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
-        contents: Array<{ parts: Array<{ inlineData?: { data: string } }> }>
+        contents: Array<{ parts: Array<{ inlineData?: { data: string; mimeType: string } }> }>
         tools: Array<{ functionDeclarations: Array<{ name: string; parameters: { properties: { route?: { enum?: unknown } } } }> }>
       }
       const declaration = body.tools[0]!.functionDeclarations[0]!
-      requests.push({ routes: declaration.parameters.properties.route?.enum ?? null })
-      const audio = body.contents[0]!.parts.find((part) => part.inlineData)!.inlineData!.data
-      const args = JSON.parse(Buffer.from(audio, 'base64').toString('utf8')) as FakeTranscription
+      const audio = body.contents[0]!.parts.find((part) => part.inlineData)!.inlineData!
+      requests.push({ routes: declaration.parameters.properties.route?.enum ?? null, mimeType: audio.mimeType })
+      const args = JSON.parse(Buffer.from(audio.data, 'base64').toString('utf8')) as FakeTranscription
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify({

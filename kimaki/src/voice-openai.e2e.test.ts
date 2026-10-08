@@ -96,3 +96,22 @@ test('an Ogg Opus voice message is converted to WAV and transcribed by OpenAI', 
   // 0.3 s of 48 kHz mono 16-bit PCM plus the 44-byte header.
   expect(request!.audio.length).toBeGreaterThan(20_000)
 })
+
+// https://github.com/remorses/kimaki/issues/235: Discord labels some MP3 uploads audio/mpeg3.
+test('an MP3 upload labeled audio/mpeg3 goes to OpenAI as mp3', async () => {
+  const mp3 = Buffer.from('ID3-fake-mp3-bytes')
+  const before = new Set((await twin.discord.channel(twin.channelId).getThreads()).map((thread) => thread.id))
+  await twin.discord
+    .channel(twin.channelId)
+    .user(TEST_USER_ID)
+    .sendVoiceMessage({ url: `data:audio/mpeg3;base64,${mp3.toString('base64')}`, contentType: 'audio/mpeg3', filename: 'memo.mp3' })
+  const thread = await twin.discord.channel(twin.channelId).waitForThread({ timeout: 8_000, predicate: (thread) => !before.has(thread.id) })
+  await waitForFooter({ discord: twin.discord, threadId: thread.id })
+  const request = openai.requests.at(-1)
+  expect({ format: request?.format, audio: request?.audio.toString('utf8') }).toMatchInlineSnapshot(`
+    {
+      "audio": "ID3-fake-mp3-bytes",
+      "format": "mp3",
+    }
+  `)
+})
