@@ -56,10 +56,18 @@ test('bot reconnects after the OpenCode service restarts with a new port', async
   const before = bot.opencode.endpoint?.url
   await server.kill()
   await waitFor({ label: 'disconnect', check: async () => !bot.opencode.connected })
+  // Added while disconnected: no catalog event reaches the bot, the reconnect re-reads the catalog.
+  const skillFile = path.join(server.skillsDirectory, 'gap', 'SKILL.md')
+  fs.mkdirSync(path.dirname(skillFile), { recursive: true })
+  fs.writeFileSync(skillFile, '---\nname: gap\ndescription: Added while disconnected\n---\nGap.\n')
   await server.start()
   await waitFor({ label: 'reconnect', timeout: 10_000, check: async () => bot.opencode.connected })
   expect(bot.opencode.endpoint?.url).not.toBe(before)
   expect(await bot.opencode.endpoint?.client.session.active()).toEqual({})
+  await waitFor({
+    label: 'gap-skill command',
+    check: async () => (await twin.discord.getRegisteredCommands()).some((command) => command.name === 'gap-skill'),
+  })
 }, 30_000)
 
 test('the lock server creates a missing data dir (fresh install)', async () => {

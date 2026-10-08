@@ -10,11 +10,20 @@
 // Handlers only collect input and call the writers (prompt.ts, sessions.ts,
 // ...); session output comes from events.
 //
-// Dynamic commands come from the OpenCode catalog of the guild's projects:
+// Dynamic commands come from the global OpenCode catalog: one location (the
+// Kimaki data dir) that has no project config, so every guild gets the same
+// list. Project-only entries stay reachable through /agent, /command, /skill.
 //
 //   agent.list    primary agents  ─▶ /<agent>-agent prompt?
 //   command.list  commands        ─▶ /<cmd>-cmd arguments?
 //   skill.list    skills          ─▶ /<skill>-skill arguments?
+//
+// Like the OpenCode TUI (client/src/solid/data.ts), the catalog is re-read
+// when agent/command/skill.updated arrive, and after every reconnect (events
+// sent while disconnected are lost):
+//
+//   agent|command|skill.updated ─▶ read catalog ─▶ buildCommands ─▶ PUT guild commands (if changed)
+//   server.connected            ─┘
 //
 // Commands with a colon get no slash command. OpenCode names MCP prompts
 // "server:prompt" and command.list has no source field, so the colon is the
@@ -23,7 +32,7 @@
 //
 // Discord allows 100 commands per guild; skills are cut first.
 
-import fs from 'node:fs'
+import path from 'node:path'
 import {
   Events,
   MessageFlags,
@@ -46,7 +55,7 @@ import { applyAgent, createPreferenceRoutes, switchModel, variantChoices, varian
 import { sessionRoutes } from './commands/session-commands.ts'
 import { SKIPPED_COMMANDS, threadRoutes } from './commands/thread-commands.ts'
 import { worktreeRoutes } from './commands/worktree-commands.ts'
-import { ConfigError, DbError, DiscordError, FilesystemError } from './errors.ts'
+import { ConfigError, DiscordError } from './errors.ts'
 import { canUseKimaki } from './ingress.ts'
 import {
   authorOf,
@@ -71,6 +80,7 @@ const logger = createLogger('COMMANDS')
 
 const MAX_COMMANDS = 100
 const NAME_LIMIT = 32
+const CATALOG_EVENTS: ReadonlySet<string> = new Set(['server.connected', 'agent.updated', 'command.updated', 'skill.updated'])
 
 // --- The registry: every feature's tables, combined once per bot.
 
@@ -153,13 +163,8 @@ export type Catalog = {
   skills: ReadonlyArray<{ id: string; description?: string }>
 }
 
-export async function readCatalog(bot: Pick<Bot, 'opencode'>, directory: string) {
-  const stat = await fs.promises.stat(directory).catch((cause: NodeJS.ErrnoException) => {
-    if (cause.code === 'ENOENT' || cause.code === 'ENOTDIR') return null
-    return new FilesystemError({ operation: `read project directory ${directory}`, cause })
-  })
-  if (stat instanceof Error) return stat
-  if (!stat?.isDirectory()) return null
+async function readCatalog(bot: Pick<Bot, 'opencode'>, directory: string): Promise<Error | Catalog> {
+  // Waits for plugin activation, so a cold location returns its full catalog.
   const ready = await catalogReady(bot, directory)
   if (ready instanceof Error) return ready
   const location = { directory }
@@ -267,7 +272,11 @@ export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIC
     commands.push(builder.toJSON())
   }
 
-  for (const agent of catalog.agents) {
+  // Sorted: the same catalog always keeps the same commands under the limit,
+  // whatever order OpenCode lists them in.
+  const sorted = <T>(items: readonly T[], key: (item: T) => string) =>
+    items.toSorted((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
+  for (const agent of sorted(catalog.agents, (agent) => agent.id)) {
     if (agent.mode === 'subagent' || agent.hidden) continue
     add({
       name: discordCommandName(agent.id, '-agent'),
@@ -275,7 +284,7 @@ export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIC
       text: agent.description || `Switch to the ${agent.name} agent`,
     })
   }
-  for (const command of catalog.commands) {
+  for (const command of sorted(catalog.commands, (command) => command.name)) {
     if (SKIPPED_COMMANDS.has(command.name) || command.name.includes(':')) continue
     add({
       name: discordCommandName(command.name, '-cmd'),
@@ -283,7 +292,7 @@ export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIC
       text: command.description || `Run /${command.name}`,
     })
   }
-  for (const skill of catalog.skills) {
+  for (const skill of sorted(catalog.skills, (skill) => skill.id)) {
     add({
       name: discordCommandName(skill.id, '-skill'),
       target: { kind: 'skill', id: skill.id },
@@ -369,58 +378,21 @@ async function handleDynamic(bot: Bot, { interaction, target }: { interaction: C
 // Registers the interaction listener and keeps every guild's commands in line
 // with the OpenCode catalog. Returns registerAll and stop.
 export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
-  const { discord, db } = bot
+  const { discord } = bot
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
-
-  async function catalogFor(directories: readonly string[], reads: Map<string, Promise<Catalog | null>>): Promise<Catalog> {
-    const catalog: { agents: Catalog['agents'][number][]; commands: Catalog['commands'][number][]; skills: Catalog['skills'][number][] } = {
-      agents: [],
-      commands: [],
-      skills: [],
-    }
-    for (const directory of directories) {
-      const pending = reads.get(directory) ?? readCatalog(bot, directory).then((result) => {
-        if (result instanceof Error) {
-          logger.warn(`${directory}: ${result.message}${result.cause instanceof Error ? `: ${result.cause.message}` : ''}`)
-          return null
-        }
-        return result
-      })
-      reads.set(directory, pending)
-      const found = await pending
-      if (!found) continue
-      // Union by name: the first project that has a name wins.
-      catalog.agents.push(...found.agents.filter((agent) => catalog.agents.every((known) => known.id !== agent.id)))
-      catalog.commands.push(...found.commands.filter((command) => catalog.commands.every((known) => known.name !== command.name)))
-      catalog.skills.push(...found.skills.filter((skill) => catalog.skills.every((known) => known.id !== skill.id)))
-    }
-    return catalog
-  }
+  // A location with no project config: its catalog is the global one.
+  const globalDirectory = path.resolve(bot.dataDir)
 
   // Last commands set per guild: an unchanged list is not sent again (Discord
   // limits command creates to 200 per day per guild).
   const registered = new Map<string, string>()
 
-  async function registerGuild(guild: Guild, reads: Map<string, Promise<Catalog | null>>): Promise<void> {
-    const rows = await db.query.channel_directories
-      .findMany({ where: { channel_type: 'text' } })
-      .catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
-    if (rows instanceof Error) {
-      logger.warn(rows.message)
-      return
-    }
-    // Rows from before guild_id was stored belong to any guild.
-    const directories = [...new Set(rows.filter((row) => !row.guild_id || row.guild_id === guild.id).map((row) => row.directory))]
-    const built = buildCommands({ fixed: registry.definitions, catalog: await catalogFor(directories, reads) })
-    if (passes.closed) return
+  async function registerGuild(guild: Guild, built: ReturnType<typeof buildCommands>): Promise<void> {
     const signature = JSON.stringify(built.commands)
     if (registered.get(guild.id) === signature) {
       dynamic.set(guild.id, built.dynamic)
       return
-    }
-    if (built.dropped > 0) {
-      logger.log(`${built.dropped} catalog shortcuts do not fit in guild ${guild.id}; all entries remain available through /agent, /command and /skill`)
     }
     const result = await discord.application?.commands
       .set(built.commands, guild.id)
@@ -510,8 +482,18 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
       try {
         while (passes.dirty && !passes.closed) {
           passes.dirty = false
-          const reads = new Map<string, Promise<Catalog | null>>()
-          await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild, reads)))
+          const read = await readCatalog(bot, globalDirectory)
+          if (passes.closed) return
+          if (read instanceof Error) {
+            // The next catalog event or reconnect retries.
+            logger.warn(`global catalog: ${read.message}${read.cause instanceof Error ? `: ${read.cause.message}` : ''}`)
+            return
+          }
+          const built = buildCommands({ fixed: registry.definitions, catalog: read })
+          if (built.dropped > 0) {
+            logger.log(`${built.dropped} catalog shortcuts do not fit in Discord's 100 commands; all entries remain available through /agent, /command and /skill`)
+          }
+          await Promise.all([...discord.guilds.cache.values()].map((guild) => registerGuild(guild, built)))
         }
       } finally {
         passes.active = null
@@ -522,12 +504,13 @@ export function registerSlashCommands(bot: Bot, registry: InteractionRegistry) {
   }
 
   discord.on(Events.GuildCreate, () => void registerAll())
-  // agent/command/skill.updated are ephemeral hints (no payload). OpenCode sends
-  // them while a location loads (a cold start returns an incomplete catalog) and
-  // when skill files change, so a pass re-reads the lists and Discord is only
-  // written when the resulting commands differ.
+  // agent/command/skill.updated are ephemeral hints (no payload) sent on every
+  // catalog change of one location: plugin activation after a cold boot, edited
+  // skill or agent files. Events of any location count: OpenCode unloads idle
+  // locations, so a global change may only show up in a project location.
+  // server.connected follows each reconnect: hints sent while disconnected are lost.
   const unsubscribe = bot.opencode.subscribe((event) => {
-    if (event.type === 'agent.updated' || event.type === 'command.updated' || event.type === 'skill.updated') void registerAll()
+    if (CATALOG_EVENTS.has(event.type)) void registerAll()
   })
 
   return {

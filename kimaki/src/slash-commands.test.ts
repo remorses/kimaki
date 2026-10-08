@@ -6,7 +6,8 @@ import { expect, test } from 'vitest'
 import { buildCommands, createInteractionRegistry } from './slash-commands.ts'
 
 test('catalog names are sanitized, keep their suffix, skip collisions and MCP prompts, and stop at 100 commands', () => {
-  const { commands, dynamic } = buildCommands({ fixed: createInteractionRegistry().definitions, catalog: {
+  const fixed = createInteractionRegistry().definitions
+  const catalog = {
     agents: [
       { id: 'gpt5.4', name: 'GPT 5.4', mode: 'primary', hidden: false },
       { id: 'explore', name: 'Explore', mode: 'subagent', hidden: false },
@@ -17,12 +18,19 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
       // MCP prompt: no slash command.
       { name: 'github:create-pull-request' },
       { name: 'a-very-long-command-name-that-goes-on-and-on' },
-      // Sanitizes to the same Discord name as the one before: first wins.
+      // Sanitizes to the same Discord name as the one before: the first in name order wins (uppercase sorts first).
       { name: 'A_VERY_LONG_COMMAND_NAME_THAT_GOES_ON_AND_ON' },
       { name: 'queue' },
     ],
     skills: Array.from({ length: 90 }, (_, index) => ({ id: `skill-${index}` })),
-  } })
+  }
+  const { commands, dynamic } = buildCommands({ fixed, catalog })
+  // OpenCode's list order does not change which commands fit.
+  const reversed = buildCommands({
+    fixed,
+    catalog: { agents: catalog.agents.toReversed(), commands: catalog.commands.toReversed(), skills: catalog.skills.toReversed() },
+  })
+  expect(reversed.commands).toEqual(commands)
   const names = commands.map((command) => command.name)
   expect(names.length).toBe(100)
   expect(names.filter((name) => !name.startsWith('skill-'))).toMatchInlineSnapshot(`
@@ -65,7 +73,7 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
     {
       "a-very-long-command-name-tha-cmd": {
         "kind": "command",
-        "name": "a-very-long-command-name-that-goes-on-and-on",
+        "name": "A_VERY_LONG_COMMAND_NAME_THAT_GOES_ON_AND_ON",
       },
       "gpt5-4-agent": {
         "kind": "agent",

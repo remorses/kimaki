@@ -297,7 +297,8 @@ export type OpencodeConnection = {
   readonly endpoint: OpencodeEndpoint | null
   // Resolves on the first successful connect, or with the fatal error.
   readonly ready: Promise<Error | OpencodeEndpoint>
-  // Live events after hydration, in addition to the onEvent callback. Returns the unsubscribe.
+  // Live events after hydration, in addition to the onEvent callback. Each
+  // (re)connect starts with server.connected. Returns the unsubscribe.
   subscribe: (listener: (event: V2Event) => void) => () => void
   stop: () => void
 }
@@ -386,6 +387,9 @@ export function watchOpencode({
       phase.booting = false
       state.connected = true
       state.endpoint = endpoint
+      // After the endpoint switch, so listeners refetch from the new server:
+      // ephemeral events sent while disconnected are lost.
+      for (const listener of listeners) listener(first.value)
       readyDeferred.resolve(endpoint)
       logger.log(`connected to OpenCode ${endpoint.version} at ${endpoint.url}`)
       return consume

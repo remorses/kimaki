@@ -8,7 +8,6 @@ import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
-import { readCatalog } from './slash-commands.ts'
 import {
   TEST_USER_ID,
   seedProjectChannel,
@@ -111,17 +110,6 @@ test('the bot registers exactly the static and catalog commands in the guild', a
     ]
   `)
   expect(await twin.discord.getRegisteredCommands({ guildId: null })).toEqual([])
-})
-
-test('catalog discovery skips missing folders and file paths while keeping valid projects', async () => {
-  expect(await readCatalog(bot, path.join(server.root, 'missing-project'))).toBeNull()
-  const file = path.join(server.root, 'not-a-directory.txt')
-  fs.writeFileSync(file, 'not a project')
-  expect(await readCatalog(bot, file)).toBeNull()
-  const catalog = await readCatalog(bot, server.projectDirectory)
-  expect(catalog).not.toBeInstanceOf(Error)
-  if (!catalog || catalog instanceof Error) throw new Error('valid project catalog missing')
-  expect(catalog.commands.some((command) => command.name === 'hello')).toBe(true)
 })
 
 test('/skill and /command run catalog entries through project autocomplete', async () => {
