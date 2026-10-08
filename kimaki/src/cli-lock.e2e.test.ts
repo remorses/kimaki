@@ -186,7 +186,7 @@ test('CLI help documents the supported P7 commands', async () => {
       buttons                           Show 1-3 action buttons. Call last, after visible text
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
-        -b, --button <spec>             Repeatable: Label[=command][:white|blue|green|red]
+        -b, --button <spec>             Repeatable: Label[:white|blue|green|red]
 
       upload-request                    Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes
         --data-dir <path>               Data directory (default: ~/.kimaki)

@@ -361,8 +361,7 @@ export const lockRoutes = {
       ...agentUiFields,
       buttons: z.array(buttonSpec, { error: 'Use 1 to 3 --button flags' })
         .min(1, { error: 'Use 1 to 3 --button flags' })
-        .max(3, { error: 'Use 1 to 3 --button flags' })
-        .refine((buttons) => buttons.map((item) => item.command ?? '').join('\n').length <= 1800, { error: 'Button commands must fit in one Discord message' }),
+        .max(3, { error: 'Use 1 to 3 --button flags' }),
     }, { error: 'Expected agent UI input' }),
     run: async (bot, { buttons, threadId, ...input }, signal) => {
       const sessionId = sessionOf(bot, { ...input, threadId })

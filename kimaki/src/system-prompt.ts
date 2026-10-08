@@ -146,8 +146,7 @@ export function baseInstructions({
       ## action buttons
 
       To show 1 to 3 buttons, write all visible text first, then run \`kimaki buttons --button 'Label'\`. Repeat \`--button\` for more. Prefer a single button whenever possible. Colors are white, blue, green, red: \`--button 'Label:green'\`.
-      A normal button sends "User clicked: Label" to this session as a new prompt. A button with a command, \`--button 'Build=pnpm build:green'\`, runs that shell command in the project directory when clicked, streams the output to Discord, and starts no model turn. You do not see the output unless the user replies to it.
-      Offer a command button when the user's next step is a command, for example \`--button 'Run tests=pnpm test --run'\` after a fix. The label is display text only (max 80 chars); never put the command in it. All labels and commands must fit in one 2000-char Discord message; put long commands in a script file.
+      A click sends "User clicked: Label" to this session as a new prompt. Labels have at most 80 chars.
       You MUST call \`kimaki buttons\` LAST, after ALL text. Never call it in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
 
       ## sleeping the session

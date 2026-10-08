@@ -74,7 +74,7 @@ export type Child = {
 }
 
 // Buttons and upload requests from `kimaki buttons` / `kimaki upload-request` (agent-ui.ts).
-export type AgentButton = { label: string; command?: string; color: 'white' | 'blue' | 'green' | 'red' }
+export type AgentButton = { label: string; color: 'white' | 'blue' | 'green' | 'red' }
 export type AgentPrompt = { id: string; sessionId: string; buttons?: AgentButton[]; prompt?: string; maxFiles?: number }
 
 // A tool call between session.tool.input.started and its success or failure.
@@ -554,9 +554,8 @@ const BUTTON_STYLES = { white: ButtonStyle.Secondary, blue: ButtonStyle.Primary,
 function showAgentPrompt({ draft, emit, prompt }: Pick<Context, 'draft' | 'emit'> & { prompt: AgentPrompt }) {
   const buttons = prompt.buttons?.map((item, index) => button({ customId: `action_button:${prompt.id}:${index}`, label: item.label, style: BUTTON_STYLES[item.color] }))
     ?? [button({ customId: `file_upload_btn:${prompt.id}`, label: 'Upload files' })]
-  const commands = prompt.buttons?.flatMap((item) => (item.command ? [`${item.label}: \`${item.command}\``] : [])) ?? []
   draft.agentUi.push(prompt)
-  emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, notify: true, messages: [{ content: prompt.prompt ?? commands.join('\n'), components: [buttonRow(buttons)] }] })
+  emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, notify: true, messages: [{ content: prompt.prompt ?? '', components: [buttonRow(buttons)] }] })
 }
 
 function dismissAgentPrompts({ draft, emit, ids }: Pick<Context, 'draft' | 'emit'> & { ids: readonly string[] }) {

@@ -115,7 +115,7 @@ The test raced the session cookie. I await it now.    ◀── final text, full
 ### Things the agent can do to the user
 
 - ask multiple-choice questions (dropdowns)
-- show 1-3 **action buttons** (click sends `User clicked: X` or runs a shell command)
+- show 1-3 **action buttons** (click sends `User clicked: X`)
 - request **file uploads** (native Discord file picker)
 - **sleep** for hours or days and wake itself up in the same thread
 - **upload files** to the thread (`kimaki upload-to-discord`)
@@ -1153,7 +1153,6 @@ Consequences:
   lands, `!cmd. queue` becomes `session.shell({ command, delivery: 'queue' })` with no
   Kimaki state.
 - the TUI and `session read` show the command too (it is part of the session history)
-- action buttons with `command` use the same call
 - delete `commands/run-command.ts` process spawning and the "shell output as context"
   plumbing; keep only the throttled Discord renderer (1 edit/s, new message past 2000
   chars) fed by `shell.output`
@@ -1425,7 +1424,7 @@ key per-session data by `sessionID`; no `console.*`; no imports of the bot logge
 | Tool | Args | Behavior today | V2 |
 |---|---|---|---|
 | `kimaki_file_upload` | `prompt`, `maxFiles` 1-10 (5) | waits for Discord upload, returns local paths | form or RPC request/reply |
-| `kimaki_action_buttons` | `buttons[1..3]: { label ≤80, command?, color? }` | bot renders buttons; total must fit 2000 chars | tool returns immediately; bot reads input from events |
+| `kimaki_action_buttons` | `buttons[1..3]: { label ≤80, color? }` | bot renders buttons | tool returns immediately; bot reads input from events |
 | `kimaki_sleep` | `duration` or `until` (UTC Z), `reason?` | durable wake in same session | tool returns immediately; bot persists wake |
 | bash schema change | adds `description`, `hasSideEffect`, `summary` | drives Discord verbosity | keep |
 
@@ -1449,7 +1448,7 @@ can be a CLI command that calls the bot directly:
 | Tool | CLI command | Lock port route | Blocks? |
 |---|---|---|---|
 | `kimaki_sleep` | `kimaki sleep (--duration 2h \| --until <Z>) [--reason]` | `POST /kimaki/sleep` | no: bot stores the wake, prints wake time |
-| `kimaki_action_buttons` | `kimaki buttons --button 'Label' --button 'Build=pnpm build:green'` | `POST /kimaki/buttons` | no: bot renders, prints "shown" |
+| `kimaki_action_buttons` | `kimaki buttons --button 'Label' --button 'Approve:green'` | `POST /kimaki/buttons` | no: bot renders, prints "shown" |
 | `kimaki_file_upload` | `kimaki upload-request --prompt 'Send the logo' [--max-files 5]` | `POST /kimaki/upload-request` (long request) | yes: returns the local paths when the user uploads, or "cancelled" |
 
 ```
@@ -1477,7 +1476,7 @@ agent bash ──kimaki buttons …──▶ ~/.kimaki/bin shim ──POST /kima
 | **bash line noise**: `┣ bash kimaki buttons …` appears in Discord | the model passes `description` (e.g. "show build button"); or the renderer hides shell calls whose command starts with `kimaki buttons\|sleep\|upload-request` (a string check; acceptable because Kimaki owns both sides) |
 | **upload waits minutes**, bash default timeout is 2 min | the command description in the system prompt says to set the bash timeout to 10 min; the bot also answers `timeout` after 6 min so the command always exits |
 | **interrupt** while waiting for an upload | OpenCode kills the bash process, the HTTP connection closes, the bot sees `close` and removes the upload button. A new user message makes the bot answer "cancelled" |
-| **argument quoting**: JSON in bash is error-prone | flat repeatable flags (`--button 'Label[=command][:color]'`), no JSON |
+| **argument quoting**: JSON in bash is error-prone | flat repeatable flags (`--button 'Label[:color]'`), no JSON |
 | **discoverability**: tools are in the tool list, CLI commands only in the system prompt | the system prompt already documents `kimaki` commands at length; move the three tool descriptions there |
 | **sleep cancel** rule | the bot deletes the sleep row on any new user prompt to that session (it sees them in ingress) |
 
@@ -1496,7 +1495,7 @@ Help additions (group **Agent**):
 
   buttons                              Show 1-3 buttons in the session thread. Call it last, after your text
 
-    -b, --button <spec>                Repeatable, max 3: 'Label', 'Label=command', 'Label:color', 'Label=command:color'
+    -b, --button <spec>                Repeatable, max 3: 'Label' or 'Label:color'
                                        Colors: white (default), blue, green, red
     -s, --session <sessionId>          Session whose thread gets the buttons (default: OPENCODE_SESSION_ID)
 
@@ -3012,7 +3011,7 @@ optionally `file-edit-events.jsonl`.
 | typing timers | restarted from the next busy event | none needed |
 | pending question dropdowns, permission buttons | re-rendered from `form.list` / `permission.list` at startup; custom IDs carry native IDs, so old buttons still work | built in |
 | queue acks | source message ID maps to the inbox item (`msg_discord_<id>`): delete still works | built in |
-| **action buttons** (`kimaki buttons`) | today stored in memory with a 24h TTL and `action_button:<hash>:<i>`; after a restart clicks fail | encode the button in the custom ID when it fits (`ab:<sessionId>:<i>`) and read label/command back from the rendered message's components, so no store is needed |
+| **action buttons** (`kimaki buttons`) | today stored in memory with a 24h TTL and `action_button:<hash>:<i>`; after a restart clicks fail | encode the button in the custom ID when it fits (`ab:<sessionId>:<i>`) and read the label back from the rendered message's components, so no store is needed |
 | upload requests | the waiting CLI call is dropped with the connection | the CLI prints an error; the agent can ask again |
 | slash command wizards (`/model`, `/login`) | user reruns the command | none needed |
 

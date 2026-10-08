@@ -17,7 +17,7 @@ export function registerAgentUiCommands(cli: Goke) {
   cli.command('buttons', 'Show 1-3 action buttons. Call last, after visible text')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
-    .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[=command][:white|blue|green|red]" }))
+    .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[:white|blue|green|red]" }))
     .action(async (options) => {
       await action({ route: 'buttons', dataDir: options.dataDir, input: { ...targetOrEnv(options.session), buttons: options.button ?? [], ...agentShell() } })
     })

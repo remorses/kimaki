@@ -13,7 +13,7 @@ beforeAll(async () => {
   ;[server, twin] = await Promise.all([startOpencodeTestServer({ matchers: [
     { id: 'buttons', priority: 100, when: { latestUserTextIncludes: 'button-marker' }, then: { parts: [
       { type: 'text-start', id: 'intro' }, { type: 'text-delta', id: 'intro', delta: 'Choose the next action.' }, { type: 'text-end', id: 'intro' },
-      ...toolParts({ toolCallId: 'buttons-call', toolName: 'shell', input: { command: "kimaki buttons --button 'Proceed' --button 'Build=printf built:green'", description: 'Show choices', hasSideEffect: true } }),
+      ...toolParts({ toolCallId: 'buttons-call', toolName: 'shell', input: { command: "kimaki buttons --button 'Proceed' --button 'Build:green'", description: 'Show choices', hasSideEffect: true } }),
     ] } },
     { id: 'buttons-done', priority: 110, when: { latestUserTextIncludes: 'button-marker', rawPromptIncludes: 'buttons-call' }, then: { parts: textParts('Buttons shown.') } },
     { id: 'click', priority: 200, when: { latestUserTextIncludes: 'User clicked: Proceed' }, then: { parts: textParts('Proceed accepted.') } },

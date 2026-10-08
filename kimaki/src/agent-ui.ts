@@ -14,14 +14,10 @@ import type { AgentButton, AgentPrompt, ThreadView } from './thread-reducer.ts'
 export function parseButton(value: string): ConfigError | AgentButton {
   const match = value.match(/:(white|blue|green|red)$/)
   const color = match?.[1] ?? 'white'
-  const body = match ? value.slice(0, -match[0].length) : value
-  const equal = body.indexOf('=')
-  const label = equal < 0 ? body : body.slice(0, equal)
+  const label = match ? value.slice(0, -match[0].length) : value
   if (!label.trim() || label.length > 80) return new ConfigError({ reason: 'Button labels must have 1 to 80 characters' })
-  const command = equal < 0 ? undefined : body.slice(equal + 1)
-  if (command !== undefined && !command.trim()) return new ConfigError({ reason: 'Button command must not be empty' })
   if (color !== 'white' && color !== 'blue' && color !== 'green' && color !== 'red') return new ConfigError({ reason: 'Unknown button color' })
-  return { label, color, ...(command && { command }) }
+  return { label, color }
 }
 
 type UploadResult = { paths: string[] } | { cancelled: true }
@@ -192,7 +188,7 @@ export function createAgentUi(bot: Pick<Bot, 'store' | 'eventLoop' | 'opencode'>
   }
 }
 
-// Buttons of an agent prompt: an action button sends its text or command; the
+// Buttons of an agent prompt: an action button sends `User clicked: <label>`; the
 // upload button opens the file modal.
 async function clickAgentButton(bot: Bot, interaction: ButtonInteraction) {
   const [, id = '', index = '0'] = interaction.customId.split(':')
@@ -210,8 +206,7 @@ async function clickAgentButton(bot: Bot, interaction: ButtonInteraction) {
   const item = prompt.buttons[Number(index)]
   if (!item) return
   bot.eventLoop.dispatch(interaction.channelId, { type: 'kimaki.agent-ui-dismiss', id })
-  const text = item.command ? `!${item.command}` : `User clicked: ${item.label}`
-  const result = await send(bot, { threadId: interaction.channelId, prompt: text, user: interaction.user.id })
+  const result = await send(bot, { threadId: interaction.channelId, prompt: `User clicked: ${item.label}`, user: interaction.user.id })
   if (result instanceof Error) await interaction.followUp({ content: result.message, flags: MessageFlags.Ephemeral })
 }
 
