@@ -4,7 +4,7 @@
 import { expect, test } from 'vitest'
 
 import { queuedItems } from './queue.ts'
-import { isBusy, type ThreadEvent } from './thread-reducer.ts'
+import { emptyView, isBusy, type ThreadEvent } from './thread-reducer.ts'
 import { effectLines, loadFixture, replay } from './test/replay.ts'
 
 test('tools: names from tool.input.started, failed tool lines, read-only tools hidden, one footer', () => {
@@ -306,6 +306,31 @@ test('permission: two requests, the rejected one fails its tool call', () => {
     ]
   `)
   expect(view.permissions).toMatchInlineSnapshot(`{}`)
+})
+
+test('shell-background: background shell line even without side effects, finished line when its job ends', () => {
+  const events = loadFixture('shell-background.events.jsonl')
+  const view = emptyView({ sessionId: 'ses_ee56d6caeffech0rMI5NTnkky1', channelId: 'channel', directory: '/project', isNew: false })
+  const { effects, view: end } = replay({ events, view, prefs: { verbosity: 'tools', contextLimits: {} } })
+  expect(effectLines(effects)).toMatchInlineSnapshot(`
+    [
+      "[typing on]",
+      "-# ┣ shell _Run sleep 100 in background_ (background)",
+      "\\nI started \`sleep 100\` in the background (shell ID \`sh_11a929cf5001mAukdL6rQFIbLg\`). It ends in about 100 seconds, and I get a notification when it does.",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 4s ⋅ claude-opus-5-5 ⋅ opus*",
+      "[typing on]",
+      "Yes, it is still running (PID 47861). I have not had the completion notification yet.",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 5s ⋅ claude-opus-5-5 ⋅ opus*",
+      "-# ⬦ background shell finished: _Run sleep 100 in background_",
+      "[typing on]",
+      "\\nThe background \`sleep 100\` has finished. It printed no output.",
+      "[typing off]",
+      "-# *project ⋅ main ⋅ 2s ⋅ claude-opus-5-5 ⋅ opus*",
+    ]
+  `)
+  expect(end.shells).toMatchInlineSnapshot(`{}`)
 })
 
 test('shell: user !cmd output while idle and while busy, synthetic items render nothing', () => {

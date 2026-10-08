@@ -41,6 +41,7 @@ import {
   formatError,
   formatRetry,
   formatShellEnded,
+  formatShellFinished,
   formatShellStarted,
   formatSubagentFinished,
   formatToolFailed,
@@ -86,6 +87,8 @@ export type ToolCall = {
   subagent: { agent: string; description: string; background: boolean } | null
   // Code Mode `execute`: inner tool calls that already got a line.
   innerCalls: number
+  // A `shell` call with `background: true`: the label of its finished line.
+  backgroundShell: string | null
 }
 
 export type ThreadView = {
@@ -102,6 +105,8 @@ export type ThreadView = {
   tools: Readonly<Record<string, ToolCall>>
   agentUi: readonly AgentPrompt[]
   children: Readonly<Record<string, Child>>
+  // Background shells started by tool calls: shell ID -> label, until their job ends.
+  shells: Readonly<Record<string, string>>
   // Blank line between text and tool blocks.
   lastKind: 'text' | 'tool' | null
   lastRetryAt: number | null
@@ -194,6 +199,7 @@ export function emptyView({
     tools: {},
     agentUi: [],
     children: {},
+    shells: {},
     lastKind: null,
     lastRetryAt: null,
     cached: null,
@@ -297,6 +303,9 @@ function applyOpencode({ draft, event, prefs, emit }: Context & { event: V2Event
   if (sessionId !== draft.sessionId && !child) return
   // Questions and permissions of subagents show in this thread too.
   const label = child?.agent ?? null
+  if (event.type === 'session.inbox.enqueued' && event.data.item.type === 'synthetic' && !child?.background) {
+    return showShellFinished({ draft, prefs, emit, metadata: event.data.item.payload.metadata ?? {}, label })
+  }
   switch (event.type) {
     case 'form.created':
       return showForm({ draft, emit, form: event.data.form, label })
@@ -449,13 +458,14 @@ function applyTool(context: Context & { event: V2Event; label: string | undefine
   const { draft, event, prefs, label, render } = context
   switch (event.type) {
     case 'session.tool.input.started':
-      draft.tools[toolKey(event.data)] = { name: event.data.name, phase: 'input', subagent: null, innerCalls: 0 }
+      draft.tools[toolKey(event.data)] = { name: event.data.name, phase: 'input', subagent: null, innerCalls: 0, backgroundShell: null }
       return
     case 'session.tool.called': {
       const key = toolKey(event.data)
       const name = draft.tools[key]?.name ?? 'tool'
       const input = event.data.input
-      const tool: ToolCall = { name, phase: 'called', subagent: null, innerCalls: 0 }
+      const backgroundShell = name === 'shell' && input['background'] === true ? stringInput(input, 'description') || stringInput(input, 'command') : null
+      const tool: ToolCall = { name, phase: 'called', subagent: null, innerCalls: 0, backgroundShell }
       if (name === 'subagent') {
         const reused = typeof input['sessionID'] === 'string' ? draft.children[input['sessionID']] : undefined
         const call = { agent: stringInput(input, 'agent'), description: stringInput(input, 'description'), background: input['background'] === true }
@@ -470,6 +480,11 @@ function applyTool(context: Context & { event: V2Event; label: string | undefine
     case 'session.tool.progress': {
       const tool = draft.tools[toolKey(event.data)]
       if (tool?.name === 'execute') return showInnerCalls({ ...context, tool, metadata: event.data.metadata })
+      const shellId = event.data.metadata['shellID']
+      if (tool && tool.backgroundShell !== null && typeof shellId === 'string') {
+        draft.shells[shellId] = tool.backgroundShell
+        return
+      }
       const childId = event.data.metadata['sessionID']
       if (typeof childId !== 'string' || !tool?.subagent) return
       draft.children[childId] = { ...tool.subagent, running: draft.children[childId]?.running ?? false }
@@ -512,6 +527,26 @@ function showInnerCalls({
   for (const call of calls) {
     if (isToolVisible(call, context.prefs.verbosity)) toolLine(context, formatToolLine(call, { label }))
   }
+}
+
+// OpenCode tells the agent a background shell ended with a synthetic inbox item.
+// Only background jobs carry `jobID`; user `!cmd` shells have their own lines.
+function showShellFinished({
+  metadata,
+  label,
+  ...context
+}: Context & { metadata: Readonly<Record<string, unknown>>; label: string | null }) {
+  const { shellID, jobID, state, exit } = metadata
+  if (metadata['source'] !== 'shell' || typeof shellID !== 'string' || typeof jobID !== 'string') return
+  const description = context.draft.shells[shellID] ?? null
+  delete context.draft.shells[shellID]
+  if (context.prefs.verbosity === 'text') return
+  toolLine(context, formatShellFinished({
+    description,
+    state: typeof state === 'string' ? state : null,
+    exit: typeof exit === 'number' ? exit : null,
+    label: label ?? undefined,
+  }))
 }
 
 const BUTTON_STYLES = { white: ButtonStyle.Secondary, blue: ButtonStyle.Primary, green: ButtonStyle.Success, red: ButtonStyle.Danger } as const

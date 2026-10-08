@@ -234,14 +234,16 @@ export function isToolVisible({ name, input }: ToolCall, verbosity: Verbosity): 
   if (FILE_EDIT_TOOLS.has(name)) return true
   if (verbosity === 'text') return false
   if (READ_ONLY_TOOLS.has(name)) return false
-  if (name === 'shell' && input['hasSideEffect'] === false) return false
+  // A background shell gets a finished line later: its start must show too.
+  if (name === 'shell' && input['hasSideEffect'] === false && input['background'] !== true) return false
   return true
 }
 
 function toolBody({ name, input }: ToolCall): { glyph: '┣' | '◼︎'; text: string } {
   if (name === 'shell') {
     const detail = stringField(input, 'description') ?? stringField(input, 'command')
-    return { glyph: '┣', text: detail ? `shell _${inline(detail)}_` : 'shell' }
+    const background = input['background'] === true ? ' (background)' : ''
+    return { glyph: '┣', text: `${detail ? `shell _${inline(detail)}_` : 'shell'}${background}` }
   }
   if (name === 'edit') {
     const { added, removed } = editStats({
@@ -349,6 +351,25 @@ export function formatSubagentFinished({ agent, description }: { agent: string; 
   return asSubtext(`⬦ ${inline(agent)} finished: ${inline(description)}`)
 }
 
+// `state` is OpenCode's job state; any value other than "completed" is shown.
+export function formatShellFinished({
+  description,
+  state,
+  exit,
+  label,
+}: {
+  description: string | null
+  state: string | null
+  exit: number | null
+  label?: string
+}): string {
+  const prefix = label ? `${inline(label)} ⋅ ` : ''
+  const notes = [
+    state && state !== 'completed' ? inline(state) : null,
+    exit !== null && exit !== 0 ? `exit ${exit}` : null,
+  ].filter((note) => note !== null)
+  return asSubtext(`⬦ ${prefix}background shell finished${description ? `: _${inline(description)}_` : ''}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`)
+}
 
 const SHELL_OUTPUT_LIMIT = 1_800
 

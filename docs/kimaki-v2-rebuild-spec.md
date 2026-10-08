@@ -3788,7 +3788,7 @@ long and formatted text.
 
 | File | Contents |
 |---|---|
-| `src/format-parts.ts` | pure: `formatTool({ name, input, status, error })`, footer, banner, verbosity filter. V2 tool names (29.2 #2): `shell` (description or command; hidden at `text` verbosity; hidden at `tools` when `hasSideEffect === false`), `edit` / `write` / `patch` (`◼︎` + file + `+a-d`), `read` / `glob` / `grep` (hidden at `text`, hidden at `tools` default), `todowrite` (active item), `subagent` (`┣ <agent> **<description>**`, `(background)` suffix), `question` and Kimaki UI tools (nothing), any other (`┣ <name> _<title>_`) |
+| `src/format-parts.ts` | pure: `formatTool({ name, input, status, error })`, footer, banner, verbosity filter. V2 tool names (29.2 #2): `shell` (description or command; hidden at `text` verbosity; hidden at `tools` when `hasSideEffect === false`, unless `background: true`, which adds a `(background)` suffix and an end line `-# ⬦ background shell finished: <description>` when OpenCode enqueues the job's synthetic result), `edit` / `write` / `patch` (`◼︎` + file + `+a-d`), `read` / `glob` / `grep` (hidden at `text`, hidden at `tools` default), `todowrite` (active item), `subagent` (`┣ <agent> **<description>**`, `(background)` suffix), `question` and Kimaki UI tools (nothing), any other (`┣ <name> _<title>_`) |
 | `src/markdown/` | `render-markdown.ts`: mdast parse → `groupCallouts` → `unnestCodeInLists` → `clampHeadings` → `toSegments` → node-based split (section 8). `components.ts`: table and callout → Components V2 payloads. One file per concern only if each is ≥100 lines |
 | `src/thread-reducer.ts` | new cases below |
 | `src/effects.ts` | `send` accepts `Segment[]`: text segments as content, table/callout segments with `IsComponentsV2` |
