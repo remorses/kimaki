@@ -71,6 +71,15 @@ export const bot_api_keys = s.sqliteTable('bot_api_keys', {
   created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
 })
 
+// Bot-wide settings that must survive restarts. Start flags like --voice write them.
+export const bot_settings = s.sqliteTable('bot_settings', {
+  app_id: s.text('app_id').primaryKey().notNull().references(() => bot_tokens.app_id, { onUpdate: 'cascade' }),
+  // Realtime voice of voice calls; null: the provider default (voice-call.ts).
+  voice_call_voice: s.text('voice_call_voice'),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
+})
+
 export const channel_models = s.sqliteTable('channel_models', {
   channel_id: s.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
   model_id: s.text('model_id').notNull(),
@@ -158,6 +167,7 @@ export const relations = defineRelations({
   thread_sessions,
   bot_tokens,
   bot_api_keys,
+  bot_settings,
   channel_directories,
   guild_categories,
   channel_models,
@@ -175,9 +185,13 @@ export const relations = defineRelations({
   bot_tokens: {
     api_keys: r.one.bot_api_keys({ from: r.bot_tokens.app_id, to: r.bot_api_keys.app_id }),
     global_model: r.one.global_models({ from: r.bot_tokens.app_id, to: r.global_models.app_id }),
+    settings: r.one.bot_settings({ from: r.bot_tokens.app_id, to: r.bot_settings.app_id }),
   },
   bot_api_keys: {
     bot: r.one.bot_tokens({ from: r.bot_api_keys.app_id, to: r.bot_tokens.app_id }),
+  },
+  bot_settings: {
+    bot: r.one.bot_tokens({ from: r.bot_settings.app_id, to: r.bot_tokens.app_id }),
   },
   global_models: {
     bot: r.one.bot_tokens({ from: r.global_models.app_id, to: r.bot_tokens.app_id }),

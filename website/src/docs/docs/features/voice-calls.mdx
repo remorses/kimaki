@@ -93,3 +93,39 @@ Kimaki picks the first key it finds, saved key before environment variable:
 | Gemini | `gemini-3.8-live` | built in (Google Search) |
 
 Only users who can use Kimaki (server owner, administrators, Manage Server, or the "Kimaki" role) are heard.
+
+## Choose the voice
+
+Each provider has its own **default voice**. The first line of a call shows the model and the voice: `⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin`.
+
+| Provider | Default | Other voices |
+| --- | --- | --- |
+| OpenAI | `marin` | `cedar`, `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse` |
+| xAI | `eve` | `ara`, `rex`, `sal`, `leo` and the rest of the [xAI voices](https://docs.x.ai/developers/model-capabilities/audio/text-to-speech#voices) |
+| Gemini | `Puck` | `Kore`, `Charon`, `Zephyr` and the rest of the [Gemini voices](https://ai.google.dev/gemini-api/docs/speech-generation#voices) |
+
+Pass **`--voice`** when you start Kimaki:
+
+```bash
+kimaki --voice cedar      # OpenAI voice
+kimaki --voice Kore       # Gemini voice; names are case-insensitive
+kimaki --voice default    # back to the provider default
+```
+
+An unknown name stops the start with the full list of voices. The running bot keeps running.
+
+The voice also **picks the provider**. Voice names never repeat across providers, so `--voice Kore` uses Gemini when a Gemini key is set, even if an OpenAI key is set too. Without a key for that provider, the call uses the usual key order (OpenAI, xAI, Gemini) with that provider's default voice, and the text chat says why.
+
+### The voice is saved
+
+Kimaki saves the voice in its SQLite database (`~/.kimaki/kimaki.db`). Pass the flag **once**; you do not need it again:
+
+| Event | Voice |
+| --- | --- |
+| `kimaki restart` | kept |
+| bot crash, computer reboot | kept |
+| autostart when OpenCode starts (`~/.kimaki/autostart.command`) | kept |
+| `kimaki` with no `--voice` | kept |
+| `kimaki --voice <other>` | replaced |
+
+The precedence is: `--voice` flag, then the saved voice, then the provider default. The autostart script does not need to change: it reads the saved voice like any other start. Each data directory (`--data-dir`) has its own voice.

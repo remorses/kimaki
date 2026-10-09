@@ -48,6 +48,7 @@ import { canUseKimaki } from './ingress.ts'
 import { createLogger } from './logger.ts'
 import { addVoiceChannel, listProjects } from './project.ts'
 import { formatEcho } from './queue.ts'
+import * as schema from './schema.ts'
 import { catalogReady } from './sessions.ts'
 import { voiceCallInstructions } from './system-prompt.ts'
 
@@ -87,28 +88,95 @@ export class NoRealtimeKeyError extends errore.createTaggedError({
 // Realtime WebSocket URLs; tests point OpenAI at a local fake.
 export type RealtimeBaseUrls = { openai?: string; xai?: string }
 
+const REALTIME_PROVIDERS = ['openai', 'xai', 'gemini'] as const
+type RealtimeProvider = (typeof REALTIME_PROVIDERS)[number]
+
+const PROVIDER_NAMES: Record<RealtimeProvider, string> = { openai: 'OpenAI', xai: 'xAI', gemini: 'Gemini' }
+
+// Built-in voices of each realtime API. No name repeats across providers, so a voice picks its provider.
+// OpenAI: the list in the error of session.update with an unknown voice (gpt-realtime-2.1, 2026-10).
+// xAI: KnownVoiceId in https://github.com/xai-org/xai-sdk-ts/blob/main/src/generated/voice.ts
+// Gemini: Live takes the TTS voices, https://ai.google.dev/gemini-api/docs/speech-generation#voices
+export const REALTIME_VOICES: Record<RealtimeProvider, readonly string[]> = {
+  openai: ['marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'],
+  xai: [
+    'eve', 'ara', 'rex', 'sal', 'leo', 'altair', 'atlas', 'aurora', 'carina', 'castor', 'celeste', 'cosmo', 'helios', 'helix',
+    'iris', 'kepler', 'liora', 'lumen', 'luna', 'lux', 'naksh', 'orion', 'perseus', 'rigel', 'sirius', 'ursa', 'zagan', 'zenith',
+  ],
+  gemini: [
+    'Puck', 'Zephyr', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede', 'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel',
+    'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima',
+    'Achird', 'Zubenelgenubi', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
+  ],
+}
+
+// Sent when no voice is saved: OpenAI's own default, xAI's documented default, Gemini's documented default.
+export const DEFAULT_REALTIME_VOICES: Record<RealtimeProvider, string> = { openai: 'marin', xai: 'eve', gemini: 'Puck' }
+
+export class UnknownVoiceError extends errore.createTaggedError({
+  name: 'UnknownVoiceError',
+  message: 'Unknown voice "$voice". Pass one of: $voices. Use --voice default to reset',
+}) {}
+
+// Case-insensitive; returns the canonical name of the voice and its provider.
+export function parseRealtimeVoice(name: string): UnknownVoiceError | { provider: RealtimeProvider; voice: string } {
+  const wanted = name.trim().toLowerCase()
+  for (const provider of REALTIME_PROVIDERS) {
+    const voice = REALTIME_VOICES[provider].find((candidate) => candidate.toLowerCase() === wanted)
+    if (voice) return { provider, voice }
+  }
+  const voices = REALTIME_PROVIDERS.map((provider) => `${PROVIDER_NAMES[provider]} ${REALTIME_VOICES[provider].join(', ')}`).join('; ')
+  return new UnknownVoiceError({ voice: name, voices })
+}
+
+// The --voice start flag: a voice saves it, "default" clears it.
+export async function saveVoiceCallVoice({ db, appId, voice }: { db: Bot['db']; appId: string; voice: string | null }): Promise<DbError | void> {
+  const saved = await db.insert(schema.bot_settings).values({ app_id: appId, voice_call_voice: voice })
+    .onConflictDoUpdate({ target: schema.bot_settings.app_id, set: { voice_call_voice: voice } })
+    .then(() => undefined)
+    .catch((cause) => new DbError({ operation: 'write bot_settings', cause }))
+  if (saved instanceof Error) return saved
+}
+
 // Same keys as voice transcription (bot_api_keys, then env), best first. OpenAI
 // has the most reliable tool calls. Its realtime API only takes function and MCP
 // tools, so web search is our web_search function (searchKey); xAI and Gemini search server-side.
 // https://developers.openai.com/api/docs/guides/realtime-mcp
-export async function realtimeModel(
-  bot: Pick<Bot, 'db' | 'token' | 'realtimeBaseUrls'>,
-): Promise<DbError | NoRealtimeKeyError | { adapter: Adapter; builtinSearch: string; searchKey: string | null }> {
+// A saved voice (kimaki --voice) moves its provider first when that key is set.
+// voiceNotice says why the saved voice is not used.
+export async function realtimeModel(bot: Pick<Bot, 'db' | 'token' | 'realtimeBaseUrls'>): Promise<
+  DbError | NoRealtimeKeyError | { adapter: Adapter; voice: string; voiceNotice: string | null; builtinSearch: string; searchKey: string | null }
+> {
   const row = await bot.db.query.bot_tokens
-    .findFirst({ where: { token: bot.token }, with: { api_keys: true } })
+    .findFirst({ where: { token: bot.token }, with: { api_keys: true, settings: true } })
     .catch((cause) => new DbError({ operation: 'read realtime keys', cause }))
   if (row instanceof Error) return row
   const keys = row?.api_keys
-  const openaiKey = keys?.openai_api_key || process.env['OPENAI_API_KEY']
-  if (openaiKey) return { adapter: openai({ apiKey: openaiKey, baseUrl: bot.realtimeBaseUrls.openai }), builtinSearch: 'web_search', searchKey: openaiKey }
-  const xaiKey = keys?.xai_api_key || process.env['XAI_API_KEY']
-  if (xaiKey) {
-    const builtinTools = [{ type: 'web_search' }, { type: 'x_search' }]
-    return { adapter: xai({ apiKey: xaiKey, builtinTools, baseUrl: bot.realtimeBaseUrls.xai }), builtinSearch: 'web_search and x_search', searchKey: null }
+  const available = [
+    { provider: 'openai' as const, key: keys?.openai_api_key || process.env['OPENAI_API_KEY'] },
+    { provider: 'xai' as const, key: keys?.xai_api_key || process.env['XAI_API_KEY'] },
+    { provider: 'gemini' as const, key: keys?.gemini_api_key || process.env['GEMINI_API_KEY'] },
+  ].flatMap(({ provider, key }) => (key ? [{ provider, key }] : []))
+  const savedName = row?.settings?.voice_call_voice ?? null
+  const parsed = savedName === null ? null : parseRealtimeVoice(savedName)
+  const saved = parsed instanceof Error ? null : parsed
+  const chosen = available.find((entry) => entry.provider === saved?.provider) ?? available[0]
+  if (!chosen) return new NoRealtimeKeyError()
+  const voice = saved?.provider === chosen.provider ? saved.voice : DEFAULT_REALTIME_VOICES[chosen.provider]
+  const voiceNotice = (() => {
+    if (parsed instanceof Error) return `saved voice ${savedName} is unknown, using ${voice}. Run kimaki --voice <name> to change it`
+    if (!saved || saved.provider === chosen.provider) return null
+    return `voice ${saved.voice} needs a ${PROVIDER_NAMES[saved.provider]} key, using ${voice}`
+  })()
+  const shared = { voice, voiceNotice }
+  if (chosen.provider === 'openai') {
+    return { ...shared, adapter: openai({ apiKey: chosen.key, baseUrl: bot.realtimeBaseUrls.openai }), builtinSearch: 'web_search', searchKey: chosen.key }
   }
-  const geminiKey = keys?.gemini_api_key || process.env['GEMINI_API_KEY']
-  if (geminiKey) return { adapter: gemini({ apiKey: geminiKey, builtinTools: [{ googleSearch: {} }] }), builtinSearch: 'Google Search', searchKey: null }
-  return new NoRealtimeKeyError()
+  if (chosen.provider === 'xai') {
+    const builtinTools = [{ type: 'web_search' }, { type: 'x_search' }]
+    return { ...shared, adapter: xai({ apiKey: chosen.key, builtinTools, baseUrl: bot.realtimeBaseUrls.xai }), builtinSearch: 'web_search and x_search', searchKey: null }
+  }
+  return { ...shared, adapter: gemini({ apiKey: chosen.key, builtinTools: [{ googleSearch: {} }] }), builtinSearch: 'Google Search', searchKey: null }
 }
 
 const SEARCH_MODEL = 'gpt-5.5'
@@ -611,6 +679,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     const holder: { call: Call | null } = { call: null }
     const session = new RealtimeSession({
       model: model.adapter,
+      voice: model.voice,
       instructions,
       tools: tools(bot, { call: () => holder.call!, searchKey: model.searchKey }),
       output: speaker.sink,
@@ -671,8 +740,9 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
       })
     }
     listen(bot, call)
-    logger.info(`voice call started in ${channelId} with ${model.adapter.provider} ${model.adapter.model}`)
-    post(bot, { channelId, text: `-# ⬦ voice call started ⋅ ${model.adapter.model}` })
+    logger.info(`voice call started in ${channelId} with ${model.adapter.provider} ${model.adapter.model}, voice ${model.voice}`)
+    post(bot, { channelId, text: `-# ⬦ voice call started ⋅ ${model.adapter.model} ⋅ ${model.voice}` })
+    if (model.voiceNotice) post(bot, { channelId, text: asSubtext(`⬦ ${model.voiceNotice}`) })
     const greeted = sendHidden(call, '<system>The call started. Greet the users by name in one short sentence.</system>')
     if (greeted instanceof Error) report(bot, { channelId, label: 'greeting', error: greeted })
   }

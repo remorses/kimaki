@@ -87,6 +87,7 @@ export function registerStartCommand(cli: Goke) {
     .option('--machine-name <name>', 'Name in this machine\'s category "Kimaki <name>" (default: hostname)')
     .option('--restart-onboarding', 'Choose credentials again')
     .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
+    .option('--voice <name>', 'Voice of voice calls, saved for later starts (e.g. marin, eve, Puck). "default" resets it')
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
     .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
@@ -104,7 +105,7 @@ export function registerStartCommand(cli: Goke) {
         { createAnalytics },
         { opencodeConfigDir },
         { defaultMachineName },
-        { ensureVoiceChannels },
+        { ensureVoiceChannels, parseRealtimeVoice, saveVoiceCallVoice },
       ] = await Promise.all([
         import('../main.ts'),
         import('../onboarding.ts'),
@@ -124,6 +125,14 @@ export function registerStartCommand(cli: Goke) {
       const dataDir = dataDirOrDefault(options.dataDir)
       const urls = gatewayUrlsFromEnv()
       const machine = options.machineName ?? defaultMachineName()
+      // Validated before the lock, so a typo never stops the running bot. null: reset to the default.
+      const voice = (() => {
+        if (!options.voice) return undefined
+        if (options.voice.trim().toLowerCase() === 'default') return null
+        const parsed = parseRealtimeVoice(options.voice)
+        if (parsed instanceof Error) fail(parsed)
+        return parsed.voice
+      })()
 
       if (options.installUrl) {
         const opened = await openDb({ dataDir, migrate: true })
@@ -173,8 +182,12 @@ export function registerStartCommand(cli: Goke) {
         urls,
         callbackUrl: options.gatewayCallbackUrl,
       })
+      // Saved in SQLite, so restarts, crashes and autostart keep it without the flag.
+      const savedVoice = resolved instanceof Error || voice === undefined ? undefined : await saveVoiceCallVoice({ db: opened.db, appId: resolved.credentials.appId, voice })
       opened.close()
       if (resolved instanceof Error) failStartup(resolved)
+      if (savedVoice instanceof Error) failStartup(savedVoice)
+      if (voice !== undefined) logger.log(`voice calls use ${voice === null ? 'the default voice' : `the voice ${voice}`}`)
       const { credentials, install } = resolved
       const installUrl = installUrlFor({ credentials, website: urls.website, callbackUrl: options.gatewayCallbackUrl })
       // The agent calls this same install. Prefer the built dist entry, so agent
@@ -221,7 +234,7 @@ export function registerStartCommand(cli: Goke) {
       const voiceChannels = await ensureVoiceChannels(bot, { machine })
       if (voiceChannels instanceof Error) logger.warn('cannot create the Kimaki voice channel', voiceChannels)
       // Only the default port: the plugin checks that one. Runtime flags only;
-      // credentials and onboarding are saved in SQLite.
+      // credentials, onboarding and --voice are saved in SQLite.
       if (lock.port === DEFAULT_LOCK_PORT) {
         const autostart = await writeAutostartScript({ dataDir, args: [
           ...(options.worktrees ? ['--worktrees'] : []),

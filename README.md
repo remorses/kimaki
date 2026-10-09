@@ -68,6 +68,7 @@ Kimaki adds a layer of orchestration features on top of OpenCode. The ones worth
 - **[Worktrees](https://kimaki.dev/docs/features/worktrees)**: `/new-worktree` starts a session in an isolated Git worktree so it never touches your main checkout. In a thread it forks the current context. `/merge-worktree` merges the commits into a local branch with rebase or squash.
 - **[Diff viewer](https://kimaki.dev/docs/features/diff-viewer)**: `/diff` generates a shareable URL to review changes in a real diff viewer from your phone or browser.
 - **[Voice messages](https://kimaki.dev/docs/features/voice)**: record a voice note; Kimaki transcribes it using your project's file tree for accuracy.
+- **[Voice calls](https://kimaki.dev/docs/features/voice-calls)**: join the **Kimaki voice** channel and talk; a realtime model starts and reads threads for you. The default voice is the provider's (`marin` on OpenAI, `eve` on xAI, `Puck` on Gemini). Run `kimaki --voice cedar` once to change it: Kimaki saves it in SQLite, so restarts, reboots and autostart keep it. `--voice default` resets it.
 - **[Images](https://kimaki.dev/docs/features/images)**: attach images and files to your message. The agent can upload screenshots and other files to the thread.
 - **[OpenCode commands](https://kimaki.dev/docs/features/opencode-commands)**: your OpenCode commands and skills become Discord slash commands.
 - **[Shell commands](https://kimaki.dev/docs/features/shell-commands)**: prefix any message with `!` to run a shell command in the session folder.

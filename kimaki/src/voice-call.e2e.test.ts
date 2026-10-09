@@ -7,12 +7,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getVoiceConnection } from '@discordjs/voice'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
+import { eq } from 'drizzle-orm'
 import prism from 'prism-media'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
+import * as schema from './schema.ts'
 import { saveAudioKeys } from './voice.ts'
-import { ensureVoiceChannels } from './voice-call.ts'
+import { ensureVoiceChannels, realtimeModel, saveVoiceCallVoice } from './voice-call.ts'
 import {
   TEST_USER_ID,
   seedProjectChannel,
@@ -125,7 +127,7 @@ test('a user joins, speaks, the model runs a kimaki command and answers; leaving
   // Thread IDs are snowflakes: replace them for a stable snapshot.
   expect((await twin.discord.channel(voiceChannelId).text()).replace(/<#\d+>/g, '<#thread>')).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    -# ⬦ voice call started ⋅ gpt-realtime-2.1
+    -# ⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin
     Hello tommy.
     » **tommy:** Which projects do I have?
     -# ┣ shell _seq 1 2000; kimaki project list_
@@ -185,7 +187,7 @@ test('chat messages reach the model, and end_call leaves while the user stays', 
   expect(realtime.userTexts.at(-1)).toBe('tommy wrote in the chat: please hang up')
   const messages = (await twin.discord.channel(voiceChannelId).getMessages()).slice(before)
   expect(messages.map((message) => `${message.author.username}: ${message.content}`).join('\n')).toMatchInlineSnapshot(`
-    "TestBot: -# ⬦ voice call started ⋅ gpt-realtime-2.1
+    "TestBot: -# ⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin
     TestBot: Hi again.
     tommy: please hang up
     TestBot: Bye.
@@ -230,7 +232,7 @@ test('finished threads of any project are announced in the call; the model answe
     .replace(/\d{17,20}/g, '<id>')
     .replace(/ses_\w+/g, '<ses>')
   expect(text).toMatchInlineSnapshot(`
-    "TestBot: -# ⬦ voice call started ⋅ gpt-realtime-2.1
+    "TestBot: -# ⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin
     TestBot: Hi.
     tommy: start a thread
     TestBot: -# ┣ shell _kimaki send --channel <id> --prompt 'call-thread-marker' --user '…_
@@ -248,4 +250,30 @@ test('finished threads of any project are announced in the call; the model answe
     ]
   `)
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).leaveVoice()
+})
+
+test('a saved voice picks its provider when that key is set, else the provider default', async () => {
+  const appId = (await bot.db.query.bot_tokens.findFirst({ where: { token: bot.token } }))!.app_id
+  const pick = async (voice: string | null) => {
+    const saved = await saveVoiceCallVoice({ db: bot.db, appId, voice })
+    if (saved instanceof Error) throw saved
+    const model = await realtimeModel(bot)
+    if (model instanceof Error) throw model
+    return `${model.adapter.provider} ${model.voice}${model.voiceNotice ? ` (${model.voiceNotice})` : ''}`
+  }
+  const keys = await saveAudioKeys({ db: bot.db, token: bot.token, xai: 'xai-test' })
+  if (keys instanceof Error) throw keys
+  const lines: string[] = []
+  for (const voice of [null, 'Cedar', 'EVE', 'bogus']) lines.push(`${voice}: ${await pick(voice)}`)
+  expect(lines).toMatchInlineSnapshot(`
+    [
+      "null: openai marin",
+      "Cedar: openai cedar",
+      "EVE: xai eve",
+      "bogus: openai marin (saved voice bogus is unknown, using marin. Run kimaki --voice <name> to change it)",
+    ]
+  `)
+  await bot.db.update(schema.bot_api_keys).set({ xai_api_key: null }).where(eq(schema.bot_api_keys.app_id, appId))
+  const reset = await saveVoiceCallVoice({ db: bot.db, appId, voice: null })
+  if (reset instanceof Error) throw reset
 })

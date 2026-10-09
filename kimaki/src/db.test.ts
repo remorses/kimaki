@@ -86,6 +86,7 @@ test('fresh install gets kimaki.db with the kimaki tables; subcommands never cre
   expect(await tableNames(opened.client)).toMatchInlineSnapshot(`
     [
       "bot_api_keys",
+      "bot_settings",
       "bot_tokens",
       "channel_agents",
       "channel_directories",
