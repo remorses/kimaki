@@ -31,6 +31,8 @@ const DOCKER_IMAGE = 'registry.fly.io/kimaki-cloud:latest'
 const KIMAKI_FLY_ORG = 'kimaki-cloud'
 // kimaki's lock server (KIMAKI_LOCK_PORT in kimaki-cloud/kimaki-init.sh) serves /kimaki/wake.
 const WAKE_PORT = 8080
+// Fly default is 5, max 60. Snapshots cost $0.08/GB-month after the first 10 GB.
+const SNAPSHOT_RETENTION_DAYS = 14
 
 // Fly pricing per hour (USD), used for 2x markup display
 // Source: https://fly.io/pricing/ (shared-cpu)
@@ -144,7 +146,15 @@ export async function provisionMachine({ fly, prisma, userId, spec }: {
     }
     const secrets = await fly.App.updateSecrets({ app_name: appName, request: { values: flyMachineSecrets({ clientId, clientSecret }) } })
     if (secrets instanceof Error) return new Error(`Failed to store Fly secrets: ${secrets.message}`, { cause: secrets })
-    const volume = await fly.Volume.createVolume({ app_name: appName, name: 'kimaki_data', region: spec.region, size_gb: spec.diskSizeGb })
+    const volume = await fly.Volume.createVolume({
+      app_name: appName,
+      name: 'kimaki_data',
+      region: spec.region,
+      size_gb: spec.diskSizeGb,
+      // The volume lives on one host: daily snapshots are the only copy if it fails.
+      // https://fly.io/docs/volumes/snapshots/
+      snapshot_retention: SNAPSHOT_RETENTION_DAYS,
+    })
     if (volume instanceof Error) return new Error(`Failed to create volume: ${volume.message}`, { cause: volume })
     // skip_launch: kimaki cannot log in before Discord OAuth writes the gateway_clients row.
     const machine = await fly.Machine.createMachine({
