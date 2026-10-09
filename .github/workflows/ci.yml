@@ -37,6 +37,7 @@ jobs:
           pnpm --filter traforo run build
           pnpm --filter opencode-injection-guard run build
           pnpm --filter libsqlproxy run build
+          pnpm --filter @kimaki/realtime run build
 
       - name: Generate Prisma + SQL (discord-digital-twin)
         run: pnpm generate

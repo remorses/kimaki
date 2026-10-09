@@ -25,6 +25,7 @@ import { createInteractionRegistry, registerSlashCommands } from './slash-comman
 import { createSleepLock } from './sleeps.ts'
 import { createBotStore } from './store.ts'
 import type { TranscriptionBaseUrls } from './voice.ts'
+import { createVoiceCalls, type RealtimeBaseUrls } from './voice-call.ts'
 
 const logger = createLogger('MAIN')
 
@@ -51,6 +52,8 @@ export type StartBotOptions = {
   analytics: Analytics
   // Voice transcription API base URLs; tests point Gemini at a local fake.
   transcriptionBaseUrls?: TranscriptionBaseUrls
+  // Voice call WebSocket URLs; tests point OpenAI at a local fake.
+  realtimeBaseUrls?: RealtimeBaseUrls
   // The scheduler's only source of time. Tests pass a manual clock.
   clock?: Clock
   // How often due tasks and wakes run; null: never (tests call scheduler.runDueTasks).
@@ -86,7 +89,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const db = opened.db
 
   const discord = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates],
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
     ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
   })
@@ -131,6 +134,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The features that non-interaction code reaches through bot.features.
   const agentUi = createAgentUi({ store, eventLoop, opencode })
   cleanup.defer(() => agentUi.stop())
+  const voiceCalls = createVoiceCalls()
   const bot: Bot = {
     discord,
     db,
@@ -146,8 +150,9 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     token: options.token,
     appId: options.appId,
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},
+    realtimeBaseUrls: options.realtimeBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
-    features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi },
+    features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
   }
   const scheduler = createScheduler({
     bot,
@@ -158,6 +163,9 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
   // Before login: gateway-proxy replays missed messages right after READY.
   registerIngress(bot)
+  voiceCalls.register(bot)
+  // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.
+  cleanup.defer(() => voiceCalls.stop(bot))
 
   // Resolves with the first fatal error, or null when both sides are ready.
   // Not Promise.all: a failed side must not wait for the other (Discord login

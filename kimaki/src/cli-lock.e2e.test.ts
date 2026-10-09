@@ -218,7 +218,7 @@ test('CLI help documents the supported P7 commands', async () => {
         -n, --name <text>               Thread name
         --agent <name>                  Agent ID
         --model <provider/model>        Model for the new session
-        -u, --user <id>                 Add this Discord user to the thread
+        -u, --user <id>                 Add this Discord user to the thread (repeatable)
         --cwd <path>                    Existing project subfolder or linked Git worktree
         --worktree [name]               Create a custom Git worktree (automatic name when omitted)
         --base-branch <ref>             Starting ref for --worktree (default: project HEAD)
@@ -315,9 +315,10 @@ test('CLI help documents the supported P7 commands', async () => {
         -q, --query <text>              Name filter
         --json                          Output as JSON
 
-      upload-to-discord <...files>      Attach local files to a session thread
+      upload-to-discord <...files>      Attach local files to a session thread or the Kimaki voice channel chat
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
+        -c, --channel <id>              Kimaki voice channel to post in (default in voice calls: KIMAKI_CHANNEL_ID)
 
       Tools:
       tunnel                            Run a command and expose its local port with a public URL. The child gets TRAFORO_URL
@@ -356,10 +357,11 @@ test('CLI help documents the supported P7 commands', async () => {
       bot token                         Print saved bot credentials for automation
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      bot keys set                      Store OpenAI or Gemini API keys for voice transcription and kimaki tts
+      bot keys set                      Store OpenAI, Gemini or xAI API keys for voice transcription, voice calls and kimaki tts
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --openai <key>                  OpenAI API key
         --gemini <key>                  Gemini API key
+        --xai <key>                     xAI API key (voice calls only)
 
       bot install-url                   Print the Discord bot install URL
         --data-dir <path>               Data directory (default: ~/.kimaki)

@@ -55,6 +55,7 @@
           "docs/features/scheduled-tasks",
           "docs/features/sleep",
           "docs/features/voice",
+          "docs/features/voice-calls",
           "docs/features/images",
           "docs/features/opencode-commands",
           "docs/features/shell-commands"

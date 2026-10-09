@@ -10,7 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import dedent from 'string-dedent'
 import type { Goke } from 'goke'
 
-import { writeAutostartScript } from '../autostart.ts'
+import { distCliEntry, writeAutostartScript } from '../autostart.ts'
 import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE, startLockServer } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
 import { createLogger, setLogFile } from '../logger.ts'
@@ -104,6 +104,7 @@ export function registerStartCommand(cli: Goke) {
         { createAnalytics },
         { opencodeConfigDir },
         { defaultMachineName },
+        { ensureVoiceChannels },
       ] = await Promise.all([
         import('../main.ts'),
         import('../onboarding.ts'),
@@ -112,6 +113,7 @@ export function registerStartCommand(cli: Goke) {
         import('../analytics.ts'),
         import('../opencode-server.ts'),
         import('../project.ts'),
+        import('../voice-call.ts'),
       ])
       // Non-TTY hosts get the failure as an `error` event too (programmatic onboarding).
       // Explicit type: TS narrows after a `never` call only for annotated consts.
@@ -175,10 +177,13 @@ export function registerStartCommand(cli: Goke) {
       if (resolved instanceof Error) failStartup(resolved)
       const { credentials, install } = resolved
       const installUrl = installUrlFor({ credentials, website: urls.website, callbackUrl: options.gatewayCallbackUrl })
-      // The agent calls this same install: same node, loader flags and script.
+      // The agent calls this same install. Prefer the built dist entry, so agent
+      // commands skip the tsx loader also when the bot runs from src.
+      const distCli = distCliEntry()
       const kimaki = kimakiShellCommand({
-        command: [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki'],
-        dataDir,
+        command: fs.existsSync(distCli)
+          ? [process.execPath, distCli]
+          : [process.execPath, ...process.execArgv, process.argv[1] ?? 'kimaki'],
       })
 
       const bot = await startBot({
@@ -213,6 +218,8 @@ export function registerStartCommand(cli: Goke) {
         return
       }
       if (onboarded) process.stderr.write(`Onboarding thread: https://discord.com/channels/${onboarded.guildId}/${onboarded.threadId}\n`)
+      const voiceChannels = await ensureVoiceChannels(bot, { machine })
+      if (voiceChannels instanceof Error) logger.warn('cannot create the Kimaki voice channel', voiceChannels)
       // Only the default port: the plugin checks that one. Runtime flags only;
       // credentials and onboarding are saved in SQLite.
       if (lock.port === DEFAULT_LOCK_PORT) {
@@ -369,10 +376,11 @@ export function registerBotCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .action(async (options) => process.stdout.write(`${(await discordApi(options.dataDir)).credentials.token}\n`))
 
-  cli.command('bot keys set', 'Store OpenAI or Gemini API keys for voice transcription and kimaki tts')
+  cli.command('bot keys set', 'Store OpenAI, Gemini or xAI API keys for voice transcription, voice calls and kimaki tts')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--openai <key>', 'OpenAI API key')
     .option('--gemini <key>', 'Gemini API key')
+    .option('--xai <key>', 'xAI API key (voice calls only)')
     .action(async (options) => {
       const [{ readSavedCredentials }, { saveAudioKeys }] = await Promise.all([import('../credentials.ts'), import('../voice.ts')])
       const opened = await openCliDb(options.dataDir)
@@ -380,11 +388,11 @@ export function registerBotCommands(cli: Goke) {
         const credentials = await readSavedCredentials({ db: opened.db })
         if (credentials instanceof Error) return credentials
         if (!credentials) return new Error('No saved bot credentials. Start kimaki once to onboard.')
-        return saveAudioKeys({ db: opened.db, token: credentials.token, openai: options.openai, gemini: options.gemini })
+        return saveAudioKeys({ db: opened.db, token: credentials.token, openai: options.openai, gemini: options.gemini, xai: options.xai })
       })()
       opened.close()
       if (result instanceof Error) fail(result)
-      process.stdout.write(`Saved ${[options.openai && 'OpenAI', options.gemini && 'Gemini'].filter(Boolean).join(' and ')} API key\n`)
+      process.stdout.write(`Saved ${[options.openai && 'OpenAI', options.gemini && 'Gemini', options.xai && 'xAI'].filter(Boolean).join(' and ')} API key\n`)
     })
 
   cli.command('bot install-url', 'Print the Discord bot install URL')

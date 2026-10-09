@@ -99,13 +99,16 @@ export function registerDiscordCommands(cli: Goke) {
       printRows({ json: options.json, rows: users, line: (user) => `${user.id} ${user.username}${user.name ? ` (${user.name})` : ''}` })
     })
 
-  cli.command('upload-to-discord <...files>', 'Attach local files to a session thread')
+  cli.command('upload-to-discord <...files>', 'Attach local files to a session thread or the Kimaki voice channel chat')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
+    .option('-c, --channel <id>', 'Kimaki voice channel to post in (default in voice calls: KIMAKI_CHANNEL_ID)')
     .action(async (files, options) => {
-      const target = targetOrEnv(options.session)
-      const id = target.sessionId ?? target.threadId
-      if (!id) fail(new Error('Use --session or run inside an OpenCode session'))
+      if (options.session && options.channel) fail(new Error('Use --session or --channel, not both'))
+      const target = options.channel ? {} : targetOrEnv(options.session)
+      // Voice call shells have no session: KIMAKI_CHANNEL_ID is the voice channel.
+      const id = options.channel ?? target.sessionId ?? target.threadId ?? process.env['KIMAKI_CHANNEL_ID']
+      if (!id) fail(new Error('Use --session or --channel, or run inside an OpenCode session'))
       const input = { id, files: files.map((file) => ({ path: path.resolve(file), name: path.basename(file) })) }
       // Waits for Discord: big files and a busy thread take longer than the 30s default.
       await action({ route: 'upload', dataDir: options.dataDir, input, signal: AbortSignal.timeout(5 * 60_000) })

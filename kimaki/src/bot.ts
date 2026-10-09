@@ -23,6 +23,7 @@ import type { SleepLock } from './sleeps.ts'
 import type { BotStore } from './store.ts'
 import type { ScheduledRun } from './system-prompt.ts'
 import type { TranscriptionBaseUrls } from './voice.ts'
+import type { RealtimeBaseUrls, VoiceCalls } from './voice-call.ts'
 
 export type Author = { id: string; username: string }
 
@@ -36,6 +37,7 @@ export type BotFeatures = {
   withSleepLock: SleepLock
   waitForPlugin: PluginWait
   agentUi: AgentUi
+  voiceCalls: VoiceCalls
 }
 
 export type Bot = {
@@ -58,6 +60,7 @@ export type Bot = {
   // bot_tokens.app_id of these credentials: key of the global_models row.
   appId: string
   transcriptionBaseUrls: TranscriptionBaseUrls
+  realtimeBaseUrls: RealtimeBaseUrls
   // Default for channels without a channel_worktrees row.
   autoWorktrees: boolean
   features: BotFeatures

@@ -635,12 +635,16 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
   return started
 }
 
-// `kimaki upload-to-discord`: posts local files into the session's thread,
+// `kimaki upload-to-discord`: posts local files into the session's thread (or the voice channel chat),
 // after the output already queued there. Answers once Discord has them.
 export async function upload(bot: Bot, { id, files }: { id: string; files: Array<{ path: string; name: string }> }) {
   const { sessionThreads, roots } = bot.store.getState()
-  const threadId = sessionThreads[id] ?? (roots[id] ? id : undefined)
-  if (!threadId) return new ConfigError({ reason: 'No local session thread for this upload' })
+  const sessionThread = sessionThreads[id] ?? (roots[id] ? id : undefined)
+  // Voice calls have no session: they upload into the text chat of the voice channel.
+  const voice = sessionThread ? null : await projectOf(bot, id)
+  if (voice instanceof Error) return voice
+  const threadId = sessionThread ?? (voice?.channel_type === 'voice' ? id : undefined)
+  if (!threadId) return new ConfigError({ reason: 'No local session thread or Kimaki voice channel for this upload' })
   if (files.length === 0) return new ConfigError({ reason: 'Upload needs at least one file' })
   const sized: UploadFile[] = []
   for (const file of files) {

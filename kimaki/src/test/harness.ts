@@ -215,12 +215,125 @@ export type TestTwin = {
   unregisteredChannelId: string
 }
 
+// `say` can end with a tool call in the same reply, like a spoken goodbye before end_call.
+export type FakeRealtimeReply =
+  | { type: 'say'; text: string; then?: { name: string; args: ToolInput } }
+  | { type: 'call'; name: string; args: ToolInput }
+
+export type FakeRealtime = {
+  // OpenAI realtime WebSocket URL for startTestBot({ realtimeBaseUrl }).
+  url: string
+  // Answers in order: one per response (greeting, after a user turn, after a tool result).
+  replies: FakeRealtimeReply[]
+  // What the user "said" in each turn, in order (the transcription of the audio).
+  transcripts: string[]
+  // Instructions of each session.update, function outputs and user text items, in order.
+  instructions: string[]
+  toolOutputs: Array<{ name: string; output: string }>
+  userTexts: string[]
+  audioBytes: () => number
+  openSockets: () => number
+  stop: () => Promise<void>
+}
+
+// OpenAI Realtime over WebSocket, deterministic: server VAD hears speech in
+// non-zero audio and ends the turn at the first all-zero chunk (the silence of
+// session.endOfSpeech()). Every response pops the next scripted reply. Exercises the real
+// @kimaki/realtime OpenAI adapter, tool loop and audio paths.
+export async function startFakeRealtime(): Promise<FakeRealtime> {
+  const { WebSocketServer } = await import('ws')
+  const port = await freePort()
+  const server = new WebSocketServer({ port, host: '127.0.0.1' })
+  await new Promise<void>((resolve) => server.once('listening', () => resolve()))
+  const audio = { bytes: 0 }
+  const fake: FakeRealtime = {
+    url: `ws://127.0.0.1:${port}/v1/realtime`,
+    replies: [],
+    transcripts: [],
+    instructions: [],
+    toolOutputs: [],
+    userTexts: [],
+    audioBytes: () => audio.bytes,
+    openSockets: () => server.clients.size,
+    stop: () => new Promise((resolve) => server.close(() => resolve())),
+  }
+  const counter = { id: 0 }
+  const nextId = (prefix: string) => `${prefix}_${++counter.id}`
+  // 300ms of a 440 Hz tone, 24 kHz mono PCM16.
+  const tone = Buffer.alloc(24_000 * 0.3 * 2)
+  for (let i = 0; i < tone.length / 2; i++) tone.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / 24_000) * 8000), i * 2)
+  const calls = new Map<string, string>()
+  server.on('connection', (socket) => {
+    const send = (event: ToolInput) => socket.send(JSON.stringify(event))
+    const speech = { active: false }
+    const respond = () => {
+      const responseId = nextId('resp')
+      send({ type: 'response.created', response: { id: responseId } })
+      const reply = fake.replies.shift()
+      if (reply?.type === 'say') {
+        const itemId = nextId('item')
+        send({ type: 'response.output_item.added', item: { type: 'message', id: itemId } })
+        send({ type: 'response.output_audio.delta', item_id: itemId, delta: tone.toString('base64') })
+        send({ type: 'response.output_audio_transcript.delta', item_id: itemId, delta: reply.text })
+      }
+      const call = reply?.type === 'call' ? reply : reply?.then
+      if (call) {
+        const callId = nextId('call')
+        calls.set(callId, call.name)
+        send({ type: 'response.function_call_arguments.done', call_id: callId, name: call.name, arguments: JSON.stringify(call.args) })
+      }
+      send({ type: 'response.done', response: { id: responseId, status: 'completed', usage: { input_tokens: 1, output_tokens: 1 } } })
+    }
+    const endOfSpeech = () => {
+      speech.active = false
+      const itemId = nextId('item')
+      send({ type: 'input_audio_buffer.speech_stopped' })
+      send({ type: 'input_audio_buffer.committed', item_id: itemId })
+      send({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: fake.transcripts.shift() ?? '' })
+      respond()
+    }
+    socket.on('message', (raw) => {
+      const event = JSON.parse(raw.toString()) as {
+        type: string
+        audio?: string
+        session?: { instructions?: string }
+        item?: { type: string; call_id?: string; output?: string; content?: Array<{ text?: string }> }
+      }
+      if (event.type === 'session.update') {
+        fake.instructions.push(event.session?.instructions ?? '')
+        send({ type: 'session.updated', session: { id: nextId('sess') } })
+      }
+      if (event.type === 'input_audio_buffer.append') {
+        const chunk = Buffer.from(event.audio ?? '', 'base64')
+        audio.bytes += chunk.length
+        const silent = chunk.every((byte) => byte === 0)
+        if (silent && speech.active) endOfSpeech()
+        if (!silent && !speech.active) {
+          speech.active = true
+          send({ type: 'input_audio_buffer.speech_started' })
+        }
+      }
+      if (event.type === 'conversation.item.create' && event.item?.type === 'function_call_output') {
+        fake.toolOutputs.push({ name: calls.get(event.item.call_id ?? '') ?? '', output: event.item.output ?? '' })
+      }
+      if (event.type === 'conversation.item.create' && event.item?.type === 'message') fake.userTexts.push(event.item.content?.[0]?.text ?? '')
+      if (event.type === 'response.create') respond()
+    })
+  })
+  return fake
+}
+
 // gateway: the twin plays gateway-proxy (REST scope rules of rest_proxy.rs)
 // and accepts a clientId:secret token. KIMAKI_TEST_GATEWAY=1 runs every e2e
 // file in gateway mode, to find REST calls the proxy would reject.
 export async function startTwin({
   gateway = process.env['KIMAKI_TEST_GATEWAY'] === '1',
-}: { gateway?: boolean } = {}): Promise<TestTwin> {
+  voice = false,
+}: {
+  gateway?: boolean
+  // Discord voice server (wss + UDP) for voice call tests; trusts its certificate in this process.
+  voice?: boolean
+} = {}): Promise<TestTwin> {
   const channelId = '200000000000000100'
   const unregisteredChannelId = '200000000000000101'
   const quietChannelId = '200000000000000102'
@@ -229,6 +342,7 @@ export async function startTwin({
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-twin-'))
   const discord = new DigitalDiscord({
     dbUrl: `file:${path.join(root, 'twin.db')}`,
+    voice,
     ...(gateway && { gatewayProxy: true, botToken: `${crypto.randomUUID()}:${crypto.randomBytes(32).toString('hex')}` }),
     guild: { name: 'Kimaki Test', ownerId: TEST_USER_ID },
     channels: [
@@ -242,6 +356,7 @@ export async function startTwin({
     ],
   })
   await discord.start()
+  if (voice) discord.trustVoiceCertificate()
   return {
     discord,
     channelId,
@@ -288,6 +403,7 @@ export async function startTestBot({
   server,
   geminiBaseUrl,
   openaiBaseUrl,
+  realtimeBaseUrl,
   lockPort,
   saveTwinCredentials = true,
   analytics,
@@ -300,6 +416,8 @@ export async function startTestBot({
   // Voice transcription against startFakeGemini() / startFakeOpenAI().
   geminiBaseUrl?: string
   openaiBaseUrl?: string
+  // Voice calls against startFakeRealtime().
+  realtimeBaseUrl?: string
   lockPort?: number
   // false: the data dir is used as is (a V1 database the bot start must import).
   saveTwinCredentials?: boolean
@@ -335,6 +453,7 @@ export async function startTestBot({
     analytics: analytics ?? disabledAnalytics,
     ...(clock && { clock }),
     ...(schedulerIntervalMs !== undefined && { schedulerIntervalMs }),
+    ...(realtimeBaseUrl && { realtimeBaseUrls: { openai: realtimeBaseUrl } }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),

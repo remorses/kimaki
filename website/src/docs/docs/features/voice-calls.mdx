@@ -1,0 +1,67 @@
+---
+title: Voice Calls
+sidebarTitle: Voice Calls
+description: Join the Kimaki voice channel and talk to your coding agents. A realtime voice model lists, searches and starts Kimaki sessions for you.
+icon: lucide:phone
+prompt: |
+  Explain Kimaki voice calls from @/kimaki/src/voice-call.ts, the voice call
+  instructions in @/kimaki/src/system-prompt.ts and addVoiceChannel in @/kimaki/src/project.ts.
+---
+
+Join the **Kimaki voice** channel and talk. A realtime voice model answers, and it controls your coding agents with the `kimaki` CLI: it lists sessions, reads them, and starts new ones for real work.
+
+```diagram
+  you ──voice──▶ Kimaki voice ──▶ realtime model ──shell──▶ kimaki send / session list / read
+                     ▲                  │
+                     └────── speech ────┘   text chat: transcripts, tool lines, links
+```
+
+## How it works
+
+1. Kimaki creates one **Kimaki voice** channel per computer, in the `Kimaki <machine>` category.
+2. You join it. Kimaki joins too, greets you, and listens.
+3. You ask for something. The model runs `kimaki` commands in the Kimaki data folder (`~/.kimaki`).
+4. For coding work it starts a session with `kimaki send` in the right project channel and adds everyone in the call to the new thread.
+5. The call ends when the last user leaves, or when you ask the model to hang up.
+
+## The text chat
+
+Every Discord voice channel has a **text chat**. Kimaki uses it to show the call:
+
+- your words as `» tommy: ...` and the model's answers
+- each command the model runs, like `┣ shell kimaki session list`
+- links and IDs the model posts, so it never reads them aloud
+- files from `kimaki upload-to-discord`, which posts here when called during a call
+
+Type in the chat to talk to the model without speaking.
+
+## What to ask
+
+```text
+Which sessions are running now?
+Start a session in the website project to fix the broken signup link.
+Wait for that session to finish and tell me what it did.
+What was the last session about the parser?
+```
+
+Long commands like `kimaki session wait` run in the background. The model tells you the result when they finish, and you can keep talking meanwhile.
+
+## Setup: an API key
+
+Voice calls use the same keys as [voice messages](./voice). Add one with **`/transcription-key`** or from a terminal:
+
+```bash
+kimaki bot keys set --openai sk-...
+kimaki bot keys set --xai xai-...
+kimaki bot keys set --gemini AIza...
+```
+
+Kimaki picks the first key it finds, saved key before environment variable:
+
+| Provider | Model | Web search |
+| --- | --- | --- |
+| OpenAI | `gpt-realtime-2.1` | no, the model starts a session to search |
+| xAI | `grok-voice-think-fast-2.0` | built in (`web_search`, `x_search`) |
+| Gemini | `gemini-3.8-live` | built in (Google Search) |
+
+Only users who can use Kimaki (server owner, administrators, Manage Server, or the "Kimaki" role) are heard.

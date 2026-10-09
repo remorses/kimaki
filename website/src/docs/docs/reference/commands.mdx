@@ -175,7 +175,7 @@ kimaki send --channel <channel-id> --prompt 'daily report' --send-at '0 9 * * 1-
 | `-n, --name <text>`        | Thread name                                                                 |
 | `--agent <name>`           | Agent ID                                                                    |
 | `--model <provider/model>` | Model for the new session                                                   |
-| `-u, --user <id>`          | Add this Discord user to the thread                                         |
+| `-u, --user <id>`          | Add this Discord user to the thread (repeatable)                            |
 | `--cwd <path>`             | Existing project subfolder or linked Git worktree                           |
 | `--worktree [name]`        | Create a custom Git worktree (automatic name when omitted)                  |
 | `--base-branch <ref>`      | Starting ref for --worktree (default: project HEAD)                         |
@@ -223,7 +223,7 @@ kimaki send --channel <channel-id> --prompt 'daily report' --send-at '0 9 * * 1-
 | ------------------------------ | -------------------------------------------------------- | ----------------------------------------- |
 | `thread list`                  | List active and optionally archived threads in a channel | `-c, --channel`, `--archived`, `--json`   |
 | `user list`                    | Find Discord users for mentions                          | `-g, --guild`, `-q, --query`, `--json`    |
-| `upload-to-discord <...files>` | Attach local files to a session thread                   | `-s, --session`                           |
+| `upload-to-discord <...files>` | Attach local files to a session thread or the voice call chat | `-s, --session`, `-c, --channel`     |
 
 ### Tools
 
@@ -242,7 +242,7 @@ kimaki send --channel <channel-id> --prompt 'daily report' --send-at '0 9 * * 1-
 | `profile cpu`     | Record a CPU profile of the running bot and print the .cpuprofile path              | `-d, --duration`              |
 | `profile heap`    | Write a heap snapshot of the running bot and print the .heapsnapshot path           |                               |
 | `bot token`       | Print saved bot credentials for automation                                          |                               |
-| `bot keys set`    | Store OpenAI or Gemini API keys for voice transcription and kimaki tts              | `--openai`, `--gemini`        |
+| `bot keys set`    | Store OpenAI, Gemini or xAI API keys for voice transcription, voice calls and kimaki tts | `--openai`, `--gemini`, `--xai` |
 | `bot install-url` | Print the Discord bot install URL                                                   | `--gateway-callback-url`      |
 
 Run `kimaki <command> --help` for the full flag descriptions. See [Debug sessions and report bugs](../guides/report-bugs.mdx) to export events and file an issue.

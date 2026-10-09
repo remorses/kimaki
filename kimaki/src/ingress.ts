@@ -193,7 +193,19 @@ async function handleMessage(bot: Bot, message: Message) {
 
   const project = await projectOf(bot, channelId)
   if (project instanceof Error) return logger.warn(project)
-  if (!project || project.channel_type !== 'text') return
+  if (!project) return
+  if (project.channel_type === 'voice') {
+    // The text chat of the voice channel talks to the running call.
+    if (message.author.bot || thread || !(await canUseKimaki({ guild: message.guild, userId: message.author.id }))) return
+    const forwarded = await bot.features.voiceCalls.text(bot, {
+      guildId: message.guild.id,
+      channelId,
+      author: { id: message.author.id, username: message.author.username },
+      content: message.content,
+    })
+    if (forwarded instanceof Error) logger.warn(forwarded)
+    return
+  }
   if (message.author.bot) {
     if (message.author.id !== bot.discord.user?.id) return
     return handleRemoteEnvelope(bot, { message, channelId, threadId: thread?.id ?? null })

@@ -165,6 +165,41 @@ export async function addProjectChannel({
   return { channelId: channel.id, name: channel.name ?? body.name, directory, created: true }
 }
 
+// This machine's voice channel in a guild: one per machine, with no category
+// (users drag it where they want), named with the machine to tell machines apart.
+// Mapped as channel_type 'voice' to the data dir (where voice call shells run).
+// Created once: a voice channel the user deleted stays deleted.
+export async function addVoiceChannel({
+  api,
+  db,
+  guildId,
+  dataDir,
+  machine,
+}: {
+  api: API
+  db: KimakiDb
+  guildId: string
+  dataDir: string
+  machine: string
+}): Promise<DbError | DiscordError | { channelId: string; created: boolean }> {
+  const existing = await db.query.channel_directories
+    .findFirst({ where: { guild_id: guildId, channel_type: 'voice' } })
+    .catch((e) => new DbError({ operation: 'read voice channel', cause: e }))
+  if (existing instanceof Error) return existing
+  if (existing) return { channelId: existing.channel_id, created: false }
+  const channel = await api.guilds
+    .createChannel(guildId, { name: `Kimaki voice ${machine}`.slice(0, 100), type: ChannelType.GuildVoice })
+    .catch((e) => new DiscordError({ operation: 'create voice channel', cause: e }))
+  if (channel instanceof Error) return channel
+  const saved = await db
+    .insert(schema.channel_directories)
+    .values({ channel_id: channel.id, directory: dataDir, channel_type: 'voice', guild_id: guildId })
+    .catch((e) => new DbError({ operation: 'insert voice channel', cause: e }))
+  if (saved instanceof Error) return saved
+  return { channelId: channel.id, created: true }
+}
+
+
 export async function listProjects({ db }: { db: KimakiDb }) {
   return db.query.channel_directories
     .findMany({ where: { channel_type: 'text' }, orderBy: { created_at: 'asc' } })
