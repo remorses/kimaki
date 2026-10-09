@@ -156,7 +156,7 @@ test('kimaki --gateway without a TTY installs, onboards and reports ready on std
       "quiet",
       "Kimaki test-machine",
       "kimaki (in Kimaki test-machine)",
-      "Kimaki voice (in Kimaki test-machine)",
+      "Kimaki voice test-machine",
     ]
   `)
 

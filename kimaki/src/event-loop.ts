@@ -57,6 +57,9 @@ function hold(map: Map<string, Held>, key: string, event: ThreadEvent): Held {
   return entry
 }
 
+// A root session execution that finished. error: null on success.
+export type RunEnded = { threadId: string; sessionId: string; error: string | null }
+
 export function createEventLoop({
   store,
   db,
@@ -64,6 +67,7 @@ export function createEventLoop({
   effects,
   recorder,
   analytics,
+  onRunEnded,
 }: {
   store: BotStore
   db: KimakiDb
@@ -71,6 +75,8 @@ export function createEventLoop({
   effects: EffectsRunner
   recorder: EventRecorder
   analytics: Analytics
+  // Every finished or failed run of a thread's root session (voice call notifications).
+  onRunEnded: (run: RunEnded) => void
 }) {
   // The client of the current connection, set before hydration starts.
   const connection: { client: OpenCodeClient | null } = { client: null }
@@ -149,6 +155,10 @@ export function createEventLoop({
     logRun(threadId, event)
     recorder.record(threadId, event)
     if (!isKimakiEvent(event)) analytics.observe(event, store.getState().roots[threadId] === eventSessionId(event))
+    // Interrupted runs are skipped: a new message or /abort caused them.
+    if ((event.type === 'session.execution.succeeded' || event.type === 'session.execution.failed') && store.getState().roots[threadId] === event.data.sessionID) {
+      onRunEnded({ threadId, sessionId: event.data.sessionID, error: event.type === 'session.execution.failed' ? event.data.error.message : null })
+    }
     if (store.getState().threads[threadId] && !coldThreads.has(threadId)) return fold(threadId, event)
     hold(coldThreads, threadId, event)
     void loadView(threadId)

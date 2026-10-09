@@ -1,14 +1,14 @@
 ---
 title: Voice Calls
 sidebarTitle: Voice Calls
-description: Join the Kimaki voice channel and talk to your coding agents. A realtime voice model lists, searches and starts Kimaki sessions for you.
+description: Join the Kimaki voice channel and talk to your coding agents. A realtime voice model lists, searches and starts Kimaki threads for you.
 icon: lucide:phone
 prompt: |
   Explain Kimaki voice calls from @/kimaki/src/voice-call.ts, the voice call
   instructions in @/kimaki/src/system-prompt.ts and addVoiceChannel in @/kimaki/src/project.ts.
 ---
 
-Join the **Kimaki voice** channel and talk. A realtime voice model answers, and it controls your coding agents with the `kimaki` CLI: it lists sessions, reads them, and starts new ones for real work.
+Join the **Kimaki voice** channel and talk. A realtime voice model answers, and it controls your coding agents with the `kimaki` CLI: it lists threads, reads them, and starts new ones for real work.
 
 ```diagram
   you ──voice──▶ Kimaki voice ──▶ realtime model ──shell──▶ kimaki send / session list / read
@@ -16,13 +16,16 @@ Join the **Kimaki voice** channel and talk. A realtime voice model answers, and 
                      └────── speech ────┘   text chat: transcripts, tool lines, links
 ```
 
+> A **thread** and a **session** are the same thing: each Discord thread has one OpenCode session. Say either word in a call. The CLI commands say `session` and take thread IDs too.
+
 ## How it works
 
-1. Kimaki creates one **Kimaki voice** channel per computer, in the `Kimaki <machine>` category.
+1. Kimaki creates one **Kimaki voice &lt;machine&gt;** channel per computer, outside any category. Drag it where you want.
 2. You join it. Kimaki joins too, greets you, and listens.
 3. You ask for something. The model runs `kimaki` commands in the Kimaki data folder (`~/.kimaki`).
-4. For coding work it starts a session with `kimaki send` in the right project channel and adds everyone in the call to the new thread.
-5. The call ends when the last user leaves, or when you ask the model to hang up.
+4. For coding work it starts a thread with `kimaki send --wait` in the background, in the right project channel, and adds everyone in the call to it.
+5. When the thread finishes, the model gets its transcript and tells you what it did.
+6. The call ends when the last user leaves, or when you ask the model to hang up.
 
 ## The text chat
 
@@ -38,13 +41,38 @@ Type in the chat to talk to the model without speaking.
 ## What to ask
 
 ```text
-Which sessions are running now?
-Start a session in the website project to fix the broken signup link.
-Wait for that session to finish and tell me what it did.
-What was the last session about the parser?
+Which threads are running now?
+Start a thread in the website project to fix the broken signup link.
+What was the last thread about the parser?
 ```
 
-Long commands like `kimaki session wait` run in the background. The model tells you the result when they finish, and you can keep talking meanwhile.
+## Threads report back
+
+The model starts every thread with `--wait` as a background command:
+
+```bash
+kimaki send --channel <project channel> --prompt 'Fix the broken signup link' --user <you> --wait
+```
+
+The thread shows in the text chat at once, and you can keep talking. When the thread finishes, the same command returns its transcript. So the model gets the notification and the result together, and tells you what the thread you just started did, with no extra `kimaki session read`.
+
+Other slow commands like `kimaki session wait` also run in the background.
+
+## Finished thread notifications
+
+When a thread of **any** project finishes or fails during a call, Kimaki posts a line in the text chat with the title, the thread link and the session ID:
+
+```text
+⬦ thread finished: Fix signup link ⋅ https://discord.com/channels/<guild>/<thread> ⋅ ses_abc123
+```
+
+The model gets the same notice, so it never needs to poll `kimaki session list`:
+
+| Thread | What the model does |
+| --- | --- |
+| started in the call | tells you it finished |
+| started in the call with `--wait` | waits for the transcript, then tells you the result once |
+| started elsewhere (Discord, another agent) | keeps it as context, mentions it when you ask |
 
 ## Setup: an API key
 
@@ -60,7 +88,7 @@ Kimaki picks the first key it finds, saved key before environment variable:
 
 | Provider | Model | Web search |
 | --- | --- | --- |
-| OpenAI | `gpt-realtime-2.1` | no, the model starts a session to search |
+| OpenAI | `gpt-realtime-2.1` | `web_search` tool, runs a `gpt-5.5` web search with the same key |
 | xAI | `grok-voice-think-fast-2.0` | built in (`web_search`, `x_search`) |
 | Gemini | `gemini-3.8-live` | built in (Google Search) |
 

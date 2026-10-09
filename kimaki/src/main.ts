@@ -115,7 +115,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   cleanup.defer(() => recorder.close())
   const effects = createEffectsRunner({ discord })
   cleanup.defer(() => effects.stop())
-  const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics })
+  const voiceCalls = createVoiceCalls({ opencodeConfigDir: options.opencodeConfigDir })
+  const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics, onRunEnded: voiceCalls.runEnded })
   const loaded = await eventLoop.load()
   if (loaded instanceof Error) return loaded
   // Before the service is used, so a service started by ensure() loads it at once.
@@ -134,7 +135,6 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The features that non-interaction code reaches through bot.features.
   const agentUi = createAgentUi({ store, eventLoop, opencode })
   cleanup.defer(() => agentUi.stop())
-  const voiceCalls = createVoiceCalls()
   const bot: Bot = {
     discord,
     db,

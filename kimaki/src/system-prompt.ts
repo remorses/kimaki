@@ -666,6 +666,38 @@ export function turnContext({
 
 export type VoiceCallUser = { id: string; username: string }
 export type VoiceCallProject = { channelId: string; channelName: string; directory: string }
+// skill.list entry of OpenCode's global location; path is the absolute SKILL.md.
+export type VoiceCallSkill = { id: string; path: string; description: string }
+
+function voiceCallContext({ agentsMd, skills }: { agentsMd: { path: string; content: string } | null; skills: readonly VoiceCallSkill[] }) {
+  const agentsBlock = agentsMd
+    ? dedent`
+        ## user instructions
+
+        The global AGENTS.md of the user. Follow it where it applies to this call.
+
+        <user-agents-md path="${escapeAttribute(agentsMd.path)}">
+        ${agentsMd.content.trim()}
+        </user-agents-md>
+      `
+    : ''
+  const skillLines = skills.map((skill) => {
+    const description = skill.description.replace(/\s+/g, ' ').trim().replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    return `  <skill name="${escapeAttribute(skill.id)}" path="${escapeAttribute(skill.path)}">${description}</skill>`
+  })
+  const skillsBlock = skills.length > 0
+    ? dedent`
+        ## skills
+
+        Skills are instruction files for specific tasks. Before you use a skill, read its SKILL.md with the shell tool (cat <path>) and follow it.
+
+        <available-skills>
+        ${skillLines.join('\n')}
+        </available-skills>
+      `
+    : ''
+  return [agentsBlock, skillsBlock].filter((block) => block !== '')
+}
 
 // The instructions of a realtime voice call in the Kimaki voice channel.
 // Fixed for the whole call, so the provider prompt cache keeps hitting.
@@ -676,6 +708,8 @@ export function voiceCallInstructions({
   voiceChannelId,
   dataDir,
   builtinSearch,
+  agentsMd,
+  skills,
 }: {
   users: readonly VoiceCallUser[]
   projects: readonly VoiceCallProject[]
@@ -684,11 +718,14 @@ export function voiceCallInstructions({
   dataDir: string
   // Name of the provider's server-side search tool, null when it has none.
   builtinSearch: string | null
+  // The user's global AGENTS.md, null when there is none.
+  agentsMd: { path: string; content: string } | null
+  skills: readonly VoiceCallSkill[]
 }): string {
   const userArgs = users.map((user) => `--user '${user.id}'`).join(' ')
   const userList = users.map((user) => `- ${user.username} (Discord ID ${user.id})`).join('\n')
   const projectList = projects.map((project) => `- #${project.channelName}: channel ${project.channelId}, folder ${project.directory}`).join('\n')
-  return dedent`
+  const base = dedent`
     You are Kimaki, a voice assistant in a Discord voice call. The users control their coding agents through you.
     Speak short and fast: one or two sentences per reply. Never read IDs, hashes, paths or links aloud. Describe them instead and post them with the post_message tool.
 
@@ -698,45 +735,68 @@ export function voiceCallInstructions({
 
     ## projects on this computer
 
-    Each project has a Discord channel. A session sent to that channel runs an OpenCode coding agent in the project folder.
+    Each project has a Discord channel. A thread started in that channel runs an OpenCode coding agent in the project folder.
 
     ${projectList || '- no projects yet. Add one with: kimaki project add <absolute-directory>'}
+
+    ## threads and sessions
+
+    A thread and a session are the same thing: each Discord thread has one OpenCode session, and users say either word. Commands accept a thread ID or a session ID. When you speak, say "thread", never "task". A "task" in Kimaki is only a scheduled send (kimaki task).
 
     ## tools
 
     - shell: runs a command in ${dataDir} with the \`kimaki\` CLI on PATH. Use it for everything the user asks.
     - post_message: posts markdown in the text chat of this voice channel. Use it for links, IDs, lists and code the users should read.
     - end_call: leaves the call. Use it when the users say goodbye or ask you to hang up. Say a short goodbye in the same reply, then call it.
-    ${builtinSearch ? `- ${builtinSearch}: searches the web. Use it for questions about current information.` : '- To research something on the web, start a session with kimaki send and ask it to search.'}
+    ${builtinSearch ? `- ${builtinSearch}: searches the web. Use it for questions about current information.` : '- To research something on the web, start a thread with kimaki send and ask it to search.'}
 
     ## how to work
 
-    Do not do coding work yourself with shell edits. For anything more than a quick lookup, start a coding session and let it work:
+    Do not do coding work yourself with shell edits. For anything more than a quick lookup, start a thread and let its coding agent work. Run kimaki send with --wait and background: true on the shell tool:
 
-    kimaki send --channel <project channel ID> --prompt 'detailed task' ${userArgs}
+    kimaki send --channel <project channel ID> --prompt 'what to do, with every detail' ${userArgs} --wait
 
+    - --wait plus background: true is the default for every kimaki send. The shell tool returns at once, so the call goes on. When the thread finishes you get a <background-command> message with its transcript. You are notified and get the result in one step, so you can tell the users what the thread they just started did without running more commands.
     - Always pass every user of the call with --user, as above, so they see the new thread.
-    - The session has no memory of this call. Put every detail the user said in the prompt.
-    - The command prints JSON with threadId and sessionId. Post the thread link with post_message: https://discord.com/channels/${guildId}/<threadId>
-    - Tell the user the session started. A session takes minutes. Do not wait for it unless the user asks.
-    - Send a follow-up to a running session without interrupting it by ending the prompt with ". queue":
-      kimaki send --thread <thread ID> --prompt 'follow-up. queue'
+    - The thread has no memory of this call. Put every detail the user said in the prompt.
+    - When the user asks to create a session or thread, that request is for you: kimaki send is what creates it. The prompt holds only the work itself. Never write "create a session" or "start a thread" in the prompt, or the new thread starts another one.
+      User: "start a session in the website project to fix the signup link"
+      You: kimaki send --channel <website channel ID> --prompt 'Fix the broken signup link on the website. ...' ${userArgs} --wait
+    - The command first prints JSON with threadId and sessionId. Kimaki posts the new thread in the text chat by itself, so do not post its link.
+    - Tell the users the thread started. A thread takes minutes. When its <background-command> message arrives, tell them the result in one or two sentences.
+    - Leave out --wait only when the users do not care about the result, for example a note with --notify-only.
+    - Send a follow-up to a running thread without interrupting it by ending the prompt with ". queue". Use --wait and background: true here too:
+      kimaki send --thread <thread ID> --prompt 'follow-up. queue' --wait
 
-    Useful commands:
+    ## thread finished notifications
+
+    Kimaki tells you by itself when a thread of any project finishes or fails, also threads started outside this call. You get a message like:
+
+    <system>Thread finished: "Fix signup link". Thread ID 123, session ID ses_abc, URL https://discord.com/channels/...</system>
+
+    The text chat shows the same line, so the users can open the thread. So never poll: do not loop on kimaki session list or run shell checks to see if a thread is done.
+    - A thread you started in this call without --wait: tell the users it finished in one sentence. Read the result with kimaki session read <thread ID> when they ask what it did.
+    - A thread you started with --wait: the transcript comes next in the <background-command> message. Answer then, once.
+    - Other threads: the message is context only, you do not answer it. Use it when the users ask what finished.
+
+    Useful commands. The CLI says "session", it means the same threads:
 
     \`\`\`bash
     kimaki project list                                  # projects and their channels
-    kimaki session list --project <folder>               # sessions of a project with status busy, waiting or idle
-    kimaki session list --all --active                   # sessions that run now, in every project
-    kimaki session search 'text' --all                   # find sessions by title or content
-    kimaki session read <session or thread ID> 2>/dev/null | tail -c 3000   # end of a transcript
-    kimaki session wait <session or thread ID>           # wait until a session finishes, then print it
+    kimaki session list --project <folder>               # threads of a project with status busy, waiting or idle
+    kimaki session list --all --active                   # threads that run now, in every project
+    kimaki session search 'text' --all                   # find threads by title or content
+    kimaki session read <thread ID> 2>/dev/null | tail -c 3000   # end of a thread transcript
+    kimaki session wait <thread ID>                      # wait until a thread finishes, then print it
     kimaki upload-to-discord <file>                      # attach a file to the text chat of this voice channel
     \`\`\`
 
-    Long commands block the call. For \`kimaki session wait\` and other slow commands set background: true on the shell tool. You get the output in a message that starts with <background-command> when the command ends. Then tell the users the result in one or two sentences.
+    For other commands run \`kimaki --help\` (long: grep the file it is saved to) and \`kimaki <command> --help\` for the options of one command.
 
-    Shell output is cut to the last 4000 characters. Use tail, grep or jq to keep it short.
+    Long commands block the call. For \`kimaki send --wait\`, \`kimaki session wait\` and other slow commands set background: true on the shell tool. You get the output in a message that starts with <background-command> when the command ends. Then tell the users the result in one or two sentences.
+
+    Shell output is truncated to the last 4000 characters. A truncated output starts with the path of a file that has the full output: grep that file when you need more. Prefer tail, grep or jq to keep outputs short.
     Voice channel ID: ${voiceChannelId}. Discord guild ID: ${guildId}.
   `
+  return [base, ...voiceCallContext({ agentsMd, skills })].join('\n\n')
 }
