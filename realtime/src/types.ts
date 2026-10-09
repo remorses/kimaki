@@ -31,6 +31,8 @@ export type RealtimeEvent =
   /** The server cut unheard audio from a reply. `text` is the heard transcript when the provider sends it (xAI). */
   | { type: 'output.truncated'; itemId: string; text: string | null }
   | { type: 'tool.call'; callId: string; name: string; args: string }
+  /** A server-side tool the provider ran by itself, e.g. Gemini Google Search. Informational: no result is sent. */
+  | { type: 'tool.builtin'; name: string; args: string }
   | { type: 'tools.cancelled'; callIds: string[] }
   | { type: 'response.done'; status: ResponseStatus }
   | { type: 'usage'; usage: Usage }

@@ -19,6 +19,7 @@ type Wire = {
     modelTurn?: { parts?: Array<{ text?: string; thought?: boolean; inlineData?: { data?: string } }> }
     inputTranscription?: { text?: string; finished?: boolean }
     outputTranscription?: { text?: string }
+    groundingMetadata?: { webSearchQueries?: string[] }
   }
   toolCall?: { functionCalls?: Array<{ id?: string; name?: string; args?: unknown }> }
   toolCallCancellation?: { ids?: string[] }
@@ -69,6 +70,10 @@ function decode({ message, model }: { message: unknown; model: string }): Decode
   }
   if (content?.outputTranscription?.text) {
     out.push({ type: 'output.text', text: content.outputTranscription.text, itemId: null })
+  }
+  // The googleSearch tool runs server-side; grounding metadata names its queries.
+  for (const query of content?.groundingMetadata?.webSearchQueries ?? []) {
+    out.push({ type: 'tool.builtin', name: 'google_search', args: JSON.stringify({ query }) })
   }
   for (const call of wire.toolCall?.functionCalls ?? []) {
     out.push({ type: 'tool.call', callId: call.id ?? '', name: call.name ?? '', args: JSON.stringify(call.args ?? {}) })
