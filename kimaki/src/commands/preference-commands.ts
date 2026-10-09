@@ -7,6 +7,7 @@
 //   /agent          ─▶ agent select ─▶ session or channel
 //   /<agent>-agent  ─▶ same, without the select
 //   /model          ─▶ provider ─▶ model ─▶ variant (if any) ─▶ scope: session | channel | global
+//                   └▶ reset buttons: session model ─▶ channel default, channel model ─▶ removed
 //   /model-variant  ─▶ variant of the current model ─▶ scope
 //   /verbosity      ─▶ text | tools for the channel
 //
@@ -14,8 +15,10 @@
 // keyed by a short hash (custom IDs max 100 chars), dropped after 10 minutes.
 
 import crypto from 'node:crypto'
+import * as orm from 'drizzle-orm'
 import {
   SlashCommandBuilder,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type MessageComponentInteraction,
   type StringSelectMenuInteraction,
@@ -24,13 +27,14 @@ import {
 import { globalModel, oc, parseModel, type Bot, type ModelChoice } from '../bot.ts'
 import { verbosityFromV1, verbosityToV1, type Verbosity } from '../db.ts'
 import { ConfigError, DbError } from '../errors.ts'
-import { paginate, selectedPage, selectRow } from '../format-parts.ts'
+import { button, buttonRow, paginate, selectedPage, selectRow, type UiMessage } from '../format-parts.ts'
 import { replyError, resolveTarget, type InteractionRoutes, type InteractionTarget } from '../interaction-context.ts'
 import * as schema from '../schema.ts'
 import { agentSelection, primaryAgents, switchAgent } from '../sessions.ts'
 
 const AGENT_PREFIX = 'agent:'
 const MODEL_PREFIX = 'model:'
+const MODEL_RESET_PREFIX = 'model_reset:'
 const VERBOSITY_PREFIX = 'verbosity:'
 const WIZARD_TTL_MS = 10 * 60 * 1_000
 const NONE_VARIANT = '__none__'
@@ -71,6 +75,15 @@ export async function setChannelModel(bot: Bot, { channelId, model }: { channelI
     .values({ channel_id: channelId, ...values })
     .onConflictDoUpdate({ target: schema.channel_models.channel_id, set: values })
     .catch((cause) => new DbError({ operation: 'write channel_models', cause }))
+  if (result instanceof Error) return result
+}
+
+// New sessions of the channel fall back to the agent model or the global one.
+async function clearChannelModel(bot: Bot, { channelId }: { channelId: string }): Promise<DbError | void> {
+  const result = await bot.db
+    .delete(schema.channel_models)
+    .where(orm.eq(schema.channel_models.channel_id, channelId))
+    .catch((cause) => new DbError({ operation: 'delete channel_models', cause }))
   if (result instanceof Error) return result
 }
 
@@ -127,6 +140,55 @@ async function current(bot: Bot, target: InteractionTarget) {
   const global = await globalModel(bot)
   if (global instanceof Error) return global
   return { scope: 'channel' as const, modelScope: 'global' as const, agent, model: global }
+}
+
+// The model a new session of the channel starts with, like startSession:
+// channel model, channel agent model, global model, OpenCode default.
+async function channelDefaultModel(bot: Bot, target: InteractionTarget): Promise<Error | ModelChoice | null> {
+  const row = await bot.db.query.channel_directories
+    .findFirst({ where: { channel_id: target.channelId }, with: { channel_agent: true, channel_model: true } })
+    .catch((cause) => new DbError({ operation: 'read channel preferences', cause }))
+  if (row instanceof Error) return row
+  const channel = parseModel(row?.channel_model?.model_id, row?.channel_model?.variant)
+  if (channel) return { ...channel, variant: channel.variant ?? null }
+  const agent = row?.channel_agent?.agent_name
+  const selected = agent ? await agentSelection(bot, { directory: target.directory, agent }) : null
+  if (selected instanceof Error) return selected
+  if (selected?.model) return selected.model
+  const global = await globalModel(bot)
+  if (global instanceof Error || global) return global
+  const fallback = await oc(bot, 'model.default', (client) => client.model.default({ location: { directory: target.directory } }))
+  if (fallback instanceof Error) return fallback
+  return fallback.data ? { providerID: fallback.data.providerID, id: fallback.data.id, variant: null } : null
+}
+
+// OpenCode reports a session without a variant as variant "default".
+function sameModel(a: { providerID: string; id: string; variant?: string | null }, b: { providerID: string; id: string; variant?: string | null }) {
+  const variant = (model: { variant?: string | null }) => (model.variant && model.variant !== 'default' ? model.variant : null)
+  return a.providerID === b.providerID && a.id === b.id && variant(a) === variant(b)
+}
+
+// Reset buttons for the overrides that are set: the session model when it
+// differs from the channel default, and the channel model.
+async function resetButtons(bot: Bot, { target, hash }: { target: InteractionTarget; hash: string }) {
+  const sessionId = target.sessionId
+  const [row, session, fallback] = await Promise.all([
+    bot.db.query.channel_models
+      .findFirst({ where: { channel_id: target.channelId } })
+      .catch((cause) => new DbError({ operation: 'read channel_models', cause })),
+    sessionId ? oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId })) : null,
+    sessionId ? channelDefaultModel(bot, target) : null,
+  ])
+  if (row instanceof Error) return row
+  if (session instanceof Error) return session
+  if (fallback instanceof Error) return fallback
+  const buttons = [
+    ...(session?.model && fallback && !sameModel(session.model, fallback)
+      ? [button({ customId: `${MODEL_RESET_PREFIX}${hash}:session`, label: 'Reset session model' })]
+      : []),
+    ...(row ? [button({ customId: `${MODEL_RESET_PREFIX}${hash}:channel`, label: 'Reset channel model' })] : []),
+  ]
+  return buttons.length > 0 ? [buttonRow(buttons)] : []
 }
 
 async function enabledModels(bot: Bot, directory: string) {
@@ -283,8 +345,13 @@ async function renderStep(
   const customId = `${MODEL_PREFIX}${hash}:${step}`
   const header = '**Set Model Preference**'
   const selected = wizard.providerID && wizard.modelID ? `${wizard.providerID}/${wizard.modelID}` : ''
-  const reply = async (content: string, options: ReadonlyArray<{ label: string; value: string; description?: string }>, placeholder: string) => {
-    await interaction.editReply({ content, components: [selectRow({ customId, placeholder, options: paginate(options, page) })] })
+  const reply = async (
+    content: string,
+    options: ReadonlyArray<{ label: string; value: string; description?: string }>,
+    placeholder: string,
+    extra: UiMessage['components'] = [],
+  ) => {
+    await interaction.editReply({ content, components: [selectRow({ customId, placeholder, options: paginate(options, page) }), ...extra] })
   }
   if (step === 'provider') {
     const providers = [...new Map(models.map((model) => [model.providerID, model.providerName]))].sort((a, b) =>
@@ -293,8 +360,9 @@ async function renderStep(
     if (providers.length === 0) {
       return replyError(interaction, new ConfigError({ reason: 'No providers with credentials found. Connect one with `opencode auth login`.' }))
     }
-    const now = await current(bot, wizard.target)
+    const [now, resets] = await Promise.all([current(bot, wizard.target), resetButtons(bot, { target: wizard.target, hash })])
     if (now instanceof Error) return replyError(interaction, now)
+    if (resets instanceof Error) return replyError(interaction, resets)
     const currentText = now.model ? `**Current (${now.modelScope}):** \`${modelLabel(now.model)}\`` : '**Current:** OpenCode default'
     return reply(
       `${header}\n${currentText}\nSelect a provider:`,
@@ -303,6 +371,7 @@ async function renderStep(
         return { label: name, value: id, description: `${count} model${count === 1 ? '' : 's'} available` }
       }),
       'Select a provider',
+      resets,
     )
   }
   if (step === 'model') {
@@ -473,6 +542,34 @@ export function createPreferenceRoutes(): InteractionRoutes {
     return applyModel(bot, { interaction, wizard, scope: value })
   }
 
+  // Session: back to the channel default. Channel: drop its model.
+  async function modelReset(bot: Bot, interaction: ButtonInteraction) {
+    const [hash, scope] = interaction.customId.slice(MODEL_RESET_PREFIX.length).split(':')
+    const wizard = hash ? wizards.get(hash) : undefined
+    if (!hash || !wizard) {
+      await interaction.update({ content: 'Selection expired. Please run /model again.', components: [] })
+      return
+    }
+    await interaction.deferUpdate()
+    wizards.delete(hash)
+    const sessionId = wizard.target.sessionId
+    if (scope === 'session' && sessionId) {
+      const model = await channelDefaultModel(bot, wizard.target)
+      if (model instanceof Error) return replyError(interaction, model)
+      if (!model) return replyError(interaction, new ConfigError({ reason: 'No default model configured.' }))
+      const result = await switchModel(bot, { sessionId, model })
+      if (result instanceof Error) return replyError(interaction, result)
+      await interaction.editReply({ content: `Session model reset to the channel default:\n\`${modelLabel(model)}\`\nApplies from the next step.`, components: [] })
+      return
+    }
+    const result = await clearChannelModel(bot, { channelId: wizard.target.channelId })
+    if (result instanceof Error) return replyError(interaction, result)
+    const next = await channelDefaultModel(bot, { ...wizard.target, sessionId: null })
+    if (next instanceof Error) return replyError(interaction, next)
+    const label = next ? `\`${modelLabel(next)}\`` : 'OpenCode default'
+    await interaction.editReply({ content: `Channel model removed. New sessions in this channel will use:\n${label}`, components: [] })
+  }
+
   return {
     commands: {
       agent: { definition: new SlashCommandBuilder().setName('agent').setDescription('Set the agent for this session or channel'), run: agentMenu },
@@ -483,6 +580,7 @@ export function createPreferenceRoutes(): InteractionRoutes {
       },
       verbosity: { definition: new SlashCommandBuilder().setName('verbosity').setDescription('Set what the bot shows in this channel'), run: verbosityMenu },
     },
+    buttons: { [MODEL_RESET_PREFIX]: modelReset },
     selects: { [AGENT_PREFIX]: handleAgentSelect, [MODEL_PREFIX]: modelSelect, [VERBOSITY_PREFIX]: handleVerbositySelect },
   }
 }

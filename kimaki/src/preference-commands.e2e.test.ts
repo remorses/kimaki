@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import * as orm from 'drizzle-orm'
+import { ComponentType } from 'discord-api-types/v10'
 import { afterAll, beforeAll, expect, onTestFinished, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
@@ -89,6 +90,34 @@ async function pick({ channelId, prefix, value }: { channelId: string; prefix: s
     },
   })
   return select.options.map((option) => option.label)
+}
+
+// Clicks the button `label` in the newest message with buttons starting with
+// `prefix`, waits until that message changed, and returns all button labels.
+async function click({ channelId, prefix, label }: { channelId: string; prefix: string; label: string }) {
+  const { discord } = twin
+  const { message, buttons } = await waitFor({
+    label: `buttons ${prefix}`,
+    check: async () => {
+      for (const message of [...(await discord.channel(channelId).getMessages())].reverse()) {
+        const buttons = (message.components ?? []).flatMap((row) => (row.type === ComponentType.ActionRow ? row.components : []))
+          .filter((item) => item.type === ComponentType.Button && 'custom_id' in item && item.custom_id.startsWith(prefix))
+        if (buttons.length > 0) return { message, buttons }
+      }
+      return null
+    },
+  })
+  const target = buttons.find((item) => 'label' in item && item.label === label)
+  if (!target || !('custom_id' in target)) throw new Error(`No button ${label}`)
+  await discord.channel(channelId).user(TEST_USER_ID).clickButton({ messageId: message.id, customId: target.custom_id })
+  await waitFor({
+    label: `button ${target.custom_id} handled`,
+    check: async () => {
+      const current = (await discord.channel(channelId).getMessages()).find((candidate) => candidate.id === message.id)
+      return current && current.content !== message.content ? current : null
+    },
+  })
+  return buttons.map((item) => ('label' in item ? item.label : ''))
 }
 
 async function sessionModel(threadId: string) {
@@ -220,6 +249,29 @@ test('/model switches the session model from the next step, /model-variant its t
     \`deterministic-provider/deterministic-thinker (low)\`
     Applies from the next step."
   `)
+
+  await user.runSlashCommand({ name: 'model' })
+  expect(await click({ channelId: thread.id, prefix: 'model_reset:', label: 'Reset session model' })).toMatchInlineSnapshot(`
+    [
+      "Reset session model",
+    ]
+  `)
+  expect((await discord.thread(thread.id).getMessages()).at(-1)?.content).toMatchInlineSnapshot(`
+    "Session model reset to the channel default:
+    \`deterministic-provider/deterministic-v2\`
+    Applies from the next step."
+  `)
+  expect((await sessionModel(thread.id)).model).toMatchInlineSnapshot(`
+    {
+      "id": "deterministic-v2",
+      "providerID": "deterministic-provider",
+      "variant": "default",
+    }
+  `)
+  // No override left: no reset button.
+  await user.runSlashCommand({ name: 'model' })
+  const { message } = await waitForSelectMenu({ discord, channelId: thread.id, prefix: 'model:' })
+  expect(message.components).toHaveLength(1)
 })
 
 test('/model with channel scope sets the model of new sessions', async () => {
@@ -251,6 +303,18 @@ test('/model with channel scope sets the model of new sessions', async () => {
       "variant": null,
     }
   `)
+
+  await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'model' })
+  expect(await click({ channelId, prefix: 'model_reset:', label: 'Reset channel model' })).toMatchInlineSnapshot(`
+    [
+      "Reset channel model",
+    ]
+  `)
+  expect((await discord.channel(channelId).getMessages()).at(-1)?.content).toMatchInlineSnapshot(`
+    "Channel model removed. New sessions in this channel will use:
+    \`deterministic-provider/deterministic-v2\`"
+  `)
+  expect(await bot.db.query.channel_models.findFirst({ where: { channel_id: channelId } })).toBeUndefined()
 })
 
 test('/verbosity applies to running sessions of the channel at once', async () => {
