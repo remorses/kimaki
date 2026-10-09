@@ -8,6 +8,10 @@
     "verbatimModuleSyntax": true,
     "rewriteRelativeImportExtensions": true,
     "outDir": "dist",
+    // Incremental: tsc only rewrites changed outputs, so a build does not touch
+    // unchanged dist/plugin files (OpenCode reloads all plugins on any write).
+    "incremental": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
     "rootDir": "src",
     "declaration": true,
     "sourceMap": true,
