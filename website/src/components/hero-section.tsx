@@ -1,6 +1,6 @@
 /**
  * Full-bleed hero with serif title, install CTA, and Discord playground.
- * Heading on the left, playground on the right. Background shader is off.
+ * Centered heading and CTA above, full-width playground below.
  */
 'use client'
 
@@ -25,32 +25,24 @@ export function HeroSection() {
   return (
     <div className='relative isolate mt-10 mb-16 lg:mt-14 lg:mb-20 w-full'>
       <StradaBrowser />
-      <HeroDither offsetX={-90} />
+      <HeroDither />
 
-      <div className='relative z-[2] flex w-full flex-col items-stretch gap-8 lg:flex-row lg:items-center lg:gap-10'>
-        <div className='flex w-full max-w-[280px] shrink-0 flex-col items-start text-left'>
-          <h1 className='flex flex-col items-start leading-[1.08] text-left'>
-            <span
-              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
-              style={{
-                fontFamily:
-                  "'Playfair Display', Georgia, 'Times New Roman', serif",
-              }}
-            >
-              AI coding agents
-            </span>
-            <span
-              className='italic text-[36px] sm:text-[48px] md:text-[56px] font-medium text-foreground'
-              style={{
-                fontFamily:
-                  "'Playfair Display', Georgia, 'Times New Roman', serif",
-              }}
-            >
-              from Discord.
-            </span>
+      <div className='relative z-[2] flex w-full flex-col items-center gap-12 lg:gap-14'>
+        <div className='flex w-full max-w-[640px] flex-col items-center text-center'>
+          <h1
+            className='italic leading-[1.08] text-[40px] sm:text-[56px] md:text-[68px] font-medium text-foreground text-balance'
+            style={{
+              fontFamily: "'Playfair Display', Georgia, 'Times New Roman', serif",
+            }}
+          >
+            AI coding agents from Discord.
           </h1>
+          <p className='mt-5 max-w-[520px] text-[16px] sm:text-[18px] leading-relaxed text-foreground/60 text-balance'>
+            Each channel is a project, each thread is a session. Message your
+            agents from anywhere and come back to finished work.
+          </p>
           <InstallCommand />
-          <div className='flex items-center gap-5 mt-4'>
+          <div className='flex items-center justify-center gap-5 mt-4'>
             <a
               target='_blank'
               rel='noopener noreferrer'
@@ -71,7 +63,7 @@ export function HeroSection() {
             </a>
           </div>
         </div>
-        <div className='min-w-0 flex-1'>
+        <div className='w-full min-w-0'>
           <DiscordPlayground />
         </div>
       </div>
