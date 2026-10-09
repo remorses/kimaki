@@ -146,8 +146,11 @@ export function resolveRouteScope(pathname: string): RouteScope {
   if (base === -1 || segments.length <= base) return { kind: 'denied' }
   const route = segments.slice(base)
   const [first = '', second = '', third = '', fourth = ''] = route
-  if (first === 'gateway' && second === 'bot') return { kind: 'allowed-without-guild' }
-  if (first === 'users' && (second === '@me' || second.toLowerCase() === '%40me')) return { kind: 'allowed-without-guild' }
+  // Exact routes only: /users/@me/* reaches every guild of the shared bot.
+  if (route.length === 2 && first === 'gateway' && second === 'bot') return { kind: 'allowed-without-guild' }
+  if (route.length === 2 && first === 'users' && (second === '@me' || second.toLowerCase() === '%40me')) {
+    return { kind: 'allowed-without-guild' }
+  }
   if ((first === 'interactions' || first === 'webhooks') && route.length >= 3) {
     return SNOWFLAKE.test(second) && third ? { kind: 'allowed-without-auth' } : { kind: 'denied' }
   }
@@ -2004,7 +2007,11 @@ export function createServer({
     const token = (req.headers.authorization ?? '').replace(/^Bot\s+/i, '')
     const guilds = authorize(token)
     if (guilds === false) return Response.json({ error: 'Invalid client credentials' }, { status: 401 })
-    if (guilds === null || scope.kind === 'allowed-without-guild') return null
+    if (guilds === null) return null
+    // Read-only, like rest_proxy.rs is_client_authorized_for_route.
+    if (scope.kind === 'allowed-without-guild') {
+      return req.method === 'GET' ? null : Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
+    }
     if (scope.kind === 'denied') return Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
     if (scope.kind === 'guild') {
       return guilds.has(scope.guildId) ? null : Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
