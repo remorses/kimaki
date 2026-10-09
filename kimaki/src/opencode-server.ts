@@ -136,8 +136,10 @@ export function opencodeConfigDir(): string {
   return path.join(xdg, 'opencode')
 }
 
-// Shim folder under plugins/ -> plugin directory under src/plugin/ (dist/plugin/
-// when built), loaded through its index module.
+// Shim folder under plugins/ -> plugin directory under dist/plugin/, loaded
+// through its index module. Always dist, also when the bot runs from src: OpenCode
+// reloads the plugin when its files change, so a src target would reload half
+// edited code on every save. dist only changes on `pnpm build`.
 // `kimaki` acts only on marked sessions; `kimaki-anthropic` is provider auth for every session.
 const PLUGIN_SHIMS = [
   { name: 'kimaki', directory: '' },
@@ -145,8 +147,9 @@ const PLUGIN_SHIMS = [
 ] as const
 
 export function kimakiPluginEntry(directory: string = ''): string {
-  const self = fileURLToPath(import.meta.url)
-  return path.join(path.dirname(self), 'plugin', directory, `index${path.extname(self)}`)
+  // This module is <package>/src/opencode-server.ts or <package>/dist/opencode-server.js.
+  const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+  return path.join(root, 'dist', 'plugin', directory, 'index.js')
 }
 
 export function pluginShimSource({ entry }: { entry: string }): string {
