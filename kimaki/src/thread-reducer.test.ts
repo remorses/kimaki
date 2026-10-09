@@ -17,7 +17,7 @@ test('text-only turn: banner, text, typing, footer with context percent', () => 
         "type": "typing",
       },
       {
-        "text": "-# *using openai/gpt-6-luna ⋅ build*",
+        "text": "-# *using openai/gpt-6-luna low ⋅ build*",
         "type": "send",
       },
       {

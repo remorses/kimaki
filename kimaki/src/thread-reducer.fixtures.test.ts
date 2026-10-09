@@ -12,7 +12,7 @@ test('tools: names from tool.input.started, failed tool lines, read-only tools h
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _ls cli/src \\| head -5_",
       "-# ┣ shell",
       "-# ⨯ shell _Invalid arguments for tool "shell":_",
@@ -35,7 +35,7 @@ test('tools at text verbosity: text, edits and errors only', () => {
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ⨯ shell _Invalid arguments for tool "shell":_",
       "-# ⨯ shell _Invalid arguments for tool "shell":_",
       "\\nDone. \`tmp-events/hello.txt\` contains \`hello world\`.",
@@ -50,7 +50,7 @@ test('task-subagent: child tool lines labelled with the agent, no child text, fo
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ general **Find SQLite schema file**",
       "\\nThe Drizzle SQLite schema is defined in \`cli/src/schema.ts\`. Its first lines confirm it defines tables for Kimaki’s local SQLite database.",
       "[typing off]",
@@ -74,7 +74,7 @@ test('task-parallel: background children show start and end lines only, no foote
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ general **Count command TypeScript** (background)",
       "-# ┣ general **List repo folders** (background)",
       "-# ⬦ general finished: Count command TypeScript",
@@ -112,7 +112,7 @@ test('abort: no error line for the aborted tool, no footer, next turn is normal'
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 30 && echo never_",
       "[typing off]",
       "[typing on]",
@@ -180,7 +180,7 @@ test('queue-plain: acks with positions while busy, silent footer before each del
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 6 && echo slow-done_",
       "[show queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1",
       "[show queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued at position 2. Delete the original message to remove it, or use /clear-queue position:2",
@@ -205,7 +205,7 @@ test('steer-queue: cancelled item edits its ack, interrupted run has no footer',
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 8 && echo slow-done_",
       "[show queue:msg_0f200f884001tIpWlHhNB8Y5bv] -# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1",
       "[show queue:msg_kimaki_queued_b_test1] -# Queued at position 2. Delete the original message to remove it, or use /clear-queue position:2",
@@ -233,7 +233,7 @@ test('queue-parked: parked item runs and echoes after the next prompt, with a fo
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 6 && echo slow-done_",
       "[show queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1",
       "[typing off]",
@@ -254,7 +254,7 @@ test('question: one dropdown per question, typing off while waiting, edited on r
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "[typing off]",
       "[show form:frm_0f1ff0402001MIUy5ATcEElGcr] **Color**
     Which color do you prefer? {Red/Green/Blue/Other} | **Fruits**
@@ -278,7 +278,7 @@ test('permission: two requests, the rejected one fails its tool call', () => {
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _echo first_",
       "[typing off]",
       "[show perm:per_0f202b5a4001acFP7sdJdnf7DQ] **Permission required**
@@ -343,7 +343,7 @@ test('shell: user !cmd output while idle and while busy, synthetic items render 
     05de62d feat: make external opencode session sync opt-in via --enable-sync
     \`\`\`",
       "[typing on]",
-      "-# *using openai/gpt-6-luna ⋅ build*",
+      "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 5_",
       "-# $ echo user-shell-busy",
       "\`\`\`

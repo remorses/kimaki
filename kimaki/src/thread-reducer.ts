@@ -337,7 +337,7 @@ function applyRoot(context: Context & { event: V2Event }) {
       draft.turn ??= { startedAt: event.created, model: null, agent: null, tokens: 0, slept: false }
       draft.turn.model = model
       draft.turn.agent = event.data.agent
-      if (draft.bannerPending) emit({ type: 'send', text: formatBanner({ model, agent: event.data.agent }) })
+      if (draft.bannerPending) emit({ type: 'send', text: formatBanner({ model: event.data.model, agent: event.data.agent }) })
       draft.bannerPending = false
       return
     }

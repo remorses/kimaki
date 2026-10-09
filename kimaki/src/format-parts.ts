@@ -119,8 +119,10 @@ export function formatDuration(ms: number): string {
 
 export type ModelRef = { providerID: string; id: string }
 
-export function formatBanner({ model, agent }: { model: ModelRef; agent: string }): string {
-  return asSubtext(`*using ${model.providerID}/${model.id} ⋅ ${agent}*`)
+export function formatBanner({ model, agent }: { model: ModelRef & { variant?: string }; agent: string }): string {
+  // OpenCode reports `default` when no variant is selected.
+  const variant = model.variant && model.variant !== 'default' ? ` ${model.variant}` : ''
+  return asSubtext(`*using ${model.providerID}/${model.id}${variant} ⋅ ${agent}*`)
 }
 
 export function formatFooter({

@@ -458,7 +458,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     "--- from: user (tommy)
     Agent model thread
     --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# *using deterministic-provider/deterministic-v2 fast ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
     Switched to **thinker** agent for this session (was **build**)
@@ -480,7 +480,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     "--- from: user (tommy)
     Agent model thread
     --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# *using deterministic-provider/deterministic-v2 fast ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
     Switched to **thinker** agent for this session (was **build**)
@@ -500,7 +500,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     "--- from: user (tommy)
     Agent model thread
     --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# *using deterministic-provider/deterministic-v2 fast ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
     Switched to **thinker** agent for this session (was **build**)
@@ -523,7 +523,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     "--- from: user (tommy)
     Uses the agent model default
     --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-thinker ⋅ thinker*
+    -# *using deterministic-provider/deterministic-thinker high ⋅ thinker*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
   `)
@@ -536,7 +536,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     "--- from: user (tommy)
     Uses the channel thinking level
     --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-thinker ⋅ thinker*
+    -# *using deterministic-provider/deterministic-thinker low ⋅ thinker*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
   `)
@@ -574,7 +574,7 @@ test('/model with all channels scope sets the model of channels without their ow
     "--- from: user (tommy)
     Uses the global model
     --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-thinker ⋅ build*
+    -# *using deterministic-provider/deterministic-thinker low ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker*"
   `)
