@@ -1372,6 +1372,15 @@ export class ChannelScope {
     return threads.map(channelToAPI)
   }
 
+  // User IDs of thread members, in join order.
+  async getMemberIds(): Promise<string[]> {
+    const members = await this.discord.prisma.threadMember.findMany({
+      where: { channelId: this.channelId },
+      orderBy: { joinedAt: 'asc' },
+    })
+    return members.map((member) => member.userId)
+  }
+
   async waitForMessage({
     timeout = 10000,
     predicate,

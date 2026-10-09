@@ -428,6 +428,8 @@ export async function startSession(
 
   const bound = await bindThread(bot, { threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
   if (bound instanceof Error) return bound
+  // Discord only adds the thread creator (the bot); the user must be added to see it in the sidebar.
+  if (author.id !== bot.discord.user?.id) await thread.members.add(author.id).catch((e: Error) => logger.warn(`add member`, e))
   if (!run) {
     const posted = await thread
       .send({

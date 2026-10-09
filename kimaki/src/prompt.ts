@@ -623,17 +623,6 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
     baseBranch: input.baseBranch,
     ...(model && { model: { ...model, variant: null } }),
   })
-  if (started instanceof Error) return started
-  if (input.user) {
-    const thread = await bot.discord.channels
-      .fetch(started.threadId)
-      .catch((cause) => new DiscordError({ operation: 'fetch send thread', cause }))
-    if (thread instanceof Error) return thread
-    if (thread?.isThread()) {
-      const added = await thread.members.add(author.id).catch((cause) => new DiscordError({ operation: 'add thread member', cause }))
-      if (added instanceof Error) return added
-    }
-  }
   return started
 }
 

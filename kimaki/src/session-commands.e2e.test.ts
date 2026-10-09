@@ -143,6 +143,8 @@ test('/new-session starts a thread with attached files and an agent', async () =
     saw the file
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)
+  // A slash command thread has no start message: the user must be added explicitly.
+  expect(await discord.channel(thread.id).getMemberIds()).toContain(TEST_USER_ID)
 })
 
 test('/resume binds an existing session to a new thread and moves the binding', async () => {
