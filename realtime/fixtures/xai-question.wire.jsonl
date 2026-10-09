@@ -1,0 +1,72 @@
+{"direction":"out","data":{"type":"session.update","session":{"instructions":"You are a voice assistant in a test. Answer in one short sentence.","voice":"eve","turn_detection":{"type":"server_vad"},"audio":{"input":{"format":{"type":"audio/pcm","rate":24000}},"output":{"format":{"type":"audio/pcm","rate":24000}}},"reasoning":{"effort":"none"},"resumption":{"enabled":true},"tools":[{"type":"function","name":"get_weather","description":"Get the current weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"],"additionalProperties":false}}]}}}
+{"direction":"in","data":{"type":"session.created","event_id":"88bcd4b1-a8e0-4e31-a8f2-902da04f6f2b","session":{"id":"903e679e5e7140f3927bc00b9413aff1","object":"realtime.session","instructions":"","voice":"xai_ara","modalities":["audio"],"turn_detection":{"type":null},"tools":[],"model":"grok-voice-think-fast-2.0"}}}
+{"direction":"in","data":{"type":"conversation.created","event_id":"910bd52c-6d05-44d3-9a4f-53023f1f23ee","conversation":{"id":"af27b023-15a8-46e4-9004-30c2d007f06d","object":"realtime.conversation"},"previous_item_id":null}}
+{"direction":"in","data":{"type":"ping","event_id":"b7023a26-1812-437e-8894-d133176ecf23","timestamp":1791558269195,"previous_item_id":null}}
+{"direction":"in","data":{"session":{"instructions":"You are a voice assistant in a test. Answer in one short sentence.","enable_noise_suppression":false,"turn_detection":{"type":"server_vad"},"reasoning":{"effort":"none"},"model":"grok-voice-think-fast-2.0","tools":[{"type":"function","function":{"name":"get_weather","description":"Get the current weather for a city","parameters":{"type":"object","properties":{"city":{"type":"string","description":"City name"}},"required":["city"],"additionalProperties":false}}}],"keep_context":false,"enable_phonetic_spelling":false,"modalities":["audio"],"input_audio_format":"not specified","output_audio_format":"not specified","tool_choice":"auto","temperature":-1,"max_response_output_tokens":"inf","audio":{"input":{"format":{"type":"audio/pcm","rate":24000},"transport":"json"},"output":{"format":{"type":"audio/pcm","rate":24000},"transport":"json"}},"input_audio_transcription":null},"type":"session.updated","event_id":"44633a76-434e-44c6-907e-8d0e81dc14a5","previous_item_id":null}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"out","data":{"type":"input_audio_buffer.append","audio":"AAA="}}
+{"direction":"in","data":{"type":"input_audio_buffer.speech_started","event_id":"bf974454-b5d8-468a-9fea-55f4de3a77a3","item_id":"44dce473-f37d-484f-95a7-cea03063bded","audio_start_ms":207,"previous_item_id":null}}
+{"direction":"in","data":{"type":"input_audio_buffer.speech_stopped","event_id":"35eebb78-efa3-4b4a-90b3-ac2bddffa75b","item_id":"44dce473-f37d-484f-95a7-cea03063bded","audio_end_ms":565,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.created","event_id":"66acd63c-9808-41cb-9381-0779045aa417","response":{"id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","object":"realtime.response","output":[],"status":"in_progress","status_details":"unimplemented","usage":{}},"previous_item_id":null}}
+{"direction":"in","data":{"type":"input_audio_buffer.committed","event_id":"313ee177-43bc-4ea3-b72b-9fab8c978ca6","item_id":"44dce473-f37d-484f-95a7-cea03063bded","previous_item_id":null}}
+{"direction":"in","data":{"type":"conversation.item.added","event_id":"8d30bba1-d57e-4268-b243-53970b4e06f4","item":{"id":"44dce473-f37d-484f-95a7-cea03063bded","object":"realtime.item","type":"message","status":"completed","role":"user","content":[{"type":"input_audio","transcript":"Hi there, in one short sentence, what is the capital of France?"}],"replayed":false},"previous_item_id":null}}
+{"direction":"in","data":{"type":"conversation.item.input_audio_transcription.completed","event_id":"b2300182-f2ce-4e98-a74b-789d2fb528c0","item_id":"44dce473-f37d-484f-95a7-cea03063bded","transcript":"Hi there, in one short sentence, what is the capital of France?","content_index":0,"status":"completed","previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_item.added","event_id":"56fb08c1-ae8e-490c-b4d6-4486327804b7","item":{"id":"289e17d2-26d7-457a-aa14-074ef1709397","object":"realtime.item","type":"message","status":"in_progress","role":"assistant","replayed":false},"response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","output_index":0,"previous_item_id":null}}
+{"direction":"in","data":{"type":"conversation.item.added","event_id":"be009ac5-3a13-4eb4-93af-9dd464c04c99","item":{"id":"289e17d2-26d7-457a-aa14-074ef1709397","object":"realtime.item","type":"message","status":"in_progress","role":"assistant","content":[],"replayed":false},"previous_item_id":"44dce473-f37d-484f-95a7-cea03063bded"}}
+{"direction":"in","data":{"type":"response.content_part.added","event_id":"472fb106-e23c-4ba1-a3cd-ce74ca1fca95","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","previous_item_id":"0","part":{"type":"audio","transcript":""},"response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","content_index":0,"output_index":0}}
+{"direction":"in","data":{"type":"response.output_audio.delta","event_id":"a2c24651-16e1-4543-88a6-ad6efbe1c0d3","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","delta":"AAA=","content_index":0,"output_index":0,"rid":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","latency":"0.65","audio_duration_ms":245,"ts":1791558270649,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio_transcript.delta","event_id":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","delta":"The capital of France is Paris.","content_index":0,"output_index":0,"rid":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","start_time":0,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio.delta","event_id":"da81464d-85d3-4843-a422-3249b6f07d4a","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","delta":"AAA=","content_index":0,"output_index":0,"rid":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","audio_duration_ms":642,"ts":1791558270735,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio.delta","event_id":"c193109e-d043-4f52-9fb8-952d1e775bd6","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","delta":"AAA=","content_index":0,"output_index":0,"rid":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","audio_duration_ms":459,"ts":1791558270812,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio.delta","event_id":"67ba6d0f-a40e-409c-b6ef-72a5ae0006af","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","delta":"AAA=","content_index":0,"output_index":0,"rid":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","audio_duration_ms":642,"ts":1791558270892,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio.delta","event_id":"e5443dae-e922-4bd8-b37d-6875fe19615d","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","delta":"AAA=","content_index":0,"output_index":0,"rid":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","audio_duration_ms":306,"ts":1791558270902,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio.delta","event_id":"211bc6a2-d331-408c-8ff2-93054c12be5a","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","delta":"AAA=","content_index":0,"output_index":0,"rid":"1fc39bd5-640f-4b4d-b64c-0c5f0c135bb4","audio_duration_ms":96,"ts":1791558270904,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio_transcript.done","event_id":"bbacefbf-495a-4b5d-8c42-2e334ac8176b","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","transcript":"The capital of France is Paris.","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","content_index":0,"output_index":0,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.content_part.done","event_id":"3bf31daf-092e-4393-8b98-2450bf536a48","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","content_index":0,"output_index":0,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_audio.done","event_id":"d11773fe-f957-455c-ab03-f2158fd4400f","item_id":"289e17d2-26d7-457a-aa14-074ef1709397","response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","content_index":0,"output_index":0,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.output_item.done","event_id":"524b2f7b-8e25-48c0-a2e5-7c7c32415601","item":{"id":"289e17d2-26d7-457a-aa14-074ef1709397","object":"realtime.item","type":"message","status":"completed","role":"assistant","replayed":false},"response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","output_index":0,"previous_item_id":null}}
+{"direction":"in","data":{"type":"response.done","event_id":"feb0b4e7-9d7d-409a-a502-44c62d830244","response":{"id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","object":"realtime.response","output":[{"id":"289e17d2-26d7-457a-aa14-074ef1709397","object":"realtime.item","type":"message","status":"completed","role":"assistant","content":[{"type":"audio","transcript":"The capital of France is Paris."}],"replayed":false}],"status":"completed","status_details":"unimplemented","usage":{}},"response_id":"626cdf57-2cf4-4380-8911-4316aa7f39eb","usage":{"input_tokens":274,"input_token_details":{"text_tokens":18,"audio_tokens":256,"grok_tokens":0},"output_tokens":127,"output_token_details":{"text_tokens":7,"audio_tokens":120,"grok_tokens":0},"total_tokens":401,"output_audio_seconds":2.39,"billable_audio_seconds":5},"previous_item_id":null}}
