@@ -42,7 +42,12 @@ const logger = createLogger('INGRESS')
 // Owner, Administrator, Manage Server, or a role named "Kimaki". A role named
 // "no-kimaki" always denies. Missing member data fails closed.
 export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: string }): Promise<boolean> {
-  const member = await guild.members.fetch({ user: userId, force: true }).catch(() => null)
+  const member = await guild.members.fetch({ user: userId, force: true }).catch((error: Error) => error)
+  if (member instanceof Error) {
+    // Still denied, but say why: a REST failure must not look like a missing role.
+    logger.warn(`cannot check Kimaki permission of ${userId}`, member)
+    return false
+  }
   if (!(member instanceof GuildMember)) return false
   const roleNames = member.roles.cache.map((role) => role.name.toLowerCase())
   if (roleNames.includes('no-kimaki')) return false

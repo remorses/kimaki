@@ -86,3 +86,31 @@ test('messages sent while the bot is offline are handled after it reconnects', a
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
 })
+
+// @discordjs/rest clears its token on any 401. A gateway-proxy restart with an
+// empty client registry answered 401 for a minute and every later request failed
+// with "Expected token to be set" until the bot restarted.
+test('the bot keeps working after the gateway answered 401 for a while', async () => {
+  const { discord, channelId } = twin
+  bot ??= await startTestBot({ dataDir, twin, server })
+  discord.revokeGatewayClient({ token: discord.botToken })
+  // The permission check gets 401, so this message is ignored.
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'message during the 401 window' })
+  const ignored = await bot.discord.guilds.cache.get(discord.guildId)!.members.fetch({ user: TEST_USER_ID, force: true }).catch((error: Error) => error)
+  expect(ignored).toBeInstanceOf(Error)
+  discord.authorizeGatewayClient({ token: discord.botToken, guildIds: [discord.guildId] })
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'message after the gateway recovered' })
+  const thread = await discord.channel(channelId).waitForThread({
+    timeout: 8_000,
+    predicate: (candidate) => candidate.name === 'message after the gateway recovered',
+  })
+  await waitForFooter({ discord, threadId: thread.id })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    message after the gateway recovered
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+  `)
+})

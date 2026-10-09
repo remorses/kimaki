@@ -334,6 +334,12 @@ export class DigitalDiscord {
     this.gatewayClients.set(token, guilds)
   }
 
+  // gatewayProxy mode: the proxy forgets the client, like a restart whose
+  // database sync failed. REST answers 401 until authorizeGatewayClient() again.
+  revokeGatewayClient({ token }: { token: string }): void {
+    this.gatewayClients.delete(token)
+  }
+
   // --- Scoped accessors ---
 
   channel(channelId: string): ChannelScope {

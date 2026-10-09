@@ -90,6 +90,21 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
     ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
   })
+  // TODO: drop this once @discordjs/rest can keep its token on 401. handleErrors()
+  // calls setToken(null) on any 401, and every later request fails with "Expected
+  // token to be set" until a restart. One transient 401 (gateway-proxy restarting
+  // with an empty client registry) must not kill the bot. Only Client.destroy()
+  // may clear it: it sets client.token to null first.
+  // https://github.com/discordjs/discord.js/blob/main/packages/rest/src/lib/handlers/Shared.ts
+  const setToken = discord.rest.setToken.bind(discord.rest)
+  discord.rest.setToken = (token) => {
+    // Typed string, but handleErrors() and destroy() pass null.
+    if (!token && discord.token !== null) {
+      logger.warn('Discord REST answered 401; keeping the bot token for the next request')
+      return discord.rest
+    }
+    return setToken(token)
+  }
   cleanup.defer(() => discord.destroy())
   cleanup.defer(() => options.analytics.flush())
   const store = createBotStore()
