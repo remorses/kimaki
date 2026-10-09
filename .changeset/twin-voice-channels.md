@@ -23,5 +23,6 @@ stream.opusPackets // decrypted opus frames, in order
 - The voice server checks the token, guild, user and gateway session ID on Identify. It supports `aead_aes256_gcm_rtpsize` and no DAVE.
 - `GUILD_CREATE` includes the current voice states.
 - `discord.channel(voiceChannelId).user(userId).joinVoice()` and `.leaveVoice()` move a user in and out of voice.
+- `discord.channel(voiceChannelId).user(userId).speak({ opusPackets })` makes a user talk: every other client in the channel gets `Speaking` and the frames as encrypted RTP, so `connection.receiver` receives them like on Discord. `intervalMs` paces the frames (default 20, real time).
 
 Needs the `openssl` CLI to make the certificate.

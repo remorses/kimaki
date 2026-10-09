@@ -56,6 +56,10 @@ type VoiceConnection = {
   secretKey: Buffer | null
   sequence: number
   stream: VoiceStream | null
+  // UDP address of the client, learned from IP discovery. Audio of other users goes there.
+  udp: { address: string; port: number } | null
+  // Nonce counter of packets the twin sends to this client.
+  sendNonce: number
 }
 
 export class DiscordVoiceServer {
@@ -64,6 +68,8 @@ export class DiscordVoiceServer {
   private grants = new Map<string, VoiceGrant>()
   private connections = new Set<VoiceConnection>()
   private nextSsrc = 1000
+  // userId -> ssrc of simulated users that speak (speak()).
+  private userSsrcs = new Map<string, number>()
   private https: https.Server | null = null
   private wss: WebSocketServer | null = null
   private udp: dgram.Socket | null = null
@@ -150,7 +156,7 @@ export class DiscordVoiceServer {
   }
 
   private handleConnection(ws: WebSocket): void {
-    const connection: VoiceConnection = { ws, grant: null, ssrc: 0, secretKey: null, sequence: 0, stream: null }
+    const connection: VoiceConnection = { ws, grant: null, ssrc: 0, secretKey: null, sequence: 0, stream: null, udp: null, sendNonce: 0 }
     this.connections.add(connection)
     this.send(connection, VoiceOpcodes.Hello, { v: 8, heartbeat_interval: 13_750 })
     ws.on('message', (raw, isBinary) => {
@@ -234,9 +240,58 @@ export class DiscordVoiceServer {
     return connection.stream
   }
 
+  // A user speaks in a voice channel: every other client connected to that
+  // channel gets Speaking (user_id -> ssrc) and then the opus frames as
+  // encrypted RTP, like Discord forwards audio. `intervalMs` paces the frames
+  // (20ms is real time); @discordjs/voice ends a receive stream after silence.
+  async speak({
+    guildId,
+    channelId,
+    userId,
+    opusPackets,
+    intervalMs = 20,
+  }: {
+    guildId: string
+    channelId: string
+    userId: string
+    opusPackets: readonly Buffer[]
+    intervalMs?: number
+  }): Promise<void> {
+    const listeners = [...this.connections].filter((connection) => {
+      const grant = connection.grant
+      return grant?.guildId === guildId && grant.channelId === channelId && grant.userId !== userId && connection.secretKey && connection.udp
+    })
+    if (listeners.length === 0) throw new Error(`No voice client listens in channel ${channelId}`)
+    const ssrc = this.userSsrcs.get(userId) ?? this.nextSsrc++
+    this.userSsrcs.set(userId, ssrc)
+    for (const connection of listeners) {
+      this.send(connection, VoiceOpcodes.Speaking, { user_id: userId, ssrc, speaking: 1 })
+    }
+    const start = { sequence: crypto.randomInt(0, 0xffff), timestamp: crypto.randomInt(0, 0xffffffff) }
+    for (const [index, opus] of opusPackets.entries()) {
+      for (const connection of listeners) {
+        const { secretKey, udp } = connection
+        if (!secretKey || !udp) continue
+        connection.sendNonce = (connection.sendNonce + 1) >>> 0
+        const packet = encryptRtpSize({
+          opus,
+          secretKey,
+          nonce: connection.sendNonce,
+          ssrc,
+          sequence: (start.sequence + index) & 0xffff,
+          timestamp: (start.timestamp + index * 960) >>> 0,
+        })
+        this.udp?.send(packet, udp.port, udp.address)
+      }
+      if (intervalMs > 0) await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    }
+  }
+
   private handleUdp(message: Buffer, remote: dgram.RemoteInfo): void {
     // IP discovery request: type 1, length 70, ssrc, 64 byte address, port.
     if (message.length === 74 && message.readUInt16BE(0) === 1) {
+      const discovering = [...this.connections].find((candidate) => candidate.ssrc === message.readUInt32BE(4))
+      if (discovering) discovering.udp = { address: remote.address, port: remote.port }
       const reply = Buffer.alloc(74)
       reply.writeUInt16BE(2, 0)
       reply.writeUInt16BE(70, 2)
@@ -257,6 +312,39 @@ export class DiscordVoiceServer {
     stream.opusPackets.push(opus)
     stream.lastPacketAt = Date.now()
   }
+}
+
+// RTP version 2, payload type 120 (opus), no extension. The header is the
+// additional data; the 32 bit nonce counter goes after the auth tag.
+function encryptRtpSize({
+  opus,
+  secretKey,
+  nonce,
+  ssrc,
+  sequence,
+  timestamp,
+}: {
+  opus: Buffer
+  secretKey: Buffer
+  nonce: number
+  ssrc: number
+  sequence: number
+  timestamp: number
+}): Buffer {
+  const header = Buffer.alloc(RTP_HEADER_LENGTH)
+  header[0] = 0x80
+  header[1] = 0x78
+  header.writeUInt16BE(sequence, 2)
+  header.writeUInt32BE(timestamp, 4)
+  header.writeUInt32BE(ssrc, 8)
+  const nonceSuffix = Buffer.alloc(NONCE_LENGTH)
+  nonceSuffix.writeUInt32BE(nonce, 0)
+  const iv = Buffer.alloc(12)
+  nonceSuffix.copy(iv, 0)
+  const cipher = crypto.createCipheriv('aes-256-gcm', secretKey, iv)
+  cipher.setAAD(header)
+  const encrypted = Buffer.concat([cipher.update(opus), cipher.final()])
+  return Buffer.concat([header, encrypted, cipher.getAuthTag(), nonceSuffix])
 }
 
 // aead_aes256_gcm_rtpsize: the RTP header (and the 4 byte extension header, if

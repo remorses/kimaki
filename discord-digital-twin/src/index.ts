@@ -320,6 +320,11 @@ export class DigitalDiscord {
     throw new Error(`Timed out waiting for a voice stream in ${channelId ?? 'any channel'}`)
   }
 
+  // A user in a voice channel speaks: the bot receives Speaking and the opus frames.
+  async speakInVoice(input: { guildId: string; channelId: string; userId: string; opusPackets: readonly Buffer[]; intervalMs?: number }): Promise<void> {
+    await this.requireVoice().speak(input)
+  }
+
   // A user joins a voice channel (channelId) or leaves voice (null).
   async setUserVoiceChannel({ userId, guildId, channelId }: { userId: string; guildId: string; channelId: string | null }): Promise<void> {
     if (!this.server) throw new Error('DigitalDiscord is not started')
@@ -1594,6 +1599,14 @@ export class ScopedUserActor {
 
   async leaveVoice(): Promise<void> {
     await this.setVoice(null)
+  }
+
+  // The user speaks in this voice channel (call joinVoice() first, like a real user).
+  // `intervalMs` paces the opus frames; 20 is real time.
+  async speak({ opusPackets, intervalMs }: { opusPackets: readonly Buffer[]; intervalMs?: number }): Promise<void> {
+    const channel = await this.discord.prisma.channel.findUniqueOrThrow({ where: { id: this.channelId } })
+    if (!channel.guildId) throw new Error(`Channel ${this.channelId} is not in a guild`)
+    await this.discord.speakInVoice({ guildId: channel.guildId, channelId: this.channelId, userId: this.userId, opusPackets, intervalMs })
   }
 
   private async setVoice(channelId: string | null): Promise<void> {

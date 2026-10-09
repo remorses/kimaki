@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { ChannelType, Client, GatewayIntentBits } from 'discord.js'
 import {
+  EndBehaviorType,
   StreamType,
   VoiceConnectionStatus,
   createAudioPlayer,
@@ -79,6 +80,32 @@ test('bot joins a voice channel and the twin records the audio it sends', async 
   expect(tail.length).toBeGreaterThan(0)
   expect(tail.every((packet) => packet.equals(SILENCE_FRAME))).toBe(true)
 
+  connection.destroy()
+  await expect.poll(() => guild.members.me?.voice.channelId ?? null, { timeout: 4_000, interval: 50 }).toBe(null)
+})
+
+test('a user speaking reaches the bot receiver as the same opus frames', async () => {
+  const guild = client.guilds.cache.get(GUILD)
+  if (!guild) throw new Error('guild missing')
+  const connection = joinVoiceChannel({ guildId: GUILD, channelId: VOICE_CHANNEL, adapterCreator: guild.voiceAdapterCreator, selfDeaf: false })
+  await entersState(connection, VoiceConnectionStatus.Ready, 8_000)
+  const speaker = new Promise<string>((resolve) => connection.receiver.speaking.once('start', resolve))
+  const received: Buffer[] = []
+  const ended = new Promise<void>((resolve) => {
+    connection.receiver.speaking.once('start', (userId) => {
+      const stream = connection.receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: 100 } })
+      stream.on('data', (packet: Buffer) => received.push(packet))
+      stream.once('end', () => resolve())
+    })
+  })
+  const expected = await readOpusPackets(FIXTURE)
+  await discord.channel(VOICE_CHANNEL).user(USER).joinVoice()
+  await discord.channel(VOICE_CHANNEL).user(USER).speak({ opusPackets: expected, intervalMs: 0 })
+  expect(await speaker).toBe(USER)
+  await ended
+  // The speaking event fires before the frame is routed, so the subscription gets every frame.
+  expect(received).toEqual(expected)
+  await discord.channel(VOICE_CHANNEL).user(USER).leaveVoice()
   connection.destroy()
   await expect.poll(() => guild.members.me?.voice.channelId ?? null, { timeout: 4_000, interval: 50 }).toBe(null)
 })
