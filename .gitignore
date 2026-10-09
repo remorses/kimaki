@@ -18,6 +18,8 @@ tmp
 __snapshots__
 traforo/dist/
 skills/jitter/dist/
+/cli/skills
+/subrouter-opencode-v2-plugin/
 bin-local.sh
 kimaki.log
 app.log
