@@ -166,6 +166,7 @@ export function baseInstructions({
       To show 1 to 3 buttons, write all visible text first, then run \`kimaki buttons --button 'Label'\`. Repeat \`--button\` for more. Prefer a single button whenever possible. Colors are white, blue, green, red: \`--button 'Label:green'\`.
       A click sends "User clicked: Label" to this session as a new prompt. Labels have at most 80 chars.
       You MUST call \`kimaki buttons\` LAST, after ALL text. Never call it in a turn that has no text before it. The text must explain the choice. Labels alone are not an explanation.
+      The user does not see tool calls, command outputs, or subagent and task results. Before the buttons, concisely explain what was done in the session and any findings the choice depends on, then what each button does.
 
       ## sleeping the session
 

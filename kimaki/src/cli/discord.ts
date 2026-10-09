@@ -5,13 +5,29 @@ import path from 'node:path'
 import { ChannelType } from 'discord-api-types/v10'
 import { wrapJsonSchema, type Goke } from 'goke'
 
-import { action, DATA_DIR_HELP, discordApi, fail, isThread, printRows, SESSION_HELP, targetOrEnv } from './shared.ts'
+import dedent from 'string-dedent'
+
+import { callBot } from '../lock-server.ts'
+import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, isThread, printRows, SESSION_HELP, targetOrEnv } from './shared.ts'
 
 // From an agent shell the bot waits for this shell's tool line, so the UI posts after it.
 function agentShell() {
   return { fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'] }
 }
 
+// The model reads this after `kimaki buttons`: a reminder to explain the buttons if it did not.
+const BUTTONS_SHOWN = dedent`
+
+  Buttons shown in Discord.
+
+  NB: never show only buttons with short labels.
+  The user cannot see tool calls, command outputs, or subagent and task results. They only see your text.
+  Check the text you wrote before this call. It must explain:
+  - what was done in this session, concisely, including any findings from tool or task outputs that the choice depends on
+  - what each button does and its tradeoffs
+  If anything is missing, write it now. Be concise: a few short lines, no walls of text. Do not only repeat the button labels. Then stop and wait for the click.
+
+`
 // buttons, upload-request
 export function registerAgentUiCommands(cli: Goke) {
   cli.command('buttons', 'Show 1-3 action buttons. Call last, after visible text')
@@ -19,7 +35,10 @@ export function registerAgentUiCommands(cli: Goke) {
     .option('-s, --session <id>', SESSION_HELP)
     .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[:white|blue|green|red]" }))
     .action(async (options) => {
-      await action({ route: 'buttons', dataDir: options.dataDir, input: { ...targetOrEnv(options.session), buttons: options.button ?? [], ...agentShell() } })
+      const input = { ...targetOrEnv(options.session), buttons: options.button ?? [], ...agentShell() }
+      const result = await callBot({ dataDir: dataDirOrDefault(options.dataDir), route: 'buttons', input })
+      if (result instanceof Error) fail(result)
+      process.stdout.write(`${BUTTONS_SHOWN}\n`)
     })
 
   cli.command('upload-request', 'Ask for file uploads; waits up to 6 minutes. Shell timeout must be 10 minutes')
