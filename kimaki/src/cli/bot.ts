@@ -88,6 +88,7 @@ export function registerStartCommand(cli: Goke) {
     .option('--restart-onboarding', 'Choose credentials again')
     .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
+    .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
       // The IPC check ignores a KIMAKI_SUPERVISED leaked into a shell by an older bot.
       if (process.env['KIMAKI_SUPERVISED'] !== '1' || !process.connected) return supervise()
@@ -136,15 +137,22 @@ export function registerStartCommand(cli: Goke) {
         return
       }
 
-      // Creates the data dir, so the eviction, import and onboarding logs land in kimaki.log.
+      // Stops a running bot of this port (V1 or V2) before the migration and
+      // onboarding, which must not run while it still writes. Before the log
+      // reset, so the stopped bot (or the one --if-not-running leaves running) keeps its kimaki.log.
+      const lock = await startLockServer({ port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT), dataDir, supervised: true, evict: !options.ifNotRunning })
+      if (lock instanceof Error) {
+        // Another bot won the race after the plugin's health check.
+        if (options.ifNotRunning && lock.cause instanceof Error && Reflect.get(lock.cause, 'code') === 'EADDRINUSE') {
+          process.stderr.write(`Kimaki already runs on port ${lock.port}. Nothing to start.\n`)
+          process.exit(0)
+        }
+        failStartup(lock)
+      }
       const logFile = setLogFile({ dataDir })
       if (logFile instanceof Error) failStartup(logFile)
       // A crash goes to kimaki.log too (Node still prints it and exits).
       process.on('uncaughtExceptionMonitor', (error, origin) => logger.error(`crash (${origin})`, error))
-      // Then: stops a running bot of this port (V1 or V2) before the
-      // migration and onboarding, which must not run while it still writes.
-      const lock = await startLockServer({ port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT), dataDir, supervised: true })
-      if (lock instanceof Error) failStartup(lock)
       const opened = await openDb({ dataDir, migrate: true })
       if (opened instanceof Error) failStartup(opened)
 
@@ -187,13 +195,6 @@ export function registerStartCommand(cli: Goke) {
         autoWorktrees: Boolean(options.worktrees),
       })
       if (bot instanceof Error) failStartup(bot)
-      // Runtime flags only: credentials and onboarding are saved in SQLite.
-      const autostart = await writeAutostartScript({ dataDir, args: [
-        ...(options.worktrees ? ['--worktrees'] : []),
-        ...(options.noAnalytics ? ['--no-analytics'] : []),
-        ...(options.machineName ? ['--machine-name', options.machineName] : []),
-      ] })
-      if (autostart instanceof Error) logger.warn('cannot write the autostart script', autostart)
       // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
       const shutdown = () => {
         void bot.stop().then(() => process.exit())
@@ -212,6 +213,16 @@ export function registerStartCommand(cli: Goke) {
         return
       }
       if (onboarded) process.stderr.write(`Onboarding thread: https://discord.com/channels/${onboarded.guildId}/${onboarded.threadId}\n`)
+      // Only the default port: the plugin checks that one. Runtime flags only;
+      // credentials and onboarding are saved in SQLite.
+      if (lock.port === DEFAULT_LOCK_PORT) {
+        const autostart = await writeAutostartScript({ dataDir, args: [
+          ...(options.worktrees ? ['--worktrees'] : []),
+          ...(options.noAnalytics ? ['--no-analytics'] : []),
+          ...(options.machineName ? ['--machine-name', options.machineName] : []),
+        ] })
+        if (autostart instanceof Error) logger.warn('cannot write the autostart script', autostart)
+      }
       if (!process.stdin.isTTY) emitEvent({ type: 'ready', app_id: credentials.appId, guild_ids: [...bot.discord.guilds.cache.keys()] })
     })
 }

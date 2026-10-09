@@ -116,7 +116,8 @@ export async function evictRunningBot({ port, graceMs = 20_000 }: { port: number
   await waitForExit({ pid, timeoutMs: 5_000 })
 }
 
-export async function startLockServer({ port, dataDir, supervised = false }: { port: number; dataDir: string; supervised?: boolean }): Promise<LockPortError | LockServer> {
+// evict: false (--if-not-running) never stops a running bot; the bind fails with EADDRINUSE instead.
+export async function startLockServer({ port, dataDir, supervised = false, evict = true }: { port: number; dataDir: string; supervised?: boolean; evict?: boolean }): Promise<LockPortError | LockServer> {
   const token = crypto.randomBytes(32).toString('hex')
   const state: { handler: LockHandler | null } = { handler: null }
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -164,7 +165,7 @@ export async function startLockServer({ port, dataDir, supervised = false }: { p
 
   // Before listening, not on EADDRINUSE: on macOS 127.0.0.1:port binds even
   // while a V1 bot holds 0.0.0.0:port (KIMAKI_INTERNET_REACHABLE_URL).
-  await evictRunningBot({ port })
+  if (evict) await evictRunningBot({ port })
   const bound = await listen(server, port)
   if (bound instanceof Error) {
     const reason = bound.code === 'EADDRINUSE'

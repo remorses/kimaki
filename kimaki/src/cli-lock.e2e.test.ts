@@ -375,6 +375,7 @@ test('CLI help documents the supported P7 commands', async () => {
       --restart-onboarding          Choose credentials again
       --worktrees                   Use a fresh Git worktree for new sessions unless the channel overrides it
       --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
+      --if-not-running              Start only if no bot runs; never stop the running one (used by autostart)
       -h, --help                    Display this message
     "
   `)
