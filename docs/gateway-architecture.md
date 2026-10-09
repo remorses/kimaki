@@ -100,3 +100,23 @@ Gateway-mode onboarding lives in `cli/src/cli.ts`, the `run()` function:
 8. bot connects with `clientId:clientSecret` as the Discord token; discord.js hits the gateway proxy, which routes events for authorized guilds only
 
 Use `--gateway` to force gateway mode even if self-hosted credentials are already saved. It skips saved self-hosted creds and enters the gateway onboarding flow.
+
+## Kimaki Cloud wake (scale-to-zero)
+
+Cloud machines (`kimaki-cloud/`, created from `/dashboard` on the website) run on Fly.io and stop when idle:
+
+```
+kimaki (KIMAKI_SCALE_TO_ZERO=1) idle 10 min
+  ──POST kimaki.dev/api/cloud/next-wake {next_wake_at}──▶ gateway_clients.next_wake_at
+  ──exit 0──▶ Fly stops the VM (restart policy on-failure)
+
+Discord MESSAGE_CREATE for an offline client with reachable_url  ─┐
+next_wake_at - 30s for an offline client                          ├─▶ gateway-proxy (src/wake.rs)
+                                                                  │
+        POST <reachable_url>/kimaki/wake (Bearer clientId:secret) ◀┘
+          ──▶ Fly starts the VM ──▶ kimaki lock server (0.0.0.0:8080) answers once Discord is ready
+```
+
+- `reachable_url` is written by the dashboard OAuth (`/discord-install?reachableUrl=...`) and cleared by Stop.
+- `kimaki/src/scale-to-zero.ts` owns the idle exit; `kimaki/src/lock-server.ts` owns `POST /kimaki/wake`.
+- gateway-proxy pulses Discord typing in the channel while the client is offline, so the user sees feedback during the cold start.

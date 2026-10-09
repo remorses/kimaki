@@ -64,7 +64,7 @@ export type StartBotOptions = {
 export type BotHandle = Bot & {
   lock: LockServer
   // Tests drive scheduling with a manual clock and call this themselves.
-  scheduler: { runDueTasks: () => Promise<void> }
+  scheduler: { runDueTasks: () => Promise<void>; isBusy: () => boolean }
   stop: () => Promise<void>
 }
 
@@ -194,6 +194,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // After Discord and OpenCode are ready: a due task needs both.
   const scheduling = await scheduler.start()
   if (scheduling instanceof Error) return scheduling
+  // gateway-proxy's POST /kimaki/wake gets its answer once Discord and OpenCode are ready.
+  lock.ready({ wakeToken: options.token })
   logger.info(`bot ready as ${discord.user?.tag} in ${discord.guilds.cache.size} server(s)`)
   const projects = await countUserProjects({ db, dataDir: options.dataDir })
   if (projects instanceof Error) logger.warn(projects)
@@ -203,5 +205,5 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   })
   const resources = cleanup.move()
   let stopping: Promise<void> | undefined
-  return { ...bot, lock, scheduler: { runDueTasks: scheduler.runDueTasks }, stop: () => (stopping ??= resources.disposeAsync()) }
+  return { ...bot, lock, scheduler: { runDueTasks: scheduler.runDueTasks, isBusy: scheduler.isBusy }, stop: () => (stopping ??= resources.disposeAsync()) }
 }

@@ -375,7 +375,8 @@ export async function resolveCredentials({
 }): Promise<ConfigError | DbError | ResolvedCredentials> {
   const fromEnv = envCredentials({ urls })
   if (fromEnv instanceof Error) return fromEnv
-  if (fromEnv && !gateway && !restartOnboarding) {
+  // --gateway still takes a gateway env token: cloud machines boot without the install wizard.
+  if (fromEnv && !restartOnboarding && (!gateway || fromEnv.mode === 'gateway')) {
     const saved = await saveCredentials({ db, credentials: fromEnv })
     if (saved instanceof Error) return saved
     return { credentials: fromEnv, install: null }

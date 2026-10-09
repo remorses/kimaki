@@ -106,6 +106,7 @@ export function registerStartCommand(cli: Goke) {
         { opencodeConfigDir },
         { defaultMachineName },
         { ensureVoiceChannels, parseRealtimeVoice, saveVoiceCallVoice },
+        { isScaleToZeroEnabled, startScaleToZero },
       ] = await Promise.all([
         import('../main.ts'),
         import('../onboarding.ts'),
@@ -115,6 +116,7 @@ export function registerStartCommand(cli: Goke) {
         import('../opencode-server.ts'),
         import('../project.ts'),
         import('../voice-call.ts'),
+        import('../scale-to-zero.ts'),
       ])
       // Non-TTY hosts get the failure as an `error` event too (programmatic onboarding).
       // Explicit type: TS narrows after a `never` call only for annotated consts.
@@ -151,7 +153,14 @@ export function registerStartCommand(cli: Goke) {
       // Stops a running bot of this port (V1 or V2) before the migration and
       // onboarding, which must not run while it still writes. Before the log
       // reset, so the stopped bot (or the one --if-not-running leaves running) keeps its kimaki.log.
-      const lock = await startLockServer({ port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT), dataDir, supervised: true, evict: !options.ifNotRunning })
+      const lock = await startLockServer({
+        port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT),
+        dataDir,
+        supervised: true,
+        evict: !options.ifNotRunning,
+        // Cloud machines: gateway-proxy wakes them through POST <url>/kimaki/wake.
+        host: process.env['KIMAKI_INTERNET_REACHABLE_URL'] ? '0.0.0.0' : '127.0.0.1',
+      })
       if (lock instanceof Error) {
         // Another bot won the race after the plugin's health check.
         if (options.ifNotRunning && lock.cause instanceof Error && Reflect.get(lock.cause, 'code') === 'EADDRINUSE') {
@@ -189,6 +198,9 @@ export function registerStartCommand(cli: Goke) {
       if (savedVoice instanceof Error) failStartup(savedVoice)
       if (voice !== undefined) logger.log(`voice calls use ${voice === null ? 'the default voice' : `the voice ${voice}`}`)
       const { credentials, install } = resolved
+      // Saved in SQLite now. The OpenCode service started below inherits process.env,
+      // so agent shells would see the token (a Fly secret on cloud machines).
+      delete process.env['KIMAKI_BOT_TOKEN']
       const installUrl = installUrlFor({ credentials, website: urls.website, callbackUrl: options.gatewayCallbackUrl })
       // The agent calls this same install. Prefer the built dist entry, so agent
       // commands skip the tsx loader also when the bot runs from src.
@@ -221,6 +233,8 @@ export function registerStartCommand(cli: Goke) {
       process.once('SIGINT', shutdown)
       // The supervisor died (SIGKILL, crash): nobody owns this bot anymore.
       process.once('disconnect', shutdown)
+      // Exit code 0 also stops the supervisor, so the Fly VM stops.
+      if (isScaleToZeroEnabled()) startScaleToZero({ bot, schedulerBusy: bot.scheduler.isBusy, exit: shutdown })
 
       const gateway = credentials.mode === 'gateway'
       const onboarded = await runOnboarding({ bot, dataDir, guildId: options.guild ?? install?.guildId, installUrl, kimaki, gateway, installerId: install?.installerId, machine })

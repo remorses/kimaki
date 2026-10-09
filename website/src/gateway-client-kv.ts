@@ -1,6 +1,6 @@
 // KV helpers for gateway client auth, Slack install state, and team routing cache.
 
-import { createPrisma } from 'db/src'
+import { createPrisma, type PrismaClient } from 'db/src'
 import type { Env } from './env.js'
 
 export type GatewayClientCacheRecord = {
@@ -176,6 +176,42 @@ export async function invalidateTeamClientIdsInKv({
   await kv.delete(teamClientIdsKvKey({ teamId }))
 }
 
+export async function deleteGatewayClientsForClientId({
+  env,
+  prisma,
+  clientId,
+}: {
+  env: Env
+  prisma: PrismaClient
+  clientId: string
+}) {
+  const rows = await prisma.gateway_clients
+    .findMany({
+      where: { client_id: clientId },
+      select: { guild_id: true },
+    })
+    .catch((cause) => new Error('Failed to list gateway_clients', { cause }))
+  if (rows instanceof Error) return rows
+
+  const deleted = await prisma.gateway_clients
+    .deleteMany({ where: { client_id: clientId } })
+    .catch((cause) => new Error('Failed to delete gateway_clients', { cause }))
+  if (deleted instanceof Error) return deleted
+
+  await env.GATEWAY_CLIENT_KV.delete(gatewayClientKvKey({ clientId })).catch((cause) => {
+    console.warn('Failed to delete gateway client KV cache', cause)
+  })
+  for (const row of rows) {
+    await invalidateTeamClientIdsInKv({
+      kv: env.GATEWAY_CLIENT_KV,
+      teamId: row.guild_id,
+    }).catch((cause) => {
+      console.warn('Failed to invalidate team client KV cache', cause)
+    })
+  }
+  return deleted
+}
+
 export async function upsertGatewayClientAndRefreshKv({
   env,
   clientId,
@@ -234,12 +270,13 @@ export async function upsertGatewayClientAndRefreshKv({
   // is keyed only by client_id. Keep secret and reachable_url consistent across
   // all rows for the same client so a proxy restart cannot pick a stale secret
   // from another guild row and wedge reconnects until the CLI is restarted.
+  const siblingData =
+    reachableUrl === undefined
+      ? { secret }
+      : { secret, reachable_url: reachableUrl }
   const updatedSiblingRows = await prisma.gateway_clients.updateMany({
     where: { client_id: clientId },
-    data: {
-      secret,
-      reachable_url: reachableUrl ?? null,
-    },
+    data: siblingData,
   }).catch((cause) => {
     return new Error('Failed to normalize gateway_clients secrets', { cause })
   })

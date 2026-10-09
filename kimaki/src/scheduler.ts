@@ -625,6 +625,8 @@ export function createScheduler({
 
   return {
     runDueTasks: () => runDueTasks(bot),
+    // A loop tick runs tasks or delivers wakes now.
+    isBusy: () => loop.tick !== null,
     // A bot that died mid-run left its tasks "running"; this process runs none yet.
     async start(): Promise<DbError | void> {
       const recovered = await bot.db.update(schema.scheduled_tasks).set({ status: 'planned', running_started_at: null })
