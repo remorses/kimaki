@@ -16,13 +16,14 @@ import crypto from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 import * as errore from 'errore'
 
+import { DEFAULT_LOCK_PORT } from './autostart.ts'
 import { BotNotRunningError, ConfigError, LockPortError } from './errors.ts'
 import type { LockRouteInput, LockRouteName, LockRouteOutput } from './lock-routes.ts'
 import { createLogger } from './logger.ts'
 
 const logger = createLogger('LOCK')
 
-export const DEFAULT_LOCK_PORT = 29988
+export { DEFAULT_LOCK_PORT }
 
 // Exit code that tells the supervisor of the root `kimaki` command (cli/bot.ts) to start the bot again.
 export const RESTART_EXIT_CODE = 75

@@ -10,6 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import dedent from 'string-dedent'
 import type { Goke } from 'goke'
 
+import { writeAutostartScript } from '../autostart.ts'
 import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE, startLockServer } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
 import { createLogger, setLogFile } from '../logger.ts'
@@ -186,6 +187,13 @@ export function registerStartCommand(cli: Goke) {
         autoWorktrees: Boolean(options.worktrees),
       })
       if (bot instanceof Error) failStartup(bot)
+      // Runtime flags only: credentials and onboarding are saved in SQLite.
+      const autostart = await writeAutostartScript({ dataDir, args: [
+        ...(options.worktrees ? ['--worktrees'] : []),
+        ...(options.noAnalytics ? ['--no-analytics'] : []),
+        ...(options.machineName ? ['--machine-name', options.machineName] : []),
+      ] })
+      if (autostart instanceof Error) logger.warn('cannot write the autostart script', autostart)
       // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
       const shutdown = () => {
         void bot.stop().then(() => process.exit())

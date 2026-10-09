@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 
+import { autostartBot } from '../autostart.ts'
 import { fileEditTool, recordToolEdits } from '../file-edit-log.ts'
 
 const exec = promisify(execFile)
@@ -10,6 +11,7 @@ const exec = promisify(execFile)
 export default Plugin.define({
   id: 'kimaki',
   async setup(ctx) {
+    autostartBot()
     async function marker(sessionID: string) {
       const session = await ctx.session.get({ sessionID }).catch(() => null)
       const value: unknown = session?.metadata?.['kimaki']
