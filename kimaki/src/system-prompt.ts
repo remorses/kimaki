@@ -65,7 +65,7 @@ export function baseInstructions({
         command: string
         /** Short 5-10 word summary of what this command does */
         description: string
-        /** true if the command writes files, modifies state, installs packages, or triggers external effects */
+        /** true if the user should see this command in Discord. false hides it */
         hasSideEffect: boolean
         workdir?: string
         timeout?: number
@@ -73,7 +73,7 @@ export function baseInstructions({
       \`\`\`
 
       \`description\` is shown in Discord when the shell command is longer than 50 characters.
-      \`hasSideEffect\` distinguishes essential shell calls from read-only ones in low-verbosity mode.
+      \`hasSideEffect\` only decides if Discord shows the shell call. Set it to \`true\` for every command the user should be aware of, for example commands that change state or that the user asked you to run (the user says "run sleep 100", so \`sleep 100\` gets \`true\`). Set \`false\` only for routine commands the user does not need to see.
       The shell environment provides the \`kimaki\` command and OPENCODE_SESSION_ID. Do not pass stale IDs copied from another session.
     `,
     dedent`

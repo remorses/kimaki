@@ -47,7 +47,7 @@ export default Plugin.define({
       // inputs with Schema.Struct, which ignores unknown keys.
       const description = { type: 'string', description: 'Short 5-10 word summary shown in Discord' }
       const extras = {
-        shell: { description, hasSideEffect: { type: 'boolean', description: 'True if the command writes files, modifies state, or triggers external effects' } },
+        shell: { description, hasSideEffect: { type: 'boolean', description: 'True if Discord should show this command so the user is aware it runs. False hides it' } },
         execute: { description },
       }
       for (const [name, properties] of Object.entries(extras)) {
