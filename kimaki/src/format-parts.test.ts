@@ -143,8 +143,8 @@ test('child tool lines carry the agent label, errors keep the first line', () =>
     [
       "-# ┣ general ⋅ glob _\\*.md_",
       "-# ◼︎ general ⋅ edit *a.ts* (+1-1)",
-      "-# ⨯ shell _Invalid arguments for tool "shell":_",
-      "-# ⨯ explore ⋅ read _File not found: notes.md_",
+      "-#  ⨯  shell _Invalid arguments for tool "shell":_",
+      "-#  ⨯  explore ⋅ read _File not found: notes.md_",
     ]
   `)
 })

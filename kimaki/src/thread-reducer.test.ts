@@ -319,8 +319,8 @@ test('execute: final metadata shows inner calls whose progress was missed, then 
       "-# ┣ execute _Move to worktree_",
       "-# ┣ execute.opencode.models _gpt_",
       "-# ┣ execute.opencode.session\\_move _/wt_",
-      "-# ⨯ execute.opencode.session\\_move _failed_",
-      "-# ⨯ execute _Error: no such directory_",
+      "-#  ⨯  execute.opencode.session\\_move _failed_",
+      "-#  ⨯  execute _Error: no such directory_",
     ]
   `)
 })

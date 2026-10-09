@@ -195,8 +195,8 @@ test('Code Mode execute shows failed inner calls and the code error', async () =
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# ┣ execute _Rename a missing session_
     -# ┣ execute.opencode.session\\_rename _x_
-    -# ⨯ execute.opencode.session\\_rename _failed_
-    -# ⨯ execute _Error: broken on purpose_
+    -#  ⨯  execute.opencode.session\\_rename _failed_
+    -#  ⨯  execute _Error: broken on purpose_
 
     The code failed.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"

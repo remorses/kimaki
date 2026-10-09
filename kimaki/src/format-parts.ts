@@ -346,7 +346,7 @@ export function formatExecuteFailures({
 export function formatToolFailed({ name, message, label }: { name: string; message: string; label?: string }): string {
   const firstLine = message.split('\n').find((line) => line.trim()) ?? 'failed'
   const prefix = label ? `${inline(label)} ⋅ ` : ''
-  return asSubtext(`⨯ ${prefix}${inline(name)} _${inline(firstLine, 150)}_`)
+  return asSubtext(` ⨯  ${prefix}${inline(name)} _${inline(firstLine, 150)}_`)
 }
 
 export function formatSubagentFinished({ agent, description }: { agent: string; description: string }): string {

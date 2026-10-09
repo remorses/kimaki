@@ -15,9 +15,9 @@ test('tools: names from tool.input.started, failed tool lines, read-only tools h
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _ls cli/src \\| head -5_",
       "-# ┣ shell",
-      "-# ⨯ shell _Invalid arguments for tool "shell":_",
+      "-#  ⨯  shell _Invalid arguments for tool "shell":_",
       "-# ┣ shell",
-      "-# ⨯ shell _Invalid arguments for tool "shell":_",
+      "-#  ⨯  shell _Invalid arguments for tool "shell":_",
       "-# ┣ shell _mkdir -p tmp-events && printf 'hello' > tmp-events/hello.txt_",
       "-# ┣ shell _python3 -c "from pathlib import Path; p=Path('tmp-events/hello.txt'); p.write\\_t…_",
       "\\nDone. \`tmp-events/hello.txt\` contains \`hello world\`.",
@@ -36,8 +36,8 @@ test('tools at text verbosity: text, edits and errors only', () => {
     [
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
-      "-# ⨯ shell _Invalid arguments for tool "shell":_",
-      "-# ⨯ shell _Invalid arguments for tool "shell":_",
+      "-#  ⨯  shell _Invalid arguments for tool "shell":_",
+      "-#  ⨯  shell _Invalid arguments for tool "shell":_",
       "\\nDone. \`tmp-events/hello.txt\` contains \`hello world\`.",
       "[typing off]",
       "-# *project ⋅ main ⋅ 17s ⋅ gpt-6-luna*",
@@ -299,7 +299,7 @@ test('permission: two requests, the rejected one fails its tool call', () => {
     **Type:** \`shell\`
     **Pattern:** \`echo second\`
     ✗ _Denied_",
-      "-# ⨯ shell _Unable to execute command: echo second_",
+      "-#  ⨯  shell _Unable to execute command: echo second_",
       "\\n\`echo first\` printed \`first\`; \`echo second\` failed to execute.",
       "[typing off]",
       "-# *project ⋅ main ⋅ 5s ⋅ 6% ⋅ gpt-6-luna*",
