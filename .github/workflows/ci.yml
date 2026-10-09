@@ -26,15 +26,6 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install opencode CLI
-        run: curl -fsSL https://opencode.ai/install | bash
-
-      - name: Add opencode to PATH
-        run: echo "$HOME/.opencode/bin" >> $GITHUB_PATH
-
-      - name: Verify opencode
-        run: opencode --version
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -59,6 +50,11 @@ jobs:
         run: pnpm build
         working-directory: discord-digital-twin
 
+      # The bot loads plugins from dist/ even when tests run from src/.
+      - name: Build kimaki
+        run: pnpm build
+        working-directory: kimaki
+
       # --retry 3: some e2e tests have timing sensitivity on CI hardware
       # (question tool cleanup races, reply ordering under slower I/O).
       - name: Run tests
@@ -66,3 +62,4 @@ jobs:
         working-directory: kimaki
         env:
           NODE_ENV: test
+          NO_COLOR: '1'
