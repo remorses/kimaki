@@ -155,8 +155,9 @@ export function onboardingPrompt({ kimaki }: { kimaki: string }): string {
 }
 
 // The shell command the agent runs to call this Kimaki install.
-export function kimakiShellCommand({ command, dataDir }: { command: readonly string[]; dataDir: string }): string {
-  return [...command, '--data-dir', dataDir].map(shellQuote).join(' ')
+// No --data-dir: agent shells get KIMAKI_DATA_DIR from the plugin, and not every command takes the flag.
+export function kimakiShellCommand({ command }: { command: readonly string[] }): string {
+  return command.map(shellQuote).join(' ')
 }
 
 class GitInitError extends errore.createTaggedError({

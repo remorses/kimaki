@@ -42,7 +42,6 @@ beforeAll(async () => {
   const require = createRequire(import.meta.url)
   kimaki = kimakiShellCommand({
     command: [process.execPath, require.resolve('tsx/cli'), path.join(import.meta.dirname, 'cli.ts')],
-    dataDir,
   })
   otherProject = path.join(dataDir, 'other-project')
   fs.mkdirSync(otherProject)

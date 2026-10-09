@@ -33,7 +33,10 @@ export async function installShim({ dataDir, command }: { dataDir: string; comma
   const created = await fs.promises.mkdir(directory, { recursive: true }).catch((cause) => new ConfigError({ reason: 'Cannot create Kimaki shim directory', cause }))
   if (created instanceof Error) return created
   const file = path.join(directory, process.platform === 'win32' ? 'kimaki.cmd' : 'kimaki')
-  const script = process.platform === 'win32' ? `@echo off\r\n${command} %*\r\n` : `#!/bin/sh\nexec ${command} "$@"\n`
+  // Bind the shim to its data dir through the env: not every command takes --data-dir.
+  const script = process.platform === 'win32'
+    ? `@echo off\r\nset "KIMAKI_DATA_DIR=${dataDir}"\r\n${command} %*\r\n`
+    : `#!/bin/sh\nexport KIMAKI_DATA_DIR='${dataDir.replaceAll("'", "'\\''")}'\nexec ${command} "$@"\n`
   return fs.promises.writeFile(file, script, { mode: 0o700 }).then(() => fs.promises.chmod(file, 0o700))
     .catch((cause) => new ConfigError({ reason: 'Cannot install Kimaki command shim', cause }))
 }
