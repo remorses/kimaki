@@ -1,4 +1,4 @@
-the important package in this repo is `kimaki/`: the Kimaki Discord bot and `kimaki` CLI (npm package `kimaki`), built on OpenCode V2. it replaced the V1 `cli/` package; `kimaki/CHANGELOG.md` keeps the V1 release history.
+the important package in this repo is `kimaki/`: the Kimaki Discord bot and `kimaki` CLI (npm package `kimaki`), built on OpenCode V2. it replaced the V1 `cli/` package; `kimaki/CHANGELOG.md` keeps the V1 release history. this branch supports OpenCode V2 only. the legacy OpenCode V1 compatible codebase lives in the `cli/` folder of the `v1` branch (https://github.com/remorses/kimaki/tree/v1/cli); read it there with `git show v1:cli/<path>`, never re-add V1 support here.
 
 after every change and every feature run `pnpm build` (tsc) inside `kimaki`. it validates types and keeps `kimaki/dist` up to date: the OpenCode plugin autostarts the bot from `dist/cli.js` (`src/autostart.ts`), so a stale dist starts old code. try to never use `as any`.
 
