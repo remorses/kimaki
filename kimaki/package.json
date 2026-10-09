@@ -1,0 +1,56 @@
+{
+  "name": "kimaki",
+  "version": "0.31.0",
+  "description": "A collaborative agent orchestrator for OpenCode, inside Discord",
+  "repository": "https://github.com/remorses/kimaki",
+  "type": "module",
+  "bin": {
+    "kimaki": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "generate": "tsx scripts/generate-schema-sql.ts"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "@discordjs/core": "2.5.0",
+    "@libsql/client": "^0.17.2",
+    "@opencode/client": "2.0.19",
+    "@opencode/plugin": "2.0.19",
+    "@strada.sh/sdk": "^0.8.0",
+    "cron-parser": "^5.5.0",
+    "discord-api-types": "^0.38.40",
+    "discord.js": "^14.26.3",
+    "drizzle-orm": "1.0.0-beta.22",
+    "effect": "4.0.0-rc.112",
+    "errore": "workspace:^",
+    "goke": "^6.15.1",
+    "immer": "^11.1.18",
+    "jsonc-parser": "^3.3.1",
+    "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-gfm": "^3.1.0",
+    "micromark-extension-gfm": "^3.0.0",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5",
+    "string-dedent": "^3.0.2",
+    "traforo": "workspace:^",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@opencode/cli": "2.0.19",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^24.3.0",
+    "discord-digital-twin": "workspace:^",
+    "drizzle-kit": "1.0.0-beta.22",
+    "opencode-deterministic-provider": "workspace:^",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

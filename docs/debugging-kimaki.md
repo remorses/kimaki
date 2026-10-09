@@ -2,7 +2,7 @@
 title: Debugging and profiling kimaki
 description: >
   Recipes for debugging the kimaki bot: the log file, OpenCode session event
-  JSONL (env vars, sqlite export, compacted buffer shape, jq queries), heap
+  JSONL (env vars, sqlite export, buffer shape, jq queries), heap
   snapshots, live CPU profiling, CPU profiling tests, and the
   ~/.kimaki/bin/kimaki command shim. Read when debugging session state, event
   ordering, memory, CPU, slow tests, or agents failing to run `kimaki` commands.
@@ -21,7 +21,26 @@ description: >
 
 ## logs
 
-kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). The log file is reset on every bot startup, so it only contains logs from the current run. File logging works in all environments (dev and production), also under vitest when terminal logs are suppressed.
+kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). Every bot start begins a fresh file and moves the previous run to `kimaki.previous.log`, so a crash and its restart keep the crash reason. Crashes (`uncaughtException`, unhandled rejections) are logged before Node exits. File logging works in all environments (dev and production), also under vitest when terminal logs are suppressed.
+
+Lines are `<ISO time> <LEVEL> [<MODULE>] <message>`. Errors are logged with their cause chain, error-level lines also get the root cause stack. The file is written with one fd and `writeSync`: lines stay ordered and reach disk before a crash.
+
+```bash
+grep -E ' (WARN|ERROR) ' ~/.kimaki/kimaki.log | tail -n 50
+grep 'run (started|finished|failed)' -E ~/.kimaki/kimaki.log
+```
+
+### OpenCode service log
+
+The shared OpenCode 2 daemon (`opencode2 serve --service`) appends logfmt lines to `$XDG_DATA_HOME/opencode/log/opencode.log` (default `~/.local/share/opencode/log/opencode.log`, `opencode2 debug paths` prints it). It is never truncated or rotated. `run=<8 chars>` identifies one daemon process. `--log-level DEBUG` or `OPENCODE_LOG_LEVEL=DEBUG` raises the level, `--print-logs` also prints to stderr. Pid and URL of the daemon are in `~/.local/state/opencode/service.json`.
+
+```bash
+LOG=~/.local/share/opencode/log/opencode.log
+RUN=$(tail -n 1 $LOG | grep -o 'run=[a-z0-9]*')
+grep "$RUN " $LOG | grep -E '^timestamp=[^ ]+ level=(ERROR|WARN)' | tail -n 50
+```
+
+Source: `packages/core/src/observability/logging.ts` and `packages/core/src/global.ts` in anomalyco/opencode (`dev` branch).
 
 ## session event JSONL
 
@@ -39,39 +58,28 @@ For live user-session debugging (without restarting with env vars), export the p
 kimaki session export-events-jsonl --session <session_id> --out ./tmp/session-events.jsonl
 ```
 
-Use this for session-state regressions (for example a footer appearing after abort). Copy the exported JSONL into `cli/src/session-handler/event-stream-fixtures/` and add or update `event-stream-state.test.ts` coverage for the pure derivation helpers.
+Use this for session-state regressions (for example a footer appearing after abort). Use the exported native events as fixture input for `event-stream-state.test.ts` or `discord-event-projection.test.ts` coverage of the pure derivation helpers.
 
-### compacted buffer shape
+### buffer and JSONL shape
 
-`ThreadSessionRuntime` keeps the last 1000 OpenCode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. The buffer stores a compacted event shape to avoid memory spikes. It strips or truncates these large fields:
+`ThreadSessionRuntime` keeps the last 1000 OpenCode events in memory per thread (`eventBuffer`) for event-sourcing derivation and waiters. Long string values are truncated before storage to avoid memory spikes, but the native OpenCode v2 event shape is preserved.
 
-- `message.updated` user events: strip `info.system`, `info.summary`, `info.tools`
-- `message.part.updated` text/reasoning/snapshot: truncate long text fields
-- `message.part.updated` `step-start.snapshot`: truncate
-- `message.part.updated` tool states: replace `state.input` with `{}`
-- `message.part.updated` completed tool output: truncate `state.output`
-- `message.part.updated` completed tool attachments: strip `state.attachments`
-- `message.part.updated` pending `state.raw` and error `state.error`: truncate
-
-Each JSONL line is intentionally minimal: `{ timestamp, threadId, projectDirectory, event }`.
+Each JSONL line is one raw OpenCode event. Do not wrap events with Kimaki metadata.
 
 ### jq recipes
 
 ```bash
 # list event type counts for one session file
-jq -r '.event.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
+jq -r '.type' ~/.kimaki/opencode-session-events/ses_xxx.jsonl | sort | uniq -c
 
-# show only session lifecycle events (status/idle/error)
-jq -r 'select(.event.type=="session.status" or .event.type=="session.idle" or .event.type=="session.error") | [.timestamp, .event.type, (.event.properties.status.type // ""), (.event.properties.error.name // "")] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# show execution lifecycle events
+jq -r 'select(.type | startswith("session.execution.")) | [.created, .type, .data.sessionID, .data.executionID] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
-# filter by a specific event type (example: message.part.updated)
-jq -r 'select(.event.type=="message.part.updated")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
-
-# filter by event subtype (example: session.status idle)
-jq -r 'select(.event.type=="session.status" and .event.properties.status.type=="idle")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+# filter by a specific event type
+jq -r 'select(.type=="session.tool.called")' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 
 # show timestamps + event types
-jq -r '[.timestamp, .event.type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
+jq -r '[.created, .type] | @tsv' ~/.kimaki/opencode-session-events/ses_xxx.jsonl
 ```
 
 ## heap snapshots and memory debugging

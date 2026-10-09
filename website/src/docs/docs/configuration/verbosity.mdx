@@ -1,42 +1,39 @@
 ---
 title: Verbosity
-description: Control how much tool activity Kimaki shows in a thread, from full tool output down to text only.
+description: Choose per channel whether Kimaki shows tool activity or only text in threads.
 icon: lucide:eye
 ---
 
-**Verbosity** controls how much of the agent's tool activity appears in a thread. Lower verbosity keeps threads readable; higher verbosity shows everything for debugging.
-
-## The three levels
+**Verbosity** controls how much of the agent's tool activity appears in a thread. There are two levels, set per channel:
 
 ```diagram
-   tools_and_text      ──▶  shows everything: edits, reads, searches, bash, status
-   text_and_essential  ──▶  text + essential tools (edits, MCP); hides reads  (default)
-   text_only          ──▶  only the agent's text replies; hides all tools
+   tools  ──▶  text, file edits, and tools with side effects; hides reads and searches  (default)
+   text   ──▶  text, file edits, and errors; hides all other tools
 ```
 
 | Level | What it shows |
 |---|---|
-| **Tools and text** (`tools_and_text`) | All output, including every tool execution and status message |
-| **Text and essential tools** (`text_and_essential_tools`) | Text plus essential tools (file edits, custom MCP tools). Hides reads and searches. **Default.** |
-| **Text only** (`text_only`) | Only text responses. Hides all tools and status messages. |
+| **Text and tools** (`tools`) | Text, file edits, and tool calls with side effects. Hides `read`, `glob`, `grep`, and shell commands that only read. **Default.** |
+| **Text only** (`text`) | Text, file edits, and errors. Hides every other tool call. |
 
-The default, **text and essential tools**, is tuned so you see the edits and meaningful actions without the noise of every file read and grep.
+At both levels you always see the agent's text, file edits (`-# ◼︎ edit *file.ts* (+3-1)`), errors, `!` shell command output, and the footer. Reasoning is never shown.
 
 ## Setting verbosity
 
-Run **`/verbosity`** in a channel and pick a level from the dropdown. The setting is a **per-channel override** of the global default and **applies immediately**, including to sessions that are already running.
+Run **`/verbosity`** in a channel or one of its threads and pick a level. The setting is stored per channel and **applies immediately**, including to sessions that are already running.
 
-<Aside>
-<Note>
-Verbosity is stored per channel, so different projects can have different levels. The reply shows whether the current value is a channel override or the global default.
-</Note>
-</Aside>
+From the CLI (the bot must be running):
 
-## What "essential tools" means
+```bash
+kimaki channel verbosity text                      # channel of the current directory
+kimaki channel verbosity tools --channel 123456789
+```
 
-At the default level, Kimaki shows tool parts that matter for following the work:
+## How `tools` decides
 
-- **File edits and writes** (prefixed `◼︎` in the thread).
-- **Custom MCP tools** you've configured.
+At the default level, Kimaki hides tool calls that only read:
 
-It hides low-signal parts like file reads, searches, thinking, and non-side-effect bash. Bump to **tools and text** when you want to see exactly what the agent is doing step by step.
+- `read`, `glob`, and `grep`.
+- Shell commands the agent marks as having no side effects (`hasSideEffect: false`). Kimaki's OpenCode plugin adds this field to the shell tool, so the agent marks each command.
+
+Everything else shows as a subtext line, for example `-# ┣ shell _run the test suite_`. Subagent tool calls follow the same rules and show in the parent thread with the agent name: `-# ┣ general ⋅ shell _run the migrations_`.

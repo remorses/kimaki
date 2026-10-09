@@ -1,13 +1,16 @@
 ---
 title: Programmatic Gateway
-description: How to spawn kimaki as a child process in gateway mode, parse SSE events, and integrate it into a cloud platform.
+description: How to spawn kimaki as a child process in gateway mode, parse its data events, and integrate it into a cloud platform.
 icon: terminal
 ---
 
-When kimaki runs in a non-TTY environment (piped stdout, no terminal), it emits
-structured events on stdout using the SSE (Server-Sent Events) wire format.
-This lets a host process parse lifecycle events reliably even when other log
-lines, warnings, and debug output are interleaved on the same stream.
+When kimaki runs without a TTY (piped stdin and stdout, no terminal), it prints
+structured events on stdout in the SSE (Server-Sent Events) wire format. A host
+process can parse them reliably with any SSE parser.
+
+```
+data: {"type":"install_url","url":"https://kimaki.dev/discord-install?clientId=...&clientSecret=..."}
+```
 
 ## Use case
 
@@ -22,33 +25,38 @@ Each user gets their own kimaki process running on a VPS. Your platform needs to
 
 ## Event lifecycle
 
-When kimaki starts in gateway mode with piped stdout, it emits these events
-in order:
+When kimaki starts in gateway mode without a TTY, it emits these events in order:
 
 ```diagram
 install_url  ──▶  authorized  ──▶  ready
                        ▲
-                       │ (user clicks URL and authorizes)
+                       │ (user opens the URL and authorizes)
 ```
 
 | Event | Payload | Description |
 |---|---|---|
-| `install_url` | `{ type, url }` | Discord OAuth URL to send to the user |
-| `authorized` | `{ type, guild_id }` | User authorized the bot in a guild |
-| `ready` | `{ type, app_id, guild_ids }` | Bot is connected and listening |
-| `error` | `{ type, message, install_url? }` | Something went wrong |
+| `install_url` | `{ type, url }` | Discord install URL to send to the user |
+| `authorized` | `{ type, guild_id }` | User authorized the bot in a server |
+| `ready` | `{ type, app_id, guild_ids }` | Bot is connected and first-run onboarding is done |
+| `error` | `{ type, message, install_url? }` | Something went wrong. `install_url` is set when the user must open the URL again |
+
+When saved credentials are already installed, kimaki skips `install_url` and
+`authorized` and only emits `ready`.
+
+Without a TTY, kimaki always uses gateway mode for a new install, even without
+`--gateway`. If the bot is in several servers, pass `--guild <id>`, otherwise
+startup fails with an `error` event.
 
 ## SSE wire format
 
-Each event is a single line prefixed with `data: ` and terminated with `\n\n`:
+Each event is a single line prefixed with `data: ` and followed by an empty line:
 
 ```
-data: {"type":"install_url","url":"https://kimaki.dev/discord-install?clientId=...&callbackUrl=..."}\n\n
+data: {"type":"ready","app_id":"1477605701202481173","guild_ids":["123..."]}\n\n
 ```
 
-This is standard SSE format. The `data:` prefix is what makes it robust — log
-lines, warnings, spinner output, and other noise do not start with `data:` at
-column 0, so the parser ignores them completely.
+Kimaki writes its logs to stderr, so stdout only has these events. The `data:`
+prefix still lets a standard SSE parser ignore any other line.
 
 ## Parsing events with eventsource-parser
 
@@ -66,13 +74,12 @@ import { createParser } from 'eventsource-parser'
 
 const child = spawn('kimaki', [
   '--gateway',
-  '--restart-onboarding',
   '--data-dir', '/data/user-abc',
   '--gateway-callback-url', 'https://your-platform.com/oauth-done',
 ], {
   env: {
     ...process.env,
-    // Unique port per instance to avoid conflicts between concurrent kimaki processes
+    // Unique port per instance; a busy port makes startup fail
     KIMAKI_LOCK_PORT: '31200',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -89,12 +96,12 @@ const parser = createParser({
         break
       }
       case 'authorized': {
-        // User authorized the bot — you now have their guild_id
+        // User authorized the bot; you now have their guild_id
         console.log('Guild ID:', event.guild_id)
         break
       }
       case 'ready': {
-        // Bot is fully connected and listening for Discord messages
+        // Bot is connected and listening for Discord messages
         console.log('App ID:', event.app_id)
         console.log('Guild IDs:', event.guild_ids)
         break
@@ -107,44 +114,72 @@ const parser = createParser({
   },
 })
 
-// Feed raw stdout into the parser — it extracts data: lines, ignores everything else
+// Feed raw stdout into the parser; it extracts data: lines
 child.stdout.on('data', (chunk) => {
   parser.feed(chunk.toString())
 })
 ```
+
+## Get the install URL without starting the bot
+
+`--install-url` prints the install URL as plain text and exits. With
+`--gateway`, it creates and saves gateway credentials first when the data
+directory has none.
+
+```bash
+kimaki --gateway --install-url --data-dir /data/user-abc
+```
+
+When you later start `kimaki --gateway` with the same data directory, it reuses
+these credentials and waits for the install to finish.
+
+From a data directory that already has credentials, `kimaki bot install-url`
+prints the same URL.
 
 ## CLI flags
 
 | Flag | Required | Description |
 |---|---|---|
 | `--gateway` | yes | Use the shared Kimaki gateway bot |
-| `--restart-onboarding` | for fresh setup | Force the onboarding flow even if saved credentials exist |
 | `--data-dir <path>` | recommended | Isolated data directory per user instance |
-| `--gateway-callback-url <url>` | optional | Redirect user here after OAuth instead of default kimaki page |
+| `--gateway-callback-url <url>` | optional | Redirect the user here after the install instead of the default kimaki page |
+| `--install-url` | optional | Print the install URL and exit |
+| `--guild <id>` | when the bot is in several servers | Server to onboard |
+| `--machine-name <name>` | optional | Name of the Discord category, `Kimaki <name>` (default: hostname) |
+| `--restart-onboarding` | optional | Run the install flow again, even with saved credentials |
+| `--no-analytics` | optional | Disable anonymous usage analytics |
+
+Kimaki needs **OpenCode 2** on the machine. Without a TTY, when no OpenCode is
+installed, kimaki installs OpenCode 2 with
+`curl -fsSL https://opencode.ai/v2/install | bash` before it emits any event.
+Install it in your image ahead of time to make startup faster.
 
 ## Custom callback URL
 
 Pass `--gateway-callback-url` to redirect the user to your own page after they
-authorize the bot. The callback URL receives a `?guild_id=<id>` query parameter
-so your platform knows which guild was authorized.
+authorize the bot. The URL must use `https`, or `http` on `localhost` or
+`127.0.0.1`.
 
 ```bash
 kimaki --gateway --gateway-callback-url https://your-platform.com/setup-done
 ```
 
-The install URL emitted in the `install_url` event will include the callback:
+The install URL in the `install_url` event includes the callback:
 
 ```
-https://kimaki.dev/discord-install?clientId=...&callbackUrl=https%3A%2F%2Fyour-platform.com%2Fsetup-done
+https://kimaki.dev/discord-install?clientId=...&clientSecret=...&kimakiCallbackUrl=https%3A%2F%2Fyour-platform.com%2Fsetup-done
 ```
 
-After the user authorizes, Discord redirects to kimaki's OAuth handler, which
-then redirects to your callback URL with `?guild_id=<id>` appended.
+After the user authorizes, Discord redirects to kimaki.dev, which then
+redirects to your callback URL with `guild_id` and `client_id` query
+parameters appended. Your platform knows which server was authorized for which
+instance.
 
 ## Running multiple instances
 
-Each kimaki process needs a unique `KIMAKI_LOCK_PORT` to avoid conflicts.
-Without it, a new process will kill the existing one.
+Each kimaki process needs a unique `KIMAKI_LOCK_PORT` (default `29988`). If the
+port is busy, the new process fails to start with `port is in use`. It never
+stops the process that already runs.
 
 ```typescript
 const lockPort = 31100 + userIndex
@@ -156,17 +191,9 @@ const child = spawn('kimaki', ['--gateway', '--data-dir', userDataDir], {
 ```
 
 Also use a unique `--data-dir` per user so their SQLite databases, logs, and
-credentials are isolated.
+credentials are isolated. CLI subcommands for an instance need the same
+`KIMAKI_LOCK_PORT` and `--data-dir`.
 
-## Why SSE format instead of plain JSON lines
-
-Process stdout is noisy. Kimaki logs, clack prompts, OpenCode server output,
-and debug messages all go to stdout. Parsing JSON by checking if a line starts
-with `{` is fragile — a log line could start with `{` by coincidence.
-
-SSE format solves this because:
-- Only lines starting with exactly `data:` at column 0 are parsed as events
-- Other SSE fields (`id:`, `event:`, `retry:`) are ignored by the parser if
-  you only read `.data`
-- Log lines, warnings, and spinners are silently discarded
-- The parser handles chunks split across multiple `data` events correctly
+All instances on one machine use the same OpenCode 2 service of the machine
+user. To isolate users from each other, run each instance as its own OS user
+or in its own container.

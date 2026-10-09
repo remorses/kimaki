@@ -32,8 +32,7 @@
         "pages": [
           "index",
           "docs/getting-started/subscriptions",
-          "docs/getting-started/model-switching",
-          "docs/getting-started/background-sync"
+          "docs/getting-started/model-switching"
         ]
       },
       {
@@ -65,9 +64,7 @@
         "group": "Remote Access",
         "icon": "lucide:monitor-smartphone",
         "pages": [
-          "docs/remote-access/vscode",
           "docs/remote-access/tunnels",
-          "docs/remote-access/screen-sharing",
           "docs/remote-access/opencode-server"
         ]
       },
@@ -78,7 +75,6 @@
           "docs/configuration/access-control",
           "docs/configuration/permissions",
           "docs/configuration/verbosity",
-          "docs/configuration/memory",
           "docs/configuration/mcp",
           "docs/configuration/projects"
         ]
@@ -94,13 +90,6 @@
           "docs/guides/advanced-setup",
           "docs/guides/docker",
           "docs/guides/programmatic-gateway"
-        ]
-      },
-      {
-        "group": "Plugins",
-        "icon": "lucide:plug",
-        "pages": [
-          "docs/plugins/abort-on-x"
         ]
       },
       {
@@ -145,8 +134,7 @@
     { "source": "/docs/model-switching", "destination": "/docs/getting-started/model-switching" },
     { "source": "/docs/advanced-setup", "destination": "/docs/guides/advanced-setup" },
     { "source": "/docs/ci-automation", "destination": "/docs/guides/ci-automation" },
-    { "source": "/docs/internals", "destination": "/docs/reference/internals" },
-    { "source": "/docs/screen-sharing", "destination": "/docs/remote-access/screen-sharing" }
+    { "source": "/docs/internals", "destination": "/docs/reference/internals" }
   ],
   "knownPaths": [
     "/discord-install",

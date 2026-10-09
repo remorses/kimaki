@@ -12,7 +12,6 @@ useraudio
 *.wav
 discord-audio-logs
 tmp
-/cli/skills
 
 # opensrc - source code for packages
 /opensrc
@@ -28,4 +27,3 @@ zig-out
 website/.wrangler/
 .wrangler
 betterstack
-/subrouter-opencode-v2-plugin/

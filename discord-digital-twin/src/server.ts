@@ -15,6 +15,7 @@ import {
   MessageType,
 } from 'discord-api-types/v10'
 import type {
+  APIAttachment,
   APIUser,
   APIApplication,
   APIApplicationCommand,
@@ -39,7 +40,7 @@ import type {
   RESTPostAPIInteractionCallbackJSONBody,
 } from 'discord-api-types/v10'
 import { DiscordGateway } from './gateway.js'
-import type { GatewayState } from './gateway.js'
+import type { GatewayAuthorize, GatewayOfflineClients, GatewayState } from './gateway.js'
 import type { PrismaClient } from './generated/client.js'
 import {
   userToAPI,
@@ -97,6 +98,23 @@ type GuildChannelCreateBody = RESTPostAPIGuildChannelJSONBody & {
   rate_limit_per_user?: number
 }
 
+async function readMessageBody(request: Request): Promise<RESTPostAPIChannelMessageJSONBody & { uploadedAttachments: APIAttachment[] }> {
+  if (!request.headers.get('content-type')?.startsWith('multipart/form-data')) {
+    const body = await request.json() as RESTPostAPIChannelMessageJSONBody
+    return { ...body, uploadedAttachments: [] }
+  }
+  const form = await request.formData()
+  const payload = form.get('payload_json')
+  const body = typeof payload === 'string' ? JSON.parse(payload) as RESTPostAPIChannelMessageJSONBody : {}
+  const uploadedAttachments: APIAttachment[] = []
+  for (const [key, file] of form.entries()) {
+    if (!/^files\[\d+\]$/.test(key) || typeof file === 'string') continue
+    const uri = `data:${file.type || 'application/octet-stream'};base64,${Buffer.from(await file.arrayBuffer()).toString('base64')}`
+    uploadedAttachments.push({ id: generateSnowflake(), filename: file.name, size: file.size, content_type: file.type, url: uri, proxy_url: uri })
+  }
+  return { ...body, uploadedAttachments }
+}
+
 export interface ServerComponents {
   httpServer: http.Server
   gateway: DiscordGateway
@@ -110,18 +128,55 @@ export type TypingEventRecord = {
   timestamp: number
 }
 
+// REST route scope of gateway-proxy, ported 1:1 from
+// gateway-proxy/src/rest_proxy.rs resolve_route_scope(). Keep them in sync.
+export type RouteScope =
+  | { kind: 'guild'; guildId: string }
+  | { kind: 'channel'; channelId: string }
+  | { kind: 'allowed-without-guild' }
+  | { kind: 'allowed-without-auth' }
+  | { kind: 'denied' }
+
+const SNOWFLAKE = /^\d+$/
+
+export function resolveRouteScope(pathname: string): RouteScope {
+  const segments = pathname.split('/').filter((segment) => segment.length > 0)
+  const base = segments[0] === 'api' && segments[1] === 'v10' ? 2 : segments[0] === 'v10' ? 1 : -1
+  if (base === -1 || segments.length <= base) return { kind: 'denied' }
+  const route = segments.slice(base)
+  const [first = '', second = '', third = '', fourth = ''] = route
+  if (first === 'gateway' && second === 'bot') return { kind: 'allowed-without-guild' }
+  if (first === 'users' && (second === '@me' || second.toLowerCase() === '%40me')) return { kind: 'allowed-without-guild' }
+  if ((first === 'interactions' || first === 'webhooks') && route.length >= 3) {
+    return SNOWFLAKE.test(second) && third ? { kind: 'allowed-without-auth' } : { kind: 'denied' }
+  }
+  if (first === 'guilds' && route.length >= 2) return SNOWFLAKE.test(second) ? { kind: 'guild', guildId: second } : { kind: 'denied' }
+  if (first === 'channels' && route.length >= 2) return SNOWFLAKE.test(second) ? { kind: 'channel', channelId: second } : { kind: 'denied' }
+  if (first === 'applications' && third === 'guilds' && route.length >= 4) {
+    return SNOWFLAKE.test(fourth) ? { kind: 'guild', guildId: fourth } : { kind: 'denied' }
+  }
+  return { kind: 'denied' }
+}
+
 export function createServer({
   prisma,
   botUserId,
-  botToken,
+  authorize,
+  gatewayProxy,
   loadGatewayState,
   gatewayUrlOverride,
+  offlineClients,
 }: {
   prisma: PrismaClient
   botUserId: string
-  botToken: string
+  authorize: GatewayAuthorize
+  // Enforce gateway-proxy REST rules: client tokens only reach routes of
+  // their authorized guilds, fail closed otherwise.
+  gatewayProxy: boolean
   loadGatewayState: () => Promise<GatewayState>
   gatewayUrlOverride?: string
+  // gatewayProxy mode: registered clients, for the offline event buffer.
+  offlineClients?: GatewayOfflineClients
 }): ServerComponents {
   const state = { port: 0 }
   const typingEvents: TypingEventRecord[] = []
@@ -393,8 +448,7 @@ export function createServer({
       method: 'POST',
       path: '/channels/:channel_id/messages',
       async handler({ params, request }): Promise<APIMessage> {
-        // JSON.parse of unknown request body -- `as` is the only option
-        const body = (await request.json()) as RESTPostAPIChannelMessageJSONBody
+        const body = await readMessageBody(request)
         const channel = await prisma.channel.findUnique({
           where: { id: params.channel_id },
         })
@@ -420,6 +474,7 @@ export function createServer({
             flags: body.flags ?? 0,
             embeds: JSON.stringify(body.embeds ?? []),
             components: JSON.stringify(body.components ?? []),
+            attachments: JSON.stringify(body.uploadedAttachments),
             messageReference: body.message_reference
               ? JSON.stringify(body.message_reference)
               : null,
@@ -1937,7 +1992,35 @@ export function createServer({
       },
     })
 
+  // Same status codes as rest_proxy.rs: 401 bad token, 403 outside the
+  // authorized guilds, 404 + 10003 for an unknown channel.
+  async function proxyRejection(req: http.IncomingMessage): Promise<Response | null> {
+    if (!gatewayProxy) return null
+    const scope = resolveRouteScope(new URL(req.url ?? '/', 'http://localhost').pathname)
+    if (scope.kind === 'allowed-without-auth') return null
+    const token = (req.headers.authorization ?? '').replace(/^Bot\s+/i, '')
+    const guilds = authorize(token)
+    if (guilds === false) return Response.json({ error: 'Invalid client credentials' }, { status: 401 })
+    if (guilds === null || scope.kind === 'allowed-without-guild') return null
+    if (scope.kind === 'denied') return Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
+    if (scope.kind === 'guild') {
+      return guilds.has(scope.guildId) ? null : Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
+    }
+    const channel = await prisma.channel.findUnique({ where: { id: scope.channelId } })
+    if (!channel) return Response.json({ message: 'Unknown Channel', code: 10003 }, { status: 404 })
+    if (channel.guildId && guilds.has(channel.guildId)) return null
+    return Response.json({ error: 'REST route is outside the authorized guild scope' }, { status: 403 })
+  }
+
   const httpServer = http.createServer((req, res) => {
+    void proxyRejection(req).then(async (rejection) => {
+      if (!rejection) return handleRequest(req, res)
+      res.writeHead(rejection.status, { 'content-type': 'application/json' })
+      res.end(await rejection.text())
+    })
+  })
+
+  function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     const origWriteHead = res.writeHead.bind(res)
     // Node's writeHead has complex overloads. Intercept to inject rate
     // limit headers on every response.
@@ -1954,13 +2037,14 @@ export function createServer({
       return origWriteHead(statusCode, ...rest)
     } as typeof res.writeHead
     return app.handleForNode(req, res)
-  })
+  }
 
   gateway = new DiscordGateway({
     httpServer,
     port: 0,
     loadState: loadGatewayState,
-    expectedToken: botToken,
+    authorize,
+    offlineClients,
   })
 
   return {

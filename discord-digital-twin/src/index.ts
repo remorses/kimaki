@@ -130,6 +130,13 @@ export interface DigitalDiscordOptions {
   // Override the gateway URL returned by GET /gateway/bot.
   // Useful when a proxy sits between the client and this server.
   gatewayUrlOverride?: string
+  // Act as kimaki's gateway-proxy: only `clientId:secret` tokens registered
+  // with authorizeGatewayClient() connect, READY and events are filtered to
+  // their guilds, and REST routes follow rest_proxy.rs (fail closed). A
+  // botToken containing ':' is authorized for every seeded guild. Message and
+  // thread events for a registered client with no connection are buffered and
+  // replayed after its next READY, like the proxy's offline buffer.
+  gatewayProxy?: boolean
 }
 
 export type DigitalDiscordCommandOption = {
@@ -187,14 +194,18 @@ export class DigitalDiscord {
 
   private server: ServerComponents | null = null
   private options: DigitalDiscordOptions
+  // gatewayProxy mode: client token -> authorized guild IDs.
+  private gatewayClients = new Map<string, Set<string>>()
   private seeded = false
   private interactionEvents: DigitalDiscordInteractionEvent[] = []
 
   constructor(options: DigitalDiscordOptions = {}) {
     this.options = options
     this.prisma = createPrismaClient(options.dbUrl)
-    this.botToken = options.botToken ?? 'fake-bot-token'
     this.botUserId = options.botUser?.id ?? generateSnowflake()
+    // Shaped like a real bot token: the first segment is base64(application id),
+    // so clients that derive the app ID from the token work against the twin.
+    this.botToken = options.botToken ?? `${Buffer.from(this.botUserId).toString('base64')}.twin.fake-bot-token`
 
     if (options.guilds && options.guilds.length > 0) {
       this.guildIds = options.guilds.map((g) => g.id ?? generateSnowflake())
@@ -230,12 +241,20 @@ export class DigitalDiscord {
       this.seeded = true
     }
 
+    if (this.options.gatewayProxy && this.botToken.includes(':')) {
+      this.authorizeGatewayClient({ token: this.botToken, guildIds: this.guildIds })
+    }
     this.server = createServer({
       prisma: this.prisma,
       botUserId: this.botUserId,
-      botToken: this.botToken,
+      gatewayProxy: Boolean(this.options.gatewayProxy),
+      authorize: (token) => {
+        if (!this.options.gatewayProxy) return token === this.botToken ? null : false
+        return this.gatewayClients.get(token) ?? false
+      },
       loadGatewayState: () => this.loadGatewayState(),
       gatewayUrlOverride: this.options.gatewayUrlOverride,
+      ...(this.options.gatewayProxy && { offlineClients: () => this.gatewayClients.entries() }),
     })
 
     const port = await startServer(this.server)
@@ -247,6 +266,14 @@ export class DigitalDiscord {
       await stopServer(this.server)
       this.server = null
     }
+  }
+
+  // gatewayProxy mode: what the website's OAuth callback does (a
+  // gateway_clients row). The client can connect from now on.
+  authorizeGatewayClient({ token, guildIds }: { token: string; guildIds: readonly string[] }): void {
+    const guilds = this.gatewayClients.get(token) ?? new Set<string>()
+    for (const guildId of guildIds) guilds.add(guildId)
+    this.gatewayClients.set(token, guilds)
   }
 
   // --- Scoped accessors ---
@@ -701,6 +728,83 @@ export class DigitalDiscord {
     })
   }
 
+  // Slash commands the bot registered, ordered by name. Guild commands by
+  // default; pass guildId: null for global commands.
+  async getRegisteredCommands({
+    guildId = this.guildId,
+  }: { guildId?: string | null } = {}): Promise<
+    Array<{ id: string; name: string; description: string; options: unknown[] }>
+  > {
+    const commands = await this.prisma.applicationCommand.findMany({
+      where: { applicationId: this.botUserId, guildId },
+      orderBy: { name: 'asc' },
+    })
+    return commands.map((command) => {
+      return {
+        id: command.id,
+        name: command.name,
+        description: command.description,
+        options: JSON.parse(command.options) as unknown[],
+      }
+    })
+  }
+
+  // Autocomplete for one option of a slash command: `focused` names the
+  // option being typed. Resolves with the choices the bot responded with.
+  async simulateAutocomplete({
+    channelId,
+    userId,
+    name,
+    options,
+    focused,
+    guildId,
+    timeout = 10_000,
+  }: {
+    channelId: string
+    userId: string
+    name: string
+    options: DigitalDiscordCommandOption[]
+    focused: string
+    guildId?: string
+    timeout?: number
+  }): Promise<Array<{ name: string; value: string | number }>> {
+    const resolvedGuildId = guildId ?? this.guildId
+    const command = await this.prisma.applicationCommand.findFirst({
+      where: { applicationId: this.botUserId, name, guildId: resolvedGuildId },
+    })
+    const { id } = await this.simulateInteraction({
+      type: InteractionType.ApplicationCommandAutocomplete,
+      channelId,
+      userId,
+      guildId,
+      data: {
+        id: command?.id ?? generateSnowflake(),
+        name,
+        type: 1,
+        options: options.map((option) => {
+          return option.name === focused ? { ...option, focused: true } : option
+        }),
+      },
+    })
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
+    const start = Date.now()
+    while (Date.now() - start < effectiveTimeout) {
+      const response = await this.prisma.interactionResponse.findUnique({
+        where: { interactionId: id },
+      })
+      if (response?.acknowledged) {
+        const data = response.data
+          ? (JSON.parse(response.data) as { choices?: Array<{ name: string; value: string | number }> })
+          : {}
+        return data.choices ?? []
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50)
+      })
+    }
+    throw new Error(`Timed out waiting for autocomplete response of /${name}`)
+  }
+
   async simulateButtonClick({
     channelId,
     userId,
@@ -762,14 +866,20 @@ export class DigitalDiscord {
     customId,
     fields,
     guildId,
+    messageId,
+    files = [],
   }: {
     channelId: string
     userId: string
     customId: string
     fields: DigitalDiscordModalField[]
     guildId?: string
+    // Set when the modal was opened from a message component: Discord then
+    // includes that message, so the bot can update it.
+    messageId?: string
+    files?: Array<{ customId: string; attachments: APIAttachment[] }>
   }): Promise<{ id: string; token: string }> {
-    const components = fields.map((field) => {
+    const components: unknown[] = fields.map((field) => {
       return {
         type: 1,
         components: [
@@ -781,15 +891,20 @@ export class DigitalDiscord {
         ],
       }
     })
+    components.push(...files.map((field) => ({ type: ComponentType.Label, component: {
+      type: ComponentType.FileUpload, custom_id: field.customId, values: field.attachments.map((attachment) => attachment.id),
+    } })))
 
     return this.simulateInteraction({
       type: InteractionType.ModalSubmit,
       channelId,
       userId,
       guildId,
+      messageId,
       data: {
         custom_id: customId,
         components,
+        resolved: { attachments: Object.fromEntries(files.flatMap((field) => field.attachments.map((attachment) => [attachment.id, attachment]))) },
       },
     })
   }
@@ -809,7 +924,7 @@ export class DigitalDiscord {
 
     const sql = fs.readFileSync(schemaPath, 'utf-8')
 
-    // Same parsing approach as cli/src/db.ts migrateSchema():
+    // Same parsing approach as kimaki/src/migrations.ts schemaStatements():
     // 1. Split on semicolons into statements
     // 2. Strip per-line SQL comments within each statement
     // 3. Filter out empty and sqlite_sequence statements
@@ -1429,14 +1544,16 @@ export class ScopedUserActor {
   async sendVoiceMessage({
     content,
     url = 'https://fake-cdn.discord.test/voice-message.ogg',
-  }: { content?: string; url?: string } = {}) {
+    contentType = 'audio/ogg',
+    filename = 'voice-message.ogg',
+  }: { content?: string; url?: string; contentType?: string; filename?: string } = {}) {
     return this.sendMessage({
       content: content ?? '',
       attachments: [
         {
           id: generateSnowflake(),
-          filename: 'voice-message.ogg',
-          content_type: 'audio/ogg',
+          filename,
+          content_type: contentType,
           size: 1024,
           url,
           proxy_url: url,
@@ -1487,6 +1604,27 @@ export class ScopedUserActor {
     })
   }
 
+  async autocomplete({
+    name,
+    options,
+    focused,
+    guildId,
+  }: {
+    name: string
+    options: DigitalDiscordCommandOption[]
+    focused: string
+    guildId?: string
+  }) {
+    return this.discord.simulateAutocomplete({
+      channelId: this.channelId,
+      userId: this.userId,
+      name,
+      options,
+      focused,
+      guildId,
+    })
+  }
+
   async clickButton({
     messageId,
     customId,
@@ -1530,10 +1668,14 @@ export class ScopedUserActor {
     customId,
     fields,
     guildId,
+    messageId,
+    files,
   }: {
     customId: string
     fields: DigitalDiscordModalField[]
     guildId?: string
+    messageId?: string
+    files?: Array<{ customId: string; attachments: APIAttachment[] }>
   }) {
     return this.discord.simulateModalSubmit({
       channelId: this.channelId,
@@ -1541,6 +1683,8 @@ export class ScopedUserActor {
       customId,
       fields,
       guildId,
+      messageId,
+      files,
     })
   }
 }
@@ -1548,3 +1692,5 @@ export class ScopedUserActor {
 export { DiscordGateway } from './gateway.js'
 export { generateSnowflake } from './snowflake.js'
 export type { GatewayState } from './gateway.js'
+export { resolveRouteScope } from './server.js'
+export type { RouteScope } from './server.js'

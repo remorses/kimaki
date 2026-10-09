@@ -21,7 +21,7 @@ kimaki tunnel --port 3000
 ```
 
 ```diagram
-  pnpm dev ──▶ tunnel ──▶ https://<id>.kimaki.dev ──▶ open anywhere
+  pnpm dev ──▶ tunnel ──▶ https://<id>-tunnel.kimaki.dev ──▶ open anywhere
 ```
 
 ## Passing the public URL to your app
@@ -49,10 +49,10 @@ When launching a dev server through `kimaki tunnel -- ...`, the local port is au
 
 | Option | Description |
 |---|---|
-| `-p, --port <port>` | Local port to expose (optional when the command output reveals it) |
-| `-t, --tunnel-id [id]` | Custom tunnel ID (use only for services safe to expose publicly; default is random) |
-| `-h, --host [host]` | Local host (default: localhost) |
-| `-k, --kill` | Kill any existing process on the port before starting |
+| `-p, --port <port>` | Local port (default: read from the command output) |
+| `-t, --tunnel-id <id>` | Fixed tunnel ID (default: random). Only for public-safe services |
+| `--host <host>` | Local host (default: localhost) |
+| `-k, --kill` | Kill the process on `--port` first |
 
 <Aside>
 <Note>

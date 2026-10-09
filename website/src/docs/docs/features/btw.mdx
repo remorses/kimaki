@@ -4,45 +4,56 @@ description: Fork the current context into a new thread to ask a clarifying ques
 icon: lucide:split
 ---
 
-**btw** forks the current session's full context into a **new thread** and immediately answers a side question there, without disturbing the running task. Use it when you need a clarification in parallel.
+**btw** forks the current session's full context into a **new thread** and answers a side question there. The running task in the original thread continues.
+
+```
+why did you pick zod here? btw
+```
 
 ## The problem it solves
 
-The agent is in the middle of a long task and you suddenly want to ask "wait, why did you choose X?" If you send that in the thread, it [interrupts](../core-concepts/message-handling) the work. If you wait, you lose the moment.
+The agent is in the middle of a long task and you want to ask "wait, why did you choose X?" A normal message in the thread [interrupts](../core-concepts/message-handling) the work. If you wait, you lose the moment.
 
-**btw** splits the question off into its own thread that shares the same context but runs independently.
+**btw** sends the question to its own thread. That thread has the same context but runs independently.
 
 ```diagram
   thread: build ──────────────────────▶ keeps working
        │
-       │ ". btw why pick?"
+       │ "why pick? btw"
        ▼
-  thread: btw ──▶ answers in parallel
+  thread: btw: why pick? ──▶ answers in parallel
 ```
 
 ## Using btw
 
-Two equivalent triggers:
+There are two triggers with the same result:
 
-- **`/btw <prompt>`** — fork and ask the prompt.
-- **`. btw` suffix** — end a message with punctuation plus `btw`, for example `why this approach? btw`. Supported forms include `. btw`, `! btw`, a trailing `btw.`, or `btw` on its own final line.
+- **`/btw prompt:<question>`**: fork and ask the question.
+- **`btw` suffix**: end a message with punctuation plus `btw`, for example `why this approach? btw`. Supported forms are `. btw`, `! btw`, `? btw`, `, btw`, a trailing `btw.`, or `btw` on its own last line.
 
-Unlike the [queue suffix](../features/queue), the `btw` suffix **requires punctuation or a newline** before it, so `btw fix this` at the start of a message is not treated as a btw.
+The suffix **needs punctuation or a newline** before it. `btw fix this` at the start of a message is a normal message.
+
+`btw queue` at the end (for example `check the logs. btw queue`) also forks at once. A queued fork is not supported.
+
+btw only works in a session thread. In a project channel there is nothing to fork, so the message starts a normal new session.
+
+From the CLI, use `kimaki send --thread <id> --prompt 'why this approach? btw'` or `kimaki session btw <text>`.
 
 ## What happens
 
-1. Kimaki **forks the entire session context** (no single message ID), so the new thread knows everything the original does.
-2. It creates a thread named `btw: <your prompt>`.
-3. It **does not replay** past Discord messages into the new thread; it just carries the context.
-4. It **dispatches your question immediately**, so the forked session starts answering right away.
+1. Kimaki **forks the whole session** with OpenCode. The fork keeps the history, agent, model and instructions.
+2. It creates a thread named `btw: <your question>` and adds you to it.
+3. The first message in the new thread is `Reusing context from #original-thread to answer prompt...` followed by your question.
+4. It **sends your question at once**, so the fork starts to answer.
+5. Where you asked, Kimaki replies `Session forked! Continue in #btw-thread`.
 
-The forked session is told its only job is to answer your question: it will not continue, resume, or reference the original task.
+The forked session gets an instruction to only answer your question. It does not continue the original task.
 
-Session lists such as **`/last-sessions`** and **`kimaki session list --active`** show these threads with a **`btw:`** title prefix. They are side sessions, not duplicates of the original task.
+Attachments on a suffix message go to the fork with the question.
 
 <Aside>
 <Note>
-The original thread is never paused or interrupted. btw runs as a separate session in parallel.
+The original thread is not paused or interrupted. Its pending questions and permission requests stay open.
 </Note>
 </Aside>
 

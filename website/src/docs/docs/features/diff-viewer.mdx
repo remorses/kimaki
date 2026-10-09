@@ -4,15 +4,15 @@ description: Generate a shareable URL to review your changes in a real diff view
 icon: lucide:file-diff
 ---
 
-The **`/diff`** command uploads your current git diff and gives you a **shareable URL** to a real, syntax-highlighted diff viewer. Review changes from your phone, your desktop browser, or send the link to a teammate.
+The **`/diff`** command uploads your current git diff and gives you a **shareable URL** to a syntax-highlighted diff viewer. Review changes from your phone, your desktop browser, or send the link to a teammate.
 
 ## Using it
 
-Run **`/diff`** in a thread or project channel. Kimaki:
+Run **`/diff`** in a thread or a project channel. Kimaki:
 
-1. Runs the [critique](https://github.com/remorses/critique) CLI on the working directory.
+1. Runs the [critique](https://github.com/remorses/critique) CLI (`critique --web`) in the working directory.
 2. Uploads the diff and gets back a URL like `https://critique.work/v/<id>`.
-3. Replies in Discord with the link and an inline preview image.
+3. Replies with an embed that links to the diff and shows a preview image.
 
 ```diagram
   /diff ──▶ critique --web ──▶ upload ──▶ https://critique.work/v/<id>
@@ -21,19 +21,40 @@ Run **`/diff`** in a thread or project channel. Kimaki:
                                  open on phone or desktop
 ```
 
-Click the embed to open the full diff viewer in your browser. It works on mobile, which is the whole point: you can review what the agent changed without being at your machine.
+In a session thread, the diff comes from the session's working directory. That is the [worktree](./worktrees) when the session uses one. In a project channel, it comes from the project folder.
+
+Click the embed to open the full diff viewer in your browser. It works on mobile, so you can review what the agent changed without being at your machine.
+
+## From the CLI
+
+The agent (or you) can get the same URL from a terminal:
+
+```bash
+kimaki session diff --session <session-id>
+```
+
+Inside a session shell `--session` is optional. The command prints the URL.
+
+## Setup
+
+critique is **not bundled** with Kimaki. Install it once on the machine that runs the bot:
+
+```bash
+npm i -g critique
+```
 
 <Aside>
 <Note>
-Diffs are ephemeral and the URL is unguessable; only people you share the link with can see it. critique is open source.
+The URL is unguessable. Only people you share the link with can see the diff. critique is open source.
 </Note>
 </Aside>
 
 ## Common cases
 
-- **No changes** — if the working tree is clean, Kimaki replies "No changes to show".
-- **critique not installed** — Kimaki tells you it's unavailable. It ships with Kimaki in normal installs.
+- **No changes**: if the working tree is clean, Kimaki replies `No changes to show`.
+- **Not a git repository**: Kimaki replies `This project is not a git repository`.
+- **critique not installed**: Kimaki replies with the install command above.
 
 ## Why this beats raw diff output
 
-A code block in Discord is hard to read on a phone and has no syntax highlighting or file navigation. A diff URL gives you a proper viewer with per-file navigation and highlighting, so reviewing a large change is actually pleasant on a small screen.
+A code block in Discord is hard to read on a phone and has no syntax highlighting or file navigation. A diff URL gives you a proper viewer with per-file navigation and highlighting, so you can review a large change on a small screen.

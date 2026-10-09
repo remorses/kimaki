@@ -1,10 +1,14 @@
 ---
 title: Models & Subscriptions
-description: Use every OpenCode model from Discord, including your Claude and ChatGPT/Codex subscriptions via OAuth.
+description: Use every OpenCode model from Discord, including your Claude Pro/Max and ChatGPT subscriptions via OAuth.
 icon: lucide:key-round
 ---
 
-Kimaki gives you access to **every model OpenCode supports**: Anthropic, OpenAI, Google, and more. You can authenticate with an API key, or use your existing **Claude Pro/Max** and **ChatGPT/Codex** subscriptions via OAuth so you pay nothing extra per token.
+Kimaki runs on your **OpenCode** install, so it can use **every provider OpenCode supports**. Connect a provider with an API key, or with OAuth to use your **Claude Pro/Max** or **ChatGPT** subscription instead of paying per token.
+
+```
+/login
+```
 
 ## The `/login` command
 
@@ -14,121 +18,90 @@ Run `/login` in any project channel. Kimaki walks you through a short flow:
   /login
     │
     ▼
-  ┌──────────┐      ┌──────────┐      ┌──────────┐
-  │ provider │ ───▶ │  method  │ ───▶ │   auth   │
-  │ (anth/   │      │ (OAuth/  │      │ (modal)  │
-  │  openai) │      │  key)    │      │          │
-  └──────────┘      └──────────┘      └──────────┘
+  ┌──────────┐      ┌──────────────┐      ┌───────────────────────────┐
+  │ provider │ ───▶ │    method    │ ───▶ │ API key modal, or         │
+  │          │      │ (key, OAuth, │      │ OAuth link + code / check │
+  │          │      │  saved login)│      │                           │
+  └──────────┘      └──────────────┘      └───────────────────────────┘
 ```
 
-1. **Pick a provider.** Connected providers show a checkmark.
-2. **Pick a method.** Choose **OAuth** to use a subscription, or **API key** to paste a key.
-3. **Authenticate.** For OAuth, open the link and authorize; some providers ask you to paste a short code back. For API keys, enter the key in a modal.
+1. **Pick a provider.** OpenAI, Anthropic, Google, and OpenCode are listed first.
+2. **Pick a method.** The provider decides which methods exist: an API key, one or more OAuth logins, or **Activate** for a login you already saved.
+3. **Authenticate.** For an API key, paste it in the modal. For OAuth, open the link, authorize, then click **Enter code** (and paste the code) or **Check login**, depending on the provider.
+
+Only the **server owner** or an **Administrator** can run `/login`. Logins are secrets of the whole bot.
+
+**Credentials are stored by OpenCode, not by Kimaki.** A provider you connected in the OpenCode TUI (or with `opencode auth login`) already works in Discord, and a login from Discord works in the TUI.
 
 ## Using subscriptions instead of API credits
 
-The reason to choose OAuth is cost. When you log in with **OAuth**, Kimaki authenticates the same way the native CLIs do, so your **subscription covers inference** and per-token costs show as zero.
+| Provider | OAuth method | Notes |
+|---|---|---|
+| Anthropic | **Claude Pro/Max (browser)** or **(headless)** | Added by the `kimaki-anthropic` plugin that Kimaki installs into OpenCode. Works in the TUI too. Browser finishes by itself through the `localhost:53692` callback. Headless is for a browser on another machine: paste the URL of the last page. Use headless from Discord when the bot runs on another computer. |
+| OpenAI | **ChatGPT Pro/Plus** | Built into OpenCode. |
 
-- **Anthropic** — log in with your **Claude Pro or Claude Max** subscription. Kimaki requests the inference scope and treats requests as Claude Code requests, so subscription usage applies.
-- **OpenAI / Codex** — log in with your **ChatGPT** subscription to use Codex models without per-token API billing.
+After the login, pick the model with [`/model`](../getting-started/model-switching).
 
-<Aside>
-<Tip>
-If you already authenticated OpenCode on this machine (for example with the OpenCode CLI), those credentials are reused. You may not need to `/login` at all.
-</Tip>
-</Aside>
+### Claude Pro/Max in OpenCode without the bot
 
-## Pooling every subscription with Subrouter
+The `kimaki-anthropic` plugin also works in **plain OpenCode**, with no bot running. List its folder in your global `~/.config/opencode/opencode.json`:
 
-**Subrouter** is the first entry in the `/login` provider list. Pick it and Kimaki asks *which* subscription to add, then adds it to a shared pool. Log in as many times as you like, to as many providers as you like.
-
-When a run hits a rate limit, Subrouter tries the **next account**. When every account of that provider is exhausted, it tries the **next provider**. Quota and authentication failures rotate through the pool; normal request errors return immediately so a bad prompt is not repeated across subscriptions.
-
-```diagram
-  model: subrouter/default
-       │
-       ▼
-  anthropic/claude-opus-4-6 ──429──▶ second Claude account ──429──▶ openai/gpt-5.5
-                                                                        │
-                                                        exhausted ──────┴──▶ xai/grok-4.6
-```
-
-Rate-limited accounts go into a **cooldown** shared by every session on the machine, so nothing retries a subscription that is known to be out. A `429` honors `retry-after` or `retry-after-ms` when the provider sends one, including zero. Without a usable retry delay, the fallback is five minutes. A `402` (balance exhausted) waits six hours.
-
-After logging in, pick the model with `/model` and choose **`subrouter/default`**.
-
-### Managing the pool
-
-Everything except login is the [`subrouter` CLI](https://github.com/remorses/subrouter). Kimaki does not wrap it; run it directly.
-
-```bash
-# everything at a glance: accounts, presets, cooldowns
-npx -y @subrouter/cli status
-
-# accounts and their cooldown state
-npx -y @subrouter/cli account list
-npx -y @subrouter/cli account remove anthropic <n|email>
-
-# stop waiting on cooldowns and retry everything now
-npx -y @subrouter/cli cooldown clear
-```
-
-Install it globally with `npm i -g @subrouter/cli` if you use it often.
-
-### Presets
-
-A **preset** is an ordered list of `provider/model` entries, and every preset shows up as a model named `subrouter/<preset>`.
-
-```bash
-# try Opus first, fall back to Grok
-npx -y @subrouter/cli preset create fast --models 'anthropic/claude-opus-4-6,xai/grok-4.6'
-npx -y @subrouter/cli preset list
-npx -y @subrouter/cli preset remove fast
-```
-
-The builtin `default` preset ranks the newest model of every provider you are logged in to. Create a preset named `default` to override it. New presets appear in `/model` after the OpenCode server restarts.
-
-## Legacy per-provider rotation
-
-Before Subrouter, Kimaki rotated accounts **within** a single provider: pick `anthropic/claude-opus-4-6`, hit a limit, swap to your second Claude account, keep the same model. That still works and is still the path used by plain `anthropic/*`, `openai/*`, and `xai/*` model ids.
-
-It cannot fall back to a different provider, so prefer Subrouter. To move an existing account across, run `/login`, pick **Subrouter**, and authorize it again.
-
-<details>
-<summary>Legacy <code>kimaki multioauth</code> commands</summary>
-
-```bash
-# List all stored Anthropic + OpenAI accounts (active one marked)
-kimaki multioauth list
-
-# Per-provider management
-kimaki multioauth anthropic list
-kimaki multioauth anthropic remove <index-or-email>
-
-kimaki multioauth openai list
-kimaki multioauth openai check     # test all accounts for usage limits
-kimaki multioauth openai remove <index-or-email>
-```
-
-</details>
-
-## Choosing the model after login
-
-Once a provider is connected, pick the model:
-
-- **`/model`** — choose provider, model, and (if supported) a thinking-level variant. Store it per session, per channel, or globally.
-- **Agent files** — define a model + variant + permissions once and switch with a single `/<name>-agent` command. This is faster than the `/model` menus when you switch often.
-
-See [Model & Agent Switching](../getting-started/model-switching) for the full agent-file workflow.
-
-## API keys instead of subscriptions
-
-Prefer a plain API key? Choose **API key** in the `/login` method step and paste it. You can also set the model directly in your project's `opencode.json`:
-
-```json
+```jsonc
 {
-  "model": "anthropic/claude-sonnet-4-20250514"
+  "plugins": ["/path/to/node_modules/kimaki/dist/plugin/anthropic"]
 }
 ```
 
-Format is `provider/model-name`, for example `openai/gpt-5.3-codex` or `google/gemini-3-pro-preview`.
+Find the path with `npm root -g` (add `/kimaki/dist/plugin/anthropic`). OpenCode only accepts **folders** in `plugins`, not files.
+
+When the bot starts and sees this entry, it removes its own `plugins/kimaki-anthropic/` shim, so the plugin is **loaded once**.
+
+## Several accounts per provider
+
+OpenCode can keep **several saved logins** for one provider. Run `/login` again to add another one. To switch, run `/login`, pick the provider, and choose **Activate &lt;label&gt;**.
+
+Kimaki does **not** rotate accounts by itself when one hits a rate limit. For automatic rotation across accounts and models, add the `@kimaki/plugin-fallback` OpenCode plugin:
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "@kimaki/plugin-fallback",
+      "options": {
+        "models": ["anthropic/claude-opus-5-5", "openai/gpt-6-sol#high"]
+      }
+    }
+  ]
+}
+```
+
+## From the CLI
+
+`kimaki login` runs the same flow through the running bot, one step per call:
+
+```bash
+# list the login methods of a provider
+kimaki login anthropic
+
+# connect with an API key
+kimaki login openai --key sk-...
+
+# start a headless OAuth login, then complete it with the pasted callback URL
+kimaki login anthropic --method claude-pro-max-headless
+kimaki login anthropic --attempt <attemptId> --code '<callback url>'
+
+# activate, remove, or label a saved login
+kimaki login credential <credentialId> --operation activate
+```
+
+## API keys instead of subscriptions
+
+Choose the API key method in `/login`, or pass `--key` to `kimaki login`. To set the default model for every session, use your `opencode.json`:
+
+```json
+{
+  "model": "anthropic/claude-sonnet-4-5"
+}
+```
+
+The format is `provider/model`, for example `openai/gpt-5.3-codex` or `google/gemini-3-pro-preview`.

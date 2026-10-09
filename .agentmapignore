@@ -17,6 +17,4 @@ opencode-deterministic-provider/**
 profano/**
 usecomputer/**
 tmp/**
-cli/src/**/*.e2e.test.ts
-cli/src/session-handler/event-stream-fixtures/**
-cli/src/forum-sync/**
+kimaki/src/**/*.e2e.test.ts

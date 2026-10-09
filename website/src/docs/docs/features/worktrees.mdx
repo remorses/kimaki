@@ -1,75 +1,104 @@
 ---
 title: Worktrees
-description: Move a session into an isolated git worktree mid-plan, then merge the commits back into your default branch.
+description: Run a session in an isolated git worktree, then merge the commits back into your local branch.
 icon: lucide:git-branch
 ---
 
-**Worktrees** let a session work in an **isolated folder** so it never touches your main checkout. Start with an idea in a thread, then move it into a worktree once you realize it should not change your main files. Merge the commits back later with one command.
+**Worktrees** let a session work in an **isolated folder**, so it never touches your main checkout. Start a worktree session from a channel, or move a thread's work into one when you see it should not change your main files. Merge the commits back later with one command.
 
 ## The typical flow
 
 ```diagram
   thread: redesign sidebar
-       │ /new-worktree
+       │ /new-worktree name:redesign
        ▼
-  ┌──────────────────┐     work in worktree
-  │worktree: opencode│──────▶ commits accumulate
-  │kimaki-redesign   │
-  └────┬─────────────┘
+  ┌────────────────────────────┐     work in worktree
+  │ thread: ⬦ redesign         │──────▶ commits accumulate
+  │ branch: opencode/kimaki-   │
+  │         redesign           │
+  └────┬───────────────────────┘
        │ /merge-worktree
        ▼
-  rebase onto target
-       ├──▶ keep commits ──▶ fast-forward ──▶ done
-       └──▶ squash ──▶ one commit ──▶ fast-forward ──▶ done
+  rebase onto target branch
+       ├──▶ rebase: keep commits ──▶ fast-forward target ──▶ done
+       └──▶ squash: one commit   ──▶ fast-forward target ──▶ done
 ```
 
 ## Creating a worktree
 
-Run **`/new-worktree`**:
+Run **`/new-worktree`**. Both options are optional:
 
-- **From a project channel**, pass a `name`. Kimaki creates a thread immediately (so you can start typing) and builds the worktree in the background. The branch is named `opencode/kimaki-<name>` and the thread is prefixed with `⬦ worktree:`.
-- **From an existing thread**, the `name` is optional; Kimaki derives it from the thread name.
-- **`base-branch`** is optional and defaults to `HEAD` (your current local HEAD), so you can branch from unpushed commits.
+- **`name`**: lowercase letters, digits, and hyphens, at most 64 characters. Without a name, Kimaki uses `session-<random>`.
+- **`base-branch`**: the git ref to start from. The default is the project's current `HEAD`, so you can branch from unpushed commits.
 
-<Aside>
-<Tip>
-Long auto-derived names get shortened by stripping vowels (e.g. `configurable-sidebar-width` becomes `cnfgrbl-sdbr-wdth`). Names you pass explicitly are kept as-is.
-</Tip>
-</Aside>
+Kimaki creates the branch `opencode/kimaki-<name>` in a new folder under `worktrees/` in the Kimaki data directory (default `~/.kimaki/worktrees/`). The new thread is named `⬦ <name>`.
+
+Where you run it changes what happens:
+
+- **In a project channel**: Kimaki creates the worktree and a new thread. The thread shows the folder and branch and says `Send a message to start working`.
+- **In a session thread**: Kimaki **forks the session** into the new worktree, in a new thread. The fork keeps the full conversation, so the agent can continue the plan there. The original thread stays as it is.
+
+### Setup in the new folder
+
+After `git worktree add`, Kimaki prepares the folder:
+
+- If the project has `.gitmodules`, it runs `git submodule update --init --recursive`.
+- If it finds a lockfile, it installs dependencies: `pnpm install --frozen-lockfile`, `bun install --frozen-lockfile`, `yarn install --frozen-lockfile`, or `npm ci`.
 
 ## Why isolate work in a worktree
 
 - **Protect your main checkout.** Experimental or risky changes stay in a separate folder.
 - **Run things in parallel.** Different threads can each have their own worktree and branch.
-- **Keep a clean default branch** until you decide the work is good.
+- **Keep a clean branch** until you decide the work is good.
+
+## Automatic worktrees
+
+Turn on automatic worktrees, and **every new session** in the channel starts in a fresh worktree. Use one of these:
+
+- **`/worktrees`**, then the **Enable auto-worktrees** button.
+- `kimaki channel worktrees on --channel <channel-id>`.
+- Start the bot with **`kimaki --worktrees`** to make it the default for channels that have no setting.
 
 ## Merging back
 
-When the worktree work is ready, run **`/merge-worktree`**. The `strategy` select has two choices, and `target-branch` optionally overrides the project's default branch:
+When the work is ready, run **`/merge-worktree`** in the worktree thread. Commit your changes first.
 
-- **Keep commits (rebase)** is the default. It rebases the worktree commits onto the target and preserves every commit.
-- **Squash into one commit** rebases the same changes, then creates one commit on the target named `Merge worktree <branch>`.
-- The worktree and target must have **no uncommitted changes**.
-- On success the `⬦ worktree:` prefix is removed from the thread title and Kimaki reports the source commit count.
+- **`strategy`**: `Rebase` (the default) keeps every commit. `Squash` makes one commit named `Merge worktree <branch>`.
+- **`target-branch`**: the local branch to merge into. The default is the branch checked out in the project folder.
 
-## Conflict resolution by the agent
+Kimaki rebases the worktree onto the target, then moves the target branch forward. It reports `Merged N commits into <branch> (<sha>)`. It merges into your **local** branch only. It does not push.
 
-If the rebase hits **conflicts**, Kimaki does not give up. It asks the AI model **in the thread** to resolve them: understand both sides, edit the conflicted files, `git add`, and `git rebase --continue`, repeating until the rebase finishes. The agent then runs `kimaki merge-worktree` itself with the same strategy and target branch. If the target changed and the automatic retry fails, run `/merge-worktree` again later.
+After the merge, the worktree folder stays, with a detached `HEAD`. The worktree branch is kept too.
 
-```diagram
-  /merge-worktree ──▶ rebase ──▶ conflict?
-                                 │ yes
-                                 ▼
-                      agent resolves ──▶ CLI retries merge ──▶ done
-                                              └──▶ failure ──▶ retry later
+The merge stops with an error when:
+
+- the worktree or the target branch has **uncommitted changes**,
+- a session is **running** in the project folder or in any of its worktrees (wait until it finishes),
+- there are no commits to merge,
+- the target branch changed during the merge.
+
+### Conflicts
+
+If the rebase has **conflicts**, the merge stops and tells you to resolve them. Ask the agent in the thread to resolve the conflicts and run `git rebase --continue`, then run `/merge-worktree` again.
+
+## Listing and deleting worktrees
+
+Run **`/worktrees`** to see every linked worktree of the channel's project, 5 per page. Worktrees made by Kimaki, by OpenCode, or by hand all show up. The same message shows whether automatic worktrees are on, with a button to change it.
+
+Each worktree has a **Delete** button. Kimaki only deletes a worktree that is **clean** and has **no unmerged commits**. It removes the folder and keeps the branch. Sessions that used the folder keep their old working directory; use `/cwd` to pick another one.
+
+## Changing the working directory
+
+**`/cwd`** shows the session's working directory. **`/cwd path:<dir>`** moves the session to a project subfolder or a linked worktree. The path is relative to the current working directory.
+
+## From the CLI
+
+```bash
+kimaki worktree list
+kimaki worktree create redesign --base-branch main
+kimaki worktree merge <directory> --strategy squash --target-branch main
+kimaki worktree remove <directory>
+kimaki send --channel <channel-id> --prompt 'redesign the sidebar' --worktree redesign
+kimaki send --channel <channel-id> --prompt 'continue here' --cwd <worktree-directory>
+kimaki session cwd <directory>
 ```
-
-## Listing worktrees and auto-worktrees
-
-Run **`/worktrees`** to see every worktree for the channel's project (Kimaki, OpenCode, or manual). The same view has a **Turn on / Turn off** button for automatic worktree creation on new sessions in that channel.
-
-<Aside>
-<Note>
-Worktrees created by Kimaki, by OpenCode, or manually all show up in `/worktrees` for the channel's project.
-</Note>
-</Aside>

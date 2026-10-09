@@ -5,26 +5,27 @@ description: Record a voice message in Discord and Kimaki transcribes it using y
 icon: lucide:mic
 prompt: |
   Explain Discord voice transcription, queueing, and explicit chat creation from
-  @/cli/src/voice.ts, @/cli/src/voice-handler.ts, and @/cli/src/message-preprocessing.ts.
+  @/kimaki/src/voice.ts, @/kimaki/src/ingress.ts, and @/kimaki/src/routes.ts.
 ---
 
-Record a **voice message** in Discord and Kimaki transcribes it, then processes it as a normal prompt. Speaking is often faster than typing a long instruction, especially from your phone.
+Record a **voice message** in Discord and Kimaki transcribes it, then handles it like a typed message. Speaking is often faster than typing a long instruction, especially on your phone.
 
 ## How it works
 
 ```diagram
-  voice ──▶ transcription ──▶ "📝 Transcribed" ──▶ session
+  voice ──▶ transcription ──▶ "» Tommy: <text>" ──▶ session
               ▲
               │ project file tree for accuracy
 ```
 
-1. You record a voice note in the thread.
+1. You record a voice message in a thread or a project channel.
 2. Kimaki sends the audio to a transcription model.
-3. The transcribed text appears in the thread prefixed with **📝 Transcribed message:** and is sent to the agent.
+3. Kimaki shows the transcription as `» Tommy: <text>`. In a thread it is a reply to your voice message. In a project channel it is the first message of the new thread.
+4. The text goes to the agent like a normal message. In a thread it **interrupts** the current run, like typed text.
 
 ## Queue a voice request
 
-Say **"queue this message"** with the task to wait until the current turn finishes. Kimaki removes the queue instruction from the transcription. If the session is idle, the request starts immediately.
+Say **"queue this message"** together with the task, and it waits until the current run finishes. Kimaki removes the queue instruction from the transcription. If the session is idle, the request starts at once.
 
 ```text
 Queue this message. Add tests for the login form.
@@ -32,43 +33,66 @@ Queue this message. Add tests for the login form.
 
 ## Create a separate chat
 
-Ask **explicitly** for a new chat, session, or thread. A plain new-chat request starts fresh with no conversation history:
+Ask **explicitly** for a new chat, session, or thread. A new chat starts fresh in a new thread, with no conversation history:
 
 ```text
 Fix the login bug. Create a new chat for this.
 ```
 
-To keep the current conversation context, explicitly request a **side chat or fork** from a thread that already has a session:
+To keep the current context, ask explicitly for a **side chat or fork** in a thread that has a session. This works like [btw](./btw):
 
 ```text
 Explain the parser. Create a side chat with the current context for this.
 ```
 
-Both routes send the task **only to the destination thread** and preserve the source's pending questions and permission requests. Routing takes priority over queueing. The destination inherits the current working directory. A voice note in a project channel already creates a fresh thread.
+A new chat or a side chat does not interrupt the current thread. Its pending questions and permission requests stay open.
 
-**Conversational phrases** such as "by the way" do not move a voice request to another chat. Include a task with the routing instruction; a routing-only note does not start an empty turn. You can also say "use the plan agent" with either route.
+Queue and side chat only work in a session thread. In a project channel, every voice message starts a new thread anyway.
+
+## Pick an agent
+
+Say **"use the plan agent"** (or any primary agent of the project) to switch to that agent for this request. This works with a normal message, a new chat, or a side chat. A queued voice message does not switch the agent, because that would change the running turn.
+
+Routing and agent choices only happen when you say them explicitly. Words like "by the way" or "plan the refactor" do not change the route or the agent. A voice message with only a routing instruction and no task does not start an empty turn.
 
 ## Accuracy from your project file tree
 
-Transcription of code is hard: file names and function names are not normal words. Kimaki improves accuracy by feeding the **project's file tree** into the transcription prompt, so when you say a file path or a function name, the model recognizes it from your actual codebase.
+Code is hard to transcribe: file names and function names are not normal words. Kimaki adds the **project's file list** (from `git ls-files`) to the transcription prompt. When you say a file path or a function name, the model can match it to your real codebase.
 
 <Aside>
 <Tip>
-Say file and function names naturally. Because the transcriber sees your file list, "open thread session runtime" is far more likely to come back as `thread-session-runtime.ts`.
+Say file and function names naturally. Because the transcriber sees your file list, "open thread reducer" is much more likely to come back as `thread-reducer.ts`.
 </Tip>
 </Aside>
 
-## Models and setup
+## Setup: an OpenAI or Gemini key
 
-Kimaki auto-detects the provider from the API key you configure for audio:
+Transcription needs an **OpenAI** or **Gemini** API key. Add one in Discord with **`/transcription-key`** (server owner or administrator only), or from a terminal:
 
-- **OpenAI** key (starts with `sk-`) → uses `gpt-audio`.
-- **Gemini** key → uses `gemini-2.5-flash`.
+```bash
+kimaki bot keys set --openai sk-...
+kimaki bot keys set --gemini AIza...
+```
 
-You'll be prompted for an audio API key during setup, or you can add one later from Discord when you first send a voice message.
+In `/transcription-key`, a key that starts with `sk-` is saved as an OpenAI key. Any other key is saved as a Gemini key.
 
-**Queue, chat, and agent detection require OpenAI or Gemini transcription.** The gateway's key-free Whisper fallback only transcribes speech; it does not interpret these routing instructions.
+Kimaki uses the first key it finds, in this order:
+
+1. OpenAI key saved with Kimaki
+2. `OPENAI_API_KEY` environment variable
+3. Gemini key saved with Kimaki
+4. `GEMINI_API_KEY` environment variable
+
+OpenAI keys use `gpt-audio-1.5`. Gemini keys use `gemini-flash-latest`.
+
+### Gateway mode without a key
+
+With the shared Kimaki bot (`--gateway`) and no key, Kimaki uses a free hosted Whisper transcription on kimaki.dev. Whisper only transcribes speech: **queue, chat, and agent instructions are ignored**, and the text is always handled as a normal message.
+
+Without a key on your own bot, a voice message gets an error that tells you to run `/transcription-key`.
+
+If a provider's content filter refuses harmless audio in gateway mode, Kimaki tries the hosted Whisper once as a fallback.
 
 ## Sending audio back
 
-Kimaki can also speak: when you ask for audio of some text, the agent can generate speech with `kimaki tts` and post it to the thread. See the [Commands reference](../reference/commands) for the `tts` and `upload-to-discord` CLI subcommands.
+Kimaki can also speak. When you ask for audio, the agent can make a speech file with `kimaki tts` and post it with `kimaki upload-to-discord`. `kimaki tts` uses the same OpenAI or Gemini keys. See the [Commands reference](../reference/commands).

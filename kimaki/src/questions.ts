@@ -1,0 +1,322 @@
+// Questions feature (spec 10.1, 27.6): every V2 form with choice fields, from
+// the `question` tool or OpenCode itself (web search setup: metadata.kind
+// "websearch.provider"). Kimaki shows one message with a dropdown per field,
+// like V1 and OpenCode Mini. Subagent forms show in the parent thread with a
+// "From: <agent>" line. Forms with number, external or conditional fields are
+// not shown; OpenCode cancels them after its timeout.
+//
+//   form.created ─▶ one dropdown message per field (+ "Other" when custom or free text)
+//   select       ─▶ message shows "✓ answer"; last field answered ─▶ form.reply
+//   "Other"      ─▶ modal with a text input ─▶ same as a select
+//   form.replied / form.cancelled ─▶ every message of the form is edited: answer or cancelled, no dropdown
+//
+// Custom IDs carry only the form ID and field index. Answers of a form with
+// several questions wait in the createQuestionHandlers closure until the last
+// one (lost on restart, the user picks again).
+
+import {
+  ActionRowBuilder,
+  ComponentType,
+  MessageFlags,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  type ModalSubmitInteraction,
+  type StringSelectMenuInteraction,
+} from 'discord.js'
+import type { FormInfo, JsonValue, V2Event } from '@opencode/client'
+
+import { oc, type Bot } from './bot.ts'
+import { createLogger } from './logger.ts'
+import { castDraft, type Draft } from 'immer'
+
+import { textOnly, type UiMessage } from './format-parts.ts'
+import type { InteractionRoutes } from './interaction-context.ts'
+import type { Emit, ThreadView } from './thread-reducer.ts'
+
+const logger = createLogger('QUESTION')
+
+const FORM_SELECT_PREFIX = 'form:'
+const FORM_OTHER_PREFIX = 'form_other:'
+const OTHER_VALUE = 'other'
+// Discord: 25 options per select, one is "Other".
+const MAX_OPTIONS = 24
+
+export type QuestionField = {
+  key: string
+  type: 'string' | 'multiselect' | 'boolean'
+  title: string
+  description: string
+  custom: boolean
+  options: ReadonlyArray<{ value: string; label: string; description: string }>
+}
+
+type FieldValue = string | readonly string[] | boolean
+
+export type PendingForm = {
+  sessionId: string
+  fields: readonly QuestionField[]
+  // Subagent name for forms of child sessions.
+  label: string | null
+}
+
+// FormInfo from the list API and the form.created payload differ only in
+// nominal field types; both have this shape.
+type FormLike = {
+  id: string
+  sessionID: string
+  title: string
+  metadata?: { readonly [key: string]: JsonValue }
+  fields: FormInfo['fields'] | Extract<V2Event, { type: 'form.created' }>['data']['form']['fields']
+}
+
+function uiKey(formID: string): string {
+  return `form:${formID}`
+}
+
+const BOOLEAN_OPTIONS = [
+  { value: 'true', label: 'Yes', description: '' },
+  { value: 'false', label: 'No', description: '' },
+]
+
+// null when a field cannot be answered with a dropdown (number, external, conditional, pattern).
+function questionFields(form: FormLike): QuestionField[] | null {
+  const fields = form.fields.map((field): QuestionField | null => {
+    if (field.type !== 'string' && field.type !== 'multiselect' && field.type !== 'boolean') return null
+    if (field.when?.length) return null
+    // Fields without a title (web search setup) use the form title, like Mini.
+    const base = { key: field.key, title: field.title ?? form.title, description: field.description ?? '' }
+    if (field.type === 'boolean') return { ...base, type: 'boolean', custom: false, options: BOOLEAN_OPTIONS }
+    if (field.type === 'string' && field.pattern !== undefined) return null
+    const options = (field.options ?? []).slice(0, MAX_OPTIONS).map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: option.description ?? '',
+    }))
+    // A string field without options is free text: only the "Other" modal.
+    return { ...base, type: field.type, custom: field.custom === true || options.length === 0, options }
+  })
+  return fields.every((field) => field !== null) ? fields : null
+}
+
+function header({ field, label }: { field: QuestionField; label: string | null }): string {
+  const from = label ? `**From:** \`${label}\`\n` : ''
+  const title = field.title ? `**${field.title.slice(0, 200)}**\n` : ''
+  return `${from}${title}${field.description.slice(0, 1_500)}`.trimEnd()
+}
+
+function questionMessage({
+  formID,
+  index,
+  field,
+  label,
+}: {
+  formID: string
+  index: number
+  field: QuestionField
+  label: string | null
+}): UiMessage {
+  const options = [
+    ...field.options.map((option, optionIndex) => ({
+      label: option.label.slice(0, 100),
+      value: String(optionIndex),
+      ...(option.description && { description: option.description.slice(0, 100) }),
+    })),
+    ...(field.custom
+      ? [field.options.length ? { label: 'Other', value: OTHER_VALUE, description: 'Type your own answer' } : { label: 'Type your answer', value: OTHER_VALUE }]
+      : []),
+  ]
+  return {
+    content: header({ field, label }),
+    components: [
+      {
+        type: ComponentType.ActionRow,
+        components: [
+          {
+            type: ComponentType.StringSelect,
+            custom_id: `${FORM_SELECT_PREFIX}${formID}:${index}`,
+            placeholder: 'Select an option',
+            options,
+            min_values: 1,
+            max_values: field.type === 'multiselect' ? options.length : 1,
+          },
+        ],
+      },
+    ],
+  }
+}
+
+// Option labels instead of values ("Disable web search", not "disable").
+export function formatAnswer({ field, value }: { field: QuestionField; value: string | readonly string[] | number | boolean | undefined }): string {
+  if (value === undefined) return 'no answer'
+  const label = (item: string | number | boolean) =>
+    field.options.find((option) => option.value === String(item))?.label ?? String(item)
+  if (typeof value === 'object') return value.map(label).join(', ')
+  return label(value)
+}
+
+const MESSAGE_LIMIT = 2_000
+
+// Header plus "✓ answer" within one Discord message. Only the display is
+// cut: OpenCode always gets the full answer.
+export function withAnswer({ header: text, answer }: { header: string; answer: string }): string {
+  const room = MESSAGE_LIMIT - text.length - 6
+  return `${text}\n✓ _${answer.length > room ? `${answer.slice(0, room - 1)}…` : answer}_`
+}
+
+function answeredMessage({ field, label, answer }: { field: QuestionField; label: string | null; answer: string }) {
+  return textOnly(withAnswer({ header: header({ field, label }), answer }))
+}
+
+type Slice = { draft: Draft<ThreadView>; emit: Emit }
+
+export function showForm({ draft, emit, form, label }: Slice & { form: FormLike; label: string | null }) {
+  const fields = questionFields(form)
+  if (!fields || draft.forms[form.id]) return
+  draft.forms[form.id] = castDraft({ sessionId: form.sessionID, fields, label })
+  const messages = fields.map((field, index) => questionMessage({ formID: form.id, index, field, label }))
+  emit({ type: 'show', key: uiKey(form.id), messages, replyTo: null, notify: true })
+}
+
+// `render` builds each question's final text from its header.
+export function closeForm({
+  draft,
+  emit,
+  formID,
+  render,
+}: Slice & { formID: string; render: (field: QuestionField, header: string) => string }) {
+  const form = draft.forms[formID]
+  if (!form) return
+  const messages = form.fields.map((field) => textOnly(render(field, header({ field, label: form.label }))))
+  delete draft.forms[formID]
+  emit({ type: 'edit', key: uiKey(formID), messages })
+}
+
+// After a (re)connect: pending forms of one session as OpenCode has them.
+// Unknown ones are shown (again); gone ones are closed.
+export function hydrateForms(slice: Slice & { sessionId: string; forms: readonly FormLike[]; label: string | null }) {
+  const pending = new Set(slice.forms.map((form) => form.id))
+  for (const [formID, form] of Object.entries(slice.draft.forms)) {
+    if (form.sessionId !== slice.sessionId || pending.has(formID)) continue
+    closeForm({ ...slice, formID, render: (_field, text) => `${text}\n_no longer pending_` })
+  }
+  for (const form of slice.forms) showForm({ ...slice, form })
+}
+
+// --- Discord handlers
+
+function parseCustomId(customId: string, prefix: string): { formID: string; index: number } | null {
+  const [formID, index] = customId.slice(prefix.length).split(':')
+  const parsed = Number(index)
+  if (!formID || !Number.isInteger(parsed)) return null
+  return { formID, index: parsed }
+}
+
+// Shows the answer in the question's own message.
+async function acknowledge({
+  interaction,
+  content,
+}: {
+  interaction: StringSelectMenuInteraction | ModalSubmitInteraction
+  content: string
+}) {
+  if (interaction.isStringSelectMenu() || interaction.isFromMessage()) {
+    await interaction.update({ content, components: [] })
+    return
+  }
+  await interaction.reply({ content, flags: MessageFlags.Ephemeral })
+}
+
+async function expired(interaction: StringSelectMenuInteraction | ModalSubmitInteraction) {
+  await interaction.reply({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
+}
+
+// The dropdown and "Other" modal handlers of question forms. One per bot.
+export function createQuestionHandlers(): InteractionRoutes {
+  // formID -> answers so far, for forms with several fields.
+  const answers = new Map<string, { readonly [key: string]: FieldValue }>()
+  // "formID:key" -> options picked together with "Other", while the modal asks for the text.
+  const otherPicks = new Map<string, readonly string[]>()
+
+  function pendingField(bot: Bot, { threadId, customId, prefix }: { threadId: string; customId: string; prefix: string }) {
+    const parsed = parseCustomId(customId, prefix)
+    if (!parsed) return null
+    const form = bot.store.getState().threads[threadId]?.forms[parsed.formID]
+    const field = form?.fields[parsed.index]
+    if (!form || !field) {
+      answers.delete(parsed.formID)
+      return null
+    }
+    return { formID: parsed.formID, form, field }
+  }
+
+  async function record(
+    bot: Bot,
+    {
+      interaction,
+      formID,
+      form,
+      field,
+      value,
+    }: {
+      interaction: StringSelectMenuInteraction | ModalSubmitInteraction
+      formID: string
+      form: PendingForm
+      field: QuestionField
+      value: FieldValue
+    },
+  ) {
+    const answer = { ...answers.get(formID), [field.key]: value }
+    const complete = form.fields.every((candidate) => answer[candidate.key] !== undefined)
+    if (complete) answers.delete(formID)
+    if (!complete) answers.set(formID, answer)
+    const answered = answeredMessage({ field, label: form.label, answer: formatAnswer({ field, value }) })
+    await acknowledge({ interaction, content: answered.content })
+    if (!complete) return
+    const result = await oc(bot, 'session.form.reply', (client) =>
+      client.session.form.reply({ sessionID: form.sessionId, formID, answer }),
+    )
+    if (!(result instanceof Error)) return
+    logger.warn(`answer ${formID} failed`, result)
+    await interaction.followUp({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
+  }
+
+  async function select(bot: Bot, interaction: StringSelectMenuInteraction): Promise<void> {
+    const pending = pendingField(bot, { threadId: interaction.channelId, customId: interaction.customId, prefix: FORM_SELECT_PREFIX })
+    if (!pending) return expired(interaction)
+    const { formID, field } = pending
+    const values = interaction.values.flatMap((value) => {
+      const option = field.options[Number(value)]
+      return option ? [option.value] : []
+    })
+    if (interaction.values.includes(OTHER_VALUE)) {
+      otherPicks.set(`${formID}:${field.key}`, values)
+      const input = new TextInputBuilder()
+        .setCustomId('answer')
+        .setLabel('Your answer')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true)
+      await interaction.showModal(
+        new ModalBuilder()
+          .setCustomId(interaction.customId.replace(FORM_SELECT_PREFIX, FORM_OTHER_PREFIX))
+          .setTitle((field.title || 'Answer').slice(0, 45))
+          .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input)),
+      )
+      return
+    }
+    const value = field.type === 'multiselect' ? values : field.type === 'boolean' ? values[0] === 'true' : (values[0] ?? '')
+    await record(bot, { interaction, ...pending, value })
+  }
+
+  async function other(bot: Bot, interaction: ModalSubmitInteraction): Promise<void> {
+    const pending = pendingField(bot, { threadId: interaction.channelId ?? '', customId: interaction.customId, prefix: FORM_OTHER_PREFIX })
+    if (!pending) return expired(interaction)
+    const text = interaction.fields.getTextInputValue('answer').trim()
+    const key = `${pending.formID}:${pending.field.key}`
+    const picked = otherPicks.get(key) ?? []
+    otherPicks.delete(key)
+    await record(bot, { interaction, ...pending, value: pending.field.type === 'multiselect' ? [...picked, text] : text })
+  }
+
+  return { selects: { [FORM_SELECT_PREFIX]: select }, modals: { [FORM_OTHER_PREFIX]: other } }
+}

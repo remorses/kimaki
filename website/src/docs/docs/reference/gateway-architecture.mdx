@@ -1,21 +1,22 @@
 ---
 title: Gateway Architecture and Event Delivery
 sidebarTitle: Gateway Architecture
-description: How events flow from Discord through the gateway proxy to your CLI, including offline buffering and reconnection.
+description: How events flow from Discord through the gateway proxy to your Kimaki bot, including offline buffering and reconnection.
 icon: lucide:network
 ---
 
-Kimaki's **gateway mode** lets multiple users share a single Discord bot instead of each user creating their own. A Rust proxy sits between Discord and every kimaki CLI instance, routing events to the right client based on guild authorization.
+Kimaki's **gateway mode** lets multiple users share a single Discord bot instead of each user creating their own. A Rust proxy sits between Discord and every Kimaki bot process, routing events to the right client based on guild authorization. Self-hosted bots connect to Discord directly and skip the proxy.
 
 ```diagram
   Discord servers              Gateway proxy (Rust)            Your machine
- ┌────────────────┐          ┌──────────────────────────┐    ┌──────────────────┐
- │                │          │                          │    │                  │
- │  Bot shard 0   │─────────>  Dispatch + broadcast     │    │  kimaki CLI      │
- │  Bot shard 1   │─────────>  Per-client guild filter  ├───>│  (discord.js)    │
- │  Bot shard N   │─────────>  Offline event buffering  │    │                  │
- │                │          │                          │    │  OpenCode server │
- └────────────────┘          └──────────────────────────┘    └──────────────────┘
+ ┌────────────────┐          ┌──────────────────────────┐    ┌───────────────────┐
+ │                │          │                          │    │                   │
+ │  Bot shard 0   │─────────>  Dispatch + broadcast     │    │  kimaki bot       │
+ │  Bot shard 1   │─────────>  Per-client guild filter  ├───>│  (discord.js)     │
+ │  Bot shard N   │─────────>  Offline event buffering  │    │       │           │
+ │                │          │                          │    │       v           │
+ │                │          │                          │    │  OpenCode service │
+ └────────────────┘          └──────────────────────────┘    └───────────────────┘
         ^                                  ^
         │                                  │
    Real Discord                   Shared Postgres
@@ -44,7 +45,7 @@ Events without a `guild_id` (DMs, user updates) are **not forwarded** to multi-t
 
 ## Offline event buffering
 
-When a client is **not connected**, the proxy buffers specific event types so they can be replayed later. This is the key mechanism that prevents message loss when the CLI restarts or loses connection.
+When a client is **not connected**, the proxy buffers specific event types so they can be replayed later. This is the key mechanism that prevents message loss when the bot restarts or loses connection.
 
 **Buffered event types:**
 
@@ -60,7 +61,7 @@ When a client is **not connected**, the proxy buffers specific event types so th
 
 <Aside>
 <Note>
-The buffer is a **FIFO queue capped at 200 events** per client. If more than 200 message/thread events arrive while the CLI is offline, the oldest are dropped.
+The buffer is a **FIFO queue capped at 200 events** per client. If more than 200 message/thread events arrive while the bot is offline, the oldest are dropped.
 </Note>
 </Aside>
 
@@ -68,7 +69,7 @@ Only message and thread events matter for coding sessions. Presence updates, typ
 
 ## What happens on reconnect
 
-When the CLI connects (or reconnects), the proxy delivers events in a strict three-step sequence before subscribing to the live stream:
+When the bot connects (or reconnects), the proxy delivers events in a strict three-step sequence before subscribing to the live stream:
 
 ```diagram
   Step 1                    Step 2                      Step 3
@@ -98,7 +99,7 @@ After a **gateway proxy redeploy**, RESUME always fails because the proxy's in-m
 
 <Aside>
 <Tip>
-The CLI doesn't implement any custom missed-event recovery. All recovery is handled by two layers working together: Discord's RESUME protocol and the proxy's offline buffer.
+The Kimaki bot does not fetch missed messages itself. Replayed events arrive as normal Discord events. All recovery is handled by two layers working together: Discord's RESUME protocol and the proxy's offline buffer.
 </Tip>
 </Aside>
 
@@ -106,7 +107,7 @@ The CLI doesn't implement any custom missed-event recovery. All recovery is hand
 
 **Buffer is in-memory only.** If the gateway proxy itself restarts or redeploys, all offline buffers are lost. Events that arrived during the proxy's downtime are not recoverable through the proxy. Discord's own RESUME may recover some of them if the session is still valid.
 
-**200 event cap per client.** If a guild is very active and generates more than 200 message/thread events while the CLI is offline, the oldest events are dropped. In practice this is rare for coding-focused servers.
+**200 event cap per client.** If a guild is very active and generates more than 200 message/thread events while the bot is offline, the oldest events are dropped. In practice this is rare for coding-focused servers.
 
 **Non-message events are not buffered.** Typing indicators, presence updates, voice state changes, and guild member updates are not queued. These are ephemeral and regenerated on reconnect (guild state comes via `GUILD_CREATE`).
 
@@ -118,6 +119,6 @@ The CLI doesn't implement any custom missed-event recovery. All recovery is hand
 |---|---|---|---|
 | **Discord servers** | Full message persistence | Unlimited | Yes |
 | **Gateway proxy** | MESSAGE/THREAD events per client | 200 events FIFO, in-memory | No (lost on redeploy) |
-| **Kimaki CLI** | Nothing (delegates to above layers) | N/A | N/A |
+| **Kimaki bot** | Nothing (delegates to above layers) | N/A | N/A |
 
-The proxy's offline buffer is the primary mechanism that makes the CLI resilient to brief disconnections. For longer outages where both the proxy buffer and Discord's RESUME window are exhausted, messages still exist in Discord and can be fetched via REST, but real-time event replay is not available.
+The proxy's offline buffer is the primary mechanism that makes the bot resilient to brief disconnections. For longer outages where both the proxy buffer and Discord's RESUME window are exhausted, messages still exist in Discord and can be fetched via REST, but real-time event replay is not available.

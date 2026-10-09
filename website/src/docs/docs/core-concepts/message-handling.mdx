@@ -1,65 +1,58 @@
 ---
 title: Message Handling
-description: How Discord messages are delivered into an OpenCode session, and how Kimaki turns a message into an interrupt.
+description: How Discord messages are delivered into an OpenCode session, and why a new message interrupts the agent right away.
 icon: lucide:message-square
 ---
 
-When you send a message to an active session, Kimaki has to decide **when** the agent sees it. This page explains the delivery model and the interrupt behavior that makes a mid-run message actually stop the agent.
+A message in a session thread **interrupts the agent at once** and becomes the next instruction. To wait for the current run instead, [queue](../features/queue) the message.
 
-## The default: queue after the current step
+| You want to...                                 | Send                                         |
+|------------------------------------------------|----------------------------------------------|
+| Redirect the agent right now                   | a normal message                             |
+| Add a follow-up for after the run finishes     | `message. queue` or [`/queue`](../features/queue) |
+| Ask a side question without disturbing the run | `question. btw` or [`/btw`](../features/btw) |
+| Run a shell command, no model turn             | `!pnpm test` (see [Shell Commands](../features/shell-commands)) |
+| Run an OpenCode command                        | `/review args` as a message, or its `/<name>-cmd` slash command |
 
-OpenCode runs in steps: it calls a tool, reads the result, calls another tool, and so on. When you send a message while a run is in progress, OpenCode **queues it to be delivered after the current step finishes**. The agent keeps doing what it's doing, then picks up your new message on the next step.
+## A normal message interrupts
+
+When the agent is busy and you send a normal message, Kimaki does three things in order:
 
 ```diagram
-  You send message
+  You send a message
         │
         ▼
-  ┌──────────┐      step finishes      ┌──────────┐
-  │ tool call│ ──────────────────────▶ │agent     │
-  │(running) │                        │reads msg │
-  └──────────┘                        └──────────┘
+  ┌───────────────────────┐    ┌────────────────────┐    ┌──────────────────────┐
+  │ cancel pending        │──▶ │ interrupt the      │──▶ │ deliver your message │
+  │ questions and         │    │ current run        │    │ as the next prompt   │
+  │ permission prompts    │    │ (tool call stops)  │    │                      │
+  └───────────────────────┘    └────────────────────┘    └──────────────────────┘
 ```
 
-This is fine for quick steps. But if the current step is a **long-running command** (a build, a test suite, a `sleep`), your message could wait a long time before the agent ever sees it.
+There is no timer: the interrupt is immediate, even during a long build or test run. This is what you want when the agent is heading the wrong way.
 
-## The interrupt: abort after ~3 seconds
+The session keeps its agent, model, and history. Only the running step stops; the agent sees your message next and continues from there. An interrupted turn gets no footer.
 
-Kimaki adds an interrupt on top. If your message has not started being processed within about **3 seconds**, Kimaki **aborts the current step and force-delivers your message**, then resumes the session with it.
+## Queued messages wait
 
-```diagram
-  You send message during long run
-         │
-         ▼ timer: 3s
-  ┌──────────┐  fires  ┌──────────┐ idle  ┌──────────┐
-  │long step │ ──────▶ │abort     │ ────▶ │resend    │
-  │(build)   │         │          │       │msg       │
-  └──────────┘         └──────────┘       └──────────┘
+A message that ends with `. queue` (or a line with only `queue`), and every `/queue`, waits until the current run finishes. Kimaki confirms it with:
+
+```
+-# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1
 ```
 
-The effect: **a message acts as an interrupt**. Instead of waiting behind a slow command, your new instruction takes over. This is exactly what you want when the agent is heading the wrong direction and you need to redirect it now.
+When OpenCode delivers it, Kimaki posts `» **Tommy:** your message` and the confirmation changes to `Queued message sent`.
 
-<Aside>
-<Note>
-The abort preserves your session's agent and model overrides. Kimaki resends the original message parts after the abort, so nothing about your session config is lost.
-</Note>
-</Aside>
+- **Delete** the Discord message to remove it from the queue.
+- **Edit** it to change the text; the edited message moves to the end of the queue.
+- **`/clear-queue`** removes all queued messages, or one with `position:`.
 
-## Tuning the timeout
+The queue lives in OpenCode, so it survives a Kimaki restart. See [Queue](../features/queue).
 
-The interrupt timeout defaults to **3000 ms**. Override it with an environment variable when starting Kimaki:
+## Stopping everything
 
-```bash
-KIMAKI_INTERRUPT_STEP_TIMEOUT_MS=8000 npx -y kimaki@latest
+`/abort` stops the run and also clears the queue, cancels pending questions and permission prompts, stops running `!` shell commands, and cancels a pending [sleep](../features/sleep).
+
 ```
-
-Increase it if you want short tool calls to finish before your message interrupts. Decrease it for a snappier "stop now" feel.
-
-## When you want to wait instead of interrupt
-
-Sometimes you do **not** want to interrupt: you want to line up a follow-up for after the run completes. That's what [the queue](../features/queue) is for. End your message with `. queue` (or use `/queue`) and it waits for the current run to finish instead of aborting it.
-
-| You want to...                              | Use            |
-|---------------------------------------------|----------------|
-| Redirect the agent right now                | a normal message (interrupts after ~3s) |
-| Add a follow-up for after the run finishes  | [`. queue` / `/queue`](../features/queue) |
-| Ask a side question without disturbing the run | [`. btw` / `/btw`](../features/btw) |
+/abort
+```

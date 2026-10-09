@@ -71,6 +71,40 @@ describe('interactions', () => {
     await discord?.stop()
   })
 
+  test('modal file fields hydrate uploaded attachments in discord.js', async () => {
+    const received = new Promise<Interaction>((resolve) => client.once('interactionCreate', resolve))
+    await discord.channel(channelId).user(testUserId).submitModal({
+      customId: 'upload-modal', fields: [], files: [{ customId: 'files', attachments: [{
+        id: '200000000000000999', filename: 'logo.txt', size: 4, url: 'data:text/plain;base64,bG9nbw==', proxy_url: 'data:text/plain;base64,bG9nbw==',
+      }] }],
+    })
+    const interaction = await received
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`""`)
+    if (!interaction.isModalSubmit()) throw new Error('Expected a modal')
+    expect(interaction.fields.getUploadedFiles('files', true).map((file) => ({ name: file.name, size: file.size }))).toMatchInlineSnapshot(`
+      [
+        {
+          "name": "logo.txt",
+          "size": 4,
+        },
+      ]
+    `)
+  })
+
+  test('bot multipart message uploads preserve attachment bytes', async () => {
+    const channel = await client.channels.fetch(channelId)
+    if (!channel?.isSendable()) throw new Error('Expected a sendable channel')
+    const message = await channel.send({ files: [{ attachment: Buffer.from('report'), name: 'report.txt' }] })
+    expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      [attachment: report.txt]"
+    `)
+    const file = message.attachments.first()
+    expect(file?.name).toBe('report.txt')
+    expect(await (await fetch(file!.url)).text()).toBe('report')
+    await message.delete()
+  })
+
   test('simulateInteraction dispatches interactionCreate to client', async () => {
     const received = new Promise<Interaction>((resolve) => {
       client.once('interactionCreate', (i) => {
@@ -560,5 +594,58 @@ describe('interactions', () => {
     const msg = messages.find((m) => m.id === targetMsg.id)
     expect(msg?.content).toBe('Edited after deferUpdate')
     expect(msg?.edited_timestamp).toBeTruthy()
+  })
+
+  test('modal submitted from a message component can update that message', async () => {
+    const channel = client.channels.cache.get(channelId) as TextChannel
+    const targetMsg = await channel.send({ content: 'Question with an Other option' })
+
+    const received = new Promise<Interaction>((resolve) => {
+      client.once('interactionCreate', (i) => {
+        if (i.isModalSubmit()) resolve(i)
+      })
+    })
+    await discord.channel(channelId).user(testUserId).submitModal({
+      customId: 'answer-modal',
+      messageId: targetMsg.id,
+      fields: [{ customId: 'answer', value: 'custom answer' }],
+    })
+    const interaction = await received
+    if (!interaction.isModalSubmit() || !interaction.isFromMessage()) throw new Error('expected a modal from a message')
+    expect(interaction.fields.getTextInputValue('answer')).toBe('custom answer')
+    await interaction.update({ content: 'Answered: custom answer', components: [] })
+
+    const messages = await discord.channel(channelId).getMessages()
+    expect(messages.find((m) => m.id === targetMsg.id)?.content).toBe('Answered: custom answer')
+  })
+
+  test('guild commands are listed and autocomplete returns the bot choices', async () => {
+    await client.application!.commands.set(
+      [
+        {
+          name: 'resume',
+          description: 'Resume a session',
+          options: [{ name: 'session', description: 'Session', type: 3, required: true, autocomplete: true }],
+        },
+        { name: 'abort', description: 'Abort' },
+      ],
+      discord.guildId,
+    )
+    expect((await discord.getRegisteredCommands()).map((command) => command.name)).toEqual(['abort', 'resume'])
+    expect(await discord.getRegisteredCommands({ guildId: null })).toEqual([])
+
+    const handler = (interaction: Interaction) => {
+      if (!interaction.isAutocomplete()) return
+      const focused = interaction.options.getFocused(true)
+      void interaction.respond([{ name: `${focused.name}: ${focused.value}`, value: 'ses_1' }])
+    }
+    client.on('interactionCreate', handler)
+    const choices = await discord.channel(channelId).user(testUserId).autocomplete({
+      name: 'resume',
+      options: [{ name: 'session', type: 3, value: 'fix' }],
+      focused: 'session',
+    })
+    client.off('interactionCreate', handler)
+    expect(choices).toEqual([{ name: 'session: fix', value: 'ses_1' }])
   })
 })

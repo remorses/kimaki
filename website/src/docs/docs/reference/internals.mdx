@@ -1,25 +1,50 @@
 ---
 title: Internals
-description: How Kimaki works under the hood — SQLite, lock port, channel metadata, voice processing, and more.
+description: How Kimaki works under the hood. The shared OpenCode service, SQLite, lock port, plugin, voice, logs, and restarts.
 icon: cpu
 ---
 
-**SQLite Database** — Kimaki stores state in `<data-dir>/discord-sessions.db` (default: `~/.kimaki/discord-sessions.db`). This maps Discord threads to OpenCode sessions, channels to directories, and stores your bot credentials. Use `--data-dir` to change the location.
+Kimaki is **one bot process per machine**. It connects Discord to the OpenCode 2 service that already runs on that machine.
 
-**Lock Port** — Kimaki enforces single-instance behavior by binding a lock port. By default, the port is derived from `--data-dir`; set `KIMAKI_LOCK_PORT=<port>` to override it when running an additional Kimaki process on the same machine.
-
-**OpenCode Servers** — When you message a channel, Kimaki spawns (or reuses) an OpenCode server for that project directory. The server handles the actual AI coding session.
-
-**Channel Metadata** — Each channel's topic contains XML metadata linking it to a directory and bot:
-
-```xml
-<kimaki><directory>/path/to/project</directory><app>bot_id</app></kimaki>
+```diagram
+  Discord ──▶ kimaki bot ──HTTP + one event stream──▶ OpenCode 2 service ◀── your OpenCode TUI
+                 │                                         │
+                 ▼                                         ▼
+     ~/.kimaki/kimaki.db                          sessions, messages, queue,
+     (threads, channels, tasks)                   provider logins
 ```
 
-**Voice Processing** — Voice features run in a worker thread. Audio flows: Discord Opus > Decoder > Downsample (48kHz to 16kHz) > Gemini API > Response > Upsample > Opus > Discord.
+**OpenCode service.** Kimaki does not start its own OpenCode server. It uses the user's shared OpenCode 2 background service, the same server the OpenCode TUI and CLI use. When no service runs, Kimaki starts one with `opencode2 serve --service`. It looks for the binary in this order: `OPENCODE_PATH`, `opencode2`, `opencode`, `~/.opencode/bin/opencode`. The minimum version is 2.0.19. Kimaki never pins a version, because that would replace the running server and stop your TUI sessions.
 
-**Log File** — Kimaki writes logs to `<data-dir>/kimaki.log` (default: `~/.kimaki/kimaki.log`). The log file is reset on every bot startup, so it only contains logs from the current run. Read this file to debug internal issues, session failures, or unexpected behavior.
+**OpenCode install.** On first start, when no OpenCode exists, Kimaki installs OpenCode 2 with `curl -fsSL https://opencode.ai/v2/install | bash` (in a terminal it asks first). An OpenCode 1 or an older OpenCode 2 is an error with install instructions. Kimaki never replaces it.
 
-**Graceful Restart** — Send `SIGUSR2` to restart the bot with new code without losing connections.
+**Sessions live in OpenCode.** Messages, the queue, agent and model per session, and provider logins are stored by OpenCode. They survive a Kimaki restart. Kimaki reacts to the OpenCode event stream and renders it in Discord.
 
-**Live CPU profiling** — In the terminal where Kimaki is running, type `cpuprof` and press Enter. Type it again to stop, or wait 20 seconds for auto-stop. Profiles land in `<data-dir>/cpu-profiles/` (default `~/.kimaki/cpu-profiles/`). Open the `.cpuprofile` file in Chrome DevTools (Performance tab) or with `bunx profano`. Stdin must be a TTY.
+**SQLite database.** Kimaki stores its own state in `<data-dir>/kimaki.db` (default `~/.kimaki/kimaki.db`): bot credentials, the channel to directory mapping, the thread to session mapping, channel preferences, scheduled tasks, and sleeps. On first start it imports a V1 `discord-sessions.db` read-only. The V1 file is never changed.
+
+**Channels and machines.** Each machine gets a Discord category named `Kimaki <machine>` (default: the hostname, override with `--machine-name`). A channel belongs to the machine whose database has it. Other Kimaki bots ignore it.
+
+**Lock port.** The bot holds a single-instance lock on `KIMAKI_LOCK_PORT` (default `29988`). Starting a second bot on the same port stops the running one, then takes over. CLI subcommands like `kimaki send` and `kimaki session archive` talk to the bot through this port. To run a second bot, use a free port and a separate data dir:
+
+```bash
+KIMAKI_LOCK_PORT=31001 kimaki --data-dir ~/.kimaki-test
+```
+
+**OpenCode plugin.** On start the bot writes plugin shims to `~/.config/opencode/plugins/kimaki/` and `~/.config/opencode/plugins/kimaki-anthropic/`. No `opencode.json` edit is needed. The `kimaki` plugin acts only on sessions Kimaki created, never on your own TUI sessions. It puts the `kimaki` command on the agent's `PATH`, so agents can call `kimaki send`, `kimaki upload-to-discord`, and more. The `kimaki-anthropic` plugin adds Claude Pro/Max login to OpenCode.
+
+**Attachments.** Files you attach in Discord are saved in `<data-dir>/attachments/<messageId>/` and sent to OpenCode as files.
+
+**Voice messages.** Kimaki transcribes voice messages with OpenAI or Gemini, using the key from `/transcription-key`, `kimaki bot keys set`, `OPENAI_API_KEY`, or `GEMINI_API_KEY`. The transcription also decides the route: interrupt, queue, new session, or agent. Gateway installs without a key use a free transcription endpoint on kimaki.dev.
+
+**Log file.** Logs go to stderr and to `<data-dir>/kimaki.log`. The file is reset on every bot start.
+
+```bash
+kimaki logs           # print the log path
+kimaki logs --follow  # print the log and follow new lines
+```
+
+**Recorded events.** The OpenCode events of every thread (root session and subagents) are recorded in `<data-dir>/session-events/<threadId>.jsonl`. Print them with `kimaki session events <id>`. See [Debug sessions and report bugs](../guides/report-bugs.mdx).
+
+**Restart.** The root `kimaki` process supervises the bot as a child process. `kimaki restart` starts the bot again with the code on disk. Sessions keep running in OpenCode.
+
+**Profiling.** `kimaki profile cpu` records a CPU profile of the running bot (default 20 seconds). `kimaki profile heap` writes a heap snapshot. Files land in `<data-dir>/profiles/`. Open `.cpuprofile` files in Chrome DevTools (Performance tab).
