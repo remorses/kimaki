@@ -111,7 +111,7 @@ export async function ensureOpencode({
   const installed = await findOpencodeBinary()
   if (installed instanceof Error) return installed
   if (installed === null) return new ConfigError({ reason: `OpenCode install finished but ${installedOpencodeBinary()} does not run. ${missing.message}` })
-  logger.log(`installed OpenCode 2 at ${installed}`)
+  logger.info(`installed OpenCode 2 at ${installed}`)
 }
 
 // macOS: keep the machine awake while the bot runs (-s also on lid close on
@@ -123,10 +123,10 @@ export function startCaffeinate(): void {
     (e) => new ConfigError({ reason: 'caffeinate failed to start', cause: e }),
   )
   if (child instanceof Error) {
-    logger.warn(child.message)
+    logger.warn(child)
     return
   }
-  child.on('error', (error) => logger.warn(`caffeinate: ${error.message}`))
+  child.on('error', (error) => logger.warn(`caffeinate`, error))
   child.unref()
 }
 
@@ -179,7 +179,7 @@ async function createDefaultDirectory(directory: string): Promise<GitInitError |
   const init = await execFileAsync('git', ['init', '-q'], { cwd: directory, timeout: 10_000 }).catch(
     (e) => new GitInitError({ directory, cause: e }),
   )
-  if (init instanceof Error) logger.warn(`git init failed in ${directory}: ${init.message}`)
+  if (init instanceof Error) logger.warn(`git init failed in ${directory}`, init)
 }
 
 export type OnboardingResult = { guildId: string; channelId: string; threadId: string } | null
@@ -288,7 +288,7 @@ export async function runOnboarding({
   })
   if (session instanceof Error) {
     // Leaves the channel empty, so the next start onboards again.
-    await welcome.delete().catch((e) => logger.warn(`delete welcome message: ${e instanceof Error ? e.message : String(e)}`))
+    await welcome.delete().catch((e) => logger.warn('delete welcome message', e))
     return session
   }
   logger.log(`onboarding thread ${session.threadId} in channel ${channel.channelId}`)

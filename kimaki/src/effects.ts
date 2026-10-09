@@ -106,7 +106,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
   async function sendableChannel(threadId: string) {
     const channel = await discord.channels.fetch(threadId).catch((e: Error) => e)
     if (channel instanceof Error || !channel?.isSendable()) {
-      logger.warn(`thread ${threadId} is not sendable`, channel instanceof Error ? channel.message : '')
+      logger.warn(`thread ${threadId} is not sendable`, ...(channel instanceof Error ? [channel] : []))
       return null
     }
     return channel
@@ -116,7 +116,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     if (lifecycle.closed) return
     const channel = await sendableChannel(threadId)
     if (!channel || lifecycle.closed) return
-    await channel.sendTyping().catch((e: Error) => logger.warn(`typing failed in ${threadId}: ${e.message}`))
+    await channel.sendTyping().catch((e: Error) => logger.warn(`typing failed in ${threadId}`, e))
   }
 
   function stopTyping(threadId: string) {
@@ -133,7 +133,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     const flags = (options.flags ?? 0) | (notify ? NOTIFY_MESSAGE_FLAGS : SILENT_MESSAGE_FLAGS)
     const sent = await channel.send({ ...options, flags, allowedMentions: { parse: ['users'] } }).catch((e: Error) => e)
     if (!(sent instanceof Error)) return sent.id
-    logger.error(`send failed in ${threadId}: ${sent.message}`)
+    logger.error(`send failed in ${threadId}`, sent)
     return null
   }
 
@@ -159,7 +159,7 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     const edited = await channel.messages
       .edit(messageId, { content: message.content, components: [...message.components] })
       .catch((e: Error) => e)
-    if (edited instanceof Error) logger.warn(`edit of ${messageId} failed: ${edited.message}`)
+    if (edited instanceof Error) logger.warn(`edit of ${messageId} failed`, edited)
   }
 
   // A bot message ends the typing indicator in the Discord UI.

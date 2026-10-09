@@ -406,12 +406,12 @@ export function registerSlashCommands(
       .set(built.commands, guild.id)
       .catch((e) => new DiscordError({ operation: `register commands in ${guild.id}`, cause: e }))
     if (result instanceof Error) {
-      logger.warn(result.message)
+      logger.warn(result)
       return
     }
     registered.set(guild.id, signature)
     dynamic.set(guild.id, built.dynamic)
-    logger.log(`registered ${built.commands.length} commands in guild ${guild.id}`)
+    logger.info(`registered ${built.commands.length} commands in guild ${guild.id}`)
   }
 
   function dynamicCommand(interaction: { guildId: string | null; commandName: string }) {
@@ -451,7 +451,7 @@ export function registerSlashCommands(
     const channel = interaction.channel ?? (interaction.channelId ? await discord.channels.fetch(interaction.channelId).catch(() => null) : null)
     const projectId = channel?.isThread() ? channel.parentId : channel?.id
     const project = projectId ? await projectOf(bot, projectId) : null
-    if (project instanceof Error) return logger.warn(project.message)
+    if (project instanceof Error) return logger.warn(project)
     if (!project) return
     const guild = interaction.guild ?? (await discord.guilds.fetch(interaction.guildId).catch(() => null))
     if (!guild || !(await canUseKimaki({ guild, userId: interaction.user.id }))) {
@@ -476,7 +476,7 @@ export function registerSlashCommands(
   }
 
   discord.on(Events.InteractionCreate, (interaction) => {
-    handle(interaction).catch((error: Error) => logger.error(`interaction failed: ${error.message}`))
+    handle(interaction).catch((error: Error) => logger.error(`interaction failed`, error))
   })
   // One registration pass at a time; a request made during a pass runs one more
   // pass, so an older catalog read never overwrites a newer one.
@@ -494,7 +494,7 @@ export function registerSlashCommands(
           if (passes.closed) return
           if (read instanceof Error) {
             // An event that arrived during the read still gets its pass; else the next event or reconnect retries.
-            logger.warn(`global catalog: ${read.message}${read.cause instanceof Error ? `: ${read.cause.message}` : ''}`)
+            logger.warn('global catalog', read)
             continue
           }
           const built = buildCommands({ fixed: registry.definitions, catalog: read })

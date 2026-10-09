@@ -103,7 +103,7 @@ export async function cancelSleep(bot: Bot, sessionId: string): Promise<void> {
         .returning({ sessionId: schema.session_sleeps.session_id })
         .catch((cause) => new DbError({ operation: 'cancel sleep', cause })),
   })
-  if (cancelled instanceof Error) return logger.warn(cancelled.message)
+  if (cancelled instanceof Error) return logger.warn(cancelled)
   if (cancelled.length > 0) logger.log(`sleep of session ${sessionId} cancelled by new input`)
 }
 
@@ -199,7 +199,7 @@ async function wake(bot: Bot, row: SleepRow): Promise<Error | void> {
       })
     })()
     if (!(sent instanceof Error)) return settle('consumed')
-    logger.warn(`wake of ${sessionId} failed (attempt ${attempt.attempts}): ${sent.message}`)
+    logger.warn(`wake of ${sessionId} failed (attempt ${attempt.attempts})`, sent)
     if (attempt.attempts >= WAKE_MAX_ATTEMPTS) return settle('failed')
     return 'retry' as const
   }
@@ -222,9 +222,9 @@ export async function runDueWakes(bot: Bot, { time, limit }: { time: number; lim
       limit,
     })
     .catch((cause) => new DbError({ operation: 'read due sleeps', cause }))
-  if (sleeps instanceof Error) return logger.error(sleeps.message)
+  if (sleeps instanceof Error) return logger.error(sleeps)
   for (const row of sleeps) {
     const woke = await wake(bot, row)
-    if (woke instanceof Error) logger.warn(woke.message)
+    if (woke instanceof Error) logger.warn(woke)
   }
 }

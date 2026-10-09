@@ -204,7 +204,7 @@ export function createAnalytics({
   if (!enabled || disabledByEnv || underTest) return disabledAnalytics
   const installId = readInstallId(dataDir)
   if (installId instanceof Error) {
-    logger.warn(`analytics off: ${installId.message}`)
+    logger.warn(`analytics off`, installId)
     return disabledAnalytics
   }
   const initialized = initStrada({
@@ -220,14 +220,14 @@ export function createAnalytics({
     ...(endpoint && { endpoint }),
   })
   if (initialized instanceof Error) {
-    logger.warn(`analytics off: ${initialized.message}`)
+    logger.warn(`analytics off`, initialized)
     return disabledAnalytics
   }
   const common = { install_id: installId, schema_version: SCHEMA_VERSION, bot_mode: botMode, platform: process.platform, arch: process.arch }
   const send = (name: AnalyticsEventName, properties: AnalyticsProps = {}) => {
     // Identity fields always win over caller props.
     const failed = track(name, { ...properties, ...common })
-    if (failed instanceof Error) logger.warn(`track ${name}: ${failed.message}`)
+    if (failed instanceof Error) logger.warn(`track ${name}`, failed)
   }
   const usage: { state: UsageState } = { state: {} }
   return {
@@ -240,7 +240,7 @@ export function createAnalytics({
     },
     flush: async () => {
       const failed = await flush()
-      if (failed instanceof Error) logger.warn(`flush: ${failed.message}`)
+      if (failed instanceof Error) logger.warn(`flush`, failed)
     },
   }
 }

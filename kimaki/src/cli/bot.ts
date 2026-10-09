@@ -138,6 +138,8 @@ export function registerStartCommand(cli: Goke) {
       // Creates the data dir, so the eviction, import and onboarding logs land in kimaki.log.
       const logFile = setLogFile({ dataDir })
       if (logFile instanceof Error) failStartup(logFile)
+      // A crash goes to kimaki.log too (Node still prints it and exits).
+      process.on('uncaughtExceptionMonitor', (error, origin) => logger.error(`crash (${origin})`, error))
       // Then: stops a running bot of this port (V1 or V2) before the
       // migration and onboarding, which must not run while it still writes.
       const lock = await startLockServer({ port: Number(process.env['KIMAKI_LOCK_PORT'] || DEFAULT_LOCK_PORT), dataDir, supervised: true })
@@ -197,7 +199,7 @@ export function registerStartCommand(cli: Goke) {
       const onboarded = await runOnboarding({ bot, dataDir, guildId: options.guild ?? install?.guildId, installUrl, kimaki, gateway, installerId: install?.installerId, machine })
       // The bot keeps running; the next start retries onboarding.
       if (onboarded instanceof Error) {
-        logger.error(`onboarding failed: ${onboarded.message}`)
+        logger.error(`onboarding failed`, onboarded)
         if (!process.stdin.isTTY) emitEvent({ type: 'error', message: `Onboarding failed: ${onboarded.message}. The bot is running; restart kimaki to retry.` })
         return
       }

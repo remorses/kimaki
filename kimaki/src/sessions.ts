@@ -188,7 +188,7 @@ async function putInstructions(
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   // The agent list is optional prompt context: a failure must not strand the thread.
   const found = await primaryAgents(bot, directory)
-  if (found instanceof Error) logger.warn(`agent list for instructions failed: ${found.message}`)
+  if (found instanceof Error) logger.warn(`agent list for instructions failed`, found)
   // The ID is what switchAgent and session.create take.
   const agents = found instanceof Error ? [] : found.map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
   const value = baseInstructions({
@@ -297,7 +297,7 @@ export async function refreshCliContext(bot: Bot) {
   for (const sessionId of Object.keys(active).filter((id) => sessionThreads[id])) {
     const info = await oc(bot, 'get bound session', (client) => client.session.get({ sessionID: sessionId }))
     if (info instanceof Error) {
-      logger.warn(info.message)
+      logger.warn(info)
       continue
     }
     const marker = readMarker(info.metadata)
@@ -564,9 +564,9 @@ async function adoptSession(
     first: [{ type: 'kimaki.replay', messages: prepared.history, note }],
   })
   logger.log(`session ${sessionId} bound to thread ${thread.id}`)
-  await thread.members.add(author.id).catch((e: Error) => logger.warn(`add member: ${e.message}`))
+  await thread.members.add(author.id).catch((e: Error) => logger.warn(`add member`, e))
   const hydrated = await bot.eventLoop.syncThread(thread.id)
-  if (hydrated instanceof Error) logger.warn(`hydrate ${thread.id}: ${hydrated.message}`)
+  if (hydrated instanceof Error) logger.warn(`hydrate ${thread.id}`, hydrated)
   return { threadId: thread.id, sessionId }
 }
 
@@ -663,7 +663,7 @@ export async function fork(
   if (forked instanceof Error) return forked
   const discard = async () => {
     const removed = await oc(bot, 'session.remove', (client) => client.session.remove({ sessionID: forked.id }))
-    if (removed instanceof Error) logger.warn(`discard fork ${forked.id}: ${removed.message}`)
+    if (removed instanceof Error) logger.warn(`discard fork ${forked.id}`, removed)
   }
   const relocated = await (async () => {
     if (!worktree) return forked
@@ -748,7 +748,7 @@ export async function forkBtw(
   }
   if (thread instanceof Error) {
     const removed = await oc(bot, 'session.remove', (client) => client.session.remove({ sessionID: forked.id }))
-    if (removed instanceof Error) logger.warn(`discard btw fork ${forked.id}: ${removed.message}`)
+    if (removed instanceof Error) logger.warn(`discard btw fork ${forked.id}`, removed)
     return thread
   }
 
@@ -763,7 +763,7 @@ export async function forkBtw(
     isNew: false,
   })
   if (bound instanceof Error) return bound
-  await thread.members.add(author.id).catch((e: Error) => logger.warn(`add btw member: ${e.message}`))
+  await thread.members.add(author.id).catch((e: Error) => logger.warn(`add btw member`, e))
   const intro = await thread
     .send({ content: `Reusing context from <#${sourceThread.id}> to answer prompt...\n${text}`.slice(0, 2_000), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
     .catch((cause) => new DiscordError({ operation: 'send btw intro', cause }))

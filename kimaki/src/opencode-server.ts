@@ -392,7 +392,7 @@ export function watchOpencode({
       }
       phase.booting = false
       readyDeferred.resolve(endpoint)
-      logger.log(`connected to OpenCode ${endpoint.version} at ${endpoint.url}`)
+      logger.info(`connected to OpenCode ${endpoint.version} at ${endpoint.url}`)
       return consume
     })()
     clearTimeout(watchdog.timer)
@@ -413,16 +413,16 @@ export function watchOpencode({
       // After a first connect, failures are restarts and upgrades: retry.
       if (endpoint instanceof OpenCodeVersionError || endpoint instanceof OpenCodeV1Error || (endpoint instanceof Error && state.endpoint === null)) {
         readyDeferred.resolve(endpoint)
-        logger.error(endpoint.message)
+        logger.error(endpoint)
         return
       }
-      if (endpoint instanceof Error) logger.warn(`OpenCode not reachable: ${endpoint.message}`)
+      if (endpoint instanceof Error) logger.warn(`OpenCode not reachable`, endpoint)
       if (!(endpoint instanceof Error)) {
         const result = await runAttempt({ endpoint, reconnect: state.endpoint !== null })
         if (controller.signal.aborted) return
         // This attempt connected: start the backoff over.
         if (state.endpoint === endpoint) backoff.ms = 500
-        logger.warn(`event stream ended: ${result.message}`)
+        logger.warn(`event stream ended`, result)
       }
       await sleep(backoff.ms, undefined, { signal: controller.signal }).catch(() => undefined)
       backoff.ms = Math.min(backoff.ms * 2, 30_000)

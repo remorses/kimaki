@@ -139,7 +139,7 @@ export async function cancelPendingUi(bot: Bot, threadId: string): Promise<OpenC
   )
   // Settled meanwhile by someone else is fine: log and go on.
   for (const result of await Promise.all([...forms, ...permissions])) {
-    if (result instanceof Error) logger.warn(`cancel pending UI in ${threadId}: ${result.message}`)
+    if (result instanceof Error) logger.warn(`cancel pending UI in ${threadId}`, result)
   }
 }
 
@@ -250,7 +250,7 @@ export function shell(bot: Bot, { threadId, sessionId, command }: { threadId: st
     .catch((cause) => new OpenCodeError({ operation: 'session.shell', cause }))
     .then((result) => {
       if (!(result instanceof Error)) return
-      logger.error(`shell in ${threadId} failed: ${result.message}`)
+      logger.error(`shell in ${threadId} failed`, result)
       bot.effects.run(threadId, [{ type: 'send', text: formatError(result.message), notify: true }])
     })
 }
@@ -547,7 +547,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
       if (project instanceof Error) return project
       return !project && !localOnly ? remoteSend(bot, input) : new ConfigError({ reason: 'No local session for this thread' })
     }
-    if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add thread member: ${error.message}`))
+    if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add thread member`, error))
     if (input.model) {
       const model = parseModel(input.model, null)
       if (!model) return new ConfigError({ reason: 'Use --model provider/model' })
@@ -582,7 +582,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
       })
       .catch((cause) => new DiscordError({ operation: 'post notification', cause }))
     if (shown instanceof Error) return shown
-    if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add notification member: ${error.message}`))
+    if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add notification member`, error))
     return { threadId: thread.id, sessionId: null }
   }
 

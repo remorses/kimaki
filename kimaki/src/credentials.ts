@@ -334,7 +334,7 @@ export async function installGateway({
   if (!interactive) emitEvent({ type: 'authorized', guild_id: install.guildId })
   const accepted = await waitForProxyClient({ credentials, proxy: credentials.baseUrl ?? urls.proxy })
   if (accepted instanceof Error) return accepted
-  logger.log(`gateway client installed in guild ${install.guildId}`)
+  logger.info(`gateway client installed in guild ${install.guildId}`)
   return { credentials, install }
 }
 

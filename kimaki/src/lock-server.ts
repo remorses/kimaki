@@ -87,7 +87,7 @@ async function waitForExit({ pid, timeoutMs }: { pid: number; timeoutMs: number 
 
 function signal({ pid, name }: { pid: number; name: NodeJS.Signals }): void {
   const sent = errore.try(() => process.kill(pid, name), (cause) => new ConfigError({ reason: `${name} to PID ${pid}`, cause }))
-  if (sent instanceof Error) logger.warn(`cannot send ${sent.message}: ${String(sent.cause)}`)
+  if (sent instanceof Error) logger.warn('cannot send', sent)
 }
 
 // Stops the kimaki bot on the port, if one answers /health. Its own shutdown
@@ -155,7 +155,7 @@ export async function startLockServer({ port, dataDir, supervised = false }: { p
       return
     }
     void handle(req, res).catch((cause) => {
-      logger.error(`lock request failed: ${String(cause)}`)
+      logger.error('lock request failed', cause)
       if (!res.headersSent) res.writeHead(500)
       res.end(JSON.stringify({ error: 'Kimaki request failed. Check kimaki logs.' }))
     })
@@ -172,7 +172,7 @@ export async function startLockServer({ port, dataDir, supervised = false }: { p
     return new LockPortError({ port, reason, cause: bound })
   }
 
-  logger.log(`lock server listening on 127.0.0.1:${port}`)
+  logger.info(`lock server listening on 127.0.0.1:${port}`)
   const tokenFile = path.join(dataDir, 'lock-token')
   const written = await fs.promises.mkdir(dataDir, { recursive: true, mode: 0o700 })
     .then(() => fs.promises.writeFile(tokenFile, token, { mode: 0o600 }))
@@ -190,7 +190,7 @@ export async function startLockServer({ port, dataDir, supervised = false }: { p
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))
       const saved = await fs.promises.readFile(tokenFile, 'utf8').catch(() => null)
-      if (saved === token) await fs.promises.unlink(tokenFile).catch((cause) => logger.warn(`remove token: ${String(cause)}`))
+      if (saved === token) await fs.promises.unlink(tokenFile).catch((cause) => logger.warn('remove token', cause))
     },
   }
 }

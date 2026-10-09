@@ -21,7 +21,26 @@ description: >
 
 ## logs
 
-kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). The log file is reset on every bot startup, so it only contains logs from the current run. File logging works in all environments (dev and production), also under vitest when terminal logs are suppressed.
+kimaki writes logs to `<dataDir>/kimaki.log` (default `~/.kimaki/kimaki.log`). Every bot start begins a fresh file and moves the previous run to `kimaki.previous.log`, so a crash and its restart keep the crash reason. Crashes (`uncaughtException`, unhandled rejections) are logged before Node exits. File logging works in all environments (dev and production), also under vitest when terminal logs are suppressed.
+
+Lines are `<ISO time> <LEVEL> [<MODULE>] <message>`. Errors are logged with their cause chain, error-level lines also get the root cause stack. The file is written with one fd and `writeSync`: lines stay ordered and reach disk before a crash.
+
+```bash
+grep -E ' (WARN|ERROR) ' ~/.kimaki/kimaki.log | tail -n 50
+grep 'run (started|finished|failed)' -E ~/.kimaki/kimaki.log
+```
+
+### OpenCode service log
+
+The shared OpenCode 2 daemon (`opencode2 serve --service`) appends logfmt lines to `$XDG_DATA_HOME/opencode/log/opencode.log` (default `~/.local/share/opencode/log/opencode.log`, `opencode2 debug paths` prints it). It is never truncated or rotated. `run=<8 chars>` identifies one daemon process. `--log-level DEBUG` or `OPENCODE_LOG_LEVEL=DEBUG` raises the level, `--print-logs` also prints to stderr. Pid and URL of the daemon are in `~/.local/state/opencode/service.json`.
+
+```bash
+LOG=~/.local/share/opencode/log/opencode.log
+RUN=$(tail -n 1 $LOG | grep -o 'run=[a-z0-9]*')
+grep "$RUN " $LOG | grep -E '^timestamp=[^ ]+ level=(ERROR|WARN)' | tail -n 50
+```
+
+Source: `packages/core/src/observability/logging.ts` and `packages/core/src/global.ts` in anomalyco/opencode (`dev` branch).
 
 ## session event JSONL
 

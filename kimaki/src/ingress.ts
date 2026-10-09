@@ -177,7 +177,7 @@ async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: 
       // The data is in the embed: SuppressEmbeds would hide it.
       flags: MessageFlags.SuppressNotifications,
     })
-    .catch((error: Error) => logger.warn(`remote acknowledgment: ${error.message}`))
+    .catch((error: Error) => logger.warn(`remote acknowledgment`, error))
 }
 
 async function handleMessage(bot: Bot, message: Message) {
@@ -187,7 +187,7 @@ async function handleMessage(bot: Bot, message: Message) {
   if (!channelId || !message.guild) return
 
   const project = await projectOf(bot, channelId)
-  if (project instanceof Error) return logger.warn(project.message)
+  if (project instanceof Error) return logger.warn(project)
   if (!project || project.channel_type !== 'text') return
   if (message.author.bot) {
     if (message.author.id !== bot.discord.user?.id) return
@@ -201,7 +201,7 @@ async function handleMessage(bot: Bot, message: Message) {
   if (thread && !sessionId) return
   const author = { id: message.author.id, username: message.author.username }
   const reportError = async (error: Error) => {
-    logger.error(`message ${message.id} failed: ${error.message}`)
+    logger.error(`message ${message.id} failed`, error)
     await message.reply({ content: formatError(error.message), flags: NOTIFY_MESSAGE_FLAGS }).catch(() => undefined)
   }
 
@@ -220,6 +220,9 @@ async function handleMessage(bot: Bot, message: Message) {
     : (parseTextMessage({ content: message.content }) ?? (files.length > 0 ? { kind: 'steer' as const, text: '' } : null))
   if (route instanceof Error) return reportError(route)
   if (!route) return
+  const detail = route.kind === 'command' ? ` /${route.name}` : route.kind === 'skill' ? ` ${route.id}` : ''
+  const attached = files.length > 0 ? `, ${files.length} file(s)` : ''
+  logger.log(`${route.kind}${detail} from ${author.username} in ${thread ? `thread ${thread.id}` : `channel ${channelId}`}${attached}`)
   // The transcription is not visible anywhere else.
   if (voice && thread && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
     await message.reply({ content: formatEcho({ username: author.username, text: route.text }), allowedMentions: { parse: [] }, flags: SILENT_MESSAGE_FLAGS })
@@ -260,8 +263,8 @@ export function registerIngress(bot: Bot) {
       // gateway-proxy replays messages missed while offline right after READY,
       // often before the OpenCode connection and hydration are done.
       const ready = await bot.opencode.ready
-      if (ready instanceof Error) return logger.warn(`ingress skipped, OpenCode not ready: ${ready.message}`)
-      await task().catch((error: Error) => logger.error(`ingress failed: ${error.message}`))
+      if (ready instanceof Error) return logger.warn(`ingress skipped, OpenCode not ready`, ready)
+      await task().catch((error: Error) => logger.error(`ingress failed`, error))
     })
     chains.set(channelId, next)
   }
@@ -276,7 +279,7 @@ export function registerIngress(bot: Bot) {
       const item = queuedItemFor(bot, { threadId: message.channelId, messageId: message.id })
       if (!item) return
       const result = await cancelQueuedPrompt(bot, { threadId: message.channelId, inboxID: item.inboxID })
-      if (result instanceof Error) logger.warn(`delete of queued ${message.id} failed: ${result.message}`)
+      if (result instanceof Error) logger.warn(`delete of queued ${message.id} failed`, result)
     })
   })
   // Editing a queued message re-queues the new text at the end (spec 9.2.2
@@ -290,14 +293,14 @@ export function registerIngress(bot: Bot) {
       // The re-queued prompt must carry the message's attachments again.
       const files = await saveAttachments({ dataDir: bot.dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
       if (files instanceof Error) {
-        logger.error(`edit of ${full.id}: ${files.message}`)
+        logger.error(`edit of ${full.id}`, files)
         return
       }
       // Read again: the item may have started while the files were saved.
       const item = queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })
       if (!item) return
       const result = await requeueEdited(bot, { message: full, inboxID: item.inboxID, files })
-      if (result instanceof Error) logger.warn(`edit of queued ${full.id} failed: ${result.message}`)
+      if (result instanceof Error) logger.warn(`edit of queued ${full.id} failed`, result)
     })
   })
 }

@@ -104,7 +104,7 @@ export async function replyError(
   interaction: ChatInputCommandInteraction | MessageComponentInteraction | ModalSubmitInteraction,
   error: Error,
 ) {
-  logger.error(`interaction ${interaction.id} failed: ${error.message}`)
+  logger.error(`interaction ${interaction.id} failed`, error)
   // Config errors are messages for the user, the rest are failures.
   const content = error instanceof ConfigError ? error.message : formatError(error.message)
   if (interaction.deferred || interaction.replied) {
@@ -125,7 +125,7 @@ export async function respondChoices(
   interaction: AutocompleteInteraction,
   choices: Error | ReadonlyArray<{ name: string; value: string }>,
 ): Promise<void> {
-  if (choices instanceof Error) logger.warn(`autocomplete /${interaction.commandName}: ${choices.message}`)
+  if (choices instanceof Error) logger.warn(`autocomplete /${interaction.commandName}`, choices)
   const list = choices instanceof Error ? [] : choices.slice(0, 25)
   await interaction.respond(list.map((choice) => ({ name: choice.name.slice(0, 100), value: choice.value.slice(0, 100) }))).catch(() => undefined)
 }

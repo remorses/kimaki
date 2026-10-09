@@ -20,6 +20,7 @@ import type { Analytics } from './analytics.ts'
 import { verbosityFromV1, type KimakiDb } from './db.ts'
 import type { EffectsRunner } from './effects.ts'
 import { DbError, DiscordError, OpenCodeError } from './errors.ts'
+import { formatDuration } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { ConnectContext, OpenCodeClient, V2Event } from './opencode-server.ts'
 import type { EventRecorder } from './session-events.ts'
@@ -95,7 +96,7 @@ export function createEventLoop({
       if (modelLimits.get(directory)?.load !== load) return
       if (result instanceof Error) {
         modelLimits.delete(directory)
-        logger.warn(result.message)
+        logger.warn(result)
         return
       }
       const limits = Object.fromEntries(result.data.map((model) => [`${model.providerID}/${model.id}`, model.limit.context]))
@@ -118,8 +119,34 @@ export function createEventLoop({
     if (event.type === 'session.moved' && event.data.sessionID === view.sessionId) void loadModelLimits(event.data.location.directory)
   }
 
+  // One line per run start and end of a root session, so the log shows what each thread did.
+  function logRun(threadId: string, event: ThreadEvent) {
+    if (isKimakiEvent(event)) return
+    const { roots, threads } = store.getState()
+    const sessionId = eventSessionId(event)
+    if (!sessionId || roots[threadId] !== sessionId) return
+    const where = `thread ${threadId} (${sessionId})`
+    // Read before the fold clears it.
+    const turn = threads[threadId]?.turn
+    const summary = (at: number) =>
+      turn ? ` after ${formatDuration(at - turn.startedAt)}${turn.model ? `, ${turn.model.providerID}/${turn.model.id}` : ''}, ${turn.tokens} tokens` : ''
+    switch (event.type) {
+      case 'session.execution.started':
+        return logger.log(`run started in ${where}`)
+      case 'session.execution.succeeded':
+        return logger.log(`run finished in ${where}${summary(event.created)}`)
+      case 'session.execution.interrupted':
+        return logger.log(`run interrupted in ${where}${summary(event.created)}`)
+      case 'session.execution.failed':
+        return logger.warn(`run failed in ${where}${summary(event.created)}: ${event.data.error.message}`)
+      case 'session.retry.scheduled':
+        return logger.warn(`retry ${event.data.attempt} in ${where}: ${event.data.error.message}`)
+    }
+  }
+
   // Every event of a thread enters here exactly once.
   function deliver(threadId: string, event: ThreadEvent) {
+    logRun(threadId, event)
     recorder.record(threadId, event)
     if (!isKimakiEvent(event)) analytics.observe(event, store.getState().roots[threadId] === eventSessionId(event))
     if (store.getState().threads[threadId] && !coldThreads.has(threadId)) return fold(threadId, event)
@@ -154,14 +181,14 @@ export function createEventLoop({
     if (loaded instanceof Error && entry.failures < LOAD_RETRIES) {
       // Transient Discord, SQLite or OpenCode failure: keep the events and retry.
       entry.failures++
-      logger.warn(`thread ${threadId} load failed (${entry.failures}/${LOAD_RETRIES}): ${loaded.message}`)
+      logger.warn(`thread ${threadId} load failed (${entry.failures}/${LOAD_RETRIES})`, loaded)
       setTimeout(() => void loadView(threadId), LOAD_RETRY_MS * entry.failures)
       return
     }
     coldThreads.delete(threadId)
     // Unbound, rebound or gone meanwhile: the held events belong to no view.
     if (!sessionId || !loaded || loaded instanceof Error || store.getState().roots[threadId] !== sessionId) {
-      logger.warn(`dropping ${entry.events.length} events of thread ${threadId}: ${loaded instanceof Error ? loaded.message : 'no project channel'}`)
+      logger.warn(`dropping ${entry.events.length} events of thread ${threadId}`, loaded instanceof Error ? loaded : '(no project channel)')
       return
     }
     if (!store.getState().threads[threadId]) {
@@ -212,7 +239,7 @@ export function createEventLoop({
     entry.loading = false
     if (found instanceof Error) {
       // Keep the held events; the next event of this session retries.
-      logger.warn(`cannot resolve session ${sessionId}: ${found.message}`)
+      logger.warn(`cannot resolve session ${sessionId}`, found)
       return
     }
     unknownSessions.delete(sessionId)

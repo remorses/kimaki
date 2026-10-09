@@ -62,7 +62,7 @@ export function createEventRecorder({ dataDir }: { dataDir: string }) {
     // Over the limit: start over rather than grow forever.
     const flags = size >= MAX_FILE_BYTES ? 'w' : 'a'
     const stream = fs.createWriteStream(file, { flags })
-    stream.on('error', (error) => logger.warn(`cannot write ${file}: ${error.message}`))
+    stream.on('error', (error) => logger.warn(`cannot write ${file}`, error))
     const entry = { stream, bytes: flags === 'w' ? 0 : size }
     streams.set(threadId, entry)
     return entry

@@ -445,7 +445,7 @@ async function withRetries(attempt: () => Promise<TranscriptionFailure | Transcr
     const result = await attempt()
     if (!(result instanceof Error)) return result
     const retry = number < MAX_ATTEMPTS && isRetryable(result)
-    logger.warn(`transcription attempt ${number}/${MAX_ATTEMPTS} failed${retry ? ', retrying' : ''}: ${result.message}`)
+    logger.warn(`transcription attempt ${number}/${MAX_ATTEMPTS} failed${retry ? ', retrying' : ''}`, result)
     if (!retry) return result
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * number))
   }
@@ -550,7 +550,7 @@ export async function transcribe({
     logger.warn(`provider blocked the audio (${result.message}), retrying with kimaki.dev Whisper`)
     const hosted = await transcribeViaGateway({ audio, mediaType, ...selected.gateway })
     if (!(hosted instanceof Error)) return hosted
-    logger.warn(`kimaki.dev Whisper fallback failed: ${hosted.message}`)
+    logger.warn(`kimaki.dev Whisper fallback failed`, hosted)
   }
   return result
 }
@@ -685,7 +685,7 @@ export async function handleTranscriptionKeyModal({ interaction, db }: { interac
   const openai = key.startsWith('sk-')
   const saved = await saveAudioKeys({ db, token: interaction.client.token, ...(openai ? { openai: key } : { gemini: key }) })
   if (saved instanceof Error) {
-    logger.warn(`save audio key: ${saved.message}`)
+    logger.warn(`save audio key`, saved)
     await interaction.editReply({ content: saved.message })
     return
   }

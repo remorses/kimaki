@@ -171,9 +171,9 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // After Discord and OpenCode are ready: a due task needs both.
   const scheduling = await scheduler.start()
   if (scheduling instanceof Error) return scheduling
-  logger.log(`bot ready as ${discord.user?.tag}`)
+  logger.info(`bot ready as ${discord.user?.tag} in ${discord.guilds.cache.size} server(s)`)
   const projects = await countUserProjects({ db, dataDir: options.dataDir })
-  if (projects instanceof Error) logger.warn(projects.message)
+  if (projects instanceof Error) logger.warn(projects)
   options.analytics.track('bot_started', {
     guild_count: discord.guilds.cache.size,
     ...(!(projects instanceof Error) && { user_project_count: projects }),

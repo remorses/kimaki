@@ -109,7 +109,25 @@ export function baseInstructions({
       ## debugging kimaki issues
 
       ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Kimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
-      If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the log file at \`${dataDir}/kimaki.log\`. This file contains detailed logs of all bot activity including session creation, event handling, errors, and API calls. The log file is reset every time the bot restarts, so it only contains logs from the current run.
+      If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the logs of the running bot and of the OpenCode service it talks to. Read them before guessing.
+
+      **Kimaki bot log**: \`${dataDir}/kimaki.log\`, only the current bot run. The run before the last restart (including the crash that caused it) is in \`${dataDir}/kimaki.previous.log\`. Each line is \`<ISO time> <LEVEL> [<MODULE>] <message>\`, and errors include their cause chain. It logs incoming messages, run start/finish/failure per thread and session, Discord and OpenCode errors, scheduled tasks and crashes.
+
+      \`\`\`bash
+      tail -n 200 ${dataDir}/kimaki.log
+      grep -E ' (WARN|ERROR) ' ${dataDir}/kimaki.log | tail -n 50
+      grep '<thread_id or ses_id>' ${dataDir}/kimaki.log
+      \`\`\`
+
+      **OpenCode service log**: the shared \`opencode2 serve --service\` daemon appends to \`~/.local/share/opencode/log/opencode.log\` (\`$XDG_DATA_HOME/opencode/log\`; \`opencode2 debug paths\` prints the folder). The file is never reset and can be very large: always use \`tail\` or \`grep\`, never read it whole. Lines are logfmt. \`run=<id>\` is one daemon process, so filter by the run of the last line. The daemon pid and URL are in \`~/.local/state/opencode/service.json\`.
+
+      \`\`\`bash
+      LOG=~/.local/share/opencode/log/opencode.log
+      RUN=$(tail -n 1 $LOG | grep -o 'run=[a-z0-9]*')
+      grep "$RUN " $LOG | grep -E '^timestamp=[^ ]+ level=(ERROR|WARN)' | tail -n 50
+      grep "$RUN " $LOG | grep '<ses_id>' | tail -n 100
+      \`\`\`
+
       \`kimaki session events <id>\` prints the recorded OpenCode events of a thread as JSONL.
       \`kimaki restart\` restarts the bot (only when the user asks). \`kimaki profile cpu --duration 30s\` and \`kimaki profile heap\` print the profile file path.
 

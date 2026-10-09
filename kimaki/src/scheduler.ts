@@ -338,7 +338,7 @@ async function finish(
       .catch((cause) => new DbError({ operation: `finish task ${row.id}`, cause }))
   const next = nextRunAt instanceof Error || nextRunAt === null ? null : new Date(nextRunAt)
   if (outcome instanceof Error) {
-    logger.warn(`task ${row.id} failed: ${outcome.message}`)
+    logger.warn(`task ${row.id} failed`, outcome)
     // The claim makes this process the only writer of the row until finish.
     const attempts = row.attempts + 1
     // A cron task tries again at its next occurrence.
@@ -394,10 +394,10 @@ async function runDueTasks(bot: Bot): Promise<void> {
   const tasks = await bot.db.query.scheduled_tasks
     .findMany({ where: { status: 'planned', next_run_at: { lte: new Date(time) } }, orderBy: { next_run_at: 'asc', id: 'asc' }, limit: DUE_BATCH })
     .catch((cause) => new DbError({ operation: 'read due tasks', cause }))
-  if (tasks instanceof Error) return logger.error(tasks.message)
+  if (tasks instanceof Error) return logger.error(tasks)
   for (const row of tasks) {
     const ran = await runTask(bot, { id: row.id, dueAt: row.next_run_at })
-    if (ran instanceof Error) logger.warn(ran.message)
+    if (ran instanceof Error) logger.warn(ran)
   }
 }
 
@@ -618,7 +618,7 @@ export function createScheduler({
   function tick(): void {
     if (loop.tick) return
     loop.tick = runDueTasks(bot)
-      .catch((cause) => logger.error(`scheduler tick failed: ${String(cause)}`))
+      .catch((cause) => logger.error('scheduler tick failed', cause))
       .finally(() => { loop.tick = null })
   }
 

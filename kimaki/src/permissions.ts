@@ -114,7 +114,7 @@ async function handlePermissionButton(bot: Bot, interaction: ButtonInteraction):
     client.permission.reply({ sessionID: request.sessionId, requestID, decision }),
   )
   if (!(result instanceof Error)) return
-  logger.warn(`reply ${requestID} failed: ${result.message}`)
+  logger.warn(`reply ${requestID} failed`, result)
   await interaction.followUp({ content: 'This permission request is no longer pending', flags: MessageFlags.Ephemeral })
 }
 

@@ -277,7 +277,7 @@ export function createQuestionHandlers(): InteractionRoutes {
       client.session.form.reply({ sessionID: form.sessionId, formID, answer }),
     )
     if (!(result instanceof Error)) return
-    logger.warn(`answer ${formID} failed: ${result.message}`)
+    logger.warn(`answer ${formID} failed`, result)
     await interaction.followUp({ content: 'This question is no longer pending', flags: MessageFlags.Ephemeral })
   }
 
