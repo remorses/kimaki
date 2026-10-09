@@ -147,7 +147,7 @@ the user-facing bug report workflow (export events, share evidence in a gist, is
 
 ## git submodules
 
-submodules: `errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`, `subrouter`. their configured branches are in `.gitmodules`.
+submodules: `errore`, `gateway-proxy`, `traforo`, `opencode-injection-guard`. their configured branches are in `.gitmodules`.
 
 **never rewrite or force-push a submodule branch in a way that drops commits kimaki still points at.** if the superproject gitlink references a SHA the remote no longer advertises, fresh clones and CI fail with `not our ref` / `did not contain <sha>` before any tests run.
 
