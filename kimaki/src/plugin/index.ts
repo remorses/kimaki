@@ -8,6 +8,8 @@ import { fileEditTool, recordToolEdits } from '../file-edit-log.ts'
 
 const exec = promisify(execFile)
 
+const BRANCH_PREFIX = '[current git branch is '
+
 export default Plugin.define({
   id: 'kimaki',
   async setup(ctx) {
@@ -23,11 +25,24 @@ export default Plugin.define({
       if (parentMarker && typeof parentMarker === 'object' && !Array.isArray(parentMarker) && parentMarker['threadId'] === current.get('threadId')) return marker(session.parentID)
       return current
     }
+    // The git branch reaches the model as a synthetic message saved right before
+    // the user prompt, only when it changed. Text in event.system would change the
+    // cached prompt prefix on every branch switch. The prompt hook runs before
+    // OpenCode admits the prompt, so the synthetic message is admitted first.
+    await ctx.session.hook('prompt', async (event) => {
+      if (!(await marker(event.sessionID))) return
+      const branch = await exec('git', ['branch', '--show-current'], { cwd: ctx.location.directory, timeout: 5000 }).catch(() => null)
+      const name = branch?.stdout.trim()
+      if (!name) return
+      const text = `${BRANCH_PREFIX}${name}]`
+      const history = await ctx.session.context({ sessionID: event.sessionID }).catch(() => null)
+      if (!history) return
+      const last = history.findLast((message) => message.type === 'synthetic' && message.text.startsWith(BRANCH_PREFIX))
+      if (last?.type === 'synthetic' && last.text === text) return
+      await ctx.session.synthetic({ sessionID: event.sessionID, text, delivery: event.delivery, resume: false }).catch(() => undefined)
+    })
     await ctx.session.hook('context', async (event) => {
       if (!(await marker(event.sessionID))) return
-      event.system.push({ type: 'text', text: `[current working directory is ${ctx.location.directory}]` })
-      const branch = await exec('git', ['branch', '--show-current'], { cwd: ctx.location.directory, timeout: 5000 }).catch(() => null)
-      if (branch?.stdout.trim()) event.system.push({ type: 'text', text: `[current git branch is ${branch.stdout.trim()}]` })
       // Extra inputs only for the Discord tool line. OpenCode decodes the real
       // inputs with Schema.Struct, which ignores unknown keys.
       const description = { type: 'string', description: 'Short 5-10 word summary shown in Discord' }

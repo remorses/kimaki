@@ -113,6 +113,18 @@ test('git context is added only to marked Discord sessions', async () => {
   `)
   expect((await twin.discord.thread(threadId).text()).includes('Git context received.')).toBe(true)
   const client = await server.client()
+  // The branch is a synthetic message before the prompt, added again only when it changes.
+  const sessionId = bot.store.getState().roots[threadId]!
+  await client.session.prompt({ sessionID: sessionId, text: 'git-marker again' })
+  await client.session.wait({ sessionID: sessionId })
+  const history = await client.session.context({ sessionID: sessionId })
+  expect(history.flatMap((message) => message.type === 'synthetic' || message.type === 'user' ? [`${message.type}: ${message.text.split('\n')[0]}`] : [])).toMatchInlineSnapshot(`
+    [
+      "synthetic: [current git branch is main]",
+      "user: git-marker",
+      "user: git-marker again",
+    ]
+  `)
   const plugins = await client.plugin.list({ location: { directory: server.projectDirectory } })
   expect(plugins.data.find((plugin) => plugin.id === 'kimaki')?.state.status).toBe('active')
   const session = await client.session.create({ location: { directory: server.projectDirectory } })
