@@ -60,7 +60,20 @@ When the bot starts and sees this entry, it removes its own `plugins/kimaki-anth
 
 OpenCode can keep **several saved logins** for one provider. Run `/login` again to add another one. To switch, run `/login`, pick the provider, and choose **Activate &lt;label&gt;**.
 
-Kimaki does **not** rotate accounts by itself when one hits a rate limit. Automatic rotation across accounts and providers lives in the separate [subrouter](https://github.com/remorses/subrouter) project.
+Kimaki does **not** rotate accounts by itself when one hits a rate limit. For automatic rotation across accounts and models, add the `@kimaki/plugin-fallback` OpenCode plugin:
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "@kimaki/plugin-fallback",
+      "options": {
+        "models": ["anthropic/claude-opus-5-5", "openai/gpt-6-sol#high"]
+      }
+    }
+  ]
+}
+```
 
 ## From the CLI
 
