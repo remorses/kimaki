@@ -141,8 +141,8 @@
     "/slack-install",
     "/slack-install/*",
     "/slack/*",
-    "/dashboard/*",
-    "/login"
+    "/dashboard",
+    "/dashboard/*"
   ],
   "decorativeLines": "none"
 }

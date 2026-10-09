@@ -7,7 +7,7 @@
 
 import './strada-init.js'
 import { z } from 'zod'
-import { Spiceflow } from 'spiceflow'
+import { Spiceflow, ValidationError } from 'spiceflow'
 import { Head } from 'spiceflow/react'
 import { createPrisma } from 'db/src'
 import { app as holocronApp } from '@holocron.so/vite/app'
@@ -27,14 +27,7 @@ import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
 import { reportWebsiteError, websiteTracer } from './strada-init.js'
 import { StradaBrowser } from './strada-browser.tsx'
-import {
-  DashboardLayout,
-  MachineListPage,
-  CreateMachinePage,
-  MachineDetailPage,
-} from './dashboard-page.js'
-import { constructInstallUrl, createFlyClient, flyReachableUrl } from './cloud-service.js'
-import { createCloudActions } from './cloud-actions.js'
+import { cloudApp } from './cloud-routes.js'
 import type { Env } from './env.js'
 
 export { SlackBridgeDO }
@@ -62,29 +55,10 @@ const SLACK_INSTALL_SCOPES = [
   'files:write',
 ]
 
-type AuthSession = {
-  session: { id: string; userId: string; expiresAt: Date; token: string }
-  user: { id: string; name: string; email: string; emailVerified: boolean; image?: string | null }
-} | null
-
 export const app = new Spiceflow({
   ...(websiteTracer ? { tracer: websiteTracer } : {}),
 })
   .state('env', {} as Env)
-  .state('session', null as AuthSession)
-
-  // Resolve session for every request so pages can check auth status.
-  // Cookie caching keeps this fast (no DB hit on most requests).
-  .use(async ({ request, state }) => {
-    const baseURL = new URL(request.url).origin
-    const auth = createAuth({ env: state.env, baseURL })
-    state.session = await auth.api.getSession({ headers: request.headers }).catch(() => null)
-  })
-
-  // Session loader — available to all pages and client components via useLoaderData('/*')
-  .loader('/*', ({ state }) => {
-    return { session: state.session }
-  })
 
   // Redirect kimaki.xyz → kimaki.dev, preserving path and subdomains
   .use(async ({ request }) => {
@@ -120,6 +94,10 @@ export const app = new Spiceflow({
   })
 
   .onError(({ error }) => {
+    // Bad request input (schema validation, malformed JSON body) is the caller's fault.
+    if (error instanceof ValidationError || error instanceof SyntaxError) {
+      return new Response(error.message, { status: 400 })
+    }
     console.error(error)
     reportWebsiteError(error, { route: 'onError' })
     const message = error instanceof Error ? error.message : String(error)
@@ -1047,295 +1025,14 @@ export const app = new Spiceflow({
     },
   })
 
-  // Cloud machines push the soonest local task/sleep so gateway-proxy can
-  // wake a stopped Fly machine before the job is due.
-  .route({
-    method: 'POST',
-    path: '/api/cloud/next-wake',
-    async handler({ request, state }) {
-      const jsonError = (message: string, status: number) => {
-        return new Response(JSON.stringify({ error: message }), {
-          status,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      const authHeader = request.headers.get('Authorization') ?? ''
-      const token = authHeader.replace(/^Bearer\s+/i, '')
-      const separatorIndex = token.indexOf(':')
-      if (separatorIndex <= 0 || separatorIndex >= token.length - 1) {
-        return jsonError('Missing or malformed Authorization header', 401)
-      }
-      const clientId = token.slice(0, separatorIndex)
-      const clientSecret = token.slice(separatorIndex + 1)
-      const body = await (request.json() as Promise<{ next_wake_at?: string | null }>).catch(
-        (cause) => {
-          return new Error('Invalid JSON body', { cause })
-        },
-      )
-      if (body instanceof Error) {
-        return jsonError('Invalid JSON body', 400)
-      }
-      const nextWakeAt = (() => {
-        if (body.next_wake_at == null) {
-          return null
-        }
-        if (typeof body.next_wake_at !== 'string') {
-          return new Error('next_wake_at must be an ISO timestamp or null')
-        }
-        const parsed = new Date(body.next_wake_at)
-        if (Number.isNaN(parsed.getTime())) {
-          return new Error('next_wake_at must be an ISO timestamp or null')
-        }
-        return parsed
-      })()
-      if (nextWakeAt instanceof Error) {
-        return jsonError(nextWakeAt.message, 400)
-      }
-
-      const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
-      const updated = await prisma.gateway_clients
-        .updateMany({
-          where: { client_id: clientId, secret: clientSecret },
-          data: { next_wake_at: nextWakeAt },
-        })
-        .catch((cause) => {
-          return new Error('Failed to update next_wake_at', { cause })
-        })
-      if (updated instanceof Error) {
-        reportWebsiteError(updated, { route: '/api/cloud/next-wake' })
-        return jsonError('Failed to update next wake time', 500)
-      }
-      if (updated.count === 0) {
-        return jsonError('Invalid client credentials', 401)
-      }
-      return { ok: true }
-    },
-  })
-
-  // ── Dashboard routes ──────────────────────────────────────────────
-  // Requires a better-auth session with Discord OAuth.
-  // Pages use RSC + server actions for all mutations.
-
-  .route({
-    method: 'POST',
-    path: '/dashboard/sign-out',
-    async handler({ request, state }) {
-      const baseURL = new URL(request.url).origin
-      const auth = createAuth({ env: state.env, baseURL })
-      const { headers } = await auth.api.signOut({
-        headers: request.headers,
-        returnHeaders: true,
-      })
-      const response = new Response(null, { status: 302, headers: { Location: '/dashboard' } })
-      for (const cookie of headers.getSetCookie()) {
-        response.headers.append('Set-Cookie', cookie)
-      }
-      return response
-    },
-  })
-
-  .layout('/dashboard/*', async ({ children, request, state }) => {
-    const baseURL = new URL(request.url).origin
-    const auth = createAuth({ env: state.env, baseURL })
-    const session = await auth.api.getSession({ headers: request.headers })
-    if (!session) {
-      // Dashboard login only needs identify+email scopes (no bot install).
-      // Use signInSocial with scopes override so Discord shows a simple
-      // "Authorize" prompt instead of the server picker + bot permissions flow.
-      const requestedPath = new URL(request.url).pathname
-      const { response: result, headers } = await auth.api.signInSocial({
-        body: {
-          provider: 'discord',
-          callbackURL: requestedPath,
-          scopes: ['identify', 'email'],
-        },
-        headers: request.headers,
-        returnHeaders: true,
-      })
-      if (!result?.url) {
-        throw new Response('Failed to initiate Discord sign-in', { status: 500 })
-      }
-      // Strip bot-specific params from the URL since we only want identity
-      const oauthUrl = new URL(result.url)
-      oauthUrl.searchParams.delete('permissions')
-      // Override scope to just identify+email (signInSocial may merge with provider defaults)
-      oauthUrl.searchParams.set('scope', 'identify email')
-      const redirectResponse = new Response(null, {
-        status: 302,
-        headers: { Location: oauthUrl.toString() },
-      })
-      for (const cookie of headers.getSetCookie()) {
-        redirectResponse.headers.append('Set-Cookie', cookie)
-      }
-      throw redirectResponse
-    }
-    return <DashboardLayout userName={session.user.name}>{children}</DashboardLayout>
-  })
-
-  .loader('/dashboard', async ({ state, request }) => {
-    const baseURL = new URL(request.url).origin
-    const auth = createAuth({ env: state.env, baseURL })
-    const session = await auth.api.getSession({ headers: request.headers })
-    if (!session) return { machines: [] }
-    const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
-    const machines = await prisma.cloud_machines.findMany({
-      where: { user_id: session.user.id },
-      orderBy: { created_at: 'desc' },
-    })
-    return { machines }
-  })
-  .page('/dashboard', async ({ loaderData }) => {
-    return <MachineListPage machines={loaderData.machines} />
-  })
-
-  .page('/dashboard/create', async ({ state, redirect }) => {
-    const actions = createCloudActions(state.env)
-    async function handleCreate(formData: FormData) {
-      'use server'
-      const machineId = await actions.createMachine(formData)
-      throw redirect(`/dashboard/machines/${machineId}`)
-    }
-    return <CreateMachinePage createAction={handleCreate} />
-  })
-
-  .page('/dashboard/machines/:id', async ({ params, state, request, response, redirect }) => {
-    const baseURL = new URL(request.url).origin
-    const auth = createAuth({ env: state.env, baseURL })
-    const session = await auth.api.getSession({ headers: request.headers })
-    if (!session) {
-      response.status = 404
-      return <p className="text-sm text-muted-foreground">Machine not found</p>
-    }
-    const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
-    const machine = await prisma.cloud_machines.findFirst({
-      where: { id: params.id, user_id: session.user.id },
-    })
-    if (!machine) {
-      response.status = 404
-      return <p className="text-sm text-muted-foreground">Machine not found</p>
-    }
-
-    let installUrl: string | null = null
-    if (machine.status === 'awaiting_authorization') {
-      const callbackUrl = new URL(`/dashboard/machines/${machine.id}/callback`, baseURL).toString()
-      installUrl = constructInstallUrl({
-        clientId: machine.client_id,
-        clientSecret: machine.client_secret,
-        callbackUrl,
-        reachableUrl: flyReachableUrl({ appName: machine.fly_app_name }),
-        websiteOrigin: baseURL,
-      })
-    }
-
-    const cloudActions = createCloudActions(state.env)
-
-    async function handleDelete(formData: FormData) {
-      'use server'
-      await cloudActions.deleteMachine(formData)
-      throw redirect('/dashboard')
-    }
-
-    return (
-      <MachineDetailPage
-        machine={machine}
-        installUrl={installUrl}
-        actions={{
-          startMachine: cloudActions.startMachine,
-          stopMachine: cloudActions.stopMachine,
-          deleteMachine: handleDelete,
-        }}
-      />
-    )
-  })
-
-  // OAuth callback after Discord authorization for a cloud machine.
-  // Validates that the gateway_clients row was created by the OAuth flow
-  // before marking the machine as running, preventing spoofed callbacks.
-  .route({
-    method: 'GET',
-    path: '/dashboard/machines/:id/callback',
-    async handler({ params, request, state }) {
-      const url = new URL(request.url)
-      const guildId = url.searchParams.get('guild_id')
-      const callbackClientId = url.searchParams.get('client_id')
-
-      if (!guildId) {
-        return new Response('Missing guild_id', { status: 400 })
-      }
-
-      const baseURL = url.origin
-      const auth = createAuth({ env: state.env, baseURL })
-      const session = await auth.api.getSession({ headers: request.headers })
-      if (!session) {
-        return new Response(null, {
-          status: 302,
-          headers: { Location: '/dashboard' },
-        })
-      }
-
-      const prisma = createPrisma(state.env.HYPERDRIVE.connectionString)
-
-      // Verify the machine belongs to this user and the client_id matches
-      const machine = await prisma.cloud_machines.findFirst({
-        where: { id: params.id, user_id: session.user.id },
-      })
-      if (!machine) {
-        return new Response('Machine not found', { status: 404 })
-      }
-      if (callbackClientId && callbackClientId !== machine.client_id) {
-        return new Response('Client ID mismatch', { status: 403 })
-      }
-
-      // Verify that the gateway_clients row exists (proving Discord auth happened)
-      const gatewayClient = await prisma.gateway_clients.findFirst({
-        where: {
-          client_id: machine.client_id,
-          guild_id: guildId,
-          secret: machine.client_secret,
-        },
-      })
-      if (!gatewayClient) {
-        return new Response('Authorization not completed. Please try authorizing again.', {
-          status: 409,
-        })
-      }
-
-      if (!state.env.FLY_API_TOKEN) {
-        return new Response('Fly.io API token not configured', { status: 500 })
-      }
-      if (machine.fly_machine_id) {
-        const started = await createFlyClient(state.env.FLY_API_TOKEN).Machine.startMachine({
-          app_name: machine.fly_app_name,
-          machine_id: machine.fly_machine_id,
-        })
-        if (started instanceof Error) {
-          return new Response(`Authorized, but the machine failed to start: ${started.message}`, {
-            status: 502,
-          })
-        }
-      }
-
-      await prisma.cloud_machines.updateMany({
-        where: { id: params.id, user_id: session.user.id },
-        data: {
-          guild_id: guildId,
-          status: 'running',
-        },
-      })
-
-      return new Response(null, {
-        status: 302,
-        headers: { Location: `/dashboard/machines/${params.id}` },
-      })
-    },
-  })
+  .use(cloudApp)
 
   // Holocron docs mounted last so explicit routes above take priority.
   .use(holocronApp)
 
 export default {
   fetch(request: Request, env: Env) {
-    return app.handle(request, { state: { env, session: null } })
+    return app.handle(request, { state: { env } })
   },
   // Re-exported here so Vite's tree-shaker keeps the class in the bundle.
   // Cloudflare Workers requires DO classes to be exported from the entry.

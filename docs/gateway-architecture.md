@@ -117,6 +117,7 @@ next_wake_at - 30s for an offline client                          ├─▶ gate
           ──▶ Fly starts the VM ──▶ kimaki lock server (0.0.0.0:8080) answers once Discord is ready
 ```
 
-- `reachable_url` is written by the dashboard OAuth (`/discord-install?reachableUrl=...`) and cleared by Stop.
+- `reachable_url` is written by the dashboard OAuth (`/discord-install?reachableUrl=...`) and cleared by Pause.
+- website: `cloud-routes.tsx` (pages, OAuth return, next-wake API), `cloud-actions.ts` (form actions), `cloud-service.ts` (Fly and Postgres operations).
 - `kimaki/src/scale-to-zero.ts` owns the idle exit; `kimaki/src/lock-server.ts` owns `POST /kimaki/wake`.
 - gateway-proxy pulses Discord typing in the channel while the client is offline, so the user sees feedback during the cold start.

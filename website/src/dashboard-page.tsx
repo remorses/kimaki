@@ -5,7 +5,8 @@
 import { Link } from 'spiceflow/react'
 import { Head } from 'spiceflow/react'
 import { SignOutButton } from './components/sign-out-button.tsx'
-import { CLOUD_REGIONS, estimateMonthlyCost, formatAlwaysOnComputeLabel } from './cloud-service.js'
+import { createMachine, deleteMachine, pauseMachineAction, resumeMachineAction } from './cloud-actions.js'
+import { CLOUD_REGIONS, estimateMonthlyCost } from './cloud-service.js'
 
 // Minimal type matching the cloud_machines Prisma model.
 // Using a local interface avoids importing the generated Prisma client
@@ -47,10 +48,15 @@ function statusColor(status: string) {
   }
 }
 
+// running: wakes on demand (the VM itself sleeps when idle). stopped: paused, nothing wakes it.
 function statusLabel(status: string) {
   switch (status) {
     case 'awaiting_authorization':
       return 'Awaiting auth'
+    case 'running':
+      return 'Active'
+    case 'stopped':
+      return 'Paused'
     default:
       return status.charAt(0).toUpperCase() + status.slice(1)
   }
@@ -191,11 +197,7 @@ export function MachineListPage({
   )
 }
 
-export function CreateMachinePage({
-  createAction,
-}: {
-  createAction: (formData: FormData) => Promise<void>
-}) {
+export function CreateMachinePage() {
   return (
     <>
       <Head>
@@ -207,7 +209,7 @@ export function CreateMachinePage({
           Deploy a managed Kimaki instance on Fly.io.
         </p>
 
-        <form action={createAction} className="mt-8 flex flex-col gap-5">
+        <form action={createMachine} className="mt-8 flex flex-col gap-5">
           <div className="flex flex-col gap-1.5">
             <label htmlFor="region" className="text-sm font-medium">
               Region
@@ -297,15 +299,9 @@ export function CreateMachinePage({
 export function MachineDetailPage({
   machine,
   installUrl,
-  actions,
 }: {
   machine: CloudMachine
   installUrl: string | null
-  actions: {
-    startMachine: (formData: FormData) => Promise<void>
-    stopMachine: (formData: FormData) => Promise<void>
-    deleteMachine: (formData: FormData) => Promise<void>
-  }
 }) {
   const region = CLOUD_REGIONS.find((r) => r.code === machine.region)
   const cost = estimateMonthlyCost({
@@ -314,8 +310,8 @@ export function MachineDetailPage({
     diskSizeGb: machine.disk_size_gb,
   })
 
-  const isRunning = machine.status === 'running'
-  const isStopped = machine.status === 'stopped'
+  const isActive = machine.status === 'running'
+  const isPaused = machine.status === 'stopped'
 
   return (
     <>
@@ -341,25 +337,25 @@ export function MachineDetailPage({
           >
             {statusLabel(machine.status)}
           </span>
-          {isStopped ? (
-            <form action={actions.startMachine}>
+          {isPaused ? (
+            <form action={resumeMachineAction}>
               <input type="hidden" name="machine_id" value={machine.id} />
               <button
                 type="submit"
                 className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs font-medium transition-colors hover:bg-accent"
               >
-                Start
+                Resume
               </button>
             </form>
           ) : null}
-          {isRunning ? (
-            <form action={actions.stopMachine}>
+          {isActive ? (
+            <form action={pauseMachineAction}>
               <input type="hidden" name="machine_id" value={machine.id} />
               <button
                 type="submit"
                 className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs font-medium transition-colors hover:bg-accent"
               >
-                Stop
+                Pause
               </button>
             </form>
           ) : null}
@@ -395,7 +391,7 @@ export function MachineDetailPage({
         <div className="mt-3 flex gap-8 text-sm">
           <div>
             <div className="text-muted-foreground">Compute</div>
-            <div className="mt-0.5 font-medium">{formatAlwaysOnComputeLabel({ compute: cost.compute })}</div>
+            <div className="mt-0.5 font-medium">${cost.alwaysOnCompute.toFixed(2)}/mo if always on</div>
           </div>
           <div>
             <div className="text-muted-foreground">Storage</div>
@@ -403,7 +399,7 @@ export function MachineDetailPage({
           </div>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Storage is billed while the volume exists. Compute is billed only while the machine runs.
+          Storage is billed while the volume exists. Compute is billed only while the VM runs: an active machine sleeps after 10 idle minutes and wakes on the next Discord message or scheduled task. A paused machine never wakes.
         </p>
       </div>
 
@@ -412,7 +408,7 @@ export function MachineDetailPage({
         <p className="mt-1 text-sm text-muted-foreground">
           Permanently delete this machine, its volume, and all data.
         </p>
-        <form action={actions.deleteMachine} className="mt-3">
+        <form action={deleteMachine} className="mt-3">
           <input type="hidden" name="machine_id" value={machine.id} />
           <button
             type="submit"

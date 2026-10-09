@@ -25,11 +25,8 @@ fi
 export KIMAKI_LOCK_PORT=8080
 export KIMAKI_SCALE_TO_ZERO=1
 
-if [ -n "${KIMAKI_CLOUD_FLY_APP:-}" ]; then
-  export KIMAKI_INTERNET_REACHABLE_URL="https://${KIMAKI_CLOUD_FLY_APP}.fly.dev"
-elif [ -n "${FLY_APP_NAME:-}" ]; then
-  export KIMAKI_INTERNET_REACHABLE_URL="https://${FLY_APP_NAME}.fly.dev"
-fi
+# Fly sets FLY_APP_NAME. gateway-proxy POSTs https://<app>.fly.dev/kimaki/wake.
+export KIMAKI_INTERNET_REACHABLE_URL="https://${FLY_APP_NAME}.fly.dev"
 
 echo "[kimaki-cloud] Starting kimaki..."
 # Exit 0 after the idle window: Fly stops the VM (restart policy on-failure).

@@ -5,8 +5,6 @@ import { FlyApiError, FlyNotFoundError } from '@fly.io/sdk'
 import {
   flyAppNameForMachine,
   flyCleanupFailed,
-  flyMachineEnv,
-  flyMachineSecrets,
   isCloudProvisionAllowed,
   isFlyMissing,
   parseCloudProvisionAllowlist,
@@ -76,35 +74,6 @@ describe('flyAppNameForMachine', () => {
     for (const name of names) {
       expect(name).toMatch(/^kimaki-cloud-abcdef12-[0-9a-f]{8}$/)
     }
-  })
-})
-
-describe('fly machine config helpers', () => {
-  test('machine env has no client secret or bot token', () => {
-    const env = flyMachineEnv({
-      appName: 'kimaki-cloud-abcdef12-deadbeef',
-      clientId: 'client-1',
-    })
-    expect(env).toEqual({
-      NODE_ENV: 'production',
-      KIMAKI_CLOUD_FLY_APP: 'kimaki-cloud-abcdef12-deadbeef',
-      KIMAKI_CLOUD_CLIENT_ID: 'client-1',
-      KIMAKI_LOCK_PORT: '8080',
-      KIMAKI_SCALE_TO_ZERO: '1',
-    })
-    expect(env).not.toHaveProperty('KIMAKI_BOT_TOKEN')
-    expect(env).not.toHaveProperty('KIMAKI_CLOUD_CLIENT_SECRET')
-  })
-
-  test('secrets stay out of machine env', () => {
-    expect(
-      flyMachineSecrets({
-        clientId: 'client-1',
-        clientSecret: 'secret-1',
-      }),
-    ).toEqual({
-      KIMAKI_BOT_TOKEN: 'client-1:secret-1',
-    })
   })
 })
 

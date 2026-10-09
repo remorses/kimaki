@@ -2,7 +2,9 @@
 'website': minor
 ---
 
-Add the Kimaki Cloud dashboard at `/dashboard`: create, start, stop and delete managed Kimaki machines on Fly.io.
+Add the Kimaki Cloud dashboard at `/dashboard`: create, pause, resume and delete managed Kimaki machines on Fly.io.
+
+An **active** machine sleeps when idle and wakes on the next Discord message or scheduled task. A **paused** machine never wakes until you resume it.
 
 ```
 /dashboard/create ─▶ Fly app + secrets + volume + machine (not launched)
