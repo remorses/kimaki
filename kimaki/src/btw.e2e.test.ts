@@ -98,6 +98,10 @@ test('. btw forks into a side thread while the source run continues', async () =
   `)
   const rows = await bot.db.query.thread_sessions.findMany({ where: { thread_id: fork.id } })
   expect(rows.length).toBe(1)
+  // The plugin only exports KIMAKI_TOOL_CALL to shells when the marker has the CLI context,
+  // so `kimaki buttons` failed on the first turn of every fork.
+  const info = await (await server.client()).session.get({ sessionID: rows[0]!.session_id })
+  expect(info.metadata?.['kimaki']).toMatchObject({ threadId: fork.id, dataDir, lockPort: expect.any(Number) })
 })
 
 test('/btw forks from a thread with an idle session', async () => {

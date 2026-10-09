@@ -754,7 +754,7 @@ export async function forkBtw(
     return thread
   }
 
-  const kimaki = { threadId: thread.id, channelId: project.channelId, source: 'discord' }
+  const kimaki = { threadId: thread.id, channelId: project.channelId, source: 'discord', ...cliContext(bot) }
   const marked = await oc(bot, 'session.update', (client) => client.session.update({ sessionID: forked.id, metadata: { kimaki } }))
   if (marked instanceof Error) return marked
   const bound = await bindThread(bot, {
