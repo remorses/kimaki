@@ -41,6 +41,7 @@ import type {
 } from 'discord-api-types/v10'
 import { DiscordGateway } from './gateway.js'
 import type { GatewayAuthorize, GatewayOfflineClients, GatewayState } from './gateway.js'
+import type { DiscordVoiceServer } from './voice.js'
 import type { PrismaClient } from './generated/client.js'
 import {
   userToAPI,
@@ -166,6 +167,7 @@ export function createServer({
   loadGatewayState,
   gatewayUrlOverride,
   offlineClients,
+  voice,
 }: {
   prisma: PrismaClient
   botUserId: string
@@ -177,6 +179,7 @@ export function createServer({
   gatewayUrlOverride?: string
   // gatewayProxy mode: registered clients, for the offline event buffer.
   offlineClients?: GatewayOfflineClients
+  voice?: DiscordVoiceServer
 }): ServerComponents {
   const state = { port: 0 }
   const typingEvents: TypingEventRecord[] = []
@@ -2045,6 +2048,8 @@ export function createServer({
     loadState: loadGatewayState,
     authorize,
     offlineClients,
+    botUserId,
+    voice,
   })
 
   return {

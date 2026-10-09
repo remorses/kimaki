@@ -30,6 +30,7 @@ import {
   type TypingEventRecord,
 } from './server.js'
 import type { GatewayState } from './gateway.js'
+import { DiscordVoiceServer, type VoiceStream } from './voice.js'
 import {
   userToAPI,
   guildToAPI,
@@ -137,7 +138,13 @@ export interface DigitalDiscordOptions {
   // thread events for a registered client with no connection are buffered and
   // replayed after its next READY, like the proxy's offline buffer.
   gatewayProxy?: boolean
+  // Start a voice server: gateway op 4 joins get VOICE_SERVER_UPDATE and
+  // @discordjs/voice can connect and send audio, recorded as opus frames
+  // (getVoiceStreams). Needs the openssl CLI for the wss:// certificate.
+  voice?: boolean
 }
+
+export type { VoiceStream }
 
 export type DigitalDiscordCommandOption = {
   name: string
@@ -197,6 +204,7 @@ export class DigitalDiscord {
   // gatewayProxy mode: client token -> authorized guild IDs.
   private gatewayClients = new Map<string, Set<string>>()
   private seeded = false
+  private voiceServer: DiscordVoiceServer | null = null
   private interactionEvents: DigitalDiscordInteractionEvent[] = []
 
   constructor(options: DigitalDiscordOptions = {}) {
@@ -244,7 +252,12 @@ export class DigitalDiscord {
     if (this.options.gatewayProxy && this.botToken.includes(':')) {
       this.authorizeGatewayClient({ token: this.botToken, guildIds: this.guildIds })
     }
+    if (this.options.voice && !this.voiceServer) {
+      this.voiceServer = new DiscordVoiceServer()
+      await this.voiceServer.start()
+    }
     this.server = createServer({
+      voice: this.voiceServer ?? undefined,
       prisma: this.prisma,
       botUserId: this.botUserId,
       gatewayProxy: Boolean(this.options.gatewayProxy),
@@ -266,6 +279,51 @@ export class DigitalDiscord {
       await stopServer(this.server)
       this.server = null
     }
+    await this.voiceServer?.stop()
+    this.voiceServer = null
+  }
+
+  // --- Voice (needs the `voice` option) ---
+
+  private requireVoice(): DiscordVoiceServer {
+    if (!this.voiceServer) throw new Error('DigitalDiscord was started without the voice option')
+    return this.voiceServer
+  }
+
+  // Trust the self-signed wss:// certificate of the voice server in this process.
+  trustVoiceCertificate(): void {
+    this.requireVoice().trustCertificate()
+  }
+
+  getVoiceStreams({ channelId, userId }: { channelId?: string; userId?: string } = {}): VoiceStream[] {
+    return this.requireVoice().streams.filter((stream) => {
+      return (!channelId || stream.channelId === channelId) && (!userId || stream.userId === userId)
+    })
+  }
+
+  // Resolves with the first finished audio stream that matches: Speaking is
+  // off and no opus frame arrived for 200ms (UDP can trail the Speaking message).
+  async waitForVoiceStream({
+    channelId,
+    userId,
+    timeout = 10000,
+  }: { channelId?: string; userId?: string; timeout?: number } = {}): Promise<VoiceStream> {
+    const effectiveTimeout = normalizeWaitTimeout(timeout)
+    const start = Date.now()
+    while (Date.now() - start < effectiveTimeout) {
+      const stream = this.getVoiceStreams({ channelId, userId }).find((candidate) => {
+        return !candidate.speaking && candidate.opusPackets.length > 0 && Date.now() - candidate.lastPacketAt > 200
+      })
+      if (stream) return stream
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    throw new Error(`Timed out waiting for a voice stream in ${channelId ?? 'any channel'}`)
+  }
+
+  // A user joins a voice channel (channelId) or leaves voice (null).
+  async setUserVoiceChannel({ userId, guildId, channelId }: { userId: string; guildId: string; channelId: string | null }): Promise<void> {
+    if (!this.server) throw new Error('DigitalDiscord is not started')
+    this.server.gateway.setVoiceState({ guildId, channelId, userId, sessionId: `user-${userId}` })
   }
 
   // gatewayProxy mode: what the website's OAuth callback does (a
@@ -1521,6 +1579,21 @@ export class ScopedUserActor {
     this.discord = discord
     this.channelId = channelId
     this.userId = userId
+  }
+
+  // The user joins this voice channel (VOICE_STATE_UPDATE to the guild).
+  async joinVoice(): Promise<void> {
+    await this.setVoice(this.channelId)
+  }
+
+  async leaveVoice(): Promise<void> {
+    await this.setVoice(null)
+  }
+
+  private async setVoice(channelId: string | null): Promise<void> {
+    const channel = await this.discord.prisma.channel.findUniqueOrThrow({ where: { id: this.channelId } })
+    if (!channel.guildId) throw new Error(`Channel ${this.channelId} is not in a guild`)
+    await this.discord.setUserVoiceChannel({ userId: this.userId, guildId: channel.guildId, channelId })
   }
 
   async sendMessage({

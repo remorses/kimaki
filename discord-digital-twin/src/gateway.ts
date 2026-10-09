@@ -23,11 +23,13 @@ import type {
   APIGuildMember,
   APIChannel,
   APIMessage,
-   APIBaseVoiceState,
-   APIStageInstance,
-   APIGuildScheduledEvent,
-   APISoundboardSound,
+  APIVoiceState,
+  APIStageInstance,
+  APIGuildScheduledEvent,
+  APISoundboardSound,
+  GatewayVoiceServerUpdateDispatchData,
 } from 'discord-api-types/v10'
+import type { DiscordVoiceServer } from './voice.js'
 
 interface ConnectedClient {
   ws: WebSocket
@@ -85,6 +87,10 @@ export class DiscordGateway {
   private offlineClients: GatewayOfflineClients | null
   // Client token -> events it missed while offline, oldest first.
   private offlineEvents = new Map<string, BufferedEvent[]>()
+  private botUserId: string
+  private voice: DiscordVoiceServer | null
+  // `${guildId}:${userId}` -> voice state, for users and the bot in a voice channel.
+  private voiceStates = new Map<string, APIVoiceState>()
 
   constructor({
     httpServer,
@@ -92,6 +98,8 @@ export class DiscordGateway {
     loadState,
     authorize,
     offlineClients,
+    botUserId,
+    voice,
   }: {
     httpServer: http.Server
     port: number
@@ -99,11 +107,16 @@ export class DiscordGateway {
     authorize: GatewayAuthorize
     // Only in gateway-proxy mode. Real Discord has no offline buffer.
     offlineClients?: GatewayOfflineClients
+    botUserId: string
+    // Voice server for op 4 joins. Without it, op 4 is ignored.
+    voice?: DiscordVoiceServer
   }) {
     this.port = port
     this.loadState = loadState
     this.authorize = authorize
     this.offlineClients = offlineClients ?? null
+    this.botUserId = botUserId
+    this.voice = voice ?? null
     // Use noServer mode so we can accept both /gateway and /gateway/
     // (twilight-gateway appends /?v=10&encoding=json, creating path /gateway/)
     this.wss = new WebSocketServer({ noServer: true })
@@ -161,6 +174,70 @@ export class DiscordGateway {
       mentions: [],
     }
     this.broadcast(GatewayDispatchEvents.MessageCreate, data)
+  }
+
+  // Moves a user (or the bot) into a voice channel, or out with channelId null,
+  // and broadcasts VOICE_STATE_UPDATE to the guild.
+  setVoiceState({
+    guildId,
+    channelId,
+    userId,
+    sessionId,
+    selfMute = false,
+    selfDeaf = false,
+  }: {
+    guildId: string
+    channelId: string | null
+    userId: string
+    sessionId: string
+    selfMute?: boolean
+    selfDeaf?: boolean
+  }): void {
+    const key = `${guildId}:${userId}`
+    const state: APIVoiceState = {
+      guild_id: guildId,
+      channel_id: channelId,
+      user_id: userId,
+      session_id: sessionId,
+      deaf: false,
+      mute: false,
+      self_deaf: selfDeaf,
+      self_mute: selfMute,
+      self_video: false,
+      suppress: false,
+      request_to_speak_timestamp: null,
+    }
+    if (channelId) this.voiceStates.set(key, state)
+    else this.voiceStates.delete(key)
+    this.broadcast(GatewayDispatchEvents.VoiceStateUpdate, state)
+  }
+
+  // Gateway op 4 from the bot session.
+  private handleVoiceStateUpdate(
+    client: ConnectedClient,
+    { guildId, channelId, selfMute, selfDeaf }: { guildId: string; channelId: string | null; selfMute: boolean; selfDeaf: boolean },
+  ): void {
+    if (!this.voice) return
+    if (client.guilds && !client.guilds.has(guildId)) return
+    const current = this.voiceStates.get(`${guildId}:${this.botUserId}`)
+    // Like Discord: a join for the channel this session is already in only
+    // updates mute/deaf, with no new voice token. No change sends no events.
+    if (channelId && current?.channel_id === channelId && current.session_id === client.sessionId) {
+      if (current.self_mute === selfMute && current.self_deaf === selfDeaf) return
+      this.setVoiceState({ guildId, channelId, userId: this.botUserId, sessionId: client.sessionId, selfMute, selfDeaf })
+      return
+    }
+    if (!channelId) {
+      if (!current) return
+      this.voice.revoke({ guildId, userId: this.botUserId })
+      this.setVoiceState({ guildId, channelId: null, userId: this.botUserId, sessionId: client.sessionId })
+      return
+    }
+    this.setVoiceState({ guildId, channelId, userId: this.botUserId, sessionId: client.sessionId, selfMute, selfDeaf })
+    const token = this.voice.grant({ guildId, channelId, userId: this.botUserId, sessionId: client.sessionId })
+    const server: GatewayVoiceServerUpdateDispatchData = { token, guild_id: guildId, endpoint: this.voice.endpoint }
+    // Only the session that asked gets the voice token.
+    this.sendDispatch(client, GatewayDispatchEvents.VoiceServerUpdate, server)
   }
 
   close(): void {
@@ -231,6 +308,12 @@ export class DiscordGateway {
       if (idx !== -1) {
         this.clients.splice(idx, 1)
       }
+      // The bot leaves voice when the gateway session that joined ends.
+      for (const state of [...this.voiceStates.values()]) {
+        if (state.user_id !== this.botUserId || state.session_id !== client.sessionId || !state.guild_id) continue
+        this.voice?.revoke({ guildId: state.guild_id, userId: this.botUserId })
+        this.setVoiceState({ guildId: state.guild_id, channelId: null, userId: this.botUserId, sessionId: client.sessionId })
+      }
     })
   }
 
@@ -263,6 +346,12 @@ export class DiscordGateway {
         await this.sendReadySequence(client)
         break
       }
+      case GatewayOpcodes.VoiceStateUpdate: {
+        if (!client.identified) return
+        const { guild_id, channel_id, self_mute, self_deaf } = payload.d
+        this.handleVoiceStateUpdate(client, { guildId: guild_id, channelId: channel_id, selfMute: self_mute, selfDeaf: self_deaf })
+        break
+      }
     }
   }
 
@@ -293,7 +382,6 @@ export class DiscordGateway {
     this.sendDispatch(client, GatewayDispatchEvents.Ready, readyData)
 
     // Typed empty arrays so TS doesn't infer never[]
-    const emptyVoiceStates: APIBaseVoiceState[] = []
     const emptyPresences: GatewayPresenceUpdate[] = []
     const emptyStageInstances: APIStageInstance[] = []
     const emptyScheduledEvents: APIGuildScheduledEvent[] = []
@@ -313,7 +401,9 @@ export class DiscordGateway {
         large: false,
         unavailable: false,
         member_count: guild.members.length,
-        voice_states: emptyVoiceStates,
+        voice_states: [...this.voiceStates.values()]
+          .filter((voiceState) => voiceState.guild_id === guild.id)
+          .map(({ guild_id: _guildId, ...voiceState }) => voiceState),
         members: guild.members,
         channels: guild.channels as GuildCreateChannels,
         threads: [] as GuildCreateThreads,
