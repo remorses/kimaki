@@ -129,7 +129,7 @@ export function decodeTaskPayload(json: string): ConfigError | TaskJob {
     prompt,
     ...(agent !== null && { agent }),
     ...(model !== null && { model }),
-    ...(user !== null && { user }),
+    ...(user !== null && { user: [user] }),
     ...(parentSessionId !== null && { parentSessionId }),
     ...(permissions !== null && { permissions }),
   }
@@ -168,7 +168,7 @@ export function encodeTaskPayload({ send, preRun, allowConcurrency, username, in
     agent: send.agent ?? null,
     model: send.model ?? null,
     username,
-    userId: send.user ?? null,
+    userId: send.user?.[0] ?? null,
     permissions: send.permissions ?? null,
     injectionGuardPatterns,
     parentSessionId: send.parentSessionId ?? null,
@@ -254,7 +254,7 @@ export async function listTasks({ db, guildId = null }: { db: KimakiDb; guildId?
       threadId: job?.send.threadId ?? null,
       agent: job?.send.agent ?? null,
       model: job?.send.model ?? null,
-      userId: job?.send.user ?? null,
+      userId: job?.send.user?.[0] ?? null,
       preRun: job?.preRun ?? null,
       allowConcurrency: job?.allowConcurrency ?? false,
       lastError: row.last_error,
@@ -313,7 +313,7 @@ async function execute(bot: Bot, row: TaskRow): Promise<Error | RunOutcome> {
     prompt: checked.prompt,
     agent: job.send.agent || undefined,
     model: job.send.model || undefined,
-    user: job.send.user || undefined,
+    user: job.send.user?.length ? job.send.user : undefined,
     parentSessionId: job.send.parentSessionId || undefined,
     permissions: job.send.permissions?.length ? job.send.permissions : undefined,
     name: job.send.name || undefined,
@@ -407,7 +407,8 @@ export async function createTask(bot: Bot, { send: input, options }: { send: Sen
   const when = parseSendAt({ value: options.sendAt, now: bot.clock.now() })
   if (when instanceof Error) return when
   if (input.files?.length) return new ConfigError({ reason: '--file cannot be scheduled. Put the file in the project and name it in the prompt.' })
-  const user = userIdOf(input.user ?? '')
+  if ((input.user?.length ?? 0) > 1) return new ConfigError({ reason: 'A scheduled task takes one --user' })
+  const user = userIdOf(input.user?.[0] ?? '')
   if (user instanceof Error) return user
   if (input.model && !/^[^/]+\/.+$/.test(input.model)) return new ConfigError({ reason: 'Use --model provider/model' })
   const roots = bot.store.getState().roots
@@ -433,7 +434,7 @@ export async function createTask(bot: Bot, { send: input, options }: { send: Sen
   // The encoder keeps only the fields of the target kind.
   const target = threadId ? { threadId } : { channelId: project.channel_id }
   const payload = encodeTaskPayload({
-    send: { ...input, ...target, user: user ?? undefined },
+    send: { ...input, ...target, user: user ? [user] : undefined },
     preRun: options.preRun,
     allowConcurrency: options.allowConcurrency,
     username: null,
@@ -482,7 +483,7 @@ export async function editTask(bot: Bot, edit: TaskEdit) {
       prompt,
       ...(edit.agent !== undefined && { agent: edit.agent || undefined }),
       ...(edit.model !== undefined && { model: edit.model || undefined }),
-      ...(edit.user !== undefined && { user: user ?? undefined }),
+      ...(edit.user !== undefined && { user: user ? [user] : undefined }),
     },
     ...(edit.preRun !== undefined && { preRun: edit.preRun || null }),
     ...(edit.allowConcurrency !== undefined && { allowConcurrency: edit.allowConcurrency }),

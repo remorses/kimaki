@@ -530,7 +530,12 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
   if (input.permissions?.length && (input.threadId || input.sessionId || input.notifyOnly)) {
     return new ConfigError({ reason: '--permission applies only to new sessions. Start a new session without --thread, --session, or --notify-only' })
   }
-  const author = { id: input.user?.replace(/[<@!>]/g, '') ?? bot.discord.user!.id, username: task ? `task #${task.id}` : 'CLI' }
+  const userIds = (input.user ?? []).map((user) => user.replace(/[<@!>]/g, ''))
+  const author = { id: userIds[0] ?? bot.discord.user!.id, username: task ? `task #${task.id}` : 'CLI' }
+  // Every --user joins the thread; startSession adds the author of a new session itself.
+  const addMembers = async (thread: ThreadChannel, ids: readonly string[]) => {
+    for (const id of ids) await thread.members.add(id).catch((error: Error) => logger.warn(`add thread member ${id}`, error))
+  }
   const messageId = crypto.randomUUID()
   const route = parseTextMessage({ content: input.prompt })
   if (!route) return new ConfigError({ reason: 'Prompt is empty' })
@@ -547,7 +552,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
       if (project instanceof Error) return project
       return !project && !localOnly ? remoteSend(bot, input) : new ConfigError({ reason: 'No local session for this thread' })
     }
-    if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add thread member`, error))
+    await addMembers(thread, userIds)
     if (input.model) {
       const model = parseModel(input.model, null)
       if (!model) return new ConfigError({ reason: 'Use --model provider/model' })
@@ -582,7 +587,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
       })
       .catch((cause) => new DiscordError({ operation: 'post notification', cause }))
     if (shown instanceof Error) return shown
-    if (input.user) await thread.members.add(author.id).catch((error: Error) => logger.warn(`add notification member`, error))
+    await addMembers(thread, userIds)
     return { threadId: thread.id, sessionId: null }
   }
 
@@ -623,6 +628,10 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
     baseBranch: input.baseBranch,
     ...(model && { model: { ...model, variant: null } }),
   })
+  if (started instanceof Error || userIds.length < 2) return started
+  const thread = await fetchThread(bot, started.threadId)
+  if (thread instanceof Error) logger.warn(`add thread members`, thread)
+  else await addMembers(thread, userIds.slice(1))
   return started
 }
 

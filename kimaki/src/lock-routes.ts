@@ -74,7 +74,8 @@ const sendFields = {
   name: text('name').optional(),
   agent: text('agent').optional(),
   model: text('model').optional(),
-  user: text('user').optional(),
+  // One ID or several (`--user` is repeatable); every user is added to the thread, the first is the author.
+  user: z.union([text('user').transform((id) => [id]), z.array(text('user'), { error: 'user must be a string or a list of strings' })]).optional(),
   cwd: text('cwd').optional(),
   parentSessionId: text('parentSessionId').optional(),
   baseBranch: text('baseBranch').optional(),

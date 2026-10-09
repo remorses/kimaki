@@ -21,7 +21,7 @@ export function registerSendCommand(cli: Goke) {
     .option('-n, --name <text>', 'Thread name')
     .option('--agent <name>', 'Agent ID')
     .option('--model <provider/model>', 'Model for the new session')
-    .option('-u, --user <id>', 'Add this Discord user to the thread')
+    .option('-u, --user <id>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Add this Discord user to the thread (repeatable)' }))
     .option('--cwd <path>', 'Existing project subfolder or linked Git worktree')
     .option('--worktree [name]', 'Create a custom Git worktree (automatic name when omitted)')
     .option('--base-branch <ref>', 'Starting ref for --worktree (default: project HEAD)')

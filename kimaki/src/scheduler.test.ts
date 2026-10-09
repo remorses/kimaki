@@ -54,7 +54,9 @@ test('V1 task payloads decode to the send input of each run and encode back unch
           "parentSessionId": "ses_parent",
           "prompt": "Weekly check",
           "threadId": "300",
-          "user": "100",
+          "user": [
+            "100",
+          ],
         },
         "username": "tommy",
       },
@@ -75,7 +77,9 @@ test('V1 task payloads decode to the send input of each run and encode back unch
             "bash:*:allow",
           ],
           "prompt": "Weekly check",
-          "user": "100",
+          "user": [
+            "100",
+          ],
           "worktree": "",
         },
         "username": "tommy",

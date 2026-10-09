@@ -229,7 +229,7 @@ export function baseInstructions({
       Use this to spawn parallel helper sessions like teammates: start threads with focused prompts, then come back and collect the results. Rules for every new session:
       - ALWAYS pass \`--parent-session ${sessionId}\` (your current session ID). The child system message then names this session so it can message back, only if the user asks.
       - Pass \`--agent <current_agent>\` so spawned and scheduled sessions keep the same agent unless you are intentionally switching. Replace \`<current_agent>\` with your agent ID: the \`agent\` field of session \`${sessionId}\` in \`kimaki session list --all --json\`.
-      - \`--user\` accepts a Discord user ID or raw mention only and adds that user to the thread. Resolve names to IDs with \`kimaki user list\` first.
+      - \`--user\` accepts a Discord user ID or raw mention only and adds that user to the thread. Repeat it to add several users. Resolve names to IDs with \`kimaki user list\` first.
       - Use single quotes around \`--prompt\`, \`--user\`, \`--send-at\`, and other literal arguments so backticks inside prompts are not executed by the shell.
       - The new session has no memory of this conversation. Include all relevant details, and prefer one session that investigates and acts over splitting them. Use **bold**, \`code\`, lists, and > quotes for readability.
       - Prompts over 2000 chars for another machine's channel are sent as a file attachment automatically.

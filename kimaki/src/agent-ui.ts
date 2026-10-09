@@ -206,7 +206,7 @@ async function clickAgentButton(bot: Bot, interaction: ButtonInteraction) {
   const item = prompt.buttons[Number(index)]
   if (!item) return
   bot.eventLoop.dispatch(interaction.channelId, { type: 'kimaki.agent-ui-dismiss', id })
-  const result = await send(bot, { threadId: interaction.channelId, prompt: `User clicked: ${item.label}`, user: interaction.user.id })
+  const result = await send(bot, { threadId: interaction.channelId, prompt: `User clicked: ${item.label}`, user: [interaction.user.id] })
   if (result instanceof Error) await interaction.followUp({ content: result.message, flags: MessageFlags.Ephemeral })
 }
 

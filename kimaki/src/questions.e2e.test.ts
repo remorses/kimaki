@@ -115,7 +115,7 @@ async function waitForSelects({ threadId, count }: { threadId: string; count: nu
 
 // Kimaki sessions deny the question tool; `--permission question:allow` turns it back on.
 async function startThread(content: string) {
-  const started = await send(bot, { channelId: twin.channelId, prompt: content, user: TEST_USER_ID, permissions: ['question:allow'] })
+  const started = await send(bot, { channelId: twin.channelId, prompt: content, user: [TEST_USER_ID], permissions: ['question:allow'] })
   if (started instanceof Error) throw started
   return { id: started.threadId }
 }
