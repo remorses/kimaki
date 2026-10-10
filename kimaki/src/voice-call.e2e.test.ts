@@ -133,7 +133,6 @@ test('a user joins, speaks, the model runs a kimaki command and answers; leaving
     -# ┣ shell _seq 1 2000; kimaki project list_
     -# ┣ shell _kimaki send --channel 200000000000000100 --prompt 'Voice call note' --notify-on…_
     -# ⬦ session started in <#thread>
-    -# ┣ post\\_message (text:)
     -#  ⨯  post\\_message _text must not be empty_
     You have one project."
   `)
@@ -184,7 +183,7 @@ test('chat messages reach the model, and end_call leaves while the user stays', 
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).sendMessage({ content: 'please hang up' })
   await waitFor({ label: 'bot out of voice', check: async () => botVoiceChannel() === null })
   await waitForChat('voice call ended: the assistant hung up')
-  expect(realtime.userTexts.at(-1)).toBe('tommy wrote in the chat: please hang up')
+  expect(realtime.userTexts.at(-1)).toBe(`<chat-message from="tommy" user-id="${TEST_USER_ID}">\nplease hang up\n</chat-message>`)
   const messages = (await twin.discord.channel(voiceChannelId).getMessages()).slice(before)
   expect(messages.map((message) => `${message.author.username}: ${message.content}`).join('\n')).toMatchInlineSnapshot(`
     "TestBot: -# ⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin

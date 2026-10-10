@@ -49,7 +49,7 @@ import { createLogger } from './logger.ts'
 import { addVoiceChannel, listProjects } from './project.ts'
 import { formatEcho } from './queue.ts'
 import * as schema from './schema.ts'
-import { catalogReady } from './sessions.ts'
+import { catalogReady, primaryAgents } from './sessions.ts'
 import { voiceCallInstructions } from './system-prompt.ts'
 
 const logger = createLogger('VCALL')
@@ -251,17 +251,21 @@ async function globalSkills(bot: Bot, directory: string) {
 // OpenCode reads the global AGENTS.md from its config dir (core/src/config/plugin/instruction.ts).
 async function globalContext(bot: Bot, { configDir }: { configDir: string }) {
   const agentsPath = path.join(configDir, 'AGENTS.md')
-  const [content, skills] = await Promise.all([
+  const [content, skills, agents] = await Promise.all([
     fs.promises
       .readFile(agentsPath, 'utf8')
       .catch((cause: NodeJS.ErrnoException) => (cause.code === 'ENOENT' ? null : new VoiceCallError({ operation: `read ${agentsPath}`, cause }))),
     globalSkills(bot, configDir),
+    primaryAgents(bot, configDir),
   ])
   if (content instanceof Error) logger.warn(`global AGENTS.md`, content)
   if (skills instanceof Error) logger.warn(`global skills`, skills)
+  if (agents instanceof Error) logger.warn(`global agents`, agents)
   return {
     agentsMd: typeof content === 'string' && content.trim() ? { path: agentsPath, content } : null,
     skills: skills instanceof Error ? [] : skills,
+    // Same list as session threads get: the IDs kimaki send --agent takes.
+    agents: agents instanceof Error ? [] : agents.map((agent) => ({ name: agent.id, description: agent.description ?? '' })),
   }
 }
 
@@ -418,7 +422,8 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
       }
       if (message.kind === 'tool') {
         call.posted.add(index)
-        post(bot, { channelId: call.channelId, text: toolCallLine(message) })
+        // The posted message shows itself; a failed post still gets its failure line.
+        if (message.name !== 'post_message') post(bot, { channelId: call.channelId, text: toolCallLine(message) })
         continue
       }
       // Text before a tool call is complete, and its line must come before the tool line.
@@ -586,8 +591,12 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
         },
       },
       post_message: {
-        description: 'Post markdown in the text chat of this voice channel: links, IDs, lists, code.',
-        parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+        description: 'Post markdown in the text chat of this voice channel: links, IDs, lists, code. The users see the text as is, so write only the content, with no intro like "Here is the link".',
+        parameters: {
+          type: 'object',
+          properties: { text: { type: 'string', description: 'Only the content, e.g. "[Signup fix thread](https://discord.com/channels/...)" or a short list' } },
+          required: ['text'],
+        },
         execute(args) {
           const parsed = postArgs.safeParse(args)
           if (!parsed.success) return { error: parsed.error.issues.map((issue) => issue.message).join('; ') }
@@ -674,6 +683,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
       builtinSearch: model.builtinSearch,
       agentsMd: context.agentsMd,
       skills: context.skills,
+      agents: context.agents,
     })
     const speaker = createSpeaker(connection, { onError: (error) => report(bot, { channelId, label: 'audio player', error }) })
     const holder: { call: Call | null } = { call: null }
@@ -828,7 +838,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     async text(bot: Bot, { guildId, channelId, author, content }: { guildId: string; channelId: string; author: Author; content: string }) {
       const call = calls.get(guildId)
       if (!call || call.channelId !== channelId || call.ending || !content.trim()) return
-      const sent = sendHidden(call, `${author.username} wrote in the chat: ${content}`)
+      const sent = sendHidden(call, `<chat-message from="${author.username}" user-id="${author.id}">\n${content}\n</chat-message>`)
       if (sent instanceof Error) return new VoiceCallError({ operation: 'forward a chat message', cause: sent })
     },
     async stop(bot: Bot) {
