@@ -61,8 +61,8 @@ const text = (key: string) => {
 const oneOf = <const T extends readonly [string, ...string[]]>(values: T, error: string) =>
   z.string({ error }).pipe(z.enum(values, { error }))
 
-const taskId = z.number({ error: 'Task ID must be a positive integer' })
-  .refine((id) => Number.isSafeInteger(id) && id >= 1, { error: 'Task ID must be a positive integer' })
+const routineId = z.number({ error: 'Routine ID must be a positive integer' })
+  .refine((id) => Number.isSafeInteger(id) && id >= 1, { error: 'Routine ID must be a positive integer' })
 
 // --- `kimaki send` (also remote envelopes in ingress.ts).
 
@@ -330,9 +330,10 @@ export const lockRoutes = {
       return createSleep(bot, { ...input, sessionId })
     },
   }),
+  // Routines keep the `task.*` route names so older CLIs and bots still talk to each other.
   'task.edit': route({
     input: z.object({
-      id: taskId,
+      id: routineId,
       prompt: z.string({ error: 'prompt must be a string' }).trim().optional(),
       sendAt: z.string({ error: 'sendAt must be a string' }).trim().optional(),
       agent: z.string({ error: 'agent must be a string' }).trim().optional(),
@@ -340,7 +341,7 @@ export const lockRoutes = {
       preRun: z.string({ error: 'preRun must be a string' }).trim().optional(),
       user: z.string({ error: 'user must be a string' }).trim().optional(),
       allowConcurrency: z.boolean({ error: 'allowConcurrency must be boolean' }).optional(),
-    }, { error: 'Expected a task edit object' }).superRefine((edit, ctx) => {
+    }, { error: 'Expected a routine edit object' }).superRefine((edit, ctx) => {
       if (Object.entries(edit).every(([key, value]) => key === 'id' || value === undefined)) {
         ctx.addIssue({ code: 'custom', message: 'Pass at least one of --prompt, --send-at, --agent, --model, --pre-run, --allow-concurrency, --user' })
         return
@@ -350,11 +351,11 @@ export const lockRoutes = {
     run: async (bot, input) => editTask(bot, input),
   }),
   'task.delete': route({
-    input: z.object({ id: taskId }, { error: 'Task ID must be a positive integer' }),
+    input: z.object({ id: routineId }, { error: 'Routine ID must be a positive integer' }),
     run: async (bot, { id }) => deleteTask(bot, id),
   }),
   'task.run': route({
-    input: z.object({ id: taskId }, { error: 'Task ID must be a positive integer' }),
+    input: z.object({ id: routineId }, { error: 'Routine ID must be a positive integer' }),
     run: async (bot, { id }) => runTaskNow(bot, id),
   }),
   buttons: route({

@@ -228,7 +228,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --wait                          Wait until idle or input is needed, then print the session
         --send-at <when>                Schedule: UTC ISO date ending in Z, or cron expression (UTC)
         --pre-run <command>             Scheduled only: run first in the project. Exit 0 starts, stdout is appended
-        --allow-concurrency             Scheduled only: allow overlapping runs of this task
+        --allow-concurrency             Scheduled only: allow overlapping runs of this routine
 
       session events <id>               Print the recorded OpenCode events of a thread as JSONL (root + subagents)
         --data-dir <path>               Data directory (default: ~/.kimaki)
@@ -275,11 +275,12 @@ test('CLI help documents the supported P7 commands', async () => {
         --strategy <name>               Merge strategy: rebase | squash
 
       Schedule:
-      task list                         List scheduled tasks (planned, running, failed)
+      routine list                      List routines (planned, running, failed)
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --json                          Output as JSON
+        --all                           Also list finished and cancelled V1 routines
 
-      task edit <taskId>                Change a planned task. An empty string clears a value
+      routine edit <routineId>          Change a planned routine. An empty string clears a value
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --prompt <text>                 New prompt
         --send-at <when>                New schedule: UTC ISO date ending in Z, or cron (UTC)
@@ -289,10 +290,10 @@ test('CLI help documents the supported P7 commands', async () => {
         --pre-run <command>             Command to run before each run
         --allow-concurrency <bool>      true | false
 
-      task delete <taskId>              Delete a scheduled task
+      routine delete <routineId>        Delete a routine
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      task run <taskId>                 Run a scheduled task now
+      routine run <routineId>           Run a routine now
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
       sleep                             Wake this session later with a new message in the same thread. Run it last, after your text. To monitor slow events (email replies, PR reviews), wait 2h or more; never poll every few minutes
@@ -376,6 +377,7 @@ test('CLI help documents the supported P7 commands', async () => {
       --machine-name <name>         Name in this machine's category "Kimaki <name>" (default: hostname)
       --restart-onboarding          Choose credentials again
       --worktrees                   Use a fresh Git worktree for new sessions unless the channel overrides it
+      --voice <name>                Voice of voice calls, saved for later starts (e.g. marin, eve, Puck). "default" resets it
       --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
       --if-not-running              Start only if no bot runs; never stop the running one (used by autostart)
       -h, --help                    Display this message

@@ -8,7 +8,7 @@ export const INSTRUCTION_KEY = 'kimaki'
 
 export type InstructionAgent = { name: string; description: string }
 
-// The scheduled task that started a session (scheduler.ts). Set once at
+// The routine that started a session (scheduler.ts). Set once at
 // session.create, so the instruction entry stays stable across turns.
 export type ScheduledRun = { id: number; cronExpr: string | null; timezone: string | null }
 
@@ -111,7 +111,7 @@ export function baseInstructions({
       ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Kimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
       If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the logs of the running bot and of the OpenCode service it talks to. Read them before guessing.
 
-      **Kimaki bot log**: \`${dataDir}/kimaki.log\`, only the current bot run. The run before the last restart (including the crash that caused it) is in \`${dataDir}/kimaki.previous.log\`. Each line is \`<ISO time> <LEVEL> [<MODULE>] <message>\`, and errors include their cause chain. It logs incoming messages, run start/finish/failure per thread and session, Discord and OpenCode errors, scheduled tasks and crashes.
+      **Kimaki bot log**: \`${dataDir}/kimaki.log\`, only the current bot run. The run before the last restart (including the crash that caused it) is in \`${dataDir}/kimaki.previous.log\`. Each line is \`<ISO time> <LEVEL> [<MODULE>] <message>\`, and errors include their cause chain. It logs incoming messages, run start/finish/failure per thread and session, Discord and OpenCode errors, routines and crashes.
 
       \`\`\`bash
       tail -n 200 ${dataDir}/kimaki.log
@@ -316,9 +316,9 @@ export function baseInstructions({
 
       kimaki send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${parentArg}${userArg}
 
-      ## scheduled sends and task management
+      ## scheduled sends and routines
 
-      Use \`--send-at\` to schedule a one-time (UTC ISO date) or recurring (cron) task. This also suits automation like cron jobs, GitHub webhooks, and n8n:
+      Use \`--send-at\` to schedule a one-time (UTC ISO date) or recurring (cron) routine. This also suits automation like cron jobs, GitHub webhooks, and n8n:
 
       kimaki send --channel ${channelId} --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --agent <current_agent>${parentArg}${userArg}
       kimaki send --channel ${channelId} --prompt 'Run weekly test suite and summarize failures' --send-at '0 9 * * 1' --agent <current_agent>${parentArg}
@@ -329,46 +329,46 @@ export function baseInstructions({
       - \`--notify-only\`: reminder thread without starting a session (channel targets only)
       - \`--agent\` and \`--model\`: control the scheduled session
       - \`--pre-run '<command>'\`: Kimaki runs the command in the project directory first. Exit code 0 starts the session and appends stdout to the prompt. Any other exit code skips that occurrence. Command output goes to the Kimaki log.
-      - \`--allow-concurrency\`: scheduled runs do not overlap by default (a run is skipped while the previous run's session is busy). Add this only when concurrent sessions of the same task are safe.
+      - \`--allow-concurrency\`: scheduled runs do not overlap by default (a run is skipped while the previous run's session is busy). Add this only when concurrent sessions of the same routine are safe.
       - \`--parent-session\`: pass this session as parent of the scheduled session
-      - \`--user\`: add a user to every scheduled thread. Use it for reminders, not autonomous tasks
+      - \`--user\`: add a user to every scheduled thread. Use it for reminders, not autonomous routines
 
-      \`--wait\` and \`--file\` do not work with \`--send-at\`. Schedule a task on the machine that owns its channel.
+      \`--wait\` and \`--file\` do not work with \`--send-at\`. Schedule a routine on the machine that owns its channel.
 
-      Keep scheduled task prompts **short**. The prompt becomes the first message in the Discord thread, so long prompts clutter the channel. Write the full task in a markdown file in the project's \`tasks/\` folder (goal, constraints, expected output, completion criteria) and reference it:
+      Keep routine prompts **short**. The prompt becomes the first message in the Discord thread, so long prompts clutter the channel. Write the full routine in a markdown file in the project's \`routines/\` folder (goal, constraints, expected output, completion criteria) and reference it:
 
       \`\`\`bash
-      kimaki send --channel ${channelId} --prompt 'Read tasks/weekly-test-suite.md and follow instructions' --send-at '0 9 * * 1' --agent <current_agent>${parentArg}
+      kimaki send --channel ${channelId} --prompt 'Read routines/weekly-test-suite.md and follow instructions' --send-at '0 9 * * 1' --agent <current_agent>${parentArg}
       \`\`\`
 
-      Task file frontmatter:
+      Routine file frontmatter:
 
       \`\`\`yaml
       ---
       title: Weekly test suite
       description: >
-        Managed by kimaki scheduled task. Do not move or delete this file
-        without also updating the kimaki task (kimaki task list / kimaki task edit).
+        Managed by a kimaki routine. Do not move or delete this file
+        without also updating the routine (kimaki routine list / kimaki routine edit).
       ---
       \`\`\`
 
       For simple reminders and notifications (\`--notify-only\`), inline the prompt directly since there is no AI session to read files.
 
       Notification strategy:
-      - For autonomous tasks, do not pass \`--user\`. It adds the user to every run's thread before the result is known. Put the user's Discord ID in the task md file instead, and tell the agent to mention it only after completing work worth reviewing, when reporting an issue, or when asking for a decision.
+      - For autonomous routines, do not pass \`--user\`. It adds the user to every run's thread before the result is known. Put the user's Discord ID in the routine md file instead, and tell the agent to mention it only after completing work worth reviewing, when reporting an issue, or when asking for a decision.
       - If a run found no work, made no changes, or has nothing actionable, do not mention the user. Archive that session instead with \`kimaki session archive\`.
-      - NEVER put a raw \`@username\` in task prompts. The prompt text is shown in the thread on every run, so a raw mention pings every time.
+      - NEVER put a raw \`@username\` in routine prompts. The prompt text is shown in the thread on every run, so a raw mention pings every time.
 
-      Manage scheduled tasks with:
+      Manage routines with:
 
-      kimaki task list
-      kimaki task edit <id> --prompt 'new prompt' [--send-at 'new schedule'] [--pre-run 'command'] [--allow-concurrency true|false] [--user '<discord-user-id>'] [--model 'provider/model'] [--agent '<agent>']
-      kimaki task run <id>
-      kimaki task delete <id>
+      kimaki routine list
+      kimaki routine edit <id> --prompt 'new prompt' [--send-at 'new schedule'] [--pre-run 'command'] [--allow-concurrency true|false] [--user '<discord-user-id>'] [--model 'provider/model'] [--agent '<agent>']
+      kimaki routine run <id>
+      kimaki routine delete <id>
 
-      An empty string clears a value, e.g. \`kimaki task edit <id> --user ''\`. Do not read SQLite or recreate a task just to change it. Sessions started by a task have \`taskId\` in their OpenCode session metadata.
+      An empty string clears a value, e.g. \`kimaki routine edit <id> --user ''\`. Do not read SQLite or recreate a routine just to change it. Sessions started by a routine have \`taskId\` in their OpenCode session metadata.
 
-      **Never duplicate tasks to run more frequently.** To run twice a day, edit the existing task's cron expression: \`kimaki task edit <id> --send-at '0 9,18 * * *'\`.
+      **Never duplicate routines to run more frequently.** To run twice a day, edit the existing routine's cron expression: \`kimaki routine edit <id> --send-at '0 9,18 * * *'\`.
 
       Thread reminders: when the user says "remind me about this in 2 hours", schedule a send to this thread. \`--notify-only\` does not work with \`--thread\`; the scheduled prompt always runs in that thread's session:
 
@@ -617,15 +617,15 @@ export function baseInstructions({
 
 function scheduledTaskSection(task: ScheduledRun): string {
   const schedule = task.cronExpr
-    ? `Schedule: cron \`${task.cronExpr}\` in ${task.timezone || 'UTC'}. When your run is done, just stop: the task fires again on its schedule and starts a fresh session automatically.`
-    : 'This task runs once and does not repeat. When your run is done, just stop.'
+    ? `Schedule: cron \`${task.cronExpr}\` in ${task.timezone || 'UTC'}. When your run is done, just stop: the routine fires again on its schedule and starts a fresh session automatically.`
+    : 'This routine runs once and does not repeat. When your run is done, just stop.'
   return dedent`
 
-    ## scheduled task session
+    ## routine session
 
-    This session was started automatically by kimaki scheduled task #${task.id}.
+    This session was started automatically by kimaki routine #${task.id}.
     ${schedule}
-    Do NOT use \`kimaki sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the task starts a new session on its own.
+    Do NOT use \`kimaki sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the routine starts a new session on its own.
   `
 }
 
@@ -745,7 +745,7 @@ export function voiceCallInstructions({
 
     ## threads and sessions
 
-    A thread and a session are the same thing: each Discord thread has one OpenCode session, and users say either word. Commands accept a thread ID or a session ID. When you speak, say "thread", never "task". A "task" in Kimaki is only a scheduled send (kimaki task).
+    A thread and a session are the same thing: each Discord thread has one OpenCode session, and users say either word. Commands accept a thread ID or a session ID. When you speak, say "thread", never "task". A "routine" in Kimaki is a scheduled send (kimaki routine).
 
     ## tools
 
@@ -820,16 +820,16 @@ export function voiceCallInstructions({
 
     ## scheduled sends and reminders
 
-    kimaki send --send-at schedules a prompt: a UTC ISO date ending with Z for one time, or a cron expression for a repeating task. Cron also runs in UTC. When a user gives a time without a timezone, ask for the timezone. Never guess it.
+    kimaki send --send-at schedules a prompt: a UTC ISO date ending with Z for one time, or a cron expression for a repeating routine. Cron also runs in UTC. When a user gives a time without a timezone, ask for the timezone. Never guess it.
 
     \`\`\`bash
     kimaki send --channel <channel ID> --prompt 'Reminder: review open PRs' --send-at '2026-03-01T09:00:00Z' --notify-only ${userArgs}
     kimaki send --thread <thread ID> --prompt 'Check if CI passed' --send-at '2026-03-01T09:00:00Z'
     kimaki send --channel <channel ID> --prompt 'Run the test suite and summarize failures' --send-at '0 9 * * 1'
-    kimaki task list                                     # scheduled tasks
-    kimaki task edit <id> --send-at '0 9,18 * * *'       # change a task; never make a duplicate
-    kimaki task run <id>                                 # run a task now
-    kimaki task delete <id>
+    kimaki routine list                                     # routines
+    kimaki routine edit <id> --send-at '0 9,18 * * *'       # change a routine; never make a duplicate
+    kimaki routine run <id>                                 # run a routine now
+    kimaki routine delete <id>
     \`\`\`
 
     ## useful commands

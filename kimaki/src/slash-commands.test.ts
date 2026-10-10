@@ -60,7 +60,7 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
       "model",
       "model-variant",
       "verbosity",
-      "tasks",
+      "routines",
       "command",
       "skill",
       "gpt5-4-agent",

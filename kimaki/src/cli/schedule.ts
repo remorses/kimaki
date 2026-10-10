@@ -1,5 +1,5 @@
-// `send`, `task ...` and `sleep`: start, schedule and wake sessions through
-// the running bot. scheduler.ts is bot code: only `task list` loads it, lazily.
+// `send`, `routine ...` and `sleep`: start, schedule and wake sessions through
+// the running bot. scheduler.ts is bot code: only `routine list` loads it, lazily.
 
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -31,9 +31,9 @@ export function registerSendCommand(cli: Goke) {
     .option('--wait', 'Wait until idle or input is needed, then print the session')
     .option('--send-at <when>', 'Schedule: UTC ISO date ending in Z, or cron expression (UTC)')
     .option('--pre-run <command>', 'Scheduled only: run first in the project. Exit 0 starts, stdout is appended')
-    .option('--allow-concurrency', 'Scheduled only: allow overlapping runs of this task')
+    .option('--allow-concurrency', 'Scheduled only: allow overlapping runs of this routine')
     .action(async (options) => {
-      if (options.wait && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the task runs later'))
+      if (options.wait && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the routine runs later'))
       if (options.thread !== undefined && options.session !== undefined) fail(new Error('Use exactly one of --channel, --thread, --session, --project'))
       const continued = options.thread ?? options.session
       const target = continued === undefined ? {} : parseTarget(continued)
@@ -72,57 +72,66 @@ export function registerSendCommand(cli: Goke) {
     })
 }
 
-// task list / edit / delete / run, sleep
+// routine list / edit / delete / run, sleep
 export function registerScheduleCommands(cli: Goke) {
-  cli.command('task list', 'List scheduled tasks (planned, running, failed)')
-    .option('--data-dir <path>', DATA_DIR_HELP)
-    .option('--json', 'Output as JSON')
-    .action(async (options) => {
-      const { listTasks } = await import('../scheduler.ts')
-      const opened = await openCliDb(options.dataDir)
-      const tasks = await listTasks({ db: opened.db })
-      opened.close()
-      if (tasks instanceof Error) fail(tasks)
-      if (options.json) return printJson(tasks)
-      if (tasks.length === 0) {
-        process.stdout.write('No scheduled tasks\n')
-        return
-      }
-      const header = 'id | status | schedule | nextRunAt | channel | thread | user | agent | model | preRun | allowConcurrency | prompt'
-      const rows = tasks.map((task) =>
-        [task.id, task.status, task.schedule, task.nextRunAt, task.channelId, task.threadId, task.userId, task.agent, task.model, task.preRun, task.allowConcurrency, task.prompt]
-          .map((value) => value ?? '-')
-          .join(' | '),
-      )
-      process.stdout.write(`${[header, ...rows].join('\n')}\n`)
-    })
+  // `task` is the V1 name of `routine`: same commands, hidden from help.
+  for (const noun of ['routine', 'task'] as const) {
+    const hide = <C extends { hidden(): unknown }>(command: C): C => {
+      if (noun === 'task') command.hidden()
+      return command
+    }
 
-  cli.command('task edit <taskId>', 'Change a planned task. An empty string clears a value')
-    .option('--data-dir <path>', DATA_DIR_HELP)
-    .option('--prompt <text>', 'New prompt')
-    .option('--send-at <when>', 'New schedule: UTC ISO date ending in Z, or cron (UTC)')
-    .option('--agent <name>', 'Agent for the scheduled session')
-    .option('--model <provider/model>', 'Model for the scheduled session')
-    .option('-u, --user <id>', 'Discord user ID added to each run\'s thread')
-    .option('--pre-run <command>', 'Command to run before each run')
-    .option('--allow-concurrency <bool>', 'true | false')
-    .action(async (taskId, options) => {
-      const flag = options.allowConcurrency
-      if (flag && flag !== 'true' && flag !== 'false') fail(new Error('--allow-concurrency must be true or false'))
-      await action({ route: 'task.edit', dataDir: options.dataDir, input: {
-        id: Number(taskId), prompt: options.prompt, sendAt: options.sendAt, agent: options.agent, model: options.model,
-        user: options.user, preRun: options.preRun, allowConcurrency: flag ? flag === 'true' : undefined,
-      } })
-    })
-
-  for (const [name, description] of [['delete', 'Delete a scheduled task'], ['run', 'Run a scheduled task now']] as const) {
-    cli.command(`task ${name} <taskId>`, description)
+    hide(cli.command(`${noun} list`, 'List routines (planned, running, failed)'))
       .option('--data-dir <path>', DATA_DIR_HELP)
-      .action(async (taskId, options) => {
-        // A run waits for its pre-run command (up to 10 minutes) and the session start.
-        const signal = name === 'run' ? AbortSignal.timeout(12 * 60_000) : undefined
-        await action({ route: `task.${name}`, dataDir: options.dataDir, input: { id: Number(taskId) }, signal })
+      .option('--json', 'Output as JSON')
+      .option('--all', 'Also list finished and cancelled V1 routines')
+      .action(async (options) => {
+        const { listTasks } = await import('../scheduler.ts')
+        const opened = await openCliDb(options.dataDir)
+        const routines = await listTasks({ db: opened.db, all: options.all })
+        opened.close()
+        if (routines instanceof Error) fail(routines)
+        if (options.json) return printJson(routines)
+        if (routines.length === 0) {
+          process.stdout.write('No routines\n')
+          return
+        }
+        const header = 'id | status | schedule | nextRunAt | channel | thread | user | agent | model | preRun | allowConcurrency | prompt'
+        const rows = routines.map((routine) =>
+          [routine.id, routine.status, routine.schedule, routine.nextRunAt, routine.channelId, routine.threadId, routine.userId, routine.agent, routine.model, routine.preRun, routine.allowConcurrency, routine.prompt]
+            .map((value) => value ?? '-')
+            .join(' | '),
+        )
+        process.stdout.write(`${[header, ...rows].join('\n')}\n`)
       })
+
+    hide(cli.command(`${noun} edit <routineId>`, 'Change a planned routine. An empty string clears a value'))
+      .option('--data-dir <path>', DATA_DIR_HELP)
+      .option('--prompt <text>', 'New prompt')
+      .option('--send-at <when>', 'New schedule: UTC ISO date ending in Z, or cron (UTC)')
+      .option('--agent <name>', 'Agent for the scheduled session')
+      .option('--model <provider/model>', 'Model for the scheduled session')
+      .option('-u, --user <id>', 'Discord user ID added to each run\'s thread')
+      .option('--pre-run <command>', 'Command to run before each run')
+      .option('--allow-concurrency <bool>', 'true | false')
+      .action(async (routineId, options) => {
+        const flag = options.allowConcurrency
+        if (flag && flag !== 'true' && flag !== 'false') fail(new Error('--allow-concurrency must be true or false'))
+        await action({ route: 'task.edit', dataDir: options.dataDir, input: {
+          id: Number(routineId), prompt: options.prompt, sendAt: options.sendAt, agent: options.agent, model: options.model,
+          user: options.user, preRun: options.preRun, allowConcurrency: flag ? flag === 'true' : undefined,
+        } })
+      })
+
+    for (const [name, description] of [['delete', 'Delete a routine'], ['run', 'Run a routine now']] as const) {
+      hide(cli.command(`${noun} ${name} <routineId>`, description))
+        .option('--data-dir <path>', DATA_DIR_HELP)
+        .action(async (routineId, options) => {
+          // A run waits for its pre-run command (up to 10 minutes) and the session start.
+          const signal = name === 'run' ? AbortSignal.timeout(12 * 60_000) : undefined
+          await action({ route: `task.${name}`, dataDir: options.dataDir, input: { id: Number(routineId) }, signal })
+        })
+    }
   }
 
   cli.command('sleep', 'Wake this session later with a new message in the same thread. Run it last, after your text. To monitor slow events (email replies, PR reviews), wait 2h or more; never poll every few minutes')

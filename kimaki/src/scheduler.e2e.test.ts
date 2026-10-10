@@ -1,5 +1,5 @@
-// Scheduled tasks end to end (spec 30, Phase 8): `kimaki send --send-at` runs
-// one-shot, cron, thread and pre-run tasks against the twin and a real
+// Routines end to end (spec 30, Phase 8): `kimaki send --send-at` runs
+// one-shot, cron, thread and pre-run routines against the twin and a real
 // OpenCode server. Time is a manual clock; nothing waits for real time.
 
 import fs from 'node:fs'
@@ -42,16 +42,16 @@ afterAll(async () => {
   fs.rmSync(dataDir, { recursive: true, force: true })
 })
 
-test('a one-shot task starts a thread at its time, then is gone', async () => {
+test('a one-shot routine starts a thread at its time, then is gone', async () => {
   // The real command once; later tests call the same lock-server route directly.
-  const task = JSON.parse(await cli(['send', '--channel', twin.channelId, '--prompt', 'Check the deploy once', '--send-at', '2030-01-01T10:00:00Z', '--name', 'Deploy check'])) as { taskId: number; nextRunAt: string }
+  const task = JSON.parse(await cli(['send', '--channel', twin.channelId, '--prompt', 'Check the deploy once', '--send-at', '2030-01-01T10:00:00Z', '--name', 'Deploy check'])) as { routineId: number; nextRunAt: string }
   expect(task.nextRunAt).toBe('2030-01-01T10:00:00.000Z')
   expect(await tick('2030-01-01T09:59:59Z')).toEqual([])
   const [threadId] = await tick('2030-01-01T10:00:00Z')
   await waitForFooter({ discord: twin.discord, threadId: threadId! })
   expect(await twin.discord.thread(threadId!).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **task #1:** Check the deploy once
+    » **routine #1:** Check the deploy once
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
@@ -60,28 +60,28 @@ test('a one-shot task starts a thread at its time, then is gone', async () => {
   expect(thread?.name).toBe('Deploy check')
   const sessionId = bot.store.getState().roots[threadId!]!
   const info = await (await server.client()).session.get({ sessionID: sessionId })
-  expect(info.metadata?.['kimaki']).toMatchObject({ source: 'task', taskId: task.taskId })
+  expect(info.metadata?.['kimaki']).toMatchObject({ source: 'task', taskId: task.routineId })
   // The instruction entry tells the agent it runs for a task and must not sleep until the next run.
   const entries = await (await server.client()).session.instructions.entry.list({ sessionID: sessionId })
   const text = entries.map((entry) => String(entry.value)).join('\n')
-  expect(text.slice(text.indexOf('## scheduled task session'), text.indexOf('## archiving'))).toMatchInlineSnapshot(`
-    "## scheduled task session
+  expect(text.slice(text.indexOf('## routine session'), text.indexOf('## archiving'))).toMatchInlineSnapshot(`
+    "## routine session
 
-    This session was started automatically by kimaki scheduled task #1.
-    This task runs once and does not repeat. When your run is done, just stop.
-    Do NOT use \`kimaki sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the task starts a new session on its own.
+    This session was started automatically by kimaki routine #1.
+    This routine runs once and does not repeat. When your run is done, just stop.
+    Do NOT use \`kimaki sleep\` to wait for the next run. Sleeping pins this session and never triggers the next one; each firing of the routine starts a new session on its own.
 
     "
   `)
-  expect((await listTasks()).filter((row) => row.id === task.taskId)).toEqual([])
+  expect((await listTasks()).filter((row) => row.id === task.routineId)).toEqual([])
   // /resume rebuilds the instruction entry: the task section and marker stay, though the row is gone.
   await request('session.resume', { sessionId, channelId: twin.channelId })
   const resumed = await (await server.client()).session.instructions.entry.list({ sessionID: sessionId })
-  expect(resumed.map((entry) => String(entry.value)).join('\n')).toContain('started automatically by kimaki scheduled task #1.')
-  expect((await (await server.client()).session.get({ sessionID: sessionId })).metadata?.['kimaki']).toMatchObject({ source: 'task', taskId: task.taskId })
+  expect(resumed.map((entry) => String(entry.value)).join('\n')).toContain('started automatically by kimaki routine #1.')
+  expect((await (await server.client()).session.get({ sessionID: sessionId })).metadata?.['kimaki']).toMatchObject({ source: 'task', taskId: task.routineId })
 })
 
-test('a cron task fires once per occurrence, in a new thread each time', async () => {
+test('a cron routine fires once per occurrence, in a new thread each time', async () => {
   clock.set(Date.parse('2030-01-01T10:30:00Z'))
   const task = await schedule({ prompt: 'Hourly report', sendAt: '0 * * * *' })
   expect(task.nextRunAt).toBe('2030-01-01T11:00:00.000Z')
@@ -93,16 +93,16 @@ test('a cron task fires once per occurrence, in a new thread each time', async (
   expect([first.length, second.length]).toEqual([1, 1])
   expect(await twin.discord.thread(second[0]!).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **task #2:** Hourly report
+    » **routine #2:** Hourly report
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
-  expect((await listTasks()).find((row) => row.id === task.taskId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T13:00:00.000Z' })
-  await request('task.delete', { id: task.taskId })
+  expect((await listTasks()).find((row) => row.id === task.routineId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T13:00:00.000Z' })
+  await request('task.delete', { id: task.routineId })
 })
 
-test('a task for an existing thread prompts that thread, with or without . queue', async () => {
+test('a routine for an existing thread prompts that thread, with or without . queue', async () => {
   const started = await send(bot, { channelId: twin.channelId, prompt: 'Thread for a reminder' })
   if (started instanceof Error) throw started
   await waitForFooter({ discord: twin.discord, threadId: started.threadId })
@@ -118,10 +118,10 @@ test('a task for an existing thread prompts that thread, with or without . queue
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
-    » **task #3:** Reminder: check the logs
+    » **routine #3:** Reminder: check the logs
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
-    » **task #4:** Then summarize them
+    » **routine #4:** Then summarize them
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
@@ -136,7 +136,7 @@ test('--pre-run: a failing command skips the run, output is appended to the prom
   await waitForFooter({ discord: twin.discord, threadId: created[0]! })
   expect(await twin.discord.thread(created[0]!).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **task #6:** Summarize the new issues
+    » **routine #6:** Summarize the new issues
 
     ## Pre-run command output
 
@@ -146,10 +146,10 @@ test('--pre-run: a failing command skips the run, output is appended to the prom
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
   // A skipped one-shot is done too, like V1.
-  expect((await listTasks()).filter((row) => row.id === skipped.taskId || row.id === ran.taskId)).toEqual([])
+  expect((await listTasks()).filter((row) => row.id === skipped.routineId || row.id === ran.routineId)).toEqual([])
 })
 
-test('recurring worktree tasks get a fresh checkout on every run', async () => {
+test('recurring worktree routines get a fresh checkout on every run', async () => {
   for (const args of [['config', 'user.name', 'Test'], ['config', 'user.email', 'test@example.com'], ['commit', '--allow-empty', '-qm', 'initial']]) {
     const result = await git({ directory: server.projectDirectory, args })
     if (result instanceof Error) throw result
@@ -162,14 +162,14 @@ test('recurring worktree tasks get a fresh checkout on every run', async () => {
   const normalize = (text: string) => text.replace(/report-[a-f0-9]{8}/g, 'report-ID')
   expect(normalize(await twin.discord.thread(first[0]!).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **task #7:** Isolated recurring report
+    » **routine #7:** Isolated recurring report
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *report-ID ⋅ opencode/kimaki-report-ID ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(normalize(await twin.discord.thread(second[0]!).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **task #7:** Isolated recurring report
+    » **routine #7:** Isolated recurring report
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *report-ID ⋅ opencode/kimaki-report-ID ⋅ Ns ⋅ deterministic-v2*"
@@ -178,5 +178,5 @@ test('recurring worktree tasks get a fresh checkout on every run', async () => {
   const directories = await Promise.all([first[0]!, second[0]!].map(async (threadId) => (await client.session.get({ sessionID: bot.store.getState().roots[threadId]! })).location.directory))
   expect(new Set(directories).size).toBe(2)
   expect(directories.every((directory) => directory !== server.projectDirectory)).toBe(true)
-  await request('task.delete', { id: task.taskId })
+  await request('task.delete', { id: task.routineId })
 })

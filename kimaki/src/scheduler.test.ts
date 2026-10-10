@@ -20,14 +20,14 @@ test('next run of one-shot and cron tasks, V1 timezones included', () => {
     { id: 8, schedule_kind: 'cron' as const, cron_expr: 'not a cron', timezone: null },
     { id: 9, schedule_kind: 'cron' as const, cron_expr: null, timezone: null },
   ]
-  expect(Object.fromEntries(rows.map((row) => [`task #${row.id}`, iso(nextRunOf({ row, now }))]))).toMatchInlineSnapshot(`
+  expect(Object.fromEntries(rows.map((row) => [`routine #${row.id}`, iso(nextRunOf({ row, now }))]))).toMatchInlineSnapshot(`
     {
-      "task #1": null,
-      "task #2": "2026-01-01T11:00:00.000Z",
-      "task #6": "2026-01-02T08:30:00.000Z",
-      "task #7": "2026-01-02T09:30:00.000Z",
-      "task #8": "Error: Invalid cron expression: not a cron",
-      "task #9": "Error: Task 9 has no cron expression",
+      "routine #1": null,
+      "routine #2": "2026-01-01T11:00:00.000Z",
+      "routine #6": "2026-01-02T08:30:00.000Z",
+      "routine #7": "2026-01-02T09:30:00.000Z",
+      "routine #8": "Error: Invalid cron expression: not a cron",
+      "routine #9": "Error: Routine 9 has no cron expression",
     }
   `)
 })
@@ -127,10 +127,10 @@ test('V1 task payloads decode to the send input of each run and encode back unch
   })
   expect(invalid).toMatchInlineSnapshot(`
     [
-      "Task payload is not valid JSON",
-      "Task payload must be an object",
-      "Task payload has unknown kind channel or no target",
-      "Task payload has no prompt",
+      "Routine payload is not valid JSON",
+      "Routine payload must be an object",
+      "Routine payload has unknown kind channel or no target",
+      "Routine payload has no prompt",
     ]
   `)
 })

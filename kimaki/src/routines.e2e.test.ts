@@ -1,5 +1,5 @@
-// Task management end to end (spec 30, Phase 8): non-overlapping runs,
-// V1 task rows, `kimaki task list/edit/run/delete` and /tasks with its Run
+// Routine management end to end (spec 30, Phase 8): non-overlapping runs,
+// V1 task rows, `kimaki routine list/edit/run/delete` and /routines with its Run
 // now and Delete buttons. Time is a manual clock.
 
 import { execFile } from 'node:child_process'
@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { ComponentType, type APIMessage } from 'discord.js'
+import * as orm from 'drizzle-orm'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
@@ -66,17 +67,17 @@ test('runs do not overlap by default; --allow-concurrency starts another session
   const second = await tick('2030-01-01T19:00:00Z')
   expect(second.length).toBe(1)
   const info = await client.session.get({ sessionID: bot.store.getState().roots[second[0]!]! })
-  expect(info.metadata?.['kimaki']).toMatchObject({ taskId: parallel.taskId })
+  expect(info.metadata?.['kimaki']).toMatchObject({ taskId: parallel.routineId })
   // The skipped occurrence still moves the serial task to its next run.
-  expect((await listTasks()).find((row) => row.id === serial.taskId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T20:00:00.000Z' })
+  expect((await listTasks()).find((row) => row.id === serial.routineId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T20:00:00.000Z' })
   for (const threadId of [...first, ...second]) {
     const aborted = await abort(bot, { threadId })
     if (aborted instanceof Error) throw aborted
   }
-  for (const id of [serial.taskId, parallel.taskId]) await request('task.delete', { id })
+  for (const id of [serial.routineId, parallel.routineId]) await request('task.delete', { id })
 })
 
-test('a task row written by V1 runs unchanged', async () => {
+test('a routine row written by V1 runs unchanged', async () => {
   // Exactly what V1 `kimaki send --send-at` stored (task-schedule.ts serializeScheduledTaskPayload).
   const payload = {
     kind: 'channel', channelId: twin.channelId, prompt: 'V1 weekly check', name: null, notifyOnly: false, worktreeName: null, cwd: null,
@@ -91,12 +92,26 @@ test('a task row written by V1 runs unchanged', async () => {
   await waitForFooter({ discord: twin.discord, threadId: threadId! })
   expect(await twin.discord.thread(threadId!).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    » **task #3:** V1 weekly check
+    » **routine #3:** V1 weekly check
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await listTasks()).find((task) => task.id === row!.id)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-14T09:00:00.000Z' })
+  // V1 history: finished rows only show with the V1 `task list --all`.
+  await bot.db.update(schema.scheduled_tasks).set({ status: 'completed' }).where(orm.eq(schema.scheduled_tasks.id, row!.id))
+  const listed = async (args: string[]) => (JSON.parse(await cli(['task', 'list', '--json', ...args])) as Array<{ id: number; status: string }>).map(({ id, status }) => ({ id, status }))
+  expect({ default: await listed([]), all: await listed(['--all']) }).toMatchInlineSnapshot(`
+    {
+      "all": [
+        {
+          "id": 3,
+          "status": "completed",
+        },
+      ],
+      "default": [],
+    }
+  `)
   await request('task.delete', { id: row!.id })
 })
 
@@ -115,12 +130,12 @@ function buttons(message: APIMessage) {
   return found
 }
 
-test('task list/edit/run/delete and /tasks with Run now and Delete buttons', async () => {
+test('routine list/edit/run/delete and /routines with Run now and Delete buttons', async () => {
   clock.set(Date.parse('2030-01-02T08:00:00Z'))
   const daily = await schedule({ prompt: 'Daily digest', sendAt: '0 9 * * *', preRun: 'true', user: TEST_USER_ID })
   const once = await schedule({ prompt: 'Renew the certificate', sendAt: '2030-01-05T09:00:00Z', notifyOnly: true })
-  expect(await cli(['task', 'edit', String(daily.taskId), '--prompt', 'Daily digest, short', '--send-at', '30 9 * * 1-5', '--agent', 'plan', '--pre-run', '', '--allow-concurrency', 'true', '--user', ''])).toMatchInlineSnapshot(`
-    "{"taskId":4,"updated":["prompt","sendAt","agent","preRun","user","allowConcurrency"]}
+  expect(await cli(['routine', 'edit', String(daily.routineId), '--prompt', 'Daily digest, short', '--send-at', '30 9 * * 1-5', '--agent', 'plan', '--pre-run', '', '--allow-concurrency', 'true', '--user', ''])).toMatchInlineSnapshot(`
+    "{"routineId":4,"updated":["prompt","sendAt","agent","preRun","user","allowConcurrency"]}
     "
   `)
   expect(await cli(['task', 'list'])).toMatchInlineSnapshot(`
@@ -132,32 +147,32 @@ test('task list/edit/run/delete and /tasks with Run now and Delete buttons', asy
 
   const { discord, channelId } = twin
   const user = discord.channel(channelId).user(TEST_USER_ID)
-  const { id } = await user.runSlashCommand({ name: 'tasks' })
+  const { id } = await user.runSlashCommand({ name: 'routines' })
   await discord.channel(channelId).waitForInteractionAck({ interactionId: id })
-  const reply = await waitFor({ label: '/tasks reply', check: async () => (await discord.channel(channelId).getMessages()).find((message) => buttons(message).some((button) => button.customId.startsWith('task_'))) })
+  const reply = await waitFor({ label: '/routines reply', check: async () => (await discord.channel(channelId).getMessages()).find((message) => buttons(message).some((button) => button.customId.startsWith('routine_'))) })
   expect(buttons(reply)).toMatchInlineSnapshot(`
     [
       {
-        "customId": "task_run:4",
+        "customId": "routine_run:4",
         "label": "Run now",
       },
       {
-        "customId": "task_delete:4",
+        "customId": "routine_delete:4",
         "label": "Delete",
       },
       {
-        "customId": "task_run:5",
+        "customId": "routine_run:5",
         "label": "Run now",
       },
       {
-        "customId": "task_delete:5",
+        "customId": "routine_delete:5",
         "label": "Delete",
       },
     ]
   `)
   expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    **Scheduled tasks** (2)
+    **Routines** (2)
     **#4** cron 30 9 * * 1-5 ⋅ next <t:1893576600:R> ⋅ <#200000000000000100>
     Daily digest, short
     **#5** once ⋅ next <t:1893834000:R> ⋅ <#200000000000000100>
@@ -166,30 +181,30 @@ test('task list/edit/run/delete and /tasks with Run now and Delete buttons', asy
 
   // Run now: a notify-only task posts its thread without a session.
   const before = await threadIds()
-  await user.clickButton({ messageId: reply.id, customId: `task_run:${once.taskId}` })
+  await user.clickButton({ messageId: reply.id, customId: `routine_run:${once.routineId}` })
   const notice = await waitFor({ label: 'notification thread', check: async () => [...(await threadIds())].find((threadId) => !before.has(threadId)) })
   expect(await discord.thread(notice).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     Renew the certificate"
   `)
-  await user.clickButton({ messageId: reply.id, customId: `task_delete:${daily.taskId}` })
-  await waitFor({ label: 'task deleted', check: async () => (await discord.channel(channelId).text()).includes(`Deleted task #${daily.taskId}`) })
+  await user.clickButton({ messageId: reply.id, customId: `routine_delete:${daily.routineId}` })
+  await waitFor({ label: 'routine deleted', check: async () => (await discord.channel(channelId).text()).includes(`Deleted routine #${daily.routineId}`) })
   expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Deleted task #4
-    No scheduled tasks. Create one with \`kimaki send --send-at\`."
+    Deleted routine #4
+    No routines. Create one with \`kimaki send --send-at\`."
   `)
   expect(await listTasks()).toEqual([])
 
-  // `task run` takes the same path as the scheduler.
+  // The hidden V1 `task run` alias takes the same path as the scheduler.
   const later = await schedule({ prompt: 'Run me now', sendAt: '2030-02-01T00:00:00Z' })
-  const ranNow = JSON.parse(await cli(['task', 'run', String(later.taskId)])) as { threadId: string }
+  const ranNow = JSON.parse(await cli(['task', 'run', String(later.routineId)])) as { threadId: string }
   await waitForFooter({ discord, threadId: ranNow.threadId })
-  const failed = await promisify(execFile)(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'task', 'delete', '999', '--data-dir', dataDir], {
+  const failed = await promisify(execFile)(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'routine', 'delete', '999', '--data-dir', dataDir], {
     env: { ...process.env, KIMAKI_LOCK_PORT: String(bot.lock.port) },
   }).catch((error: { code: number; stderr: string }) => error)
   expect(failed.stderr).toMatchInlineSnapshot(`
-    "Task 999 not found. List tasks with: kimaki task list
+    "Routine 999 not found. List routines with: kimaki routine list
     "
   `)
 })

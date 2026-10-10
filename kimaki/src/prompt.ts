@@ -521,7 +521,7 @@ async function remoteSend(bot: Bot, input: SendInput) {
 }
 
 // `localOnly`: never forward to another machine (remote envelopes, scheduled runs).
-// `task`: a scheduled run; its input shows as "» task #N: prompt".
+// `task`: a scheduled run; its input shows as "» routine #N: prompt".
 export async function send(bot: Bot, input: SendInput, { localOnly = false, task }: { localOnly?: boolean; task?: ScheduledRun } = {}) {
   if (input.worktree !== undefined && (input.cwd || input.threadId || input.sessionId || input.notifyOnly)) {
     return new ConfigError({ reason: '--worktree requires a new session without --cwd or --notify-only.' })
@@ -531,7 +531,7 @@ export async function send(bot: Bot, input: SendInput, { localOnly = false, task
     return new ConfigError({ reason: '--permission applies only to new sessions. Start a new session without --thread, --session, or --notify-only' })
   }
   const userIds = (input.user ?? []).map((user) => user.replace(/[<@!>]/g, ''))
-  const author = { id: userIds[0] ?? bot.discord.user!.id, username: task ? `task #${task.id}` : 'CLI' }
+  const author = { id: userIds[0] ?? bot.discord.user!.id, username: task ? `routine #${task.id}` : 'CLI' }
   // Every --user joins the thread; startSession adds the author of a new session itself.
   const addMembers = async (thread: ThreadChannel, ids: readonly string[]) => {
     for (const id of ids) await thread.members.add(id).catch((error: Error) => logger.warn(`add thread member ${id}`, error))

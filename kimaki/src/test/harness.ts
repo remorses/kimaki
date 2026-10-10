@@ -505,7 +505,7 @@ export function schedulingKit({ suite, dataDir, clock }: {
     },
     // `kimaki send --channel <project> --send-at …`
     async schedule(input: Omit<LockRouteInput<'send'>, 'channelId'>) {
-      return (await request('send', { channelId: suite().twin.channelId, ...input })) as { taskId: number; nextRunAt: string }
+      return (await request('send', { channelId: suite().twin.channelId, ...input })) as { routineId: number; nextRunAt: string }
     },
     async listTasks() {
       const opened = await openDb({ dataDir, migrate: false })
