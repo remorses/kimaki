@@ -1,6 +1,6 @@
-// Real conversations against provider APIs. Each provider block runs only when its key is set:
-// OPENAI_API_KEY (sigillo kimaki dev), GEMINI_API_KEY, XAI_API_KEY.
-// Run: sigillo run -- pnpm run test --run src/live.e2e.test.ts
+// Real conversations against provider APIs. Disabled by default; each provider block runs only
+// with REALTIME_LIVE_TESTS=1 and its key: OPENAI_API_KEY (sigillo kimaki dev), GEMINI_API_KEY, XAI_API_KEY.
+// Run: REALTIME_LIVE_TESTS=1 sigillo run -- pnpm run test --run src/live.e2e.test.ts
 // Writes model audio and raw wire logs to realtime/output/ for listening and fixtures.
 
 import fs from 'node:fs'
@@ -125,8 +125,11 @@ const providers: Array<{ name: string; key: string | undefined; model: (key: str
   { name: 'xai', key: process.env.XAI_API_KEY, model: (apiKey) => xai({ apiKey, reasoning: 'none' }), voice: 'eve' },
 ]
 
+// Real API calls cost credits: never run them unless REALTIME_LIVE_TESTS=1.
+const live = process.env.REALTIME_LIVE_TESTS === '1'
+
 for (const provider of providers) {
-  describe.skipIf(!provider.key)(`${provider.name} live`, () => {
+  describe.skipIf(!live || !provider.key)(`${provider.name} live`, () => {
     const options = (): SessionOptions => ({
       model: provider.model(provider.key ?? ''),
       instructions: 'You are a voice assistant in a test. Answer in one short sentence.',
