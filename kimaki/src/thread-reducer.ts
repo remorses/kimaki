@@ -152,7 +152,8 @@ export type SessionSnapshot = {
 // Internal events produced by the event loop, folded through the same path.
 export type KimakiEvent =
   | { type: 'kimaki.agent-ui'; prompt: AgentPrompt }
-  | { type: 'kimaki.agent-ui-dismiss'; id: string }
+  // `result` replaces the prompt message as a status line, e.g. the clicked button. Default: `dismissed`.
+  | { type: 'kimaki.agent-ui-dismiss'; id: string; result?: string }
   // `kimaki sleep` planned a wake of the root session (sleeps.ts).
   | { type: 'kimaki.sleep' }
   // A session found by walking parentID after a bot restart.
@@ -558,10 +559,10 @@ function showAgentPrompt({ draft, emit, prompt }: Pick<Context, 'draft' | 'emit'
   emit({ type: 'show', key: `agent:${prompt.id}`, replyTo: null, notify: true, messages: [{ content: prompt.prompt ?? '', components: [buttonRow(buttons)] }] })
 }
 
-function dismissAgentPrompts({ draft, emit, ids }: Pick<Context, 'draft' | 'emit'> & { ids: readonly string[] }) {
+function dismissAgentPrompts({ draft, emit, ids, result = 'dismissed' }: Pick<Context, 'draft' | 'emit'> & { ids: readonly string[]; result?: string }) {
   if (ids.length === 0) return
   draft.agentUi = draft.agentUi.filter((prompt) => !ids.includes(prompt.id))
-  for (const id of ids) emit({ type: 'edit', key: `agent:${id}`, messages: [textOnly('Dismissed')] })
+  for (const id of ids) emit({ type: 'edit', key: `agent:${id}`, messages: [textOnly(asSubtext(`⬦ ${result}`))] })
 }
 
 function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEvent }) {
@@ -569,7 +570,7 @@ function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEve
     case 'kimaki.agent-ui':
       return showAgentPrompt({ draft, emit, prompt: event.prompt })
     case 'kimaki.agent-ui-dismiss':
-      return dismissAgentPrompts({ draft, emit, ids: [event.id] })
+      return dismissAgentPrompts({ draft, emit, ids: [event.id], result: event.result })
     case 'kimaki.sleep':
       if (draft.turn) draft.turn.slept = true
       return

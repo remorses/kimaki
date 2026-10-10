@@ -61,7 +61,7 @@ test('agent shim shows buttons after text and a click resumes the real session',
     Choose the next action.
 
     -# ┣ shell _Show choices_
-    Dismissed
+    -# ⬦ clicked "Proceed"
 
     Buttons shown.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -92,7 +92,7 @@ test('native file upload modal returns local paths to the agent shell', async ()
     » **CLI:** upload-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# ┣ shell _Request logo_
-    Dismissed
+    -# ⬦ dismissed
     Uploaded 1 file(s)
 
     Upload received.
