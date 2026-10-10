@@ -68,9 +68,10 @@ function uiLine(message: UiMessage): string {
   return controls.length > 0 ? `${message.content} {${controls.join(', ')}}` : message.content
 }
 
-// One readable line per effect, for inline snapshots.
+// One readable line per Discord effect, for inline snapshots. `viewed` posts nothing.
 export function effectLines(effects: Effect[]): string[] {
-  return effects.map((effect) => {
+  return effects.flatMap((effect) => {
+    if (effect.type === 'viewed') return []
     if (effect.type === 'typing') return `[typing ${effect.on ? 'on' : 'off'}]`
     if (effect.type === 'attachments') return `[attachments ${effect.files.map((file) => file.name).join(', ')}]`
     if (effect.type === 'markdown') return `${effect.blankLineBefore ? '\\n' : ''}${effect.text}`

@@ -90,7 +90,9 @@ function drop(effects: readonly Effect[]) {
   }
 }
 
-export function createEffectsRunner({ discord }: { discord: Client }) {
+export type MarkViewed = (input: { sessionId: string; idle: number }) => Promise<Error | void>
+
+export function createEffectsRunner({ discord, markViewed }: { discord: Client; markViewed: MarkViewed }) {
   const workers = new Map<string, ThreadWorker>()
   // After stop(): no more sends or typing, even from effects already queued.
   const lifecycle = { closed: false }
@@ -172,6 +174,13 @@ export function createEffectsRunner({ discord }: { discord: Client }) {
     const thread = worker(threadId)
     if (effect.type === 'attachments') {
       effect.settle(await postFiles(threadId, effect.files))
+      return
+    }
+    if (effect.type === 'viewed') {
+      // Not awaited: a slow OpenCode call must not hold back Discord output.
+      void markViewed(effect).then((error) => {
+        if (error) logger.warn(`marking ${effect.sessionId} as viewed failed`, error)
+      })
       return
     }
     if (effect.type === 'typing') {

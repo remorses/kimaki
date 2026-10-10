@@ -7,7 +7,7 @@ import * as errore from 'errore'
 
 import { createAgentUi } from './agent-ui.ts'
 import type { Analytics } from './analytics.ts'
-import type { Bot } from './bot.ts'
+import { oc, type Bot } from './bot.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
@@ -122,7 +122,14 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const store = createBotStore()
   const recorder = createEventRecorder({ dataDir: options.dataDir })
   cleanup.defer(() => recorder.close())
-  const effects = createEffectsRunner({ discord })
+  const effects = createEffectsRunner({
+    discord,
+    // Viewed effects come from OpenCode events, so `opencode` below is always set by then.
+    markViewed: async ({ sessionId, idle }) => {
+      const result = await oc({ opencode }, 'mark session viewed', (client) => client.session.view({ sessionID: sessionId, idle }))
+      if (result instanceof Error) return result
+    },
+  })
   cleanup.defer(() => effects.stop())
   const voiceCalls = createVoiceCalls({ opencodeConfigDir: options.opencodeConfigDir })
   const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics, onRunEnded: voiceCalls.runEnded })

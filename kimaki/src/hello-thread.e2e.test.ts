@@ -16,6 +16,7 @@ import {
   startTestBot,
   startTwin,
   tempDataDir,
+  waitFor,
   waitForFooter,
   warmUp,
   type OpencodeTestServer,
@@ -157,6 +158,16 @@ test('channel message creates a thread with reply and footer, follow-up continue
   expect(rows.map((row) => ({ thread: row.thread_id === thread.id, source: row.source }))).toEqual([
     { thread: true, source: 'kimaki' },
   ])
+
+  // Posted to Discord, so OpenCode clients (TUI tabs, app) no longer show it unread.
+  const session = await waitFor({
+    label: 'session marked viewed',
+    check: async () => {
+      const info = await bot.opencode.endpoint!.client.session.get({ sessionID: rows[0]!.session_id })
+      return info.time.viewed !== undefined && info.time.viewed === info.time.idle && info
+    },
+  })
+  expect(session.time.idle).toBeGreaterThan(0)
 })
 
 test('message from a user without permission creates no thread', async () => {
@@ -206,6 +217,7 @@ test('/session-id shows the session, thread and attach command; events are recor
       "session.text.ended",
       "session.text.started",
       "session.usage.updated",
+      "session.viewed",
     ]
   `)
 })

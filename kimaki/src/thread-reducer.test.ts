@@ -45,6 +45,11 @@ test('text-only turn: banner, text, typing, footer with context percent', () => 
         "notify": true,
         "type": "footer",
       },
+      {
+        "idle": 1790766377050,
+        "sessionId": "ses_f0e01dc7bffelNzR27kKXbTrdG",
+        "type": "viewed",
+      },
     ]
   `)
   expect(view.turn).toBe(null)
@@ -150,6 +155,11 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
         },
         "notify": true,
         "type": "footer",
+      },
+      {
+        "idle": 1790766556670,
+        "sessionId": "ses_f0dfeef78ffeZ3za5UGCaeop1t",
+        "type": "viewed",
       },
     ]
   `)

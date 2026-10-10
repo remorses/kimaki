@@ -140,6 +140,9 @@ export type Effect =
   | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null; notify: boolean }
   // Edits the messages `show` posted under `key` (by index; the last one covers the rest).
   | { type: 'edit'; key: string; messages: readonly UiMessage[] }
+  // Marks the root execution that went idle at `idle` as read in OpenCode, once
+  // the lines before it are posted. Bots cannot see Discord read state.
+  | { type: 'viewed'; sessionId: string; idle: number }
 
 export type Emit = (effect: Effect) => void
 
@@ -406,16 +409,20 @@ function applyRoot(context: Context & { event: V2Event }) {
       draft.turn = null
       draft.lastKind = null
       if (turn) emitFooter({ ...context, turn, at: event.created, notify: !turn.slept })
+      emit({ type: 'viewed', sessionId: draft.sessionId, idle: event.created })
       return
     }
     case 'session.execution.failed':
       draft.turn = null
       draft.lastKind = null
       emit({ type: 'send', text: formatError(event.data.error.message), notify: true })
+      emit({ type: 'viewed', sessionId: draft.sessionId, idle: event.created })
       return
     case 'session.execution.interrupted':
       draft.turn = null
       draft.lastKind = null
+      // A shutdown does not make the session idle in OpenCode.
+      if (event.data.reason !== 'shutdown') emit({ type: 'viewed', sessionId: draft.sessionId, idle: event.created })
       return
     case 'session.inbox.enqueued':
       return enqueueInput({ draft, emit, data: event.data, busy: isBusy(draft) })
