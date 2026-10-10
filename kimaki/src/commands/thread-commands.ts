@@ -56,7 +56,7 @@ export function sessionIdReply({
   threadId: string
   directory: string | null
 }): string {
-  const attach = directory ? `opencode2 ${shellQuote(directory)} --session ${sessionId}` : `opencode2 --session ${sessionId}`
+  const attach = directory ? `opencode ${shellQuote(directory)} --session ${sessionId}` : `opencode --session ${sessionId}`
   return dedent`
     **Session ID:** \`${sessionId}\`
     **Thread ID:** \`${threadId}\`

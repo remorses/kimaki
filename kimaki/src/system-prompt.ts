@@ -120,7 +120,7 @@ export function baseInstructions({
       grep '<thread_id or ses_id>' ${dataDir}/kimaki.log
       \`\`\`
 
-      **OpenCode service log**: the shared \`opencode2 serve --service\` daemon appends to \`~/.local/share/opencode/log/opencode.log\` (\`$XDG_DATA_HOME/opencode/log\`; \`opencode2 debug paths\` prints the folder). The file is never reset and can be very large: always use \`tail\` or \`grep\`, never read it whole. Lines are logfmt. \`run=<id>\` is one daemon process, so filter by the run of the last line. The daemon pid and URL are in \`~/.local/state/opencode/service.json\`.
+      **OpenCode service log**: the shared \`opencode serve --service\` daemon appends to \`~/.local/share/opencode/log/opencode.log\` (\`$XDG_DATA_HOME/opencode/log\`; \`opencode debug paths\` prints the folder). The file is never reset and can be very large: always use \`tail\` or \`grep\`, never read it whole. Lines are logfmt. \`run=<id>\` is one daemon process, so filter by the run of the last line. The daemon pid and URL are in \`~/.local/state/opencode/service.json\`.
 
       \`\`\`bash
       LOG=~/.local/share/opencode/log/opencode.log

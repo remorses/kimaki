@@ -32,7 +32,7 @@ grep 'run (started|finished|failed)' -E ~/.kimaki/kimaki.log
 
 ### OpenCode service log
 
-The shared OpenCode 2 daemon (`opencode2 serve --service`) appends logfmt lines to `$XDG_DATA_HOME/opencode/log/opencode.log` (default `~/.local/share/opencode/log/opencode.log`, `opencode2 debug paths` prints it). It is never truncated or rotated. `run=<8 chars>` identifies one daemon process. `--log-level DEBUG` or `OPENCODE_LOG_LEVEL=DEBUG` raises the level, `--print-logs` also prints to stderr. Pid and URL of the daemon are in `~/.local/state/opencode/service.json`.
+The shared OpenCode 2 daemon (`opencode serve --service`) appends logfmt lines to `$XDG_DATA_HOME/opencode/log/opencode.log` (default `~/.local/share/opencode/log/opencode.log`, `opencode debug paths` prints it). It is never truncated or rotated. `run=<8 chars>` identifies one daemon process. `--log-level DEBUG` or `OPENCODE_LOG_LEVEL=DEBUG` raises the level, `--print-logs` also prints to stderr. Pid and URL of the daemon are in `~/.local/state/opencode/service.json`.
 
 ```bash
 LOG=~/.local/share/opencode/log/opencode.log

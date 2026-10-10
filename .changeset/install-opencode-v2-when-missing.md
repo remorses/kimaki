@@ -4,7 +4,7 @@
 
 Kimaki checks for OpenCode 2 before the Discord install, and installs it when no OpenCode exists.
 
-- **Lookup order:** `OPENCODE_PATH` if set, else `opencode2`, `opencode`, then `~/.opencode/bin/opencode`. A running OpenCode 2 service is used as is.
+- **Lookup order:** `OPENCODE_PATH` if set, else `opencode`, `~/.opencode/bin/opencode`, then the rare `opencode2` alias. The first OpenCode 2 found wins, so an OpenCode 1 `opencode` next to an `opencode2` still works. A running OpenCode 2 service is used as is.
 - **OpenCode 1 found:** Kimaki stops and does not touch it:
 
   ```

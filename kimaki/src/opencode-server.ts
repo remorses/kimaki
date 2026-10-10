@@ -3,10 +3,9 @@
 // Service.ensure() to start `<bin> serve --service` without a version pin
 // (a version pin would replace a running server and kill TUI sessions).
 //
-// Service.ensure() defaults to `opencode` from PATH. While V2 is in beta it
-// installs as `opencode2` and `opencode` is usually V1, which prints help for
-// `serve --service` and exits. So the binary is resolved first (findOpencodeBinary).
-// TODO: drop the lookup and use the Service.ensure() default once V2 ships as `opencode`.
+// Service.ensure() defaults to `opencode` from PATH. That may be V1 (prints help
+// for `serve --service` and exits) or missing from PATH right after the install
+// script, so the binary is resolved first (findOpencodeBinary).
 //
 // watchOpencode() owns the single /api/event subscription and implements the
 // mini TUI connect protocol (stream-v2.transport.ts connect()):
@@ -85,21 +84,23 @@ async function opencodeVersion(binary: string): Promise<string | null> {
   return result ? parseVersionOutput(result.stdout) : null
 }
 
-// OPENCODE_PATH alone when set. Otherwise `opencode2` first (V2 while V1 still owns
-// `opencode`), then `opencode`, then the install script location. The first
-// binary that answers --version decides: an OpenCode 1 or an old V2 is an error,
-// never a reason to install over it. null: no OpenCode at all.
+// OPENCODE_PATH alone when set. Otherwise `opencode`, the install script location,
+// then the rare `opencode2` alias (V2 next to a V1 `opencode`). The first supported
+// binary wins. If none is supported, the first OpenCode 1 or old V2 found is an
+// error, never a reason to install over it. null: no OpenCode at all.
 export async function findOpencodeBinary({
-  candidates = process.env['OPENCODE_PATH'] ? [process.env['OPENCODE_PATH']] : ['opencode2', 'opencode', installedOpencodeBinary()],
+  candidates = process.env['OPENCODE_PATH'] ? [process.env['OPENCODE_PATH']] : ['opencode', installedOpencodeBinary(), 'opencode2'],
 }: { candidates?: readonly string[] } = {}): Promise<OpenCodeV1Error | OpenCodeVersionError | string | null> {
+  let unsupported: OpenCodeV1Error | OpenCodeVersionError | null = null
   for (const binary of candidates) {
     const version = await opencodeVersion(binary)
     if (!version) continue
     if (isSupportedVersion(version)) return binary
-    if ((parseVersion(version)[0] ?? 0) < 2) return new OpenCodeV1Error({ binary, version, install: OPENCODE_INSTALL_COMMAND })
-    return new OpenCodeVersionError({ version, minimum: MIN_OPENCODE_VERSION })
+    unsupported ??= (parseVersion(version)[0] ?? 0) < 2
+      ? new OpenCodeV1Error({ binary, version, install: OPENCODE_INSTALL_COMMAND })
+      : new OpenCodeVersionError({ version, minimum: MIN_OPENCODE_VERSION })
   }
-  return null
+  return unsupported
 }
 
 export async function resolveOpencodeBinary(): Promise<OpenCodeV1Error | OpenCodeVersionError | OpenCodeMissingError | string> {

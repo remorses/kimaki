@@ -199,7 +199,7 @@ test('/session-id shows the session, thread and attach command; events are recor
     **Thread ID:** \`THREAD\`
     **Attach command:**
     \`\`\`bash
-    opencode2 PROJECT --session ses_X
+    opencode PROJECT --session ses_X
     \`\`\`"
   `)
 

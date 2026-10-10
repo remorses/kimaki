@@ -256,7 +256,7 @@ beforeAll(async () => {
       OPENCODE_PASSWORD: SERVER_PASSWORD,
     }).filter(([key]) => key !== 'KIMAKI'),
   )
-  serverProcess = spawn('opencode2', ['serve', '--port', String(port), '--hostname', '127.0.0.1'], {
+  serverProcess = spawn('opencode', ['serve', '--port', String(port), '--hostname', '127.0.0.1'], {
     cwd: projectDir,
     stdio: 'pipe',
     env,

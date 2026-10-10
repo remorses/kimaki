@@ -14,7 +14,7 @@ Kimaki is **one bot process per machine**. It connects Discord to the OpenCode 2
      (threads, channels, routines)                provider logins
 ```
 
-**OpenCode service.** Kimaki does not start its own OpenCode server. It uses the user's shared OpenCode 2 background service, the same server the OpenCode TUI and CLI use. When no service runs, Kimaki starts one with `opencode2 serve --service`. It looks for the binary in this order: `OPENCODE_PATH`, `opencode2`, `opencode`, `~/.opencode/bin/opencode`. The minimum version is 2.0.19. Kimaki never pins a version, because that would replace the running server and stop your TUI sessions.
+**OpenCode service.** Kimaki does not start its own OpenCode server. It uses the user's shared OpenCode 2 background service, the same server the OpenCode TUI and CLI use. When no service runs, Kimaki starts one with `opencode serve --service`. It looks for the binary in this order: `OPENCODE_PATH`, `opencode`, `~/.opencode/bin/opencode`, then `opencode2` if present. The minimum version is 2.0.19. Kimaki never pins a version, because that would replace the running server and stop your TUI sessions.
 
 **OpenCode install.** On first start, when no OpenCode exists, Kimaki installs OpenCode 2 with `curl -fsSL https://opencode.ai/v2/install | bash` (in a terminal it asks first). An OpenCode 1 or an older OpenCode 2 is an error with install instructions. Kimaki never replaces it.
 

@@ -139,7 +139,7 @@ The "Kimaki" role is the recommended approach for team access. Messages from use
 
 ## Troubleshooting
 
-If sessions stop responding or fail to start, restart the OpenCode service with `opencode2 service restart`. Kimaki reconnects by itself.
+If sessions stop responding or fail to start, restart the OpenCode service with `opencode service restart`. Kimaki reconnects by itself.
 
 If the issue is with the bot itself (messages not picked up, threads not created), run `kimaki restart`. To update Kimaki, install the latest version with `npm i -g kimaki@latest`, then run `kimaki restart`. Run `kimaki logs` to find the log file.
 

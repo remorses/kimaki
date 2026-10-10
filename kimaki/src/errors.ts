@@ -17,7 +17,7 @@ export class OpenCodeMissingError extends errore.createTaggedError({
   message: 'Kimaki requires OpenCode 2, which is not installed. Install it with: $install (or: npm i -g @opencode/cli). Then run kimaki again',
 }) {}
 
-// Both install commands put OpenCode 2 at `opencode` and `opencode2`.
+// Both install commands put OpenCode 2 at `opencode`.
 export class OpenCodeV1Error extends errore.createTaggedError({
   name: 'OpenCodeV1Error',
   message: 'Kimaki now requires OpenCode 2, but $binary is OpenCode $version. Install OpenCode 2 with: $install (or: npm i -g @opencode/cli). Then run kimaki again',

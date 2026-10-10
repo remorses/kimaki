@@ -11,13 +11,13 @@ Kimaki does not run its own OpenCode server. It uses the **OpenCode 2 background
 Run `/session-id` in a thread. Kimaki replies with the session ID and the command to open it:
 
 ```bash
-opencode2 /path/to/project --session ses_abc123
+opencode /path/to/project --session ses_abc123
 ```
 
 ```diagram
   Discord thread ──▶ kimaki bot ──┐
-                                  ├──▶ OpenCode 2 service (opencode2 serve --service)
-  terminal ──▶ opencode2 TUI ─────┘         one server, same sessions
+                                  ├──▶ OpenCode 2 service (opencode serve --service)
+  terminal ──▶ opencode TUI ─────┘         one server, same sessions
 ```
 
 ## Bring a TUI session into Discord
@@ -30,11 +30,11 @@ kimaki session resume <session-id>
 
 ## On a VPS
 
-By default the TUI connects to the service of the **same machine**. SSH into the VPS and run `opencode2` there:
+By default the TUI connects to the service of the **same machine**. SSH into the VPS and run `opencode` there:
 
 ```bash
 ssh my-vps
-opencode2 /path/to/project --session ses_abc123
+opencode /path/to/project --session ses_abc123
 ```
 
 Do not expose Kimaki's lock port (`KIMAKI_LOCK_PORT`, default `29988`) to the network.
@@ -44,8 +44,8 @@ Do not expose Kimaki's lock port (`KIMAKI_LOCK_PORT`, default `29988`) to the ne
 The service belongs to OpenCode. Use the OpenCode CLI to manage it:
 
 ```bash
-opencode2 service status
-opencode2 service restart
+opencode service status
+opencode service restart
 ```
 
 When the service restarts, Kimaki reconnects by itself. `kimaki status` shows the OpenCode URL and version the bot uses.
