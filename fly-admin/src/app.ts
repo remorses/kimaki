@@ -271,8 +271,9 @@ export class App {
     return await this.client.restOrThrow('apps', 'POST', payload)
   }
 
-  async deleteApp(app_name: DeleteAppRequest): Promise<FlyResult<void>> {
-    return await this.client.restOrThrow(`apps/${app_name}`, 'DELETE')
+  // force: also stop and delete running machines (Fly rejects deleting an app with running machines).
+  async deleteApp(app_name: DeleteAppRequest, { force = false }: { force?: boolean } = {}): Promise<FlyResult<void>> {
+    return await this.client.restOrThrow(`apps/${app_name}${force ? '?force=true' : ''}`, 'DELETE')
   }
 
   async listCertificates(payload: ListCertificatesRequest): Promise<FlyResult<ListCertificatesResponse>> {

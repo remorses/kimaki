@@ -28,4 +28,8 @@ export type Env = {
   STRADA_TOKEN?: string
   /** deployment environment label for Strada (development/preview/production). */
   ENVIRONMENT?: string
+  FLY_API_TOKEN?: string
+  // TODO: remove when Kimaki Cloud billing exists. Temporary gate so unpaid Discord logins cannot provision Fly VMs.
+  /** Comma-separated Discord user IDs and/or emails allowed to create Fly machines. Empty = nobody. */
+  CLOUD_PROVISION_ALLOWLIST?: string
 }

@@ -7,7 +7,7 @@
 
 import './strada-init.js'
 import { z } from 'zod'
-import { Spiceflow } from 'spiceflow'
+import { Spiceflow, ValidationError } from 'spiceflow'
 import { Head } from 'spiceflow/react'
 import { createPrisma } from 'db/src'
 import { app as holocronApp } from '@holocron.so/vite/app'
@@ -27,6 +27,7 @@ import { SlackBridgeDO } from './slack-bridge-do.js'
 import { SlackInstallPage } from './slack-install-page.js'
 import { reportWebsiteError, websiteTracer } from './strada-init.js'
 import { StradaBrowser } from './strada-browser.tsx'
+import { cloudApp } from './cloud-routes.js'
 import type { Env } from './env.js'
 
 export { SlackBridgeDO }
@@ -93,6 +94,10 @@ export const app = new Spiceflow({
   })
 
   .onError(({ error }) => {
+    // Bad request input (schema validation, malformed JSON body) is the caller's fault.
+    if (error instanceof ValidationError || error instanceof SyntaxError) {
+      return new Response(error.message, { status: 400 })
+    }
     console.error(error)
     reportWebsiteError(error, { route: 'onError' })
     const message = error instanceof Error ? error.message : String(error)
@@ -1019,6 +1024,8 @@ export const app = new Spiceflow({
       return { text: result.text }
     },
   })
+
+  .use(cloudApp)
 
   // Holocron docs mounted last so explicit routes above take priority.
   .use(holocronApp)

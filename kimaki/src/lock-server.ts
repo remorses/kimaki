@@ -46,12 +46,22 @@ export type LockServer = {
   // Started by the `kimaki` supervisor (cli/bot.ts): `kimaki restart` can respawn it.
   supervised: boolean
   handle: (handler: LockHandler) => void
+  // Discord and OpenCode are ready: POST /kimaki/wake answers callers with this bot token.
+  ready: (input: { wakeToken: string }) => void
   close: () => Promise<void>
+}
+
+const WAKE_TIMEOUT_MS = 30_000
+
+function sameSecret(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf8')
+  const right = Buffer.from(b, 'utf8')
+  return left.length === right.length && crypto.timingSafeEqual(left, right)
 }
 
 export type LockHandler = (route: string, input: unknown, signal: AbortSignal) => Promise<Error | { data: unknown }>
 
-function listen(server: http.Server, port: number): Promise<NodeJS.ErrnoException | void> {
+function listen({ server, port, host }: { server: http.Server; port: number; host: string }): Promise<NodeJS.ErrnoException | void> {
   return new Promise((resolve) => {
     const onError = (error: NodeJS.ErrnoException) => {
       server.off('listening', onListening)
@@ -63,7 +73,7 @@ function listen(server: http.Server, port: number): Promise<NodeJS.ErrnoExceptio
     }
     server.once('error', onError)
     server.once('listening', onListening)
-    server.listen(port, '127.0.0.1')
+    server.listen(port, host)
   })
 }
 
@@ -120,9 +130,37 @@ export async function evictRunningBot({ port, graceMs = 20_000 }: { port: number
 }
 
 // evict: false (--if-not-running) never stops a running bot; the bind fails with EADDRINUSE instead.
-export async function startLockServer({ port, dataDir, supervised = false, evict = true }: { port: number; dataDir: string; supervised?: boolean; evict?: boolean }): Promise<LockPortError | LockServer> {
+// host 0.0.0.0 (cloud machines, KIMAKI_INTERNET_REACHABLE_URL): gateway-proxy reaches /kimaki/wake.
+// The other /kimaki/* routes still need the lock-token, which only exists on this machine.
+export async function startLockServer({ port, dataDir, supervised = false, evict = true, host = '127.0.0.1' }: {
+  port: number
+  dataDir: string
+  supervised?: boolean
+  evict?: boolean
+  host?: string
+}): Promise<LockPortError | LockServer> {
   const token = crypto.randomBytes(32).toString('hex')
   const state: { handler: LockHandler | null } = { handler: null }
+  const readiness = Promise.withResolvers<string>()
+  // gateway-proxy calls this on a stopped cloud machine: the request starts the Fly VM,
+  // and the answer waits until this bot receives Discord events. Bearer: the bot's clientId:secret.
+  async function wake(req: http.IncomingMessage, res: http.ServerResponse) {
+    const answer = ({ status, body }: { status: number; body: { ready?: boolean; error?: string } }) => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+    if (req.method !== 'POST') return answer({ status: 405, body: { error: 'Use POST' } })
+    const timeout = new AbortController()
+    const wakeToken = await Promise.race([
+      readiness.promise,
+      sleep(WAKE_TIMEOUT_MS, null, { signal: timeout.signal }).catch(() => null),
+    ])
+    timeout.abort()
+    if (wakeToken === null) return answer({ status: 504, body: { ready: false, error: 'Kimaki is still starting' } })
+    const bearer = req.headers.authorization?.replace(/^Bearer /, '') ?? ''
+    if (!sameSecret(bearer, wakeToken)) return answer({ status: 401, body: { error: 'Not authorized' } })
+    answer({ status: 200, body: { ready: true } })
+  }
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const json = (status: number, value: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json' })
@@ -159,7 +197,7 @@ export async function startLockServer({ port, dataDir, supervised = false, evict
       res.end()
       return
     }
-    void handle(req, res).catch((cause) => {
+    void (req.url === '/kimaki/wake' ? wake(req, res) : handle(req, res)).catch((cause) => {
       logger.error('lock request failed', cause)
       if (!res.headersSent) res.writeHead(500)
       res.end(JSON.stringify({ error: 'Kimaki request failed. Check kimaki logs.' }))
@@ -169,7 +207,7 @@ export async function startLockServer({ port, dataDir, supervised = false, evict
   // Before listening, not on EADDRINUSE: on macOS 127.0.0.1:port binds even
   // while a V1 bot holds 0.0.0.0:port (KIMAKI_INTERNET_REACHABLE_URL).
   if (evict) await evictRunningBot({ port })
-  const bound = await listen(server, port)
+  const bound = await listen({ server, port, host })
   if (bound instanceof Error) {
     const reason = bound.code === 'EADDRINUSE'
       ? 'port is in use and the process on it did not stop. Stop it or set KIMAKI_LOCK_PORT to a free port'
@@ -177,7 +215,7 @@ export async function startLockServer({ port, dataDir, supervised = false, evict
     return new LockPortError({ port, reason, cause: bound })
   }
 
-  logger.info(`lock server listening on 127.0.0.1:${port}`)
+  logger.info(`lock server listening on ${host}:${port}`)
   const tokenFile = path.join(dataDir, 'lock-token')
   const written = await fs.promises.mkdir(dataDir, { recursive: true, mode: 0o700 })
     .then(() => fs.promises.writeFile(tokenFile, token, { mode: 0o600 }))
@@ -191,6 +229,7 @@ export async function startLockServer({ port, dataDir, supervised = false, evict
     port,
     supervised,
     handle: (handler) => { state.handler = handler },
+    ready: ({ wakeToken }) => readiness.resolve(wakeToken),
     close: async () => {
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))

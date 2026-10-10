@@ -59,6 +59,11 @@ export class LockPortError extends errore.createTaggedError({
   message: 'Could not take lock port $port: $reason',
 }) {}
 
+export class CloudWakeSyncError extends errore.createTaggedError({
+  name: 'CloudWakeSyncError',
+  message: 'Cannot store the next wake time on kimaki.dev ($reason)',
+}) {}
+
 export class FilesystemError extends errore.createTaggedError({
   name: 'FilesystemError',
   message: 'Filesystem $operation failed',

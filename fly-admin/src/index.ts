@@ -131,6 +131,7 @@ export type {
 } from './volume.ts'
 
 export type * from './types.ts'
+export { ApiMachineRestartPolicyEnum, StateEnum } from './types.ts'
 
 export function createClient(input: ClientInput) {
   return new Client(input)

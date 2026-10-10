@@ -247,3 +247,9 @@ export function createAuth({ env, baseURL }: { env: Env; baseURL: string }) {
 
   return auth
 }
+
+// The signed-in kimaki.dev user of this request, or null.
+export async function getSession({ env, request }: { env: Env; request: Request }) {
+  const auth = createAuth({ env, baseURL: new URL(request.url).origin })
+  return auth.api.getSession({ headers: request.headers })
+}
