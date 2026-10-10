@@ -406,6 +406,8 @@ async function requestGemini({ apiKey, baseUrl, prompt, audio, mediaType, tool }
   return parseGeminiResponse(raw)
 }
 
+// TODO: use the ChatGPT subscription token here once OpenAI allows it. Today chat/completions
+// rejects it (missing model.request scope), so the subscription only gets dictation without routing.
 async function requestOpenAI({ apiKey, baseUrl, prompt, audio, mediaType, tool }: ProviderRequest) {
   const input = await openAIAudio({ audio, mediaType })
   if (input instanceof Error) return input
