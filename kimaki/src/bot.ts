@@ -59,6 +59,8 @@ export type Bot = {
   token: string
   // bot_tokens.app_id of these credentials: key of the global_models row.
   appId: string
+  // OpenCode's SQLite file, source of the ChatGPT credential for voice transcription.
+  opencodeDbFile: string
   transcriptionBaseUrls: TranscriptionBaseUrls
   realtimeBaseUrls: RealtimeBaseUrls
   // Default for channels without a channel_worktrees row.

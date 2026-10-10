@@ -4,16 +4,19 @@
 //   audio ─▶ OpenAI gpt-audio (OGG/M4A converted to WAV) or Gemini (raw audio)
 //        ─▶ tool call { transcription, route, agent? } ─▶ parseVoiceMessage ─▶ Route
 //
-// Key order: OpenAI (bot_api_keys, then OPENAI_API_KEY), then Gemini
-// (bot_api_keys, then GEMINI_API_KEY). Gateway installs without a key use the free kimaki.dev
-// Whisper endpoint, which has no tool call: the route is always steer.
+// Order: OpenAI (bot_api_keys, then OPENAI_API_KEY), the ChatGPT subscription credential
+// stored by OpenCode (billed to the plan), Gemini (bot_api_keys, then GEMINI_API_KEY), then the
+// free kimaki.dev Whisper endpoint on gateway installs. A failing provider falls through to the
+// next one. ChatGPT and Whisper have no tool call: the route is always steer.
 // Plain fetch, no AI SDK: we parse provider bodies ourselves so transient
 // bad responses keep their details and can be retried.
 
 import { execFile } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
+import { createClient } from '@libsql/client'
 import * as errore from 'errore'
 import prism from 'prism-media'
 import dedent from 'string-dedent'
@@ -36,6 +39,7 @@ import * as schema from './schema.ts'
 const logger = createLogger('VOICE')
 const execFileAsync = promisify(execFile)
 
+const CHATGPT_BASE_URL = 'https://chatgpt.com/backend-api'
 const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 const OPENAI_AUDIO_MODEL = 'gpt-audio-1.5'
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
@@ -66,7 +70,7 @@ export class EmptyTranscriptionError extends errore.createTaggedError({
 
 export class NoTranscriptionKeyError extends errore.createTaggedError({
   name: 'NoTranscriptionKeyError',
-  message: 'Voice transcription needs an OpenAI or Gemini API key. Run /transcription-key, or kimaki bot keys set --openai <key>',
+  message: 'Voice transcription needs ChatGPT signed in to OpenCode, or an OpenAI or Gemini API key. Run /transcription-key, or kimaki bot keys set --openai <key>',
 }) {}
 
 type TranscriptionFailure = TranscriptionError | TranscriptionApiError | TranscriptionBlockedError | EmptyTranscriptionError
@@ -472,6 +476,76 @@ async function transcribeViaGateway({ audio, mediaType, clientId, clientSecret }
   return toTranscriptionResult({ transcription: parsed['text'] })
 }
 
+// --- ChatGPT subscription
+//
+// "Sign in with ChatGPT" in OpenCode stores an OAuth token that also works on the dictation
+// endpoint of the ChatGPT and Codex desktop apps, billed to the subscription. Private and
+// undocumented: multipart `file`, reply `{ text }`, no prompt or tool call. Accepts ogg, m4a,
+// mp3 and wav as is. The OpenCode SDK never returns secrets, so the token is read from
+// OpenCode's database. Kimaki never refreshes it: refresh tokens rotate, so a refresh here
+// would log OpenCode out. An expired token is skipped until OpenCode refreshes it.
+
+type ChatGPTCredential = { accessToken: string; accountId: string | null }
+
+const CHATGPT_EXTENSIONS: Record<string, string> = { 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3', 'audio/wav': 'wav' }
+
+// Same claim the Codex CLI sends as chatgpt-account-id.
+function chatGPTAccountId(accessToken: string): string | null {
+  const payload = accessToken.split('.')[1] ?? ''
+  const claims = errore.try(() => JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown, () => null)
+  const auth = isRecord(claims) ? claims['https://api.openai.com/auth'] : null
+  return isRecord(auth) && typeof auth['chatgpt_account_id'] === 'string' ? auth['chatgpt_account_id'] : null
+}
+
+// The active (else newest) OpenAI OAuth credential, if not expired. null when OpenCode has none.
+export async function chatGPTCredential({ dbFile, now = Date.now() }: { dbFile: string; now?: number }): Promise<TranscriptionError | ChatGPTCredential | null> {
+  if (!fs.existsSync(dbFile)) return null
+  const client = createClient({ url: ':memory:' })
+  const rows = await client
+    .execute({ sql: 'ATTACH DATABASE ? AS opencode', args: [`file:${dbFile}?mode=ro`] })
+    .then(() =>
+      client.execute(`SELECT value FROM opencode.credential WHERE integration_id = 'openai' ORDER BY active DESC, time_updated DESC`),
+    )
+    .catch((cause) => new TranscriptionError({ reason: `reading OpenCode credentials from ${dbFile} failed`, cause }))
+    .finally(() => client.close())
+  if (rows instanceof Error) return rows
+  for (const row of rows.rows) {
+    const raw = row['value']
+    const value = typeof raw === 'string' ? errore.try(() => JSON.parse(raw) as unknown, () => null) : null
+    if (!isRecord(value) || value['type'] !== 'oauth' || typeof value['access'] !== 'string') continue
+    if (typeof value['expires'] === 'number' && value['expires'] <= now + 60_000) {
+      logger.log('OpenCode ChatGPT token expired, skipping it until OpenCode refreshes it')
+      return null
+    }
+    return { accessToken: value['access'], accountId: chatGPTAccountId(value['access']) }
+  }
+  return null
+}
+
+async function transcribeViaChatGPT({ credential, baseUrl, audio, mediaType }: {
+  credential: ChatGPTCredential
+  baseUrl: string
+  audio: Buffer
+  mediaType: string
+}): Promise<TranscriptionFailure | TranscriptionResult> {
+  const form = new FormData()
+  form.append('file', new File([new Uint8Array(audio)], `voice.${CHATGPT_EXTENSIONS[mediaType] ?? 'ogg'}`, { type: mediaType }))
+  const response = await fetch(`${baseUrl}/transcribe`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${credential.accessToken}`,
+      ...(credential.accountId && { 'chatgpt-account-id': credential.accountId }),
+    },
+    body: form,
+  }).catch((cause) => new TranscriptionError({ reason: 'ChatGPT transcription not reachable', cause }))
+  if (response instanceof Error) return response
+  const body = await response.text().catch(() => '')
+  if (!response.ok) return new TranscriptionApiError({ status: String(response.status), body: body.slice(0, 300) })
+  const parsed = parseJsonObject(body)
+  if (parsed instanceof Error) return parsed
+  return toTranscriptionResult({ transcription: parsed['text'] })
+}
+
 // --- routing
 
 export function parseVoiceMessage(result: TranscriptionResult): Route {
@@ -485,7 +559,7 @@ async function projectFileTree(directory: string): Promise<string> {
   return result?.stdout.split('\n').slice(0, 400).join('\n') ?? ''
 }
 
-export type TranscriptionBaseUrls = { openai?: string; gemini?: string }
+export type TranscriptionBaseUrls = { chatgpt?: string; openai?: string; gemini?: string }
 
 // Usable audio API keys, best first: any OpenAI key (stored, then env) before any Gemini key.
 // Gemini's content filter blocks harmless voice messages, so a stored Gemini key must not win over env OpenAI.
@@ -500,23 +574,41 @@ export function audioKeyCandidates(stored: { openai_api_key: string | null; gemi
   return candidates.flatMap(({ provider, apiKey }) => (apiKey ? [{ provider, apiKey }] : []))
 }
 
-async function transcriptionProvider({ db, token }: { db: KimakiDb; token: string }) {
-  const row = await db.query.bot_tokens
-    .findFirst({ where: { token }, with: { api_keys: true } })
-    .catch((e) => new DbError({ operation: 'read transcription keys', cause: e }))
+type Transcriber =
+  | { kind: 'openai' | 'gemini'; apiKey: string }
+  | { kind: 'chatgpt'; credential: ChatGPTCredential }
+  | { kind: 'gateway'; clientId: string; clientSecret: string }
+
+// Best first: OpenAI key (routing tool call), ChatGPT subscription and Gemini key, then hosted Whisper.
+// ChatGPT and Whisper only transcribe, so the route is always steer.
+async function transcribers({ db, token, opencodeDbFile }: { db: KimakiDb; token: string; opencodeDbFile: string }): Promise<DbError | Transcriber[]> {
+  const [row, credential] = await Promise.all([
+    db.query.bot_tokens
+      .findFirst({ where: { token }, with: { api_keys: true } })
+      .catch((e) => new DbError({ operation: 'read transcription keys', cause: e })),
+    chatGPTCredential({ dbFile: opencodeDbFile }),
+  ])
   if (row instanceof Error) return row
+  if (credential instanceof Error) logger.warn('ChatGPT credential not readable', credential)
+  const keys = audioKeyCandidates(row?.api_keys)
+  const openai = keys.find((key) => key.provider === 'openai')
+  const gemini = keys.find((key) => key.provider === 'gemini')
   const credentials = row ? credentialsFromRow(row) : null
   const [clientId, clientSecret] = credentials?.mode === 'gateway' ? credentials.token.split(':') : []
-  const gateway = clientId && clientSecret ? { kind: 'gateway' as const, clientId, clientSecret } : null
-  const found = audioKeyCandidates(row?.api_keys)[0]
-  if (found) return { kind: found.provider, apiKey: found.apiKey, gateway }
-  if (gateway) return gateway
-  return new NoTranscriptionKeyError()
+  return [
+    ...(openai ? [{ kind: 'openai' as const, apiKey: openai.apiKey }] : []),
+    ...(credential && !(credential instanceof Error) ? [{ kind: 'chatgpt' as const, credential }] : []),
+    ...(gemini ? [{ kind: 'gemini' as const, apiKey: gemini.apiKey }] : []),
+    ...(clientId && clientSecret ? [{ kind: 'gateway' as const, clientId, clientSecret }] : []),
+  ]
 }
 
+// Each transcriber in order until one succeeds. A provider failure or content filter
+// refusal moves on to the next; an empty transcription is final.
 export async function transcribe({
   db,
   token,
+  opencodeDbFile,
   baseUrls = {},
   audio,
   mediaType,
@@ -527,6 +619,8 @@ export async function transcribe({
   db: KimakiDb
   // The running bot's token: selects its bot_tokens row and API keys.
   token: string
+  // OpenCode's SQLite file with the ChatGPT credential (opencodeDbFile()).
+  opencodeDbFile: string
   baseUrls?: TranscriptionBaseUrls
   audio: Buffer
   // Canonical type from voiceMediaType().
@@ -535,24 +629,27 @@ export async function transcribe({
   agents: ReadonlyArray<{ name: string; description: string }>
   inSession: boolean
 }): Promise<DbError | NoTranscriptionKeyError | TranscriptionFailure | TranscriptionResult> {
-  const selected = await transcriptionProvider({ db, token })
-  if (selected instanceof Error) return selected
-  if (selected.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...selected })
+  const list = await transcribers({ db, token, opencodeDbFile })
+  if (list instanceof Error) return list
   const tool = buildTranscriptionTool({ agentNames: agents.map((agent) => agent.name), inSession })
-  const prompt = transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
-  const request = { apiKey: selected.apiKey, prompt, audio, mediaType, tool }
-  const result =
-    selected.kind === 'openai'
-      ? await withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
-      : await withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
-  // A provider content filter can refuse harmless audio: retry with hosted Whisper (always steer).
-  if (result instanceof TranscriptionBlockedError && selected.gateway) {
-    logger.warn(`provider blocked the audio (${result.message}), retrying with kimaki.dev Whisper`)
-    const hosted = await transcribeViaGateway({ audio, mediaType, ...selected.gateway })
-    if (!(hosted instanceof Error)) return hosted
-    logger.warn(`kimaki.dev Whisper fallback failed`, hosted)
+  const prompt = list.some((entry) => entry.kind === 'openai' || entry.kind === 'gemini')
+    ? transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
+    : ''
+  const run = (entry: Transcriber) => {
+    if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry })
+    if (entry.kind === 'chatgpt') return withRetries(() => transcribeViaChatGPT({ credential: entry.credential, baseUrl: baseUrls.chatgpt ?? CHATGPT_BASE_URL, audio, mediaType }))
+    const request = { apiKey: entry.apiKey, prompt, audio, mediaType, tool }
+    if (entry.kind === 'openai') return withRetries(() => requestOpenAI({ ...request, baseUrl: baseUrls.openai ?? OPENAI_BASE_URL }))
+    return withRetries(() => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }))
   }
-  return result
+  let last: TranscriptionFailure | NoTranscriptionKeyError = new NoTranscriptionKeyError()
+  for (const entry of list) {
+    const result = await run(entry)
+    if (!(result instanceof Error) || result instanceof EmptyTranscriptionError) return result
+    logger.warn(`${entry.kind} transcription failed${entry === list.at(-1) ? '' : ', trying the next provider'}`, result)
+    last = result
+  }
+  return last
 }
 
 // --- text to speech (`kimaki tts`)

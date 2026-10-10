@@ -46,6 +46,9 @@ export type StartBotOptions = {
   // Global OpenCode config dir that gets plugins/kimaki/ (opencodeConfigDir()).
   // Required, so no caller writes into the user's real config by accident.
   opencodeConfigDir: string
+  // OpenCode's SQLite file (opencodeDbFile()): voice transcription reads the ChatGPT credential from it.
+  // Required, so tests never read the developer's real credentials.
+  opencodeDbFile: string
   // Shell command that runs this Kimaki install (given to agents), from kimakiShellCommand().
   kimakiCommand: string
   // Product analytics sink (createAnalytics or disabledAnalytics).
@@ -162,6 +165,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The lock server only passes /kimaki/* paths.
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
   // Before login: gateway-proxy replays missed messages right after READY.
+    opencodeDbFile: options.opencodeDbFile,
   registerIngress(bot)
   voiceCalls.register(bot)
   // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.

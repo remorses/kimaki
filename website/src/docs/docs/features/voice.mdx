@@ -65,9 +65,9 @@ Say file and function names naturally. Because the transcriber sees your file li
 </Tip>
 </Aside>
 
-## Setup: an OpenAI or Gemini key
+## Setup: an API key or ChatGPT subscription
 
-Transcription needs an **OpenAI** or **Gemini** API key. Add one in Discord with **`/transcription-key`** (server owner or administrator only), or from a terminal:
+Transcription works best with an **OpenAI** or **Gemini** API key. Add one in Discord with **`/transcription-key`** (server owner or administrator only), or from a terminal:
 
 ```bash
 kimaki bot keys set --openai sk-...
@@ -76,12 +76,14 @@ kimaki bot keys set --gemini AIza...
 
 In `/transcription-key`, a key that starts with `sk-` is saved as an OpenAI key. Any other key is saved as a Gemini key.
 
-Kimaki uses the first key it finds, in this order:
+Kimaki tries these in order. If one fails, it tries the next:
 
-1. OpenAI key saved with Kimaki
-2. `OPENAI_API_KEY` environment variable
-3. Gemini key saved with Kimaki
-4. `GEMINI_API_KEY` environment variable
+1. OpenAI key (saved with Kimaki, else `OPENAI_API_KEY`)
+2. ChatGPT subscription, if you signed in to OpenCode with **Sign in with ChatGPT**
+3. Gemini key (saved with Kimaki, else `GEMINI_API_KEY`)
+4. Hosted Whisper on kimaki.dev, in gateway mode
+
+ChatGPT and Whisper only transcribe: **queue, chat, and agent instructions are ignored**, and the text is handled as a normal message. ChatGPT uses no API credits.
 
 OpenAI keys use `gpt-audio-1.5`. Gemini keys use `gemini-flash-latest`.
 
@@ -89,9 +91,7 @@ OpenAI keys use `gpt-audio-1.5`. Gemini keys use `gemini-flash-latest`.
 
 With the shared Kimaki bot (`--gateway`) and no key, Kimaki uses a free hosted Whisper transcription on kimaki.dev. Whisper only transcribes speech: **queue, chat, and agent instructions are ignored**, and the text is always handled as a normal message.
 
-Without a key on your own bot, a voice message gets an error that tells you to run `/transcription-key`.
-
-If a provider's content filter refuses harmless audio in gateway mode, Kimaki tries the hosted Whisper once as a fallback.
+Without a key or ChatGPT sign-in on your own bot, a voice message gets an error that tells you to run `/transcription-key`.
 
 ## Sending audio back
 

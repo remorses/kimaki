@@ -136,6 +136,12 @@ export function opencodeConfigDir(): string {
   return path.join(xdg, 'opencode')
 }
 
+// OpenCode's SQLite database, which holds provider credentials (packages/cli/src/database-path.ts).
+export function opencodeDbFile(): string {
+  const data = path.join(process.env['XDG_DATA_HOME'] || path.join(os.homedir(), '.local', 'share'), 'opencode')
+  return path.resolve(data, process.env['OPENCODE_DB'] || 'opencode.db')
+}
+
 // Shim folder under plugins/ -> plugin directory under dist/plugin/, loaded
 // through its index module. Always dist, also when the bot runs from src: OpenCode
 // reloads the plugin when its files change, so a src target would reload half

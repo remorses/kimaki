@@ -133,6 +133,7 @@ async function voiceRoute(
   const result = await transcribe({
     db: bot.db,
     token: bot.token,
+    opencodeDbFile: bot.opencodeDbFile,
     baseUrls: bot.transcriptionBaseUrls,
     audio,
     mediaType: voiceMediaType(attachment),

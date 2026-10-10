@@ -15,6 +15,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { createClient } from '@libsql/client'
 import { OpenCode, type OpenCodeClient } from '@opencode/client'
 import { Service } from '@opencode/client/service'
 import { ChannelType, ComponentType, type APIMessage } from 'discord.js'
@@ -63,6 +64,8 @@ export type OpencodeTestServer = {
   serviceFile: string
   // Global OpenCode config dir of this server (XDG_CONFIG_HOME/opencode).
   configDir: string
+  // OpenCode's SQLite file of this server (XDG_DATA_HOME/opencode/opencode.db).
+  dbFile: string
   projectDirectory: string
   // User skill folder (~/.agents/skills of the test HOME). It exists at start, so OpenCode watches it.
   skillsDirectory: string
@@ -181,6 +184,7 @@ export async function startOpencodeTestServer({
     root,
     serviceFile,
     configDir: path.join(env.XDG_CONFIG_HOME, 'opencode'),
+    dbFile: path.join(env.XDG_DATA_HOME, 'opencode', 'opencode.db'),
     projectDirectory,
     skillsDirectory,
     client,
@@ -403,6 +407,8 @@ export async function startTestBot({
   server,
   geminiBaseUrl,
   openaiBaseUrl,
+  chatgptBaseUrl,
+  opencodeDbFile = server.dbFile,
   realtimeBaseUrl,
   lockPort,
   saveTwinCredentials = true,
@@ -416,6 +422,9 @@ export async function startTestBot({
   // Voice transcription against startFakeGemini() / startFakeOpenAI().
   geminiBaseUrl?: string
   openaiBaseUrl?: string
+  // ChatGPT subscription transcription against startFakeChatGPT(), with the credential in opencodeDbFile.
+  chatgptBaseUrl?: string
+  opencodeDbFile?: string
   // Voice calls against startFakeRealtime().
   realtimeBaseUrl?: string
   lockPort?: number
@@ -449,6 +458,7 @@ export async function startTestBot({
     discordRestUrl: twin.discord.restUrl,
     opencodeServiceFile: server.serviceFile,
     opencodeConfigDir: server.configDir,
+    opencodeDbFile,
     ensureOpencode: false,
     analytics: analytics ?? disabledAnalytics,
     ...(clock && { clock }),
@@ -457,6 +467,7 @@ export async function startTestBot({
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),
+      ...(chatgptBaseUrl && { chatgpt: chatgptBaseUrl }),
     },
   })
   if (bot instanceof Error) throw bot
@@ -577,6 +588,8 @@ export type FakeOpenAI = {
   baseUrl: string
   // Audio of each request, as OpenAI received it.
   requests: Array<{ model: string; format: string; audio: Buffer; routes: unknown }>
+  // Reply status; tests set 401 to check the fallback to the next transcriber.
+  status: number
   stop: () => Promise<void>
 }
 
@@ -584,7 +597,7 @@ export type FakeOpenAI = {
 // same transcription tool call. Real Opus audio goes through the OGG -> WAV
 // conversion first, so the audio cannot carry the answer like voiceUrl().
 export async function startFakeOpenAI({ result }: { result: FakeTranscription }): Promise<FakeOpenAI> {
-  const requests: FakeOpenAI['requests'] = []
+  const fake: Omit<FakeOpenAI, 'baseUrl' | 'stop'> = { requests: [], status: 200 }
   const server = http.createServer((request, response) => {
     const chunks: Buffer[] = []
     request.on('data', (chunk: Buffer) => chunks.push(chunk))
@@ -596,13 +609,18 @@ export async function startFakeOpenAI({ result }: { result: FakeTranscription })
       }
       const tool = body.tools[0]!.function
       const audio = body.messages[0]!.content.find((part) => part.input_audio)!.input_audio!
-      requests.push({
+      fake.requests.push({
         model: body.model,
         format: audio.format,
         audio: Buffer.from(audio.data, 'base64'),
         routes: tool.parameters.properties.route?.enum ?? null,
       })
       response.setHeader('content-type', 'application/json')
+      if (fake.status !== 200) {
+        response.statusCode = fake.status
+        response.end(JSON.stringify({ error: { message: 'unauthorized' } }))
+        return
+      }
       response.end(
         JSON.stringify({
           choices: [
@@ -617,11 +635,61 @@ export async function startFakeOpenAI({ result }: { result: FakeTranscription })
   })
   const port = await freePort()
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
-  return {
+  return Object.assign(fake, {
     baseUrl: `http://127.0.0.1:${port}`,
-    requests,
-    stop: () => new Promise((resolve) => server.close(() => resolve())),
-  }
+    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  })
+}
+
+export type FakeChatGPT = {
+  baseUrl: string
+  // Each POST /transcribe, as ChatGPT received it.
+  requests: Array<{ authorization: string | null; accountId: string | null; filename: string; type: string; audio: Buffer }>
+  // Reply status; tests set 401 to check the API key fallback.
+  status: number
+  stop: () => Promise<void>
+}
+
+// chatgpt.com/backend-api/transcribe: multipart `file` in, `{ text }` out.
+export async function startFakeChatGPT({ text }: { text: string }): Promise<FakeChatGPT> {
+  const fake: Omit<FakeChatGPT, 'baseUrl' | 'stop'> = { requests: [], status: 200 }
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', async () => {
+      const headers = new Headers(Object.entries(request.headers).flatMap(([key, value]) => (typeof value === 'string' ? [[key, value]] : [])))
+      const form = await new Request('http://fake/transcribe', { method: 'POST', headers, body: Buffer.concat(chunks) }).formData()
+      const file = form.get('file')
+      if (!(file instanceof File)) throw new Error('fake ChatGPT: no file field')
+      fake.requests.push({
+        authorization: headers.get('authorization'),
+        accountId: headers.get('chatgpt-account-id'),
+        filename: file.name,
+        type: file.type,
+        audio: Buffer.from(await file.arrayBuffer()),
+      })
+      response.statusCode = fake.status
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify(fake.status === 200 ? { text } : { detail: 'unauthorized' }))
+    })
+  })
+  const port = await freePort()
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
+  return Object.assign(fake, {
+    baseUrl: `http://127.0.0.1:${port}`,
+    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  })
+}
+
+// An OpenCode database with only the credential table and one ChatGPT OAuth row.
+export async function writeOpencodeCredential({ file, access, expires }: { file: string; access: string; expires: number }) {
+  const client = createClient({ url: `file:${file}` })
+  await client.execute('CREATE TABLE credential (id text PRIMARY KEY, integration_id text, label text NOT NULL, value text NOT NULL, connector_id text, method_id text, active integer, time_created integer NOT NULL, time_updated integer NOT NULL)')
+  await client.execute({
+    sql: `INSERT INTO credential (id, integration_id, label, value, time_created, time_updated) VALUES ('cred_test', 'openai', 'OAuth', ?, 0, 0)`,
+    args: [JSON.stringify({ type: 'oauth', methodID: 'chatgpt-browser', access, refresh: 'refresh-test', expires })],
+  })
+  client.close()
 }
 
 export function tempDataDir(): string {

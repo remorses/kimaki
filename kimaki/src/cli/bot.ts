@@ -103,7 +103,7 @@ export function registerStartCommand(cli: Goke) {
         { emitEvent, gatewayCredentials, gatewayUrlsFromEnv, installUrlFor, readSavedCredentials, resolveCredentials, restApiUrl },
         { openDb },
         { createAnalytics },
-        { opencodeConfigDir },
+        { opencodeConfigDir, opencodeDbFile },
         { defaultMachineName },
         { ensureVoiceChannels, parseRealtimeVoice, saveVoiceCallVoice },
       ] = await Promise.all([
@@ -209,6 +209,7 @@ export function registerStartCommand(cli: Goke) {
         opencodeServiceFile: process.env['KIMAKI_OPENCODE_SERVICE_FILE'],
         ensureOpencode: true,
         opencodeConfigDir: opencodeConfigDir(),
+        opencodeDbFile: opencodeDbFile(),
         analytics: createAnalytics({ dataDir, botMode: credentials.mode, enabled: !options.noAnalytics }),
         autoWorktrees: Boolean(options.worktrees),
       })

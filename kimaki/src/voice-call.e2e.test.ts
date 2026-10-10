@@ -25,6 +25,7 @@ import {
   tempDataDir,
   textParts,
   waitFor,
+  writeOpencodeCredential,
   type FakeRealtime,
   type OpencodeTestServer,
   type TestTwin,
@@ -275,4 +276,37 @@ test('a saved voice picks its provider when that key is set, else the provider d
   await bot.db.update(schema.bot_api_keys).set({ xai_api_key: null }).where(eq(schema.bot_api_keys.app_id, appId))
   const reset = await saveVoiceCallVoice({ db: bot.db, appId, voice: null })
   if (reset instanceof Error) throw reset
+})
+
+test('the ChatGPT token from OpenCode wins over the OpenAI key; web search still needs the key', async () => {
+  const opencodeDbFile = path.join(dataDir, 'opencode-chatgpt.db')
+  await writeOpencodeCredential({ file: opencodeDbFile, access: 'chatgpt-access-token', expires: Date.now() + 3_600_000 })
+  const appId = (await bot.db.query.bot_tokens.findFirst({ where: { token: bot.token } }))!.app_id
+  const describe = async () => {
+    const model = await realtimeModel({ ...bot, opencodeDbFile })
+    if (model instanceof Error) throw model
+    return { auth: model.adapter.connect({ resumeHandle: null }).headers, searchKey: model.searchKey, builtinSearch: model.builtinSearch }
+  }
+  const withKey = await describe()
+  await bot.db.update(schema.bot_api_keys).set({ openai_api_key: null }).where(eq(schema.bot_api_keys.app_id, appId))
+  const withoutKey = await describe()
+  await bot.db.update(schema.bot_api_keys).set({ openai_api_key: withKey.searchKey }).where(eq(schema.bot_api_keys.app_id, appId))
+  expect({ withKey, withoutKey }).toMatchInlineSnapshot(`
+    {
+      "withKey": {
+        "auth": {
+          "Authorization": "Bearer chatgpt-access-token",
+        },
+        "builtinSearch": "web_search",
+        "searchKey": "sk-test-realtime",
+      },
+      "withoutKey": {
+        "auth": {
+          "Authorization": "Bearer chatgpt-access-token",
+        },
+        "builtinSearch": null,
+        "searchKey": null,
+      },
+    }
+  `)
 })

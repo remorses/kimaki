@@ -1,6 +1,7 @@
 // Voice transcription with an OpenAI key: a real Ogg Opus voice message is
 // decoded to WAV (OpenAI accepts only wav and mp3) and sent to a local
 // OpenAI-compatible server that answers with the transcription tool call.
+// A ChatGPT credential stored by OpenCode is the fallback when the key fails, and gets the raw audio.
 
 import { execFile } from 'node:child_process'
 import fs from 'node:fs'
@@ -13,6 +14,7 @@ import type { BotHandle } from './main.ts'
 import {
   TEST_USER_ID,
   seedProjectChannel,
+  startFakeChatGPT,
   startFakeOpenAI,
   startOpencodeTestServer,
   startTestBot,
@@ -21,6 +23,8 @@ import {
   textParts,
   waitForFooter,
   warmUp,
+  writeOpencodeCredential,
+  type FakeChatGPT,
   type FakeOpenAI,
   type OpencodeTestServer,
   type TestTwin,
@@ -34,18 +38,23 @@ let server: OpencodeTestServer
 let twin: TestTwin
 let bot: BotHandle
 let openai: FakeOpenAI
+let chatgpt: FakeChatGPT
 let dataDir: string
+// Created by the ChatGPT test: the tests before it run with no credential.
+let opencodeDbFile: string
 
 beforeAll(async () => {
   dataDir = tempDataDir()
-  ;[server, twin, openai] = await Promise.all([
+  opencodeDbFile = path.join(dataDir, 'opencode.db')
+  ;[server, twin, openai, chatgpt] = await Promise.all([
     startOpencodeTestServer({ matchers }),
     startTwin(),
     startFakeOpenAI({ result: { transcription: 'Hello from the phone voice-openai', route: 'steer' } }),
+    startFakeChatGPT({ text: 'Hello from ChatGPT voice-openai' }),
   ])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, openaiBaseUrl: openai.baseUrl })
+  bot = await startTestBot({ dataDir, twin, server, openaiBaseUrl: openai.baseUrl, chatgptBaseUrl: chatgpt.baseUrl, opencodeDbFile })
   // Stored with the CLI, like a user would.
   const { stdout } = await promisify(execFile)(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'bot', 'keys', 'set', '--openai', 'sk-test-openai-key', '--data-dir', dataDir])
   expect(stdout).toBe('Saved OpenAI API key\n')
@@ -56,6 +65,7 @@ afterAll(async () => {
   await twin?.stop()
   await server?.stop()
   await openai?.stop()
+  await chatgpt?.stop()
   fs.rmSync(dataDir, { recursive: true, force: true })
 })
 
@@ -112,6 +122,70 @@ test('an MP3 upload labeled audio/mpeg3 goes to OpenAI as mp3', async () => {
     {
       "audio": "ID3-fake-mp3-bytes",
       "format": "mp3",
+    }
+  `)
+})
+
+test('the OpenAI key wins over the ChatGPT credential from OpenCode, which takes over when the key fails', async () => {
+  const claims = Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'acct-test' } })).toString('base64url')
+  await writeOpencodeCredential({ file: opencodeDbFile, access: `header.${claims}.signature`, expires: Date.now() + 3_600_000 })
+  const ogg = fs.readFileSync(path.join(import.meta.dirname, 'fixtures', 'voice.ogg'))
+  const openaiRequests = openai.requests.length
+
+  async function sendVoice() {
+    const before = new Set((await twin.discord.channel(twin.channelId).getThreads()).map((thread) => thread.id))
+    await twin.discord
+      .channel(twin.channelId)
+      .user(TEST_USER_ID)
+      .sendVoiceMessage({ url: `data:audio/ogg;base64,${ogg.toString('base64')}` })
+    const thread = await twin.discord.channel(twin.channelId).waitForThread({ timeout: 8_000, predicate: (thread) => !before.has(thread.id) })
+    await waitForFooter({ discord: twin.discord, threadId: thread.id })
+    return thread.id
+  }
+
+  const viaKey = await sendVoice()
+  expect(await twin.discord.thread(viaKey).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    [attachment: voice-message.ogg]
+    --- from: assistant (TestBot)
+    » **tommy:** Hello from the phone voice-openai
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    openai voice ok
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  expect({ chatgptRequests: chatgpt.requests.length, openaiRequests: openai.requests.length - openaiRequests }).toMatchInlineSnapshot(`
+    {
+      "chatgptRequests": 0,
+      "openaiRequests": 1,
+    }
+  `)
+
+  openai.status = 401
+  const viaChatGPT = await sendVoice()
+  openai.status = 200
+  expect(await twin.discord.thread(viaChatGPT).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    [attachment: voice-message.ogg]
+    --- from: assistant (TestBot)
+    » **tommy:** Hello from ChatGPT voice-openai
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    openai voice ok
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  const [request] = chatgpt.requests
+  expect({
+    authorization: request?.authorization?.replace(claims, '<claims>'),
+    accountId: request?.accountId,
+    filename: request?.filename,
+    type: request?.type,
+    sameAudio: request?.audio.equals(ogg),
+  }).toMatchInlineSnapshot(`
+    {
+      "accountId": "acct-test",
+      "authorization": "Bearer header.<claims>.signature",
+      "filename": "voice.ogg",
+      "sameAudio": true,
+      "type": "audio/ogg",
     }
   `)
 })

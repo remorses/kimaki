@@ -74,9 +74,11 @@ The model gets the same notice, so it never needs to poll `kimaki session list`:
 | started in the call with `--wait` | waits for the transcript, then tells you the result once |
 | started elsewhere (Discord, another agent) | keeps it as context, mentions it when you ask |
 
-## Setup: an API key
+## Setup: ChatGPT subscription or an API key
 
-Voice calls use the same keys as [voice messages](./voice). Add one with **`/transcription-key`** or from a terminal:
+If you signed in to OpenCode with **Sign in with ChatGPT**, voice calls use `gpt-realtime-2.1` with your ChatGPT subscription. No setup and no API credits. The `web_search` tool still needs an OpenAI API key; without one the call has no web search.
+
+Otherwise voice calls use the same keys as [voice messages](./voice). Add one with **`/transcription-key`** or from a terminal:
 
 ```bash
 kimaki bot keys set --openai sk-...

@@ -51,6 +51,7 @@ import { formatEcho } from './queue.ts'
 import * as schema from './schema.ts'
 import { catalogReady, primaryAgents } from './sessions.ts'
 import { voiceCallInstructions } from './system-prompt.ts'
+import { chatGPTCredential } from './voice.ts'
 
 const logger = createLogger('VCALL')
 
@@ -82,7 +83,7 @@ export class VoiceCallError extends errore.createTaggedError({
 
 export class NoRealtimeKeyError extends errore.createTaggedError({
   name: 'NoRealtimeKeyError',
-  message: 'Voice calls need an OpenAI, xAI or Gemini API key. Run /transcription-key, or kimaki bot keys set --openai <key>',
+  message: 'Voice calls need ChatGPT signed in to OpenCode, or an OpenAI, xAI or Gemini API key. Run /transcription-key, or kimaki bot keys set --openai <key>',
 }) {}
 
 // Realtime WebSocket URLs; tests point OpenAI at a local fake.
@@ -144,16 +145,24 @@ export async function saveVoiceCallVoice({ db, appId, voice }: { db: Bot['db']; 
 // https://developers.openai.com/api/docs/guides/realtime-mcp
 // A saved voice (kimaki --voice) moves its provider first when that key is set.
 // voiceNotice says why the saved voice is not used.
-export async function realtimeModel(bot: Pick<Bot, 'db' | 'token' | 'realtimeBaseUrls'>): Promise<
-  DbError | NoRealtimeKeyError | { adapter: Adapter; voice: string; voiceNotice: string | null; builtinSearch: string; searchKey: string | null }
+// The ChatGPT token stored by OpenCode wins over an OpenAI key: the realtime WebSocket accepts it
+// and bills the subscription. It has no Responses API scope, so web search still needs a real key.
+export async function realtimeModel(bot: Pick<Bot, 'db' | 'token' | 'realtimeBaseUrls' | 'opencodeDbFile'>): Promise<
+  DbError | NoRealtimeKeyError | { adapter: Adapter; voice: string; voiceNotice: string | null; builtinSearch: string | null; searchKey: string | null }
 > {
-  const row = await bot.db.query.bot_tokens
-    .findFirst({ where: { token: bot.token }, with: { api_keys: true, settings: true } })
-    .catch((cause) => new DbError({ operation: 'read realtime keys', cause }))
+  const [row, credential] = await Promise.all([
+    bot.db.query.bot_tokens
+      .findFirst({ where: { token: bot.token }, with: { api_keys: true, settings: true } })
+      .catch((cause) => new DbError({ operation: 'read realtime keys', cause })),
+    chatGPTCredential({ dbFile: bot.opencodeDbFile }),
+  ])
   if (row instanceof Error) return row
+  if (credential instanceof Error) logger.warn('ChatGPT credential not readable, using API keys', credential)
+  const chatgpt = credential instanceof Error ? null : credential
   const keys = row?.api_keys
+  const openaiKey = keys?.openai_api_key || process.env['OPENAI_API_KEY']
   const available = [
-    { provider: 'openai' as const, key: keys?.openai_api_key || process.env['OPENAI_API_KEY'] },
+    { provider: 'openai' as const, key: chatgpt?.accessToken || openaiKey },
     { provider: 'xai' as const, key: keys?.xai_api_key || process.env['XAI_API_KEY'] },
     { provider: 'gemini' as const, key: keys?.gemini_api_key || process.env['GEMINI_API_KEY'] },
   ].flatMap(({ provider, key }) => (key ? [{ provider, key }] : []))
@@ -170,7 +179,8 @@ export async function realtimeModel(bot: Pick<Bot, 'db' | 'token' | 'realtimeBas
   })()
   const shared = { voice, voiceNotice }
   if (chosen.provider === 'openai') {
-    return { ...shared, adapter: openai({ apiKey: chosen.key, baseUrl: bot.realtimeBaseUrls.openai }), builtinSearch: 'web_search', searchKey: chosen.key }
+    const searchKey = openaiKey || null
+    return { ...shared, adapter: openai({ apiKey: chosen.key, baseUrl: bot.realtimeBaseUrls.openai }), builtinSearch: searchKey ? 'web_search' : null, searchKey }
   }
   if (chosen.provider === 'xai') {
     const builtinTools = [{ type: 'web_search' }, { type: 'x_search' }]
