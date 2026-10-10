@@ -111,6 +111,12 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     }
     return setToken(token)
   }
+  // Gateway lifecycle, to debug reconnects that break voice joins or event delivery.
+  discord.on(Events.ShardDisconnect, (event, id) => logger.warn(`gateway shard ${id} disconnected with code ${event.code}`))
+  discord.on(Events.ShardReconnecting, (id) => logger.warn(`gateway shard ${id} reconnecting`))
+  discord.on(Events.ShardResume, (id, replayed) => logger.info(`gateway shard ${id} resumed, ${replayed} events replayed`))
+  discord.on(Events.ShardReady, (id) => logger.info(`gateway shard ${id} ready`))
+  discord.on(Events.ShardError, (error, id) => logger.warn(`gateway shard ${id} error`, error))
   cleanup.defer(() => discord.destroy())
   cleanup.defer(() => options.analytics.flush())
   const store = createBotStore()
