@@ -152,6 +152,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     supervised: lock.supervised,
     token: options.token,
     appId: options.appId,
+    opencodeDbFile: options.opencodeDbFile,
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},
     realtimeBaseUrls: options.realtimeBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
@@ -165,7 +166,6 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The lock server only passes /kimaki/* paths.
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
   // Before login: gateway-proxy replays missed messages right after READY.
-    opencodeDbFile: options.opencodeDbFile,
   registerIngress(bot)
   voiceCalls.register(bot)
   // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.
