@@ -52,7 +52,7 @@
           "docs/features/btw",
           "docs/features/worktrees",
           "docs/features/diff-viewer",
-          "docs/features/scheduled-tasks",
+          "docs/features/routines",
           "docs/features/sleep",
           "docs/features/voice",
           "docs/features/voice-calls",
@@ -135,7 +135,8 @@
     { "source": "/docs/model-switching", "destination": "/docs/getting-started/model-switching" },
     { "source": "/docs/advanced-setup", "destination": "/docs/guides/advanced-setup" },
     { "source": "/docs/ci-automation", "destination": "/docs/guides/ci-automation" },
-    { "source": "/docs/internals", "destination": "/docs/reference/internals" }
+    { "source": "/docs/internals", "destination": "/docs/reference/internals" },
+    { "source": "/docs/features/scheduled-tasks", "destination": "/docs/features/routines" }
   ],
   "knownPaths": [
     "/discord-install",

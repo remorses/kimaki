@@ -70,7 +70,7 @@ In a session thread these change the **session**. In a project channel they set 
 
 | Command  | Description                                                                         |
 | -------- | ----------------------------------------------------------------------------------- |
-| `/tasks` | List scheduled tasks, run one now, or delete it ([docs](../features/scheduled-tasks)) |
+| `/routines` | List routines, run one now, or delete it ([docs](../features/routines)) |
 
 ## Dynamic slash commands
 
@@ -186,7 +186,7 @@ kimaki send --channel <channel-id> --prompt 'daily report' --send-at '0 9 * * 1-
 | `--wait`                   | Wait until idle or input is needed, then print the session                  |
 | `--send-at <when>`         | Schedule: UTC ISO date ending in Z, or cron expression (UTC)                |
 | `--pre-run <command>`      | Scheduled only: run first in the project. Exit 0 starts, stdout is appended |
-| `--allow-concurrency`      | Scheduled only: allow overlapping runs of this task                         |
+| `--allow-concurrency`      | Scheduled only: allow overlapping runs of this routine                         |
 
 `kimaki send` works **without a local bot** too. With `KIMAKI_BOT_TOKEN` set, it posts the request in the channel and the bot that owns the channel runs it. See [CI & Automation](../guides/ci-automation).
 
@@ -212,10 +212,10 @@ kimaki send --channel <channel-id> --prompt 'daily report' --send-at '0 9 * * 1-
 
 | Command               | Description                                                                              | Options                                                                                      |
 | --------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `task list`           | List scheduled tasks (planned, running, failed)                                          | `--json`                                                                                     |
-| `task edit <taskId>`  | Change a planned task. An empty string clears a value                                    | `--prompt`, `--send-at`, `--agent`, `--model`, `-u, --user`, `--pre-run`, `--allow-concurrency` |
-| `task delete <taskId>`| Delete a scheduled task                                                                  |                                                                                              |
-| `task run <taskId>`   | Run a scheduled task now                                                                 |                                                                                              |
+| `routine list`        | List routines (planned, running, failed)                                                 | `--json`, `--all`                                                                            |
+| `routine edit <routineId>` | Change a planned routine. An empty string clears a value                            | `--prompt`, `--send-at`, `--agent`, `--model`, `-u, --user`, `--pre-run`, `--allow-concurrency` |
+| `routine delete <routineId>` | Delete a routine                                                                  |                                                                                              |
+| `routine run <routineId>` | Run a routine now                                                                     |                                                                                              |
 | `sleep`               | Wake this session later with a new message in the same thread. Run it last, after your text | `--duration`, `--until`, `--reason`, `-s, --session`                                     |
 
 ### Discord

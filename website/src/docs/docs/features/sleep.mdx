@@ -75,18 +75,18 @@ Most input cancels a sleep, not only chat messages: **`/queue`**, **`/abort`**, 
 
 A new sleep replaces the pending one. Each session has at most **one** pending sleep.
 
-## Sleep vs scheduled tasks
+## Sleep vs routines
 
 Both wait for the future, but they are different:
 
-|               | `kimaki sleep`                      | [`--send-at`](./scheduled-tasks)   |
+|               | `kimaki sleep`                      | [`--send-at`](./routines)   |
 | ------------- | ----------------------------------- | ---------------------------------- |
 | Who starts it | The agent, during a conversation    | You or the agent, from the CLI     |
 | What resumes  | **This** session, with full context | A **new** prompt                   |
 | Repeats       | No, one time                        | Cron supported                     |
 | Best for      | "check back after the deploy"       | digests, reminders, recurring jobs |
 
-Use **sleep** when the current conversation must continue later. Use **scheduled tasks** when fresh work must start on a timer.
+Use **sleep** when the current conversation must continue later. Use **routines** when fresh work must start on a timer.
 
 ## Limits
 

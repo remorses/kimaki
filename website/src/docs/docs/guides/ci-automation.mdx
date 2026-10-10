@@ -1,6 +1,6 @@
 ---
 title: CI & Automation
-description: Start Kimaki sessions from CI pipelines, cron jobs, or any automation. Includes GitHub Actions examples, scheduled tasks, and per-session permissions.
+description: Start Kimaki sessions from CI pipelines, cron jobs, or any automation. Includes GitHub Actions examples, routines, and per-session permissions.
 icon: workflow
 ---
 
@@ -140,7 +140,7 @@ KIMAKI_BOT_TOKEN='...' npx -y kimaki@latest thread list --channel <channel-id>
 
 To add a project channel, run `kimaki project add /path/to/project` on the machine that holds the folder. It needs that machine's Kimaki data directory.
 
-## Scheduled tasks
+## Routines
 
 Add `--send-at` to a `kimaki send` command to run it later. Use a one-time UTC ISO date or a recurring cron expression (UTC). Run it on the machine where the bot runs:
 
@@ -151,11 +151,11 @@ kimaki send --channel <channel-id> \
   --send-at '0 9 * * 1'
 ```
 
-For the full scheduling workflow, including `--pre-run`, `kimaki task list`, and `/tasks`, see [Scheduled Tasks](../features/scheduled-tasks).
+For the full scheduling workflow, including `--pre-run`, `kimaki routine list`, and `/routines`, see [Routines](../features/routines).
 
 ## Per-session permissions
 
-When you start a new session with `kimaki send`, you can restrict tools for that session with `--permission`. This is useful for CI pipelines, scheduled tasks, and sandboxed sessions.
+When you start a new session with `kimaki send`, you can restrict tools for that session with `--permission`. This is useful for CI pipelines, routines, and sandboxed sessions.
 
 Format: `tool:action` or `tool:pattern:action`. Actions: `allow`, `deny`, `ask`. The tool names are OpenCode 2 permission names, for example `shell` and `edit`.
 

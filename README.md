@@ -62,7 +62,7 @@ See [Models & Subscriptions](https://kimaki.dev/docs/getting-started/subscriptio
 
 Kimaki adds a layer of orchestration features on top of OpenCode. The ones worth knowing first:
 
-- **[Scheduled tasks](https://kimaki.dev/docs/features/scheduled-tasks)**: run the bot on a schedule (cron or a future time). For example, every morning read your inbox with a CLI like [Zele](https://github.com/remorses/zele) and post an email digest thread; then reply to mark some read or unsubscribe.
+- **[Routines](https://kimaki.dev/docs/features/routines)**: run the bot on a schedule (cron or a future time). For example, every morning read your inbox with a CLI like [Zele](https://github.com/remorses/zele) and post an email digest thread; then reply to mark some read or unsubscribe.
 - **[The queue](https://kimaki.dev/docs/features/queue)**: queue a message to send when the current run finishes. Great for "review this when you're done" or "commit at the end". End any message with `. queue` and even edit it later to update the queued text.
 - **[btw](https://kimaki.dev/docs/features/btw)**: fork the current context into a new thread to ask a clarifying question in parallel while the agent keeps working. End a message with `. btw` or run `/btw`.
 - **[Worktrees](https://kimaki.dev/docs/features/worktrees)**: `/new-worktree` starts a session in an isolated Git worktree so it never touches your main checkout. In a thread it forks the current context. `/merge-worktree` merges the commits into a local branch with rebase or squash.
@@ -150,7 +150,7 @@ See the full [Troubleshooting guide](https://kimaki.dev/docs/guides/troubleshoot
 - [**Channels & Threads**](https://kimaki.dev/docs/core-concepts/channels-threads): the orchestration model in depth
 - [**Models & Subscriptions**](https://kimaki.dev/docs/getting-started/subscriptions): use your Claude and Codex subscriptions
 - [**CI & Automation**](https://kimaki.dev/docs/guides/ci-automation): programmatic sessions, GitHub Actions, per-session permissions
-- [**Scheduled Tasks**](https://kimaki.dev/docs/features/scheduled-tasks): cron and one-time tasks, email digests
+- [**Routines**](https://kimaki.dev/docs/features/routines): cron and one-time scheduled prompts, email digests
 - [**Advanced Setup**](https://kimaki.dev/docs/guides/advanced-setup): multiple instances, multiple Discord servers
 - [**Docker**](https://kimaki.dev/docs/guides/docker): run Kimaki on a VPS
 - [**Internals**](https://kimaki.dev/docs/reference/internals): how Kimaki works under the hood

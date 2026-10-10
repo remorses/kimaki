@@ -382,7 +382,7 @@ always add `expect(await discord.thread(id).text()).toMatchInlineSnapshot()` (or
 - `startTwin()`, `seedProjectChannel()`, `startTestBot()`: digital Discord and the bot, in-process.
 - `warmUp({ server })` at the end of `beforeAll`: one throwaway turn so the first test does not pay the OpenCode cold start.
 - `afterAll`: `bot.stop()`, `twin.stop()`, `server.stop()`, then delete the temp data dir.
-- `manualClock()` and `schedulingKit()` for sleeps and scheduled tasks; `startFakeOpenAI()` / `startFakeGemini()` for voice.
+- `manualClock()` and `schedulingKit()` for sleeps and routines; `startFakeOpenAI()` / `startFakeGemini()` for voice.
 
 ## e2e testing learnings
 

@@ -11,7 +11,7 @@ Kimaki is **one bot process per machine**. It connects Discord to the OpenCode 2
                  │                                         │
                  ▼                                         ▼
      ~/.kimaki/kimaki.db                          sessions, messages, queue,
-     (threads, channels, tasks)                   provider logins
+     (threads, channels, routines)                provider logins
 ```
 
 **OpenCode service.** Kimaki does not start its own OpenCode server. It uses the user's shared OpenCode 2 background service, the same server the OpenCode TUI and CLI use. When no service runs, Kimaki starts one with `opencode2 serve --service`. It looks for the binary in this order: `OPENCODE_PATH`, `opencode2`, `opencode`, `~/.opencode/bin/opencode`. The minimum version is 2.0.19. Kimaki never pins a version, because that would replace the running server and stop your TUI sessions.
@@ -20,7 +20,7 @@ Kimaki is **one bot process per machine**. It connects Discord to the OpenCode 2
 
 **Sessions live in OpenCode.** Messages, the queue, agent and model per session, and provider logins are stored by OpenCode. They survive a Kimaki restart. Kimaki reacts to the OpenCode event stream and renders it in Discord.
 
-**SQLite database.** Kimaki stores its own state in `<data-dir>/kimaki.db` (default `~/.kimaki/kimaki.db`): bot credentials, the channel to directory mapping, the thread to session mapping, channel preferences, scheduled tasks, and sleeps. On first start it imports a V1 `discord-sessions.db` read-only. The V1 file is never changed.
+**SQLite database.** Kimaki stores its own state in `<data-dir>/kimaki.db` (default `~/.kimaki/kimaki.db`): bot credentials, the channel to directory mapping, the thread to session mapping, channel preferences, routines, and sleeps. On first start it imports a V1 `discord-sessions.db` read-only. The V1 file is never changed.
 
 **Channels and machines.** Each machine gets a Discord category named `Kimaki <machine>` (default: the hostname, override with `--machine-name`). A channel belongs to the machine whose database has it. Other Kimaki bots ignore it.
 

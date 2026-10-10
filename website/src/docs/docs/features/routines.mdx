@@ -1,10 +1,10 @@
 ---
-title: Scheduled Tasks
-description: Run the bot on a schedule, cron or a one-time future time, for digests, reminders, and recurring maintenance.
+title: Routines
+description: Routines run the bot on a schedule, cron or a one-time future time, for digests, reminders, and recurring maintenance.
 icon: lucide:calendar-clock
 ---
 
-Kimaki can run a prompt **on a schedule**: once at a future time, or again and again on a cron expression. The bot wakes up, does a job, and posts the result as a Discord thread you can reply to.
+A **routine** is a prompt Kimaki runs **on a schedule**: once at a future time, or again and again on a cron expression. The bot wakes up, does a job, and posts the result as a Discord thread you can reply to.
 
 ## Scheduling with `--send-at`
 
@@ -27,13 +27,13 @@ All scheduling is in **UTC**. One-time dates must end with `Z`, and cron express
 </Warning>
 </Aside>
 
-The **Kimaki bot must run** on the machine that owns the channel. It stores the task in its SQLite database and checks for due tasks about every 5 seconds. If a cron task misses runs while the bot is off, it runs once when the bot starts again.
+The **Kimaki bot must run** on the machine that owns the channel. It stores the routine in its SQLite database and checks for due routines about every 5 seconds. If a cron routine misses runs while the bot is off, it runs once when the bot starts again.
 
-With `--channel` (or `--project`), each run starts a **new thread**. With `--thread` (or `--session`), each run sends the prompt into that existing thread, shown as `» task #N: <prompt>`.
+With `--channel` (or `--project`), each run starts a **new thread**. With `--thread` (or `--session`), each run sends the prompt into that existing thread, shown as `» routine #N: <prompt>`.
 
 ## Flagship example: a morning email digest
 
-The pattern that makes scheduled tasks shine: a **morning email digest** you can act on from Discord.
+The pattern that makes routines shine: a **morning email digest** you can act on from Discord.
 
 ```diagram
   cron 0 7 * * *
@@ -45,7 +45,7 @@ The pattern that makes scheduled tasks shine: a **morning email digest** you can
   └─────────┘      └──────────┘      └───────────┘
 ```
 
-Schedule a task that reads your inbox each morning with a CLI like **[Zele](https://github.com/remorses/zele)** (a multi-account email and calendar CLI) and posts a summary:
+Schedule a routine that reads your inbox each morning with a CLI like **[Zele](https://github.com/remorses/zele)** (a multi-account email and calendar CLI) and posts a summary:
 
 ```bash
 kimaki send --channel <channel-id> \
@@ -71,16 +71,16 @@ Make reminder prompts **detailed**: the future reader has no context, so include
 
 - **Weekly QA**: run the full test suite, summarize failures, mention a user only if review is needed.
 - **Maintenance cron**: rotate secrets, check dependency updates, clean stale branches on a `0 9 1 * *` monthly schedule.
-- **Project memory**: have the task read and update a markdown file in the repo each run.
+- **Project memory**: have the routine read and update a markdown file in the repo each run.
 
 Most other `send` flags (`--notify-only`, `--worktree`, `--base-branch`, `--cwd`, `--name`, `--agent`, `--model`, `--user`, `--permission`) work with `--send-at`. Two do not:
 
-- `--wait`: the task runs in the future.
+- `--wait`: the routine runs in the future.
 - `--file`: put the file in the project and name it in the prompt.
 
 With `--worktree`, each run gets a **fresh worktree** with its own name.
 
-Pass **`--user`** when someone should see the thread in Discord. Omit it for quiet autonomous work so the thread stays out of the sidebar. Clear a stored user later with `kimaki task edit <id> --user ''`.
+Pass **`--user`** when someone should see the thread in Discord. Omit it for quiet autonomous work so the thread stays out of the sidebar. Clear a stored user later with `kimaki routine edit <id> --user ''`.
 
 ## Run only when needed
 
@@ -132,22 +132,22 @@ kimaki send --channel <channel-id> \
   --prompt 'Read the Crisp session IDs in the pre-run output. Use crisp-cli to inspect each conversation and draft a support reply.'
 ```
 
-An exit code of **0 starts the session**. Kimaki appends the command's stdout to the task prompt under a `## Pre-run command output` heading. Any other exit code skips that occurrence. Stderr goes to the Kimaki log. A pre-run command is stopped after 10 minutes.
+An exit code of **0 starts the session**. Kimaki appends the command's stdout to the routine prompt under a `## Pre-run command output` heading. Any other exit code skips that occurrence. Stderr goes to the Kimaki log. A pre-run command is stopped after 10 minutes.
 
-Scheduled tasks **do not overlap by default**. If the session of the last run is still active, a cron task skips that occurrence and runs again at the next scheduled time. A one-time task waits until the last session is done. Add `--allow-concurrency` only when parallel runs are safe.
+Routines **do not overlap by default**. If the session of the last run is still active, a cron routine skips that occurrence and runs again at the next scheduled time. A one-time routine waits until the last session is done. Add `--allow-concurrency` only when parallel runs are safe.
 
-## Managing tasks
+## Managing routines
 
 ```bash
-kimaki task list
-kimaki task edit <id> --prompt 'new prompt' [--send-at 'new schedule'] \
+kimaki routine list
+kimaki routine edit <id> --prompt 'new prompt' [--send-at 'new schedule'] \
   [--agent <name>] [--model <provider/model>] [--pre-run 'command'] \
   [--allow-concurrency true|false] [--user '<discord-user-id>']
-kimaki task edit <id> --user ''
-kimaki task run <id>
-kimaki task delete <id>
+kimaki routine edit <id> --user ''
+kimaki routine run <id>
+kimaki routine delete <id>
 ```
 
-`kimaki task list` shows planned, running, and failed tasks. An empty string in `task edit` clears a value. `task run` starts a task now, outside its schedule.
+`kimaki routine list` shows planned, running, and failed routines. An empty string in `routine edit` clears a value. `routine run` starts a routine now, outside its schedule. Routines were called scheduled tasks before; the old `kimaki task` commands still work.
 
-The **`/tasks`** slash command lists the server's scheduled tasks in Discord. Each task has a **Run now** button and a **Delete** button. For the full `kimaki send` reference and CI usage, see [CI & Automation](../guides/ci-automation).
+The **`/routines`** slash command lists the server's routines in Discord. Each routine has a **Run now** button and a **Delete** button. For the full `kimaki send` reference and CI usage, see [CI & Automation](../guides/ci-automation).
