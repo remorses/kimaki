@@ -3,7 +3,7 @@
 // the root session to render them:
 //
 //   inbox.enqueued (queue, while busy) ─▶ "Queued at position N" ack
-//   inbox.enqueued (steer, metadata echo) ─▶ the echo line (wakes, scheduled runs)
+//   inbox.enqueued (steer, echo)       ─▶ the echo line (wakes, scheduled runs, TUI prompts)
 //   inbox.delivered                    ─▶ "» user: text" echo, ack says "Queued message sent"
 //   inbox.cancelled                    ─▶ ack says "Removed from queue"
 //
@@ -33,7 +33,7 @@ export type PendingInput = {
   messageId: string | null
   // An ack was posted; only acked items get an echo when they start.
   acked: boolean
-  // Line from the prompt metadata (scheduled runs); shown on delivery even without an ack.
+  // Line from the prompt metadata (scheduled runs) or for prompts sent outside Discord; shown on delivery even without an ack.
   echo: string | null
 }
 
@@ -45,13 +45,19 @@ function ackKey(inboxID: string): string {
   return `queue:${inboxID}`
 }
 
-function discordMetadata(metadata: { readonly [key: string]: JsonValue } | undefined) {
-  const discord = metadata?.['discord']
-  if (!discord || typeof discord !== 'object' || Array.isArray(discord)) return { username: null, messageId: null, echo: null }
+function inputFields(payload: { text: string; metadata?: { readonly [key: string]: JsonValue } }) {
+  const text = stripTurnContext(payload.text)
+  const discord = payload.metadata?.['discord']
+  // Sent outside Discord (TUI, other clients): echo it like V1 external sync did.
+  if (!discord || typeof discord !== 'object' || Array.isArray(discord)) {
+    return { external: true, text, username: null, messageId: null, echo: text.trim() ? formatEcho({ username: 'user', text }) : null }
+  }
   const username = discord['username']
   const messageId = discord['messageId']
   const echo = discord['echo']
   return {
+    external: false,
+    text,
     username: typeof username === 'string' ? username : null,
     // CLI and scheduled prompts carry a UUID, not a Discord message to reply to.
     messageId: typeof messageId === 'string' && /^\d+$/.test(messageId) ? messageId : null,
@@ -85,10 +91,14 @@ export function enqueueInput(
   const { draft, emit, data, busy } = slice
   const { item, inboxID } = data
   if (item.type !== 'user' || draft.inbox.some((candidate) => candidate.inboxID === inboxID)) return
-  const meta = discordMetadata(item.payload.metadata)
+  const { external, ...fields } = inputFields(item.payload)
+  // The expanded prompt of a command Kimaki ran: the queue echo shows the typed command, never the template.
+  const command = external ? draft.commandPending : null
+  if (external) draft.commandPending = null
+  const meta = command ? { ...fields, ...command, echo: null } : fields
   // Idle with nothing pending: OpenCode runs it at once, like a normal message.
   const acked = item.delivery === 'queue' && (busy || draft.inbox.length > 0)
-  draft.inbox.push({ inboxID, delivery: item.delivery, text: stripTurnContext(item.payload.text), ...meta, acked })
+  draft.inbox.push({ inboxID, delivery: item.delivery, ...meta, acked })
   if (item.delivery !== 'queue') {
     if (!meta.echo) return
     emit({ type: 'send', text: meta.echo })
@@ -137,8 +147,8 @@ export function hydrateQueue(slice: Slice & { inbox: readonly SessionInboxInfo[]
     const existing = known.get(item.id)
     if (existing?.delivery === item.delivery) return existing
     if (existing?.delivery === 'queue' && item.delivery === 'steer') closeAck(slice, existing, 'Queued message sent')
-    const meta = discordMetadata(item.payload.metadata)
-    return { inboxID: item.id, delivery: item.delivery, text: stripTurnContext(item.payload.text), ...meta, acked: item.delivery === 'queue' }
+    const { external: _external, ...fields } = inputFields(item.payload)
+    return { inboxID: item.id, delivery: item.delivery, ...fields, acked: item.delivery === 'queue' }
   })
 }
 

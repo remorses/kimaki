@@ -1,8 +1,9 @@
 // Text Kimaki adds to the model context: one durable instruction entry per
 // session (spec 5.4, section 26 #3) and a short per-turn <discord-user> block
-// appended to every prompt.
+// the plugin adds to every Kimaki prompt from its metadata (turnContext()).
 
 import dedent from 'string-dedent'
+import { z } from 'zod'
 
 export const INSTRUCTION_KEY = 'kimaki'
 
@@ -633,7 +634,7 @@ function escapeAttribute(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
 }
 
-// Prompt text as the user wrote it: withTurnContext() appends the block.
+// Prompts stored before turnContext() moved to metadata end with the block; display paths strip it.
 export function stripTurnContext(text: string): string {
   return text.replace(/\n\n(<local-files>\n[\s\S]*?<\/local-files>\n)?<discord-user [^\n]*\/>$/, '')
 }
@@ -644,24 +645,24 @@ export function localFilesBlock(paths: readonly string[]): string {
   return `<local-files>\nAttachments saved on disk. OpenCode cannot show these inline; use tools to read them.\n${paths.join('\n')}\n</local-files>\n`
 }
 
-export function withTurnContext({ text, context }: { text: string; context: string }): string {
-  return `${text}\n\n${context}`
-}
+// metadata.discord of a Kimaki prompt (prompt.ts).
+const TurnContextSchema = z.object({
+  username: z.string(),
+  userId: z.string(),
+  messageId: z.string(),
+  threadId: z.string(),
+  threadName: z.string(),
+  localFiles: z.array(z.string()),
+})
+export type TurnContext = z.infer<typeof TurnContextSchema>
 
-export function turnContext({
-  username,
-  userId,
-  messageId,
-  threadId,
-  threadName,
-}: {
-  username: string
-  userId: string
-  messageId: string
-  threadId: string
-  threadName: string
-}): string {
-  return `<discord-user name="${escapeAttribute(username)}" user-id="${userId}" message-id="${messageId}" thread-id="${threadId}" thread-name="${escapeAttribute(threadName)}" />`
+// The model-only text for a message's metadata.discord. Null for prompts from
+// other clients, and for prompts from before this metadata (their text has the block).
+export function turnContext(metadata: Readonly<Record<string, unknown>> | undefined): string | null {
+  const parsed = TurnContextSchema.safeParse(metadata?.['discord'])
+  if (!parsed.success) return null
+  const { username, userId, messageId, threadId, threadName, localFiles } = parsed.data
+  return `${localFilesBlock(localFiles)}<discord-user name="${escapeAttribute(username)}" user-id="${userId}" message-id="${messageId}" thread-id="${threadId}" thread-name="${escapeAttribute(threadName)}" />`
 }
 
 export type VoiceCallUser = { id: string; username: string }

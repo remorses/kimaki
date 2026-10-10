@@ -114,6 +114,9 @@ export type ThreadView = {
   cached: { tokens: number; at: number } | null
   // Root inbox: user items not delivered yet, in order (queuedItems() for the queue).
   inbox: readonly PendingInput[]
+  // Kimaki runs an OpenCode command (kimaki.command): the next root user item
+  // without Discord metadata is its expanded prompt, shown as the typed command.
+  commandPending: { text: string; username: string } | null
   // Questions and permission requests waiting for the user (root and children).
   forms: Readonly<Record<string, PendingForm>>
   permissions: Readonly<Record<string, PendingPermission>>
@@ -156,6 +159,12 @@ export type KimakiEvent =
   | { type: 'kimaki.agent-ui-dismiss'; id: string; result?: string }
   // `kimaki sleep` planned a wake of the root session (sleeps.ts).
   | { type: 'kimaki.sleep' }
+  // Kimaki is about to run an OpenCode command (prompt.ts). Prompts without
+  // Discord metadata are echoed as sent from elsewhere; this one must not be.
+  // TODO: pass metadata.discord to session.command once its payload accepts metadata, then drop this event.
+  | { type: 'kimaki.command'; text: string; username: string }
+  // session.command failed, so no prompt follows.
+  | { type: 'kimaki.command-failed' }
   // A session found by walking parentID after a bot restart.
   | { type: 'kimaki.child'; sessionId: string; agent: string }
   // History of a resumed or forked session, oldest first, then a closing note.
@@ -205,6 +214,7 @@ export function emptyView({
     lastRetryAt: null,
     cached: null,
     inbox: [],
+    commandPending: null,
     forms: {},
     permissions: {},
   }
@@ -292,6 +302,8 @@ function applyOpencode({ draft, event, prefs, emit }: Context & { event: V2Event
     if (!parentID || draft.children[sessionID]) return
     if (parentID !== draft.sessionId && !draft.children[parentID]) return
     draft.children[sessionID] = { agent: event.data.agent ?? 'subagent', description: '', background: false, running: false }
+    // A subagent command prompts its child, never the root.
+    if (parentID === draft.sessionId) draft.commandPending = null
     return
   }
   // A new user message dismisses the agent's pending buttons and upload requests.
@@ -573,6 +585,12 @@ function applyKimaki({ draft, event, prefs, emit }: Context & { event: KimakiEve
       return dismissAgentPrompts({ draft, emit, ids: [event.id], result: event.result })
     case 'kimaki.sleep':
       if (draft.turn) draft.turn.slept = true
+      return
+    case 'kimaki.command':
+      draft.commandPending = { text: event.text, username: event.username }
+      return
+    case 'kimaki.command-failed':
+      draft.commandPending = null
       return
     case 'kimaki.replay':
       for (const effect of replayEffects({ messages: event.messages, prefs, note: event.note })) emit(effect)

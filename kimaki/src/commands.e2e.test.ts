@@ -283,7 +283,7 @@ test('/queue-command queues an OpenCode command after the current run', async ()
     -# Queued message sent
     slow-done
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
-    » **queued:** queued-template please
+    » **tommy:** /later please
     queued command reply
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)

@@ -11,6 +11,7 @@ test('tools: names from tool.input.started, failed tool lines, read-only tools h
   const { effects } = replay({ events: loadFixture('tools.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Do these steps with tools, one by one: 1) run \`ls cli/src | head -5\` with bash, 2) write a file tmp-events/hello.txt containing "hello", 3) edit that file to replace hello with "hello world", 4) glob for **/*.txt under tmp-events, 5) read the file. Then reply with one short line.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _ls cli/src \\| head -5_",
@@ -34,6 +35,7 @@ test('tools at text verbosity: text, edits and errors only', () => {
   })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Do these steps with tools, one by one: 1) run \`ls cli/src | head -5\` with bash, 2) write a file tmp-events/hello.txt containing "hello", 3) edit that file to replace hello with "hello world", 4) glob for **/*.txt under tmp-events, 5) read the file. Then reply with one short line.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-#  ⨯  shell _Invalid arguments for tool "shell":_",
@@ -49,6 +51,7 @@ test('task-subagent: child tool lines labelled with the agent, no child text, fo
   const { effects, view } = replay({ events: loadFixture('task-subagent.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Use the subagent tool with agent "general" to find which file defines the Drizzle SQLite schema in cli/src (the subagent should use glob and read). Then read the first 10 lines of that file yourself with the read tool and answer in 2 short sentences.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ general **Find SQLite schema file**",
@@ -73,6 +76,7 @@ test('task-parallel: background children show start and end lines only, no foote
   const { effects, view } = replay({ events: loadFixture('task-parallel.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** In a single step, call the subagent tool twice in parallel, both with agent "general": one to count the .ts files in cli/src/commands using a shell command, one to list the top-level folders of the repo with a shell command. Then reply with both results in 2 lines.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ general **Count command TypeScript** (background)",
@@ -111,10 +115,12 @@ test('abort: no error line for the aborted tool, no footer, next turn is normal'
   const { effects } = replay({ events: loadFixture('abort.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Run \`sleep 30 && echo never\` with bash, then summarize.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 30 && echo never_",
       "[typing off]",
+      "» **user:** Say only: resumed after abort.",
       "[typing on]",
       "resumed after abort",
       "[typing off]",
@@ -179,6 +185,7 @@ test('queue-plain: acks with positions while busy, silent footer before each del
   const { effects, view } = replay({ events: loadFixture('queue-plain.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Run \`sleep 6 && echo slow-done\` with bash, then say done.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 6 && echo slow-done_",
@@ -187,11 +194,11 @@ test('queue-plain: acks with positions while busy, silent footer before each del
       "\\nDone.",
       "[silent] -# *project ⋅ main ⋅ 10s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued message sent",
-      "» **queued:** QUEUED-1: reply with the word apple.",
+      "» **user:** QUEUED-1: reply with the word apple.",
       "apple",
       "[silent] -# *project ⋅ main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued message sent",
-      "» **queued:** QUEUED-2: reply with the word cherry.",
+      "» **user:** QUEUED-2: reply with the word cherry.",
       "cherry",
       "[typing off]",
       "-# *project ⋅ main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
@@ -204,6 +211,7 @@ test('steer-queue: cancelled item edits its ack, interrupted run has no footer',
   const { effects, view } = replay({ events: loadFixture('steer-queue.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Run \`sleep 8 && echo slow-done\` with bash, then say done.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 8 && echo slow-done_",
@@ -211,6 +219,7 @@ test('steer-queue: cancelled item edits its ack, interrupted run has no footer',
       "[show queue:msg_kimaki_queued_b_test1] -# Queued at position 2. Delete the original message to remove it, or use /clear-queue position:2",
       "[show queue:msg_0f200f88a001SXny4FyIMuMPS6] -# Queued at position 3. Delete the original message to remove it, or use /clear-queue position:3",
       "[edit queue:msg_kimaki_queued_b_test1] -# Removed from queue",
+      "» **user:** STEER: actually also tell me the current date using bash \`date\`.",
       "[typing off]",
       "[typing on]",
       "-# ┣ shell _date_",
@@ -232,16 +241,18 @@ test('queue-parked: parked item runs and echoes after the next prompt, with a fo
   const { effects } = replay({ events: loadFixture('queue-parked.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Run \`sleep 6 && echo slow-done\` with bash, then say done.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 6 && echo slow-done_",
       "[show queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1",
       "[typing off]",
+      "» **user:** NEW: reply with the word kiwi.",
       "[typing on]",
       "kiwi",
       "[silent] -# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued message sent",
-      "» **queued:** PARKED-1: reply with the word apple.",
+      "» **user:** PARKED-1: reply with the word apple.",
       "apple",
       "[typing off]",
       "-# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
@@ -253,6 +264,7 @@ test('question: one dropdown per question, typing off while waiting, edited on r
   const { effects, view } = replay({ events: loadFixture('question.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Use the question tool to ask me which color I prefer, with options red, green, blue (single choice), and in the same question tool call add a second question asking which fruits I like with options apple, pear, kiwi (multiple choice). After my answer, reply with one line.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "[typing off]",
@@ -277,6 +289,7 @@ test('permission: two requests, the rejected one fails its tool call', () => {
   const { effects, view } = replay({ events: loadFixture('permission.events.jsonl') })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** Run \`echo first\` with bash. Then run \`echo second\` with bash. Then reply with one line describing what happened.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _echo first_",
@@ -314,11 +327,13 @@ test('shell-background: background shell line even without side effects, finishe
   const { effects, view: end } = replay({ events, view, prefs: { verbosity: 'tools', contextLimits: {} } })
   expect(effectLines(effects)).toMatchInlineSnapshot(`
     [
+      "» **user:** start a task in background that runs sleep 100",
       "[typing on]",
       "-# ┣ shell _Run sleep 100 in background_ (background)",
       "\\nI started \`sleep 100\` in the background (shell ID \`sh_11a929cf5001mAukdL6rQFIbLg\`). It ends in about 100 seconds, and I get a notification when it does.",
       "[typing off]",
       "-# *project ⋅ main ⋅ 4s ⋅ claude-opus-5-5 ⋅ opus*",
+      "» **user:** is it still running",
       "[typing on]",
       "Yes, it is still running (PID 47861). I have not had the completion notification yet.",
       "[typing off]",
@@ -342,6 +357,8 @@ test('shell: user !cmd output while idle and while busy, synthetic items render 
     user-shell-idle
     05de62d feat: make external opencode session sync opt-in via --enable-sync
     \`\`\`",
+      "» **user:** CONTEXT ONLY: the deploy tag is v9.9.9",
+      "» **user:** What did my shell command print, and what is the deploy tag? Also run \`sleep 5\` with bash first.",
       "[typing on]",
       "-# *using openai/gpt-6-luna low ⋅ build*",
       "-# ┣ shell _sleep 5_",

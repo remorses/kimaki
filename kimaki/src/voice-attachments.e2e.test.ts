@@ -39,7 +39,8 @@ const matchers: DeterministicMatcher[] = [
   {
     id: 'image',
     priority: 500,
-    when: { latestUserTextIncludes: 'image-marker', rawPromptIncludes: 'image/png' },
+    // The plugin adds <local-files> and <discord-user> to the model request only.
+    when: { latestUserTextRegex: 'image-marker[\\s\\S]*<local-files>[\\s\\S]*archive\\.zip\\n</local-files>\\n<discord-user ', rawPromptIncludes: 'image/png' },
     then: { parts: textParts('I see an image') },
   },
   reply('voice-steer', 'voice steer ok'),
@@ -133,15 +134,10 @@ test('image and text attachments reach the model as files', async () => {
   const user = messages.data.find((message) => message.type === 'user')
   expect(JSON.stringify(user)).toContain('image/png')
   expect(JSON.stringify(user)).toContain('notes.txt')
-  // OpenCode drops binary files: the model gets their local paths instead.
-  const text = user?.type === 'user' ? user.text : ''
-  expect(text.slice(text.indexOf('<local-files>'), text.indexOf('</local-files>')).replaceAll(dataDir, '<data>').replace(/\/\d+\//g, '/<message>/')).toMatchInlineSnapshot(`
-    "<local-files>
-    Attachments saved on disk. OpenCode cannot show these inline; use tools to read them.
-    <data>/attachments/<message>/1-notes.txt
-    <data>/attachments/<message>/2-archive.zip
-    "
-  `)
+  // OpenCode drops binary files: the model gets their local paths from metadata, the stored text stays clean.
+  expect(user?.type === 'user' && user.text).toBe('What is this image-marker')
+  const discord = user?.type === 'user' ? user.metadata?.['discord'] : null
+  expect(JSON.stringify(discord).replaceAll(dataDir, '<data>').replace(/\/\d+\//g, '/<message>/').replace(/\d{6,}/g, 'ID')).toMatchInlineSnapshot(`"{"userId":"ID","username":"tommy","messageId":"ID","threadId":"ID","threadName":"What is this image-marker","localFiles":["<data>/attachments/<message>/1-notes.txt","<data>/attachments/<message>/2-archive.zip"]}"`)
 })
 
 test('voice in a channel starts a session with the transcription and the spoken agent', async () => {

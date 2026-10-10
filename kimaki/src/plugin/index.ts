@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import { autostartBot } from '../autostart.ts'
 import { fileEditTool, recordToolEdits } from '../file-edit-log.ts'
+import { turnContext } from '../system-prompt.ts'
 
 const exec = promisify(execFile)
 
@@ -43,6 +44,15 @@ export default Plugin.define({
     })
     await ctx.session.hook('context', async (event) => {
       if (!(await marker(event.sessionID))) return
+      // The <discord-user> context of each prompt, built from its metadata, so the
+      // stored text stays clean for the TUI and other clients. Same metadata, same
+      // text on every request: the cached prompt prefix stays stable.
+      for (const message of event.messages) {
+        const context = message.role === 'user' ? turnContext(message.metadata) : null
+        // TODO: build a new Message once plugins can import OpenCode's Message class;
+        // a copy from another module instance may fail its instanceof checks.
+        if (context) Array.prototype.push.call(message.content, { type: 'text', text: context })
+      }
       // Extra inputs only for the Discord tool line. OpenCode decodes the real
       // inputs with Schema.Struct, which ignores unknown keys.
       const description = { type: 'string', description: 'Short 5-10 word summary shown in Discord' }

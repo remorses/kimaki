@@ -202,7 +202,7 @@ full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-pa
 
 `kimaki/src/plugin/` runs inside the **OpenCode server process**, not the bot. on start the bot writes a shim per plugin into `<opencode config dir>/plugins/<name>/index.js` that re-exports `dist/plugin/` of the running Kimaki install (`installPluginShim` in `opencode-server.ts`), also when the bot runs from `src`: OpenCode watches plugin files and reloads on change, so a `src` target would load half-edited code on every save. run `pnpm build` to ship plugin changes. no opencode.json edit. writing the shim only when its content changes matters: any change in that folder reloads every location and cancels pending forms.
 
-- `plugin/index.ts` (`kimaki`): git branch reminder, extra `description` / `hasSideEffect` tool inputs, shell env, file edit log.
+- `plugin/index.ts` (`kimaki`): git branch reminder, `<discord-user>` turn context rendered from `metadata.discord` into the model request only (stored prompt text stays clean for the TUI), extra `description` / `hasSideEffect` tool inputs, shell env, file edit log.
 - `plugin/anthropic/index.ts` (`kimaki-anthropic`): Claude Pro/Max OAuth for every session, TUI included.
 
 each plugin is a directory loaded through its `index` module. OpenCode only accepts directories in opencode.json `plugins`, so plain OpenCode users can list `<kimaki>/src/plugin/anthropic` there. OpenCode keeps one plugin per ID and reports a second one as failed (`Duplicate plugin ID`), so `installPluginShim` removes a shim when the global `opencode.json`/`opencode.jsonc` already lists the same plugin directory of any Kimaki install. the `anthropic` directory must import nothing from Kimaki outside itself except npm packages.
@@ -308,6 +308,7 @@ use this to write tests that find messages matching specific patterns. formattin
 - on a successful turn a footer shows folder, branch, duration, context percent, model and agent (agent omitted when `build`): `-# *kimakivoice ⋅ main ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6*`. never after an interrupt or failure, and not while a subagent still runs.
 - `!cmd` in a thread runs a user shell: a start line, then one output message from `session.shell.*` events.
 - queued messages (`/queue`, or a message sent while busy with queue delivery) get `-# Queued at position N...`. when delivered, the bot posts `» **Tommy:** content` and edits the ack to `Queued message sent`. remove one by deleting the Discord message or with `/clear-queue`.
+- root user prompts without `metadata.discord` (sent from the TUI, phone or another client) show as `» **user:** text` (`queue.ts`). every bot prompt goes through `prompt()` with that metadata; synthetic inbox items and subagent prompts are never echoed. `session.command` takes no metadata, so `command()` dispatches `kimaki.command` first to hide the expanded template.
 - voice messages are transcribed (`voice.ts`) and the transcription decides the route (steer, queue, new session, agent).
 
 # session runtime

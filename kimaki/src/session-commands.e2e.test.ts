@@ -167,6 +167,9 @@ test('/resume binds an existing session to a new thread and moves the binding', 
   })
   await discord.thread(resumed.id).user(TEST_USER_ID).sendMessage({ content: 'Go on resumed-marker' })
   await waitForFooter({ discord, threadId: resumed.id })
+  // A prompt sent outside Discord (TUI, phone) shows as an echo line.
+  await client.session.prompt({ sessionID: tui.id, text: 'Back in the TUI tui-marker' })
+  await waitForFooter({ discord, threadId: resumed.id, count: 2 })
   expect(hide(await discord.thread(resumed.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     **Resumed session:** TUI work
@@ -177,6 +180,9 @@ test('/resume binds an existing session to a new thread and moves the binding', 
     Go on resumed-marker
     --- from: assistant (TestBot)
     resumed answer
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    » **user:** Back in the TUI tui-marker
+    tui answer
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 

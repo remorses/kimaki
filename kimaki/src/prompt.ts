@@ -44,7 +44,7 @@ import { allMessages } from './session-events.ts'
 import { ensureSessionMarker, forkBtw, startSession, switchAgent, threadProject } from './sessions.ts'
 import { cancelSleep } from './sleeps.ts'
 import type { ScheduledRun } from './system-prompt.ts'
-import { localFilesBlock, turnContext, withTurnContext } from './system-prompt.ts'
+import { localFilesBlock, type TurnContext } from './system-prompt.ts'
 import { isBusy, type UploadFile } from './thread-reducer.ts'
 import { resolveWorkingDirectory } from './worktrees.ts'
 
@@ -89,16 +89,18 @@ export async function prompt(
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   const { attached, localPaths } = await splitPromptFiles(files)
-  const context = localFilesBlock(localPaths) + turnContext({ username: author.username, userId: author.id, messageId, threadId, threadName })
+  // The text stays as the user wrote it. The plugin renders the <discord-user>
+  // context from this metadata into the model request only (turnContext()).
+  const discord: TurnContext = { userId: author.id, username: author.username, messageId, threadId, threadName, localFiles: localPaths }
   const result = await oc(bot, 'session.prompt', (client) =>
     client.session.prompt({
       sessionID: sessionId,
       id,
-      text: withTurnContext({ text, context }),
+      text,
       files: attached,
       ...(skills.length > 0 && { skills: skills.map((skill) => ({ id: skill })) }),
       delivery,
-      metadata: { discord: { userId: author.id, username: author.username, messageId, threadId, ...(echo && { echo }) } },
+      metadata: { discord: { ...discord, ...(echo && { echo }) } },
     }),
   )
   if (result instanceof Error) return result
@@ -286,10 +288,10 @@ async function command(
   const { route } = input
   const commands = await oc(bot, 'command.list', (client) => client.command.list({ location: { directory: input.directory } }))
   if (commands instanceof Error) return commands
+  const typed = `/${route.name}${route.arguments ? ` ${route.arguments}` : ''}`
   if (!commands.data.some((candidate) => candidate.name === route.name)) {
-    const text = `/${route.name}${route.arguments ? ` ${route.arguments}` : ''}`
-    if (route.queue) return prompt(bot, { ...input, text, delivery: 'queue' })
-    return steer(bot, { ...input, text })
+    if (route.queue) return prompt(bot, { ...input, text: typed, delivery: 'queue' })
+    return steer(bot, { ...input, text: typed })
   }
   if (!route.queue) {
     const cancelled = await cancelPendingUi(bot, input.threadId)
@@ -299,6 +301,7 @@ async function command(
   }
   const { attached, localPaths } = await splitPromptFiles(input.files)
   const block = localFilesBlock(localPaths)
+  bot.eventLoop.dispatch(input.threadId, { type: 'kimaki.command', text: typed, username: input.author.username })
   const result = await oc(bot, 'session.command', (client) =>
     client.session.command({
       sessionID: input.sessionId,
@@ -308,7 +311,10 @@ async function command(
       delivery: route.queue ? 'queue' : 'steer',
     }),
   )
-  if (result instanceof Error) return result
+  if (result instanceof Error) {
+    bot.eventLoop.dispatch(input.threadId, { type: 'kimaki.command-failed' })
+    return result
+  }
 }
 
 // A route for an existing session (every kind that stays in its thread).

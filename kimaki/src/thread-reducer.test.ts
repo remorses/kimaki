@@ -4,7 +4,7 @@
 import type { JsonValue, V2Event } from '@opencode/client'
 import { expect, test } from 'vitest'
 
-import { emptyView, reduce } from './thread-reducer.ts'
+import { emptyView, reduce, type ThreadEvent } from './thread-reducer.ts'
 import { DEFAULT_PREFS, effectLines, loadFixture, replay, rootSessionId } from './test/replay.ts'
 
 test('text-only turn: banner, text, typing, footer with context percent', () => {
@@ -12,6 +12,10 @@ test('text-only turn: banner, text, typing, footer with context percent', () => 
   const { view, effects } = replay({ events })
   expect(effects).toMatchInlineSnapshot(`
     [
+      {
+        "text": "» **user:** Do these steps with tools, one by one: 1) run \`ls cli/src | head -5\` with bash, 2) write a file tmp-events/hello.txt containing "hello", 3) edit that file to replace hello with "hello world", 4) glob for **/*.txt under tmp-events, 5) read the file. Then reply with one short line.",
+        "type": "send",
+      },
       {
         "on": true,
         "type": "typing",
@@ -88,10 +92,19 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
         "text": "✗ rate limited by provider",
         "type": "send",
       },
+      {
+        "idle": 1790766552199,
+        "sessionId": "ses_f0dfeef78ffeZ3za5UGCaeop1t",
+        "type": "viewed",
+      },
     ]
   `)
   expect(replay({ events, view }).effects).toMatchInlineSnapshot(`
     [
+      {
+        "text": "» **user:** Run \`sleep 30 && echo never\` with bash, then summarize.",
+        "type": "send",
+      },
       {
         "on": true,
         "type": "typing",
@@ -103,6 +116,15 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
       {
         "on": false,
         "type": "typing",
+      },
+      {
+        "idle": 1790766554479,
+        "sessionId": "ses_f0dfeef78ffeZ3za5UGCaeop1t",
+        "type": "viewed",
+      },
+      {
+        "text": "» **user:** Say only: resumed after abort.",
+        "type": "send",
       },
       {
         "on": true,
@@ -254,6 +276,28 @@ test('cache miss notice when the cached prefix shrinks, e.g. after the cache TTL
     ]
   `)
   expect(effectLines(replay({ events }).effects).filter((line) => line.includes('cache'))).toEqual([])
+})
+
+test('prompts from other clients echo, except the expanded prompt of a command Kimaki ran', () => {
+  const events = loadFixture('queue-plain.events.jsonl')
+  const echoes = (before: ThreadEvent[]) => effectLines(replay({ events: [...before, ...events] }).effects).filter((line) => line.startsWith('»'))
+  const command = { type: 'kimaki.command' as const, text: '/review auth', username: 'tommy' }
+  expect(echoes([])).toMatchInlineSnapshot(`
+    [
+      "» **user:** Run \`sleep 6 && echo slow-done\` with bash, then say done.",
+      "» **user:** QUEUED-1: reply with the word apple.",
+      "» **user:** QUEUED-2: reply with the word cherry.",
+    ]
+  `)
+  // The first prompt is the command's template: hidden. The queued ones still echo.
+  expect(echoes([command])).toMatchInlineSnapshot(`
+    [
+      "» **user:** QUEUED-1: reply with the word apple.",
+      "» **user:** QUEUED-2: reply with the word cherry.",
+    ]
+  `)
+  // A failed command leaves nothing pending.
+  expect(echoes([command, { type: 'kimaki.command-failed' }])).toEqual(echoes([]))
 })
 
 test('snapshot closes the ack of an item promoted while disconnected, without an echo', () => {
