@@ -2,6 +2,7 @@
 // Discord login in parallel. Returns a handle so tests can drive the bot
 // in-process and stop it cleanly.
 
+import { setTimeout as sleep } from 'node:timers/promises'
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 import * as errore from 'errore'
 
@@ -28,6 +29,8 @@ import type { TranscriptionBaseUrls } from './voice.ts'
 import { createVoiceCalls, type RealtimeBaseUrls } from './voice-call.ts'
 
 const logger = createLogger('MAIN')
+// The close handshake takes ~120ms to Discord and to gateway-proxy.
+const DISCORD_CLOSE_WAIT_MS = 500
 
 export type StartBotOptions = {
   dataDir: string
@@ -117,7 +120,10 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   discord.on(Events.ShardResume, (id, replayed) => logger.info(`gateway shard ${id} resumed, ${replayed} events replayed`))
   discord.on(Events.ShardReady, (id) => logger.info(`gateway shard ${id} ready`))
   discord.on(Events.ShardError, (error, id) => logger.warn(`gateway shard ${id} error`, error))
-  cleanup.defer(() => discord.destroy())
+  // TODO: await destroy() fully once gateway-proxy uses Fly's `tls` handler. Fly's `http`
+  // handler closes a WebSocket's client TCP ~5s after the proxy closed it, and destroy()
+  // waits for that TCP close, so Ctrl+C took 5s. The close frames are exchanged by then.
+  cleanup.defer(() => Promise.race([discord.destroy(), sleep(DISCORD_CLOSE_WAIT_MS, undefined, { ref: false })]))
   cleanup.defer(() => options.analytics.flush())
   const store = createBotStore()
   const recorder = createEventRecorder({ dataDir: options.dataDir })
