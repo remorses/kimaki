@@ -1,24 +1,22 @@
-// Voice calls: the twin plays Discord voice (wss + UDP), a local OpenAI
-// Realtime fake plays the model. A user joins the Kimaki voice channel, the bot
-// joins and greets, the user speaks, the model runs `kimaki project list` with
-// the shell tool and answers. Leaving ends the call; so does end_call.
+// Voice calls: the twin plays Discord voice (wss + UDP), startFakeLive() plays
+// GPT-Live over real WebRTC plus the backend model. A user joins the Kimaki voice
+// channel, the bot joins and greets, the user speaks, the model delegates, the
+// backend runs `kimaki project list` with the shell tool and the model says the
+// answer. Leaving ends the call; so does end_call.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { getVoiceConnection } from '@discordjs/voice'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
-import { eq } from 'drizzle-orm'
 import prism from 'prism-media'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
-import * as schema from './schema.ts'
-import { saveAudioKeys } from './voice.ts'
-import { ensureVoiceChannels, realtimeModel, saveVoiceCallVoice } from './voice-call.ts'
+import { ensureVoiceChannels, saveVoiceCallVoice, voiceCallSettings } from './voice-call.ts'
 import {
   TEST_USER_ID,
   seedProjectChannel,
-  startFakeRealtime,
+  startFakeLive,
   startOpencodeTestServer,
   startTestBot,
   startTwin,
@@ -26,7 +24,7 @@ import {
   textParts,
   waitFor,
   writeOpencodeCredential,
-  type FakeRealtime,
+  type FakeLive,
   type OpencodeTestServer,
   type TestTwin,
 } from './test/harness.ts'
@@ -34,7 +32,7 @@ import {
 let server: OpencodeTestServer
 let twin: TestTwin
 let bot: BotHandle
-let realtime: FakeRealtime
+let live: FakeLive
 let dataDir: string
 let voiceChannelId: string
 
@@ -56,6 +54,15 @@ async function waitForChat(text: string) {
   })
 }
 
+async function chatSince(before: number) {
+  const messages = (await twin.discord.channel(voiceChannelId).getMessages()).slice(before)
+  return messages
+    .map((message) => `${message.author.username}: ${message.content}`)
+    .join('\n')
+    .replace(/\d{17,20}/g, '<id>')
+    .replace(/ses_\w+/g, '<ses>')
+}
+
 beforeAll(async () => {
   dataDir = tempDataDir()
   const matchers: DeterministicMatcher[] = ['call-thread-marker', 'other-thread-marker'].map((marker) => ({
@@ -64,22 +71,24 @@ beforeAll(async () => {
     when: { latestUserTextIncludes: marker },
     then: { parts: textParts(`${marker} done`) },
   }))
-  ;[server, twin, realtime] = await Promise.all([startOpencodeTestServer({ matchers }), startTwin({ voice: true }), startFakeRealtime()])
+  ;[server, twin, live] = await Promise.all([startOpencodeTestServer({ matchers }), startTwin({ voice: true }), startFakeLive()])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
-  // The user's global AGENTS.md and a global skill go into the call instructions.
+  // The user's global AGENTS.md and a global skill go into the backend instructions.
   fs.writeFileSync(path.join(server.configDir, 'AGENTS.md'), 'Always answer like a pirate.\n')
   fs.mkdirSync(path.join(server.configDir, 'skills', 'deploy-docs'), { recursive: true })
   fs.writeFileSync(path.join(server.configDir, 'skills', 'deploy-docs', 'SKILL.md'), '---\nname: deploy-docs\ndescription: Deploy the docs <site> & check it.\n---\n\nRun pnpm deploy.\n')
-  bot = await startTestBot({ dataDir, twin, server, realtimeBaseUrl: realtime.url })
-  const saved = await saveAudioKeys({ db: bot.db, token: bot.token, openai: 'sk-test-realtime' })
-  if (saved instanceof Error) throw saved
+  // The ChatGPT subscription signed in to OpenCode pays for the calls.
+  const opencodeDbFile = path.join(dataDir, 'opencode-chatgpt.db')
+  await writeOpencodeCredential({ file: opencodeDbFile, access: 'chatgpt-access-token', expires: Date.now() + 3_600_000 })
+  bot = await startTestBot({ dataDir, twin, server, opencodeDbFile, realtimeBaseUrls: live.baseUrls })
+  live.greeting = 'Hello tommy.'
 })
 
 afterAll(async () => {
   await bot?.stop()
   await twin?.stop()
   await server?.stop()
-  await realtime?.stop()
+  await live?.stop()
   fs.rmSync(dataDir, { recursive: true, force: true })
 })
 
@@ -99,9 +108,8 @@ test('the voice channel is created once per machine, with no category', async ()
   `)
 })
 
-test('a user joins, speaks, the model runs a kimaki command and answers; leaving ends the call', async () => {
-  realtime.replies.push(
-    { type: 'say', text: 'Hello tommy.' },
+test('a user joins and speaks, the backend runs kimaki commands and the model says the answer; leaving ends the call', async () => {
+  live.replies.push(
     // seq makes the output longer than the 4000 character limit.
     { type: 'call', name: 'shell', args: { command: 'seq 1 2000; kimaki project list' } },
     { type: 'call', name: 'shell', args: { command: `kimaki send --channel ${twin.channelId} --prompt 'Voice call note' --notify-only` } },
@@ -109,10 +117,10 @@ test('a user joins, speaks, the model runs a kimaki command and answers; leaving
     { type: 'call', name: 'post_message', args: { text: ' ' } },
     { type: 'say', text: 'You have one project.' },
   )
-  realtime.transcripts.push('Which projects do I have?')
+  live.transcripts.push('Which projects do I have?')
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).joinVoice()
   await waitFor({ label: 'bot in the voice channel', check: async () => botVoiceChannel() === voiceChannelId })
-  // The greeting is real audio the twin decrypts from the bot's UDP packets.
+  // The greeting is real audio: model RTP passed to Discord, decrypted by the twin from the bot's UDP packets.
   const greeting = await twin.discord.waitForVoiceStream({ channelId: voiceChannelId, userId: twin.discord.botUserId })
   expect(greeting.opusPackets.length).toBeGreaterThan(10)
 
@@ -128,7 +136,7 @@ test('a user joins, speaks, the model runs a kimaki command and answers; leaving
   // Thread IDs are snowflakes: replace them for a stable snapshot.
   expect((await twin.discord.channel(voiceChannelId).text()).replace(/<#\d+>/g, '<#thread>')).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    -# ⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin
+    -# ⬦ voice call started ⋅ gpt-live ⋅ cove
     Hello tommy.
     » **tommy:** Which projects do I have?
     -# ┣ shell _seq 1 2000; kimaki project list_
@@ -137,8 +145,13 @@ test('a user joins, speaks, the model runs a kimaki command and answers; leaving
     -#  ⨯  post\\_message _text must not be empty_
     You have one project."
   `)
-  expect(realtime.audioBytes()).toBeGreaterThan(0)
-  const [listed] = realtime.toolOutputs
+  expect(live.voicedFrames()).toBeGreaterThan(0)
+  expect(live.backendInputs).toMatchInlineSnapshot(`
+    [
+      "Which projects do I have?",
+    ]
+  `)
+  const [listed] = live.toolOutputs
   expect(listed?.name).toBe('shell')
   expect(JSON.parse(listed!.output)).toMatchObject({ exitCode: 0 })
   expect(listed!.output).toContain(server.projectDirectory)
@@ -148,8 +161,9 @@ test('a user joins, speaks, the model runs a kimaki command and answers; leaving
   expect(output.split('\n')[0]).toMatch(/^\[output truncated: first \d+ characters omitted; full output in \S+, use grep or sed on it\]$/)
   expect(fs.readFileSync(file!, 'utf8').startsWith('1\n2\n3\n')).toBe(true)
   fs.rmSync(file!)
-  // Instructions name the users and the projects, and pass every user to kimaki send.
-  const instructions = realtime.instructions[0]!
+  // The model's instructions name the users; the backend's name the projects and pass every user to kimaki send.
+  expect(live.liveInstructions[0]).toContain('with tommy')
+  const instructions = live.backendInstructions[0]!
   expect(instructions).toContain(`--user '${TEST_USER_ID}'`)
   expect(instructions).toContain(server.projectDirectory)
   expect(instructions.slice(instructions.indexOf('## user instructions')).replaceAll(server.configDir, '<config>')).toMatchInlineSnapshot(`
@@ -173,25 +187,29 @@ test('a user joins, speaks, the model runs a kimaki command and answers; leaving
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).leaveVoice()
   await waitForChat('voice call ended')
   await waitFor({ label: 'bot out of voice', check: async () => botVoiceChannel() === null })
-  await waitFor({ label: 'realtime socket closed', check: async () => realtime.openSockets() === 0 })
+  await waitFor({ label: 'model call closed', check: async () => live.openCalls() === 0 })
 })
 
-test('chat messages reach the model, and end_call leaves while the user stays', async () => {
+test('chat messages reach the backend, and end_call leaves after the goodbye while the user stays', async () => {
   const before = (await twin.discord.channel(voiceChannelId).getMessages()).length
-  realtime.replies.push({ type: 'say', text: 'Hi again.' }, { type: 'say', text: 'Bye.', then: { name: 'end_call', args: {} } })
+  const botPackets = () => twin.discord.getVoiceStreams({ channelId: voiceChannelId, userId: twin.discord.botUserId }).reduce((total, stream) => total + stream.opusPackets.length, 0)
+  const packetsBefore = botPackets()
+  live.greeting = 'Hi again.'
+  live.replies.push({ type: 'call', name: 'end_call', args: {} }, { type: 'say', text: 'Bye.' })
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).joinVoice()
   await waitForChat('Hi again.')
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).sendMessage({ content: 'please hang up' })
   await waitFor({ label: 'bot out of voice', check: async () => botVoiceChannel() === null })
   await waitForChat('voice call ended: the assistant hung up')
-  expect(realtime.userTexts.at(-1)).toBe(`<chat-message from="tommy" user-id="${TEST_USER_ID}">\nplease hang up\n</chat-message>`)
-  const messages = (await twin.discord.channel(voiceChannelId).getMessages()).slice(before)
-  expect(messages.map((message) => `${message.author.username}: ${message.content}`).join('\n')).toMatchInlineSnapshot(`
-    "TestBot: -# ⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin
+  // The greeting and the goodbye (15 packets each in the fake) were both played before the bot left.
+  expect(botPackets() - packetsBefore).toBeGreaterThanOrEqual(30)
+  expect(live.backendInputs.at(-1)).toBe(`<chat-message from="tommy" user-id="${TEST_USER_ID}">\nplease hang up\n</chat-message>`)
+  expect(await chatSince(before)).toMatchInlineSnapshot(`
+    "TestBot: -# ⬦ voice call started ⋅ gpt-live ⋅ cove
     TestBot: Hi again.
     tommy: please hang up
-    TestBot: Bye.
     TestBot: -# ┣ end\\_call
+    TestBot: Bye.
     TestBot: -# ⬦ voice call ended: the assistant hung up"
   `)
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).leaveVoice()
@@ -200,39 +218,33 @@ test('chat messages reach the model, and end_call leaves while the user stays', 
 test('finished threads of any project are announced in the call; the model answers only for its own', async () => {
   await waitFor({ label: 'bot out of voice', check: async () => botVoiceChannel() === null })
   const before = (await twin.discord.channel(voiceChannelId).getMessages()).length
-  realtime.replies.push(
-    { type: 'say', text: 'Hi.' },
+  live.replies.push(
     { type: 'call', name: 'shell', args: { command: `kimaki send --channel ${twin.channelId} --prompt 'call-thread-marker' --user '${TEST_USER_ID}'` } },
     { type: 'say', text: 'Started.' },
     // The answer to the finished notice of the thread the call started.
     { type: 'say', text: 'Your thread finished.' },
   )
+  live.greeting = 'Hi.'
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).joinVoice()
   await waitForChat('Hi.')
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).sendMessage({ content: 'start a thread' })
   await waitForChat('Your thread finished.')
 
-  // A thread started from Discord, not from the call: context only, no answer.
-  realtime.replies.push({ type: 'say', text: 'Should stay quiet.' })
+  // A thread started from Discord, not from the call: silent context for both models, no backend run.
+  live.replies.push({ type: 'say', text: 'Should stay quiet.' })
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'other-thread-marker' })
   await waitFor({
     label: 'second finished notice',
     check: async () => (await twin.discord.channel(voiceChannelId).getMessages()).filter((message) => message.content.includes('thread finished')).length === 2,
   })
   for (let i = 0; i < 10; i++) {
-    expect(realtime.replies.length).toBe(1)
+    expect(live.replies.length).toBe(1)
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
-  realtime.replies.length = 0
+  live.replies.length = 0
 
-  const messages = (await twin.discord.channel(voiceChannelId).getMessages()).slice(before)
-  const text = messages
-    .map((message) => `${message.author.username}: ${message.content}`)
-    .join('\n')
-    .replace(/\d{17,20}/g, '<id>')
-    .replace(/ses_\w+/g, '<ses>')
-  expect(text).toMatchInlineSnapshot(`
-    "TestBot: -# ⬦ voice call started ⋅ gpt-realtime-2.1 ⋅ marin
+  expect(await chatSince(before)).toMatchInlineSnapshot(`
+    "TestBot: -# ⬦ voice call started ⋅ gpt-live ⋅ cove
     TestBot: Hi.
     tommy: start a thread
     TestBot: -# ┣ shell _kimaki send --channel <id> --prompt 'call-thread-marker' --user '…_
@@ -242,71 +254,40 @@ test('finished threads of any project are announced in the call; the model answe
     TestBot: Your thread finished.
     TestBot: -# ⬦ thread finished: other-thread-marker ⋅ https://discord.com/channels/<id>/<id> ⋅ <ses>"
   `)
-  const notices = realtime.userTexts.filter((userText) => userText.startsWith('<system>Thread finished'))
-  expect(notices.map((notice) => notice.replace(/\d{17,20}/g, '<id>').replace(/ses_\w+/g, '<ses>'))).toMatchInlineSnapshot(`
+  const notices = live.appends.filter((append) => append.text.startsWith('<system>Thread finished'))
+  expect(notices.map((notice) => ({ ...notice, text: notice.text.replace(/\d{17,20}/g, '<id>').replace(/ses_\w+/g, '<ses>') }))).toMatchInlineSnapshot(`
     [
-      "<system>Thread finished: "call-thread-marker". Thread ID <id>, session ID <ses>, URL https://discord.com/channels/<id>/<id>.</system>",
-      "<system>Thread finished: "other-thread-marker". Thread ID <id>, session ID <ses>, URL https://discord.com/channels/<id>/<id>.</system>",
+      {
+        "channel": "commentary",
+        "delegation": false,
+        "text": "<system>Thread finished: "other-thread-marker". Thread ID <id>, session ID <ses>, URL https://discord.com/channels/<id>/<id>.</system>",
+      },
     ]
   `)
   await twin.discord.channel(voiceChannelId).user(TEST_USER_ID).leaveVoice()
 })
 
-test('a saved voice picks its provider when that key is set, else the provider default', async () => {
+test('a saved voice is used when gpt-live knows it; no ChatGPT sign-in means no call', async () => {
   const appId = (await bot.db.query.bot_tokens.findFirst({ where: { token: bot.token } }))!.app_id
   const pick = async (voice: string | null) => {
     const saved = await saveVoiceCallVoice({ db: bot.db, appId, voice })
     if (saved instanceof Error) throw saved
-    const model = await realtimeModel(bot)
-    if (model instanceof Error) throw model
-    return `${model.adapter.provider} ${model.voice}${model.voiceNotice ? ` (${model.voiceNotice})` : ''}`
+    const settings = await voiceCallSettings(bot)
+    if (settings instanceof Error) throw settings
+    return `${voice}: ${settings.voice}${settings.voiceNotice ? ` (${settings.voiceNotice})` : ''}`
   }
-  const keys = await saveAudioKeys({ db: bot.db, token: bot.token, xai: 'xai-test' })
-  if (keys instanceof Error) throw keys
   const lines: string[] = []
-  for (const voice of [null, 'Cedar', 'EVE', 'bogus']) lines.push(`${voice}: ${await pick(voice)}`)
-  expect(lines).toMatchInlineSnapshot(`
-    [
-      "null: openai marin",
-      "Cedar: openai cedar",
-      "EVE: xai eve",
-      "bogus: openai marin (saved voice bogus is unknown, using marin. Run kimaki --voice <name> to change it)",
-    ]
-  `)
-  await bot.db.update(schema.bot_api_keys).set({ xai_api_key: null }).where(eq(schema.bot_api_keys.app_id, appId))
+  for (const voice of [null, 'JUNIPER', 'marin']) lines.push(await pick(voice))
   const reset = await saveVoiceCallVoice({ db: bot.db, appId, voice: null })
   if (reset instanceof Error) throw reset
-})
-
-test('the ChatGPT token from OpenCode wins over the OpenAI key; web search still needs the key', async () => {
-  const opencodeDbFile = path.join(dataDir, 'opencode-chatgpt.db')
-  await writeOpencodeCredential({ file: opencodeDbFile, access: 'chatgpt-access-token', expires: Date.now() + 3_600_000 })
-  const appId = (await bot.db.query.bot_tokens.findFirst({ where: { token: bot.token } }))!.app_id
-  const describe = async () => {
-    const model = await realtimeModel({ ...bot, opencodeDbFile })
-    if (model instanceof Error) throw model
-    return { auth: model.adapter.connect({ resumeHandle: null }).headers, searchKey: model.searchKey, builtinSearch: model.builtinSearch }
-  }
-  const withKey = await describe()
-  await bot.db.update(schema.bot_api_keys).set({ openai_api_key: null }).where(eq(schema.bot_api_keys.app_id, appId))
-  const withoutKey = await describe()
-  await bot.db.update(schema.bot_api_keys).set({ openai_api_key: withKey.searchKey }).where(eq(schema.bot_api_keys.app_id, appId))
-  expect({ withKey, withoutKey }).toMatchInlineSnapshot(`
-    {
-      "withKey": {
-        "auth": {
-          "Authorization": "Bearer chatgpt-access-token",
-        },
-        "builtinSearch": "web_search",
-        "searchKey": "sk-test-realtime",
-      },
-      "withoutKey": {
-        "auth": {
-          "Authorization": "Bearer chatgpt-access-token",
-        },
-        "builtinSearch": null,
-        "searchKey": null,
-      },
-    }
+  const signedOut = await voiceCallSettings({ ...bot, opencodeDbFile: path.join(dataDir, 'missing.db') })
+  lines.push(signedOut instanceof Error ? signedOut.message : 'signed in')
+  expect(lines).toMatchInlineSnapshot(`
+    [
+      "null: cove",
+      "JUNIPER: juniper",
+      "marin: cove (saved voice marin is unknown, using cove. Run kimaki --voice <name> to change it)",
+      "Voice calls need a ChatGPT subscription signed in to OpenCode. Run kimaki login openai, then join the voice channel again",
+    ]
   `)
 })

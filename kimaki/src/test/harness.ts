@@ -34,6 +34,7 @@ import { startLockServer } from '../lock-server.ts'
 import { startBot, type BotHandle } from '../main.ts'
 import type { LockRouteInput, LockRouteName } from '../lock-routes.ts'
 import { listTasks, type Clock } from '../scheduler.ts'
+import type { RealtimeBaseUrls } from '../voice-call.ts'
 
 export const TEST_MODEL = 'deterministic-v2'
 
@@ -219,111 +220,194 @@ export type TestTwin = {
   unregisteredChannelId: string
 }
 
-// `say` can end with a tool call in the same reply, like a spoken goodbye before end_call.
-export type FakeRealtimeReply =
+// One scripted backend response: text, a tool call, or text that ends with a tool call.
+export type FakeLiveReply =
   | { type: 'say'; text: string; then?: { name: string; args: ToolInput } }
   | { type: 'call'; name: string; args: ToolInput }
 
-export type FakeRealtime = {
-  // OpenAI realtime WebSocket URL for startTestBot({ realtimeBaseUrl }).
-  url: string
-  // Answers in order: one per response (greeting, after a user turn, after a tool result).
-  replies: FakeRealtimeReply[]
-  // What the user "said" in each turn, in order (the transcription of the audio).
+export type FakeLive = {
+  // startTestBot({ realtimeBaseUrls }).
+  baseUrls: RealtimeBaseUrls
+  // Backend answers in order, one per Responses request.
+  replies: FakeLiveReply[]
+  // What the user "said" in each utterance, in order.
   transcripts: string[]
-  // Instructions of each session.update, function outputs and user text items, in order.
-  instructions: string[]
+  // The first speakable append of a call is Kimaki's greeting request; the fake model answers it with this.
+  greeting: string
+  // GPT-Live instructions of each call, and backend instructions of each Responses request.
+  liveInstructions: string[]
+  backendInstructions: string[]
+  // Text of each new user message the backend got, function outputs, and every context append.
+  backendInputs: string[]
   toolOutputs: Array<{ name: string; output: string }>
-  userTexts: string[]
-  audioBytes: () => number
-  openSockets: () => number
+  appends: Array<{ channel: string; text: string; delegation: boolean }>
+  voicedFrames: () => number
+  openCalls: () => number
   stop: () => Promise<void>
 }
 
-// OpenAI Realtime over WebSocket, deterministic: server VAD hears speech in
-// non-zero audio and ends the turn at the first all-zero chunk (the silence of
-// session.endOfSpeech()). Every response pops the next scripted reply. Exercises the real
-// @kimaki/realtime OpenAI adapter, tool loop and audio paths.
-export async function startFakeRealtime(): Promise<FakeRealtime> {
-  const { WebSocketServer } = await import('ws')
+// GPT-Live and its backend, deterministic, over real WebRTC on loopback:
+// - POST /calls answers the SDP offer with a werift peer and hears the bot's Opus.
+//   Speech then 300ms of silence ends an utterance: a user turn and a delegation
+//   with the next transcript.
+// - The sideband speaks every speakable append verbatim: an assistant turn plus tone RTP.
+// - POST /responses streams the next scripted reply as Responses SSE.
+export async function startFakeLive(): Promise<FakeLive> {
+  const [{ WebSocketServer }, werift, { default: OpusScript }] = await Promise.all([import('ws'), import('werift'), import('opusscript')])
   const port = await freePort()
-  const server = new WebSocketServer({ port, host: '127.0.0.1' })
-  await new Promise<void>((resolve) => server.once('listening', () => resolve()))
-  const audio = { bytes: 0 }
-  const fake: FakeRealtime = {
-    url: `ws://127.0.0.1:${port}/v1/realtime`,
+  const counter = { id: 0, voiced: 0 }
+  const nextId = (prefix: string) => `${prefix}_${++counter.id}`
+  // 20 ms frames of a 440 Hz tone, 48 kHz stereo, for the model's voice.
+  const encoder = new OpusScript(48_000, 2, OpusScript.Application.VOIP)
+  const tone = Array.from({ length: 15 }, (_, frame) => {
+    const pcm = Buffer.alloc(960 * 4)
+    for (let i = 0; i < 960; i++) {
+      const sample = Math.round(Math.sin((2 * Math.PI * 440 * (frame * 960 + i)) / 48_000) * 8000)
+      pcm.writeInt16LE(sample, i * 4)
+      pcm.writeInt16LE(sample, i * 4 + 2)
+    }
+    return Buffer.from(encoder.encode(pcm, 960))
+  })
+  encoder.delete()
+  type FakeCall = { peer: InstanceType<typeof werift.RTCPeerConnection>; socket: import('ws').WebSocket | null; spoken: number; rtp: { sequence: number; timestamp: number } }
+  const calls = new Map<string, FakeCall>()
+  const seenOutputs = new Set<string>()
+
+  const fake: FakeLive = {
+    baseUrls: {
+      calls: `http://127.0.0.1:${port}/backend-api/codex/realtime/calls`,
+      sideband: `ws://127.0.0.1:${port}/v1/live`,
+      responses: `http://127.0.0.1:${port}/backend-api/codex/responses`,
+    },
     replies: [],
     transcripts: [],
-    instructions: [],
+    greeting: 'Hello.',
+    liveInstructions: [],
+    backendInstructions: [],
+    backendInputs: [],
     toolOutputs: [],
-    userTexts: [],
-    audioBytes: () => audio.bytes,
-    openSockets: () => server.clients.size,
-    stop: () => new Promise((resolve) => server.close(() => resolve())),
+    appends: [],
+    voicedFrames: () => counter.voiced,
+    openCalls: () => [...calls.values()].filter((call) => call.socket !== null).length,
+    stop: async () => {
+      await Promise.all([...calls.values()].map((call) => call.peer.close()))
+      sockets.close()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    },
   }
-  const counter = { id: 0 }
-  const nextId = (prefix: string) => `${prefix}_${++counter.id}`
-  // 300ms of a 440 Hz tone, 24 kHz mono PCM16.
-  const tone = Buffer.alloc(24_000 * 0.3 * 2)
-  for (let i = 0; i < tone.length / 2; i++) tone.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 440 * i) / 24_000) * 8000), i * 2)
-  const calls = new Map<string, string>()
-  server.on('connection', (socket) => {
-    const send = (event: ToolInput) => socket.send(JSON.stringify(event))
-    const speech = { active: false }
-    const respond = () => {
-      const responseId = nextId('resp')
-      send({ type: 'response.created', response: { id: responseId } })
-      const reply = fake.replies.shift()
-      if (reply?.type === 'say') {
-        const itemId = nextId('item')
-        send({ type: 'response.output_item.added', item: { type: 'message', id: itemId } })
-        send({ type: 'response.output_audio.delta', item_id: itemId, delta: tone.toString('base64') })
-        send({ type: 'response.output_audio_transcript.delta', item_id: itemId, delta: reply.text })
-      }
-      const call = reply?.type === 'call' ? reply : reply?.then
-      if (call) {
-        const callId = nextId('call')
-        calls.set(callId, call.name)
-        send({ type: 'response.function_call_arguments.done', call_id: callId, name: call.name, arguments: JSON.stringify(call.args) })
-      }
-      send({ type: 'response.done', response: { id: responseId, status: 'completed', usage: { input_tokens: 1, output_tokens: 1 } } })
+
+  const send = (call: FakeCall, event: ToolInput) => call.socket?.send(JSON.stringify(event))
+  const speak = (call: FakeCall, text: string) => {
+    send(call, { type: 'turn.done', turn: { id: nextId('turn'), role: 'assistant', transcript: text } })
+    const [transceiver] = call.peer.getTransceivers()
+    for (const opus of tone) {
+      const header = new werift.RtpHeader({ payloadType: 111, sequenceNumber: call.rtp.sequence, timestamp: call.rtp.timestamp, marker: false })
+      call.rtp.sequence = (call.rtp.sequence + 1) & 0xffff
+      call.rtp.timestamp = (call.rtp.timestamp + 960) >>> 0
+      void transceiver?.sender.sendRtp(new werift.RtpPacket(header, opus))
     }
-    const endOfSpeech = () => {
+  }
+
+  async function createCall(body: { sdp: string; session: { instructions?: string } }) {
+    fake.liveInstructions.push(body.session.instructions ?? '')
+    const peer = new werift.RTCPeerConnection({ codecs: { audio: [werift.useOPUS({ payloadType: 111 })], video: [] } })
+    const callId = nextId('rtc')
+    const call: FakeCall = { peer, socket: null, spoken: 0, rtp: { sequence: 1, timestamp: 0 } }
+    calls.set(callId, call)
+    await peer.setRemoteDescription({ type: 'offer', sdp: body.sdp })
+    const decoder = new OpusScript(48_000, 2)
+    const speech = { active: false, silentFrames: 0 }
+    peer.getTransceivers()[0]!.receiver.track.onReceiveRtp.subscribe((rtp) => {
+      const pcm = Buffer.from(decoder.decode(rtp.payload))
+      const loud = Array.from({ length: pcm.length / 2 }, (_, i) => Math.abs(pcm.readInt16LE(i * 2))).some((sample) => sample > 500)
+      if (loud) {
+        counter.voiced++
+        speech.active = true
+        speech.silentFrames = 0
+        return
+      }
+      if (!speech.active || ++speech.silentFrames < 15) return
       speech.active = false
-      const itemId = nextId('item')
-      send({ type: 'input_audio_buffer.speech_stopped' })
-      send({ type: 'input_audio_buffer.committed', item_id: itemId })
-      send({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: fake.transcripts.shift() ?? '' })
-      respond()
+      const text = fake.transcripts.shift() ?? ''
+      send(call, { type: 'turn.done', turn: { id: nextId('turn'), role: 'user', transcript: text } })
+      send(call, { type: 'delegation.created', item: { id: nextId('item'), type: 'delegation', target: 'client', content: [{ type: 'input_text', text }] } })
+    })
+    await peer.setLocalDescription(await peer.createAnswer())
+    return { callId, sdp: peer.localDescription!.sdp }
+  }
+
+  // Responses SSE for one request: the next scripted reply, as finished output items.
+  function respond(body: { instructions?: string; input?: Array<{ type?: string; role?: string; call_id?: string; output?: string; name?: string; content?: Array<{ text?: string }> }> }) {
+    fake.backendInstructions.push(body.instructions ?? '')
+    const input = body.input ?? []
+    const names = new Map(input.flatMap((item) => (item.type === 'function_call' && item.call_id ? [[item.call_id, item.name ?? '']] : [])))
+    for (const item of input) {
+      if (item.type !== 'function_call_output' || !item.call_id || seenOutputs.has(item.call_id)) continue
+      seenOutputs.add(item.call_id)
+      fake.toolOutputs.push({ name: names.get(item.call_id) ?? '', output: item.output ?? '' })
     }
+    const last = input.at(-1)
+    if (last?.type === 'message' && last.role === 'user') fake.backendInputs.push(last.content?.[0]?.text ?? '')
+    const reply = fake.replies.shift()
+    const items: ToolInput[] = []
+    if (reply?.type === 'say') items.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: reply.text }] })
+    const call = reply?.type === 'call' ? reply : reply?.then
+    if (call) items.push({ type: 'function_call', call_id: nextId('call'), name: call.name, arguments: JSON.stringify(call.args) })
+    const events = [...items.map((item) => ({ type: 'response.output_item.done', item })), { type: 'response.completed', response: {} }]
+    return events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')
+  }
+
+  const readBody = async (request: http.IncomingMessage) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(chunk as Buffer)
+    return Buffer.concat(chunks).toString('utf8')
+  }
+
+  const server = http.createServer((request, response) => {
+    void (async () => {
+      const body = await readBody(request)
+      if (request.url?.startsWith('/backend-api/codex/realtime/calls')) {
+        const created = await createCall(JSON.parse(body) as Parameters<typeof createCall>[0])
+        response.writeHead(201, { location: `/v1/realtime/calls/${created.callId}`, 'content-type': 'application/sdp' })
+        response.end(created.sdp)
+        return
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.end(respond(JSON.parse(body) as Parameters<typeof respond>[0]))
+    })()
+  })
+  const sockets = new WebSocketServer({ server })
+  sockets.on('connection', (socket, request) => {
+    const call = calls.get(request.url?.split('/').at(-1) ?? '')
+    if (!call) return socket.close(4004)
+    call.socket = socket
+    socket.on('close', () => {
+      call.socket = null
+      void call.peer.close()
+    })
     socket.on('message', (raw) => {
-      const event = JSON.parse(raw.toString()) as {
-        type: string
-        audio?: string
-        session?: { instructions?: string }
-        item?: { type: string; call_id?: string; output?: string; content?: Array<{ text?: string }> }
+      const event = JSON.parse(raw.toString()) as { type: string; channel?: string; delegation_item_id?: string; content?: Array<{ text?: string }> }
+      if (event.type === 'session.close') {
+        send(call, { type: 'session.closed', reason: 'client_request' })
+        socket.close(1000)
+        return
       }
-      if (event.type === 'session.update') {
-        fake.instructions.push(event.session?.instructions ?? '')
-        send({ type: 'session.updated', session: { id: nextId('sess') } })
-      }
-      if (event.type === 'input_audio_buffer.append') {
-        const chunk = Buffer.from(event.audio ?? '', 'base64')
-        audio.bytes += chunk.length
-        const silent = chunk.every((byte) => byte === 0)
-        if (silent && speech.active) endOfSpeech()
-        if (!silent && !speech.active) {
-          speech.active = true
-          send({ type: 'input_audio_buffer.speech_started' })
-        }
-      }
-      if (event.type === 'conversation.item.create' && event.item?.type === 'function_call_output') {
-        fake.toolOutputs.push({ name: calls.get(event.item.call_id ?? '') ?? '', output: event.item.output ?? '' })
-      }
-      if (event.type === 'conversation.item.create' && event.item?.type === 'message') fake.userTexts.push(event.item.content?.[0]?.text ?? '')
-      if (event.type === 'response.create') respond()
+      if (!event.type.endsWith('context.append')) return
+      const text = event.content?.map((part) => part.text ?? '').join('') ?? ''
+      fake.appends.push({ channel: event.channel ?? 'speakable', text, delegation: Boolean(event.delegation_item_id) })
+      if (event.channel !== 'speakable') return
+      speak(call, call.spoken++ === 0 ? fake.greeting : text)
+    })
+    // Like GPT-Live: the session starts once the media connection is up.
+    const started = () => socket.send(JSON.stringify({ type: 'session.started', session: { id: 'rtc_fake' } }))
+    if (call.peer.connectionState === 'connected') return started()
+    const subscription = call.peer.connectionStateChange.subscribe((state) => {
+      if (state !== 'connected') return
+      subscription.unSubscribe()
+      started()
     })
   })
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
   return fake
 }
 
@@ -409,7 +493,7 @@ export async function startTestBot({
   openaiBaseUrl,
   chatgptBaseUrl,
   opencodeDbFile = server.dbFile,
-  realtimeBaseUrl,
+  realtimeBaseUrls,
   lockPort,
   saveTwinCredentials = true,
   analytics,
@@ -425,8 +509,8 @@ export async function startTestBot({
   // ChatGPT subscription transcription against startFakeChatGPT(), with the credential in opencodeDbFile.
   chatgptBaseUrl?: string
   opencodeDbFile?: string
-  // Voice calls against startFakeRealtime().
-  realtimeBaseUrl?: string
+  // Voice calls against startFakeLive().
+  realtimeBaseUrls?: RealtimeBaseUrls
   lockPort?: number
   // false: the data dir is used as is (a V1 database the bot start must import).
   saveTwinCredentials?: boolean
@@ -463,7 +547,7 @@ export async function startTestBot({
     analytics: analytics ?? disabledAnalytics,
     ...(clock && { clock }),
     ...(schedulerIntervalMs !== undefined && { schedulerIntervalMs }),
-    ...(realtimeBaseUrl && { realtimeBaseUrls: { openai: realtimeBaseUrl } }),
+    ...(realtimeBaseUrls && { realtimeBaseUrls }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),

@@ -1,17 +1,17 @@
 // Voice calls in the Kimaki voice channel: one voice channel per machine and
 // guild (addVoiceChannel in project.ts), mapped to the data dir. A permitted
-// user joins it, the bot joins and opens a realtime speech-to-speech session
-// (@kimaki/realtime). The call ends when the last permitted user leaves, or
-// when the model calls end_call.
+// user joins it, the bot joins and opens a GPT-Live call on the ChatGPT
+// subscription (live-call.ts). The call ends when the last permitted user
+// leaves, or when the backend calls end_call.
 //
-//   user opus ─▶ receiver (AfterSilence) ─▶ prism Decoder 48k stereo ─▶ session.appendAudio
-//                                       stream end ─▶ session.endOfSpeech
-//   model PCM 24k mono ─▶ 48k stereo ─▶ AudioResource(Raw) ─▶ AudioPlayer ─▶ Discord
-//   model tool calls ─▶ shell (kimaki CLI, cwd dataDir) | post_message | end_call
+//   users' opus ─▶ prism Decoder 48k stereo ─▶ mixer ─▶ live-call (WebRTC) ─▶ GPT-Live
+//   GPT-Live voice (Opus packets) ─▶ AudioResource(Opus) ─▶ AudioPlayer ─▶ Discord
+//   GPT-Live delegation ─▶ voice-agent.ts (gpt-6-luna tool loop) ─▶ shell | post_message | end_call
+//                       ◀─ final text, said by GPT-Live in its own words
 //
 // The text chat of the voice channel shows the call: transcripts, tool lines,
 // messages from post_message and uploads (`kimaki upload-to-discord` defaults to
-// KIMAKI_CHANNEL_ID in the call shell). Text typed there goes to the model.
+// KIMAKI_CHANNEL_ID in the call shell). Text typed there goes to the backend.
 // V1 reference: `git show v1:cli/src/voice-handler.ts`.
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -30,11 +30,9 @@ import {
   createAudioResource,
   entersState,
   joinVoiceChannel,
-  type AudioResource,
   type VoiceConnection,
 } from '@discordjs/voice'
 import { API } from '@discordjs/core/http-only'
-import { gemini, openai, RealtimeSession, resample, xai, type Adapter, type AudioSink, type OutputAudio, type Tool } from '@kimaki/realtime'
 import { Events, type Guild, type VoiceState } from 'discord.js'
 import * as errore from 'errore'
 import prism from 'prism-media'
@@ -45,12 +43,14 @@ import { DbError } from './errors.ts'
 import type { RunEnded } from './event-loop.ts'
 import { asSubtext, formatError, formatShellFinished, formatToolFailed, formatToolLine } from './format-parts.ts'
 import { canUseKimaki } from './ingress.ts'
+import { DEFAULT_LIVE_URLS, DEFAULT_LIVE_VOICE, FRAME_BYTES, LIVE_VOICES, startLiveCall, type LiveCall, type LiveEvent } from './live-call.ts'
 import { createLogger } from './logger.ts'
 import { addVoiceChannel, listProjects } from './project.ts'
 import { formatEcho } from './queue.ts'
 import * as schema from './schema.ts'
 import { catalogReady, primaryAgents } from './sessions.ts'
-import { voiceCallInstructions } from './system-prompt.ts'
+import { liveCallInstructions, voiceCallInstructions, type VoiceCallContext } from './system-prompt.ts'
+import { createVoiceAgent, type AgentTool } from './voice-agent.ts'
 import { chatGPTCredential } from './voice.ts'
 
 const logger = createLogger('VCALL')
@@ -67,7 +67,6 @@ const shellArgs = z.object({
   background: z.boolean().optional(),
   timeoutSeconds: z.number().positive().optional(),
 })
-const searchArgs = z.object({ query: z.string({ error: 'query must be a string' }).trim().min(1, { error: 'query must not be empty' }) })
 const postArgs = z.object({ text: z.string({ error: 'text must be a string' }).trim().min(1, { error: 'text must not be empty' }) })
 const toolInput = z.record(z.string(), z.json())
 const toolError = z.object({ error: z.string() })
@@ -75,59 +74,32 @@ const toolError = z.object({ error: z.string() })
 const sendResult = z.object({ threadId: z.string() })
 // A user's audio stream ends after this much silence (V1: 500).
 const SPEECH_END_MS = 400
+// Microphone audio queued per user, in 20 ms frames: a stalled clock must not add delay.
+const MAX_QUEUED_FRAMES = 50
 
 export class VoiceCallError extends errore.createTaggedError({
   name: 'VoiceCallError',
   message: 'Voice call $operation failed',
 }) {}
 
-export class NoRealtimeKeyError extends errore.createTaggedError({
-  name: 'NoRealtimeKeyError',
-  message: 'Voice calls need ChatGPT signed in to OpenCode, or an OpenAI, xAI or Gemini API key. Run /transcription-key, or kimaki bot keys set --openai <key>',
+export class NoChatGPTError extends errore.createTaggedError({
+  name: 'NoChatGPTError',
+  message: 'Voice calls need a ChatGPT subscription signed in to OpenCode. Run kimaki login openai, then join the voice channel again',
 }) {}
 
-// Realtime WebSocket URLs; tests point OpenAI at a local fake.
-export type RealtimeBaseUrls = { openai?: string; xai?: string }
-
-const REALTIME_PROVIDERS = ['openai', 'xai', 'gemini'] as const
-type RealtimeProvider = (typeof REALTIME_PROVIDERS)[number]
-
-const PROVIDER_NAMES: Record<RealtimeProvider, string> = { openai: 'OpenAI', xai: 'xAI', gemini: 'Gemini' }
-
-// Built-in voices of each realtime API. No name repeats across providers, so a voice picks its provider.
-// OpenAI: the list in the error of session.update with an unknown voice (gpt-realtime-2.1, 2026-10).
-// xAI: KnownVoiceId in https://github.com/xai-org/xai-sdk-ts/blob/main/src/generated/voice.ts
-// Gemini: Live takes the TTS voices, https://ai.google.dev/gemini-api/docs/speech-generation#voices
-export const REALTIME_VOICES: Record<RealtimeProvider, readonly string[]> = {
-  openai: ['marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'],
-  xai: [
-    'eve', 'ara', 'rex', 'sal', 'leo', 'altair', 'atlas', 'aurora', 'carina', 'castor', 'celeste', 'cosmo', 'helios', 'helix',
-    'iris', 'kepler', 'liora', 'lumen', 'luna', 'lux', 'naksh', 'orion', 'perseus', 'rigel', 'sirius', 'ursa', 'zagan', 'zenith',
-  ],
-  gemini: [
-    'Puck', 'Zephyr', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede', 'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel',
-    'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima',
-    'Achird', 'Zubenelgenubi', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
-  ],
-}
-
-// Sent when no voice is saved: OpenAI's own default, xAI's documented default, Gemini's documented default.
-export const DEFAULT_REALTIME_VOICES: Record<RealtimeProvider, string> = { openai: 'marin', xai: 'eve', gemini: 'Puck' }
+// Endpoints of the call; tests point them at local fakes.
+export type RealtimeBaseUrls = { calls?: string; sideband?: string; responses?: string }
 
 export class UnknownVoiceError extends errore.createTaggedError({
   name: 'UnknownVoiceError',
   message: 'Unknown voice "$voice". Pass one of: $voices. Use --voice default to reset',
 }) {}
 
-// Case-insensitive; returns the canonical name of the voice and its provider.
-export function parseRealtimeVoice(name: string): UnknownVoiceError | { provider: RealtimeProvider; voice: string } {
-  const wanted = name.trim().toLowerCase()
-  for (const provider of REALTIME_PROVIDERS) {
-    const voice = REALTIME_VOICES[provider].find((candidate) => candidate.toLowerCase() === wanted)
-    if (voice) return { provider, voice }
-  }
-  const voices = REALTIME_PROVIDERS.map((provider) => `${PROVIDER_NAMES[provider]} ${REALTIME_VOICES[provider].join(', ')}`).join('; ')
-  return new UnknownVoiceError({ voice: name, voices })
+// Case-insensitive; returns the canonical name of the voice.
+export function parseRealtimeVoice(name: string): UnknownVoiceError | { voice: string } {
+  const voice = LIVE_VOICES.find((candidate) => candidate === name.trim().toLowerCase())
+  if (!voice) return new UnknownVoiceError({ voice: name, voices: LIVE_VOICES.join(', ') })
+  return { voice }
 }
 
 // The --voice start flag: a voice saves it, "default" clears it.
@@ -139,92 +111,26 @@ export async function saveVoiceCallVoice({ db, appId, voice }: { db: Bot['db']; 
   if (saved instanceof Error) return saved
 }
 
-// Same keys as voice transcription (bot_api_keys, then env), best first. OpenAI
-// has the most reliable tool calls. Its realtime API only takes function and MCP
-// tools, so web search is our web_search function (searchKey); xAI and Gemini search server-side.
-// https://developers.openai.com/api/docs/guides/realtime-mcp
-// A saved voice (kimaki --voice) moves its provider first when that key is set.
+// The ChatGPT token stored by OpenCode pays for the voice and the backend. Kimaki never
+// refreshes it (refresh tokens rotate); an expired token counts as signed out.
 // voiceNotice says why the saved voice is not used.
-// The ChatGPT token stored by OpenCode wins over an OpenAI key: the realtime WebSocket accepts it
-// and bills the subscription. It has no Responses API scope, so web search still needs a real key.
-export async function realtimeModel(bot: Pick<Bot, 'db' | 'token' | 'realtimeBaseUrls' | 'opencodeDbFile'>): Promise<
-  DbError | NoRealtimeKeyError | { adapter: Adapter; voice: string; voiceNotice: string | null; builtinSearch: string | null; searchKey: string | null }
-> {
+export async function voiceCallSettings(bot: Pick<Bot, 'db' | 'token' | 'opencodeDbFile'>) {
   const [row, credential] = await Promise.all([
     bot.db.query.bot_tokens
-      .findFirst({ where: { token: bot.token }, with: { api_keys: true, settings: true } })
-      .catch((cause) => new DbError({ operation: 'read realtime keys', cause })),
+      .findFirst({ where: { token: bot.token }, with: { settings: true } })
+      .catch((cause) => new DbError({ operation: 'read voice call settings', cause })),
     chatGPTCredential({ dbFile: bot.opencodeDbFile }),
   ])
   if (row instanceof Error) return row
-  if (credential instanceof Error) logger.warn('ChatGPT credential not readable, using API keys', credential)
-  const chatgpt = credential instanceof Error ? null : credential
-  const keys = row?.api_keys
-  const openaiKey = keys?.openai_api_key || process.env['OPENAI_API_KEY']
-  const available = [
-    { provider: 'openai' as const, key: chatgpt?.accessToken || openaiKey },
-    { provider: 'xai' as const, key: keys?.xai_api_key || process.env['XAI_API_KEY'] },
-    { provider: 'gemini' as const, key: keys?.gemini_api_key || process.env['GEMINI_API_KEY'] },
-  ].flatMap(({ provider, key }) => (key ? [{ provider, key }] : []))
-  const savedName = row?.settings?.voice_call_voice ?? null
-  const parsed = savedName === null ? null : parseRealtimeVoice(savedName)
-  const saved = parsed instanceof Error ? null : parsed
-  const chosen = available.find((entry) => entry.provider === saved?.provider) ?? available[0]
-  if (!chosen) return new NoRealtimeKeyError()
-  const voice = saved?.provider === chosen.provider ? saved.voice : DEFAULT_REALTIME_VOICES[chosen.provider]
-  const voiceNotice = (() => {
-    if (parsed instanceof Error) return `saved voice ${savedName} is unknown, using ${voice}. Run kimaki --voice <name> to change it`
-    if (!saved || saved.provider === chosen.provider) return null
-    return `voice ${saved.voice} needs a ${PROVIDER_NAMES[saved.provider]} key, using ${voice}`
-  })()
-  const shared = { voice, voiceNotice }
-  if (chosen.provider === 'openai') {
-    const searchKey = openaiKey || null
-    return { ...shared, adapter: openai({ apiKey: chosen.key, baseUrl: bot.realtimeBaseUrls.openai }), builtinSearch: searchKey ? 'web_search' : null, searchKey }
+  if (credential instanceof Error) return credential
+  if (!credential) return new NoChatGPTError()
+  const saved = row?.settings?.voice_call_voice ?? null
+  const parsed = saved === null ? null : parseRealtimeVoice(saved)
+  if (parsed instanceof Error) {
+    const voiceNotice = `saved voice ${saved} is unknown, using ${DEFAULT_LIVE_VOICE}. Run kimaki --voice <name> to change it`
+    return { auth: credential, voice: DEFAULT_LIVE_VOICE, voiceNotice }
   }
-  if (chosen.provider === 'xai') {
-    const builtinTools = [{ type: 'web_search' }, { type: 'x_search' }]
-    return { ...shared, adapter: xai({ apiKey: chosen.key, builtinTools, baseUrl: bot.realtimeBaseUrls.xai }), builtinSearch: 'web_search and x_search', searchKey: null }
-  }
-  return { ...shared, adapter: gemini({ apiKey: chosen.key, builtinTools: [{ googleSearch: {} }] }), builtinSearch: 'Google Search', searchKey: null }
-}
-
-const SEARCH_MODEL = 'gpt-5.5'
-
-type ResponsesOutput = {
-  output?: Array<{
-    type?: string
-    content?: Array<{ type?: string; text?: string; annotations?: Array<{ type?: string; url?: string }> }>
-  }>
-}
-
-// OpenAI web search through the Responses API, for the web_search tool of OpenAI calls.
-// Low reasoning keeps it to a few seconds. https://developers.openai.com/api/docs/guides/tools-web-search
-async function searchWeb({ apiKey, baseUrl, query }: { apiKey: string; baseUrl: string; query: string }) {
-  const response = await fetch(`${baseUrl}/responses`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: SEARCH_MODEL,
-      reasoning: { effort: 'low' },
-      tools: [{ type: 'web_search' }],
-      instructions: 'Answer in a few short sentences that will be read aloud. No markdown.',
-      input: query,
-    }),
-    signal: AbortSignal.timeout(60_000),
-  }).catch((cause) => new VoiceCallError({ operation: 'web search', cause }))
-  if (response instanceof Error) return response
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    return new VoiceCallError({ operation: `web search (HTTP ${response.status}: ${body.slice(0, 300)})` })
-  }
-  const data = await (response.json() as Promise<ResponsesOutput>).catch((cause) => new VoiceCallError({ operation: 'web search', cause }))
-  if (data instanceof Error) return data
-  const parts = (data.output ?? []).filter((item) => item.type === 'message').flatMap((item) => item.content ?? [])
-  // Inline citations like ([npmjs.com](https://...)) would be read aloud; the URLs are in sources.
-  const answer = parts.map((part) => part.text ?? '').join('').replace(/\s*\(\[[^\]]*\]\([^)]*\)\)/g, '').trim()
-  const sources = [...new Set(parts.flatMap((part) => part.annotations ?? []).flatMap((a) => (a.type === 'url_citation' && a.url ? [a.url] : [])))]
-  return { answer, sources: sources.slice(0, 5) }
+  return { auth: credential, voice: parsed?.voice ?? DEFAULT_LIVE_VOICE, voiceNotice: null }
 }
 
 function parseJsonAs<T extends z.ZodType>(schema: T, text: string): z.output<T> | null {
@@ -233,17 +139,11 @@ function parseJsonAs<T extends z.ZodType>(schema: T, text: string): z.output<T> 
   return parsed.data
 }
 
-// Same tool line as in session threads, from the JSON arguments of the model.
-function toolCallLine({ name, args }: { name: string; args: string }): string {
-  return formatToolLine({ name, input: parseJsonAs(toolInput, args) ?? {} })
-}
-
 // Tools fail by returning { error }; null for any other result.
 function toolFailedLine({ name, output }: { name: string; output: string }): string | null {
   const result = parseJsonAs(toolError, output)
   return result ? formatToolFailed({ name, message: result.error }) : null
 }
-
 
 // Skills of OpenCode's global config dir as a location: it has no project, so
 // the list has only global skills (same rule as the global slash command catalog).
@@ -297,55 +197,88 @@ export async function ensureVoiceChannels(bot: Bot, { machine }: { machine: stri
 
 // --- audio
 
-// Model audio (mono, any rate) to what Discord plays: 48 kHz stereo PCM16.
-function toDiscordPcm({ pcm, rate }: { pcm: Int16Array; rate: number }): Buffer {
-  const mono = resample(pcm, rate, 48_000)
-  const stereo = new Int16Array(mono.length * 2)
-  for (let i = 0; i < mono.length; i++) {
-    stereo[i * 2] = mono[i]!
-    stereo[i * 2 + 1] = mono[i]!
+// Sums the 20 ms frames of all speaking users into the one stream the model hears.
+// GPT-Live is full duplex, so everyone is heard at once and can interrupt it.
+function createMixer() {
+  const queues = new Map<string, Buffer[]>()
+  return {
+    push(userId: string, frame: Buffer) {
+      if (frame.length !== FRAME_BYTES) return
+      const queue = queues.get(userId) ?? []
+      queues.set(userId, queue)
+      queue.push(frame)
+      if (queue.length > MAX_QUEUED_FRAMES) queue.shift()
+    },
+    read(): Buffer | null {
+      const frames = [...queues.values()].flatMap((queue) => queue.splice(0, 1))
+      if (frames.length <= 1) return frames[0] ?? null
+      const mixed = Buffer.alloc(FRAME_BYTES)
+      for (let offset = 0; offset < FRAME_BYTES; offset += 2) {
+        const sum = frames.reduce((total, frame) => total + frame.readInt16LE(offset), 0)
+        mixed.writeInt16LE(Math.max(-32_768, Math.min(32_767, sum)), offset)
+      }
+      return mixed
+    },
   }
-  return Buffer.from(stereo.buffer)
 }
 
-// Plays model replies. One resource per reply: the player stops by itself
-// after 1s without audio (maxMissedFrames), so the next reply starts a new one.
+// Opus silence and DTX frames of the model are 1-3 bytes; each is still 20 ms of the timeline.
+const MAX_SILENT_PAYLOAD = 3
+// Packets queued before playback starts. The player reads one packet every 20 ms and plays
+// silence when none is there, so without this margin network jitter becomes audible gaps.
+const PREBUFFER_MS = 120
+// A reply ends after this much silence; its resource then ends and the player goes idle.
+const TRAILING_SILENCE_MS = 1_000
+
+// Plays the model's Opus packets. Each reply is one resource: it starts with the first
+// voiced packet, keeps the silence packets inside the reply, and ends after trailing silence.
+// Barge-in needs nothing here: GPT-Live stops sending voiced packets.
 function createSpeaker(connection: VoiceConnection, { onError }: { onError: (error: Error) => void }) {
   const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 50 } })
   connection.subscribe(player)
-  const playing: { current: { stream: PassThrough; resource: AudioResource } | null } = { current: null }
-  player.on(AudioPlayerStatus.Idle, () => {
-    playing.current = null
-  })
   player.on('error', onError)
-  const sink: AudioSink = {
-    play(audio: OutputAudio) {
-      if (!playing.current) {
-        const stream = new PassThrough()
-        playing.current = { stream, resource: createAudioResource(stream, { inputType: StreamType.Raw }) }
-        player.play(playing.current.resource)
-      }
-      playing.current.stream.write(toDiscordPcm(audio))
-    },
-    // Barge-in: how much of the reply the users heard.
-    stop() {
-      const current = playing.current
-      if (!current) return null
-      playing.current = null
-      current.stream.end()
-      player.stop(true)
-      return current.resource.playbackDuration
-    },
+  const reply: { stream: PassThrough | null; start: NodeJS.Timeout | null; retire: NodeJS.Timeout | null } = { stream: null, start: null, retire: null }
+  // Resolved by the next voiced packet.
+  const waiters: Array<() => void> = []
+  const retire = () => {
+    if (reply.start) clearTimeout(reply.start)
+    if (reply.retire) clearTimeout(reply.retire)
+    reply.stream?.end()
+    reply.stream = null
+    reply.start = null
+    reply.retire = null
   }
   return {
-    sink,
     player,
-    // Resolves when nothing plays, at most after `timeout` ms.
-    quiet: async (timeout: number) => {
-      if (player.state.status === AudioPlayerStatus.Idle) return
-      await entersState(player, AudioPlayerStatus.Idle, timeout).catch(() => undefined)
+    play(packet: Buffer) {
+      const silent = packet.length <= MAX_SILENT_PAYLOAD
+      if (!reply.stream && silent) return
+      if (!reply.stream) {
+        // Object mode: each write must stay one Opus packet.
+        const stream = new PassThrough({ objectMode: true })
+        reply.stream = stream
+        reply.start = setTimeout(() => player.play(createAudioResource(stream, { inputType: StreamType.Opus })), PREBUFFER_MS)
+      }
+      reply.stream.write(packet)
+      if (silent) return
+      for (const resolve of waiters.splice(0)) resolve()
+      if (reply.retire) clearTimeout(reply.retire)
+      reply.retire = setTimeout(retire, TRAILING_SILENCE_MS)
     },
-    stop: () => player.stop(true),
+    // Resolves when speech that arrives after this call has played, at most after 20s.
+    async played() {
+      await new Promise<void>((resolve) => {
+        waiters.push(resolve)
+        setTimeout(resolve, 5_000)
+      })
+      // Playback starts PREBUFFER_MS after the first packet of a reply.
+      await entersState(player, AudioPlayerStatus.Playing, 1_000).catch(() => undefined)
+      await entersState(player, AudioPlayerStatus.Idle, 15_000).catch(() => undefined)
+    },
+    stop() {
+      retire()
+      player.stop(true)
+    },
   }
 }
 
@@ -362,19 +295,21 @@ type Call = {
   guildId: string
   channelId: string
   connection: VoiceConnection
-  session: RealtimeSession
+  live: LiveCall
+  agent: ReturnType<typeof createVoiceAgent>
   speaker: ReturnType<typeof createSpeaker>
+  mixer: ReturnType<typeof createMixer>
   // Users allowed to talk to the model (canUseKimaki), by ID.
   permitted: Map<string, Author>
-  // The user whose audio goes to the model now; others wait until the stream ends.
-  floor: { userId: string | null; lastSpeaker: Author | null }
-  // Indexes of session messages already posted in the text chat.
-  posted: Set<number>
+  // Who spoke last, for the user transcript lines.
+  lastSpeaker: Author | null
   background: Set<ChildProcess>
   // Threads that `kimaki send` started or prompted in this call.
   started: Set<string>
   // Threads whose transcript a background `kimaki send --wait` still waits for.
   waiting: Set<string>
+  // end_call ran: the call ends after the final reply is spoken.
+  hangup: boolean
   ending: boolean
 }
 
@@ -421,48 +356,56 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     return users
   }
 
-  // Posts finished transcripts and tool lines the chat does not show yet, in session order.
-  function postTranscripts(bot: Bot, call: Call) {
-    const messages = call.session.view().messages
-    for (const [index, message] of messages.entries()) {
-      if (call.posted.has(index)) continue
-      if (message.kind === 'summary') {
-        call.posted.add(index)
-        continue
-      }
-      if (message.kind === 'tool') {
-        call.posted.add(index)
-        // The posted message shows itself; a failed post still gets its failure line.
-        if (message.name !== 'post_message') post(bot, { channelId: call.channelId, text: toolCallLine(message) })
-        continue
-      }
-      // Text before a tool call is complete, and its line must come before the tool line.
-      const finished = message.done || (message.kind === 'assistant' && messages.slice(index + 1).some((next) => next.kind === 'tool'))
-      if (!finished) continue
-      call.posted.add(index)
-      const text = message.text.trim()
-      if (!text) continue
-      if (message.kind === 'user') post(bot, { channelId: call.channelId, text: formatEcho({ username: call.floor.lastSpeaker?.username ?? 'voice', text }) })
-      else post(bot, { channelId: call.channelId, text: message.interrupted ? `${text} *(interrupted)*` : text, markdown: true })
+  // Runs the backend on a request and has GPT-Live say the result. With a delegation ID
+  // the result answers that delegation; without one (chat messages, notices) it is new speech.
+  async function respond(bot: Bot, { call, text, delegationId }: { call: Call; text: string; delegationId?: string }) {
+    const reply = await call.agent.run(text)
+    if (call.ending) return
+    if (reply instanceof Error) {
+      report(bot, { channelId: call.channelId, label: 'voice backend', error: reply })
+      call.live.append({ text: 'The task failed. Tell the users it did not complete.', channel: 'speakable', delegationId })
+      return
     }
+    // Web search citations like ([npmjs.com](https://...)) must not be read aloud.
+    const spoken = reply.replace(/\s*\(\[[^\]]*\]\([^)]*\)\)/g, '').trim()
+    if (spoken) call.live.append({ text: spoken, channel: 'speakable', delegationId })
+    if (!call.hangup) return
+    await call.speaker.played()
+    // The users may have left meanwhile; a new call in the guild must not end.
+    if (call.ending) return
+    await end(bot, { guildId: call.guildId, reason: 'the assistant hung up' })
   }
 
-  // Text the model gets that the chat already shows (typed messages, command results).
-  function sendHidden(call: Call, text: string) {
-    const sent = call.session.sendText(text)
-    if (sent instanceof Error) return sent
-    call.posted.add(call.session.view().messages.length - 1)
+  // Context both models keep without answering now.
+  function inform(call: Call, text: string) {
+    call.agent.note(text)
+    call.live.append({ text, channel: 'commentary' })
   }
 
   // The instructions keep the users of the call start (prompt cache); changes come as context.
-  // On Gemini every clientContent interrupts the current reply (https://ai.google.dev/api/live).
   function announceUsers(call: Call) {
     const users = [...call.permitted.values()]
     const list = users.map((user) => `${user.username} (${user.id})`).join(', ')
     const args = users.map((user) => `--user '${user.id}'`).join(' ')
-    const sent = call.session.sendText(`<system>The users in the call are now: ${list}. Pass ${args} to kimaki send.</system>`, { respond: false })
-    if (sent instanceof Error) return logger.warn(`announce users`, sent)
-    call.posted.add(call.session.view().messages.length - 1)
+    inform(call, `<system>The users in the call are now: ${list}. Pass ${args} to kimaki send.</system>`)
+  }
+
+  function onLive(bot: Bot, { call, event }: { call: Call; event: LiveEvent }) {
+    if (call.ending) return
+    if (event.type === 'delegation') {
+      logger.info(`delegation ${event.id}: ${event.text.slice(0, 300)}`)
+      // The delegation can come without text; the transcripts in the backend history have the request.
+      const text = event.text || '<system>The voice model handed you the latest user request. Do it, using the transcript.</system>'
+      return void respond(bot, { call, text, delegationId: event.id })
+    }
+    if (event.type === 'error') return report(bot, { channelId: call.channelId, label: 'model error', error: event.message })
+    if (event.type === 'closed') return void end(bot, { guildId: call.guildId, reason: `the model connection closed (${event.reason})` })
+    if (!event.text) return
+    const speaker = event.role === 'user' ? (call.lastSpeaker?.username ?? 'voice') : 'voice assistant'
+    // The backend sees the conversation, so a later "yes, do that" has its context.
+    call.agent.note(`<transcript speaker="${speaker}">${event.text}</transcript>`)
+    if (event.role === 'user') post(bot, { channelId: call.channelId, text: formatEcho({ username: speaker, text: event.text }) })
+    else post(bot, { channelId: call.channelId, text: event.text, markdown: true })
   }
 
   function shellEnv(bot: Bot, call: Call) {
@@ -530,27 +473,8 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     })
   }
 
-  function tools(bot: Bot, { call, searchKey }: { call: () => Call; searchKey: string | null }): Record<string, Tool> {
-    const webSearch: Record<string, Tool> = searchKey
-      ? {
-          web_search: {
-            description: 'Search the web for current information. Returns a short answer and source URLs. Post the URLs with post_message if the users want them.',
-            parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to find out, as a full question' } }, required: ['query'] },
-            async execute(args) {
-              const parsed = searchArgs.safeParse(args)
-              if (!parsed.success) return { error: parsed.error.issues.map((issue) => issue.message).join('; ') }
-              const result = await searchWeb({ apiKey: searchKey, baseUrl: bot.transcriptionBaseUrls.openai ?? 'https://api.openai.com/v1', query: parsed.data.query })
-              if (result instanceof Error) {
-                logger.warn(`web search`, result)
-                return { error: result.message }
-              }
-              return result
-            },
-          },
-        }
-      : {}
+  function tools(bot: Bot, { call }: { call: () => Call }): Record<string, AgentTool> {
     return {
-      ...webSearch,
       shell: {
         description: 'Run a shell command with the kimaki CLI on PATH. Returns the exit code and the last 4000 characters of output.',
         parameters: {
@@ -594,8 +518,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
             // A null exit code means a signal killed it (timeout or hangup).
             const finished = formatShellFinished({ description: input.command, state: exitCode === null ? 'killed' : null, exit: exitCode })
             post(bot, { channelId: current.channelId, text: finished })
-            const sent = sendHidden(current, `<background-command exit-code="${exitCode}">\n$ ${input.command}\n${output}\n</background-command>`)
-            if (sent instanceof Error) logger.warn(`background result`, sent)
+            void respond(bot, { call: current, text: `<background-command exit-code="${exitCode}">\n$ ${input.command}\n${output}\n</background-command>` })
           })
           return { started: true }
         },
@@ -615,14 +538,10 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
         },
       },
       end_call: {
-        description: 'Leave the voice call. Say a short goodbye in the same reply, before calling it.',
+        description: 'Leave the voice call after your final reply is spoken. Make that reply a short goodbye.',
         parameters: { type: 'object', properties: {} },
-        async execute() {
-          const current = call()
-          // The goodbye came before this call in the same reply: let it play, then leave.
-          // The session closes before the result is sent, so no further reply is requested.
-          await current.speaker.quiet(15_000)
-          await end(bot, { guildId: current.guildId, reason: 'the assistant hung up' })
+        execute() {
+          call().hangup = true
           return { ok: true }
         },
       },
@@ -634,39 +553,24 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     receiver.speaking.on('start', (userId) => {
       const user = call.permitted.get(userId)
       if (!user || call.ending) return
-      // One audio stream for the model: the latest speaker takes the floor (V1 policy).
-      call.floor.userId = userId
-      call.floor.lastSpeaker = user
+      call.lastSpeaker = user
       // start fires again after 100ms of silence while the subscription (400ms) is still open.
       if (receiver.subscriptions.has(userId)) return
       const opus = receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: SPEECH_END_MS } })
       const decoder = new prism.opus.Decoder({ rate: 48_000, channels: 2, frameSize: 960 })
-      decoder.on('data', (pcm: Buffer) => {
-        if (call.floor.userId !== userId) return
-        // Copy: a Buffer slice can start at an odd byte offset.
-        const sent = call.session.appendAudio(new Int16Array(Uint8Array.from(pcm).buffer), { rate: 48_000, channels: 2 })
-        if (sent instanceof Error) logger.warn(`audio to model`, sent)
-      })
-      const release = () => {
-        if (call.floor.userId !== userId) return
-        call.floor.userId = null
-        if (call.ending) return
-        const ended = call.session.endOfSpeech()
-        if (ended instanceof Error) report(bot, { channelId: call.channelId, label: 'end of speech', error: ended })
-      }
+      decoder.on('data', (pcm: Buffer) => call.mixer.push(userId, pcm))
       // pipeline() destroys the decoder (and frees its codec) when the receive stream closes.
       pipeline(opus, decoder, (error) => {
         if (error && !call.ending) report(bot, { channelId: call.channelId, label: `audio stream of ${user.username}`, error })
-        release()
       })
     })
   }
 
   async function start(bot: Bot, { guild, channelId, users }: { guild: Guild; channelId: string; users: Map<string, Author> }) {
-    const model = await realtimeModel(bot)
-    if (model instanceof Error) {
-      logger.warn(`voice call not started`, model)
-      post(bot, { channelId, text: formatError(model.message) })
+    const settings = await voiceCallSettings(bot)
+    if (settings instanceof Error) {
+      logger.warn(`voice call not started`, settings)
+      post(bot, { channelId, text: formatError(settings.message) })
       return
     }
     const connection = joinVoiceChannel({ guildId: guild.id, channelId, adapterCreator: guild.voiceAdapterCreator, selfDeaf: false, selfMute: false })
@@ -680,7 +584,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     }
     const [projects, context] = await Promise.all([listProjects({ db: bot.db }), globalContext(bot, { configDir: opencodeConfigDir })])
     if (projects instanceof Error) logger.warn(`voice call projects`, projects)
-    const instructions = voiceCallInstructions({
+    const callContext: VoiceCallContext = {
       users: [...users.values()],
       projects: (projects instanceof Error ? [] : projects).map((project) => ({
         channelId: project.channel_id,
@@ -690,56 +594,63 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
       guildId: guild.id,
       voiceChannelId: channelId,
       dataDir: bot.dataDir,
-      builtinSearch: model.builtinSearch,
       agentsMd: context.agentsMd,
       skills: context.skills,
       agents: context.agents,
-    })
-    const speaker = createSpeaker(connection, { onError: (error) => report(bot, { channelId, label: 'audio player', error }) })
+    }
     const holder: { call: Call | null } = { call: null }
-    const session = new RealtimeSession({
-      model: model.adapter,
-      voice: model.voice,
-      instructions,
-      tools: tools(bot, { call: () => holder.call!, searchKey: model.searchKey }),
-      output: speaker.sink,
-      turns: { mode: 'server', silenceMs: 600 },
+    const speaker = createSpeaker(connection, { onError: (error) => report(bot, { channelId, label: 'audio player', error }) })
+    const mixer = createMixer()
+    const agent = createVoiceAgent({
+      auth: settings.auth,
+      url: bot.realtimeBaseUrls.responses,
+      instructions: voiceCallInstructions(callContext),
+      tools: tools(bot, { call: () => holder.call! }),
+      // Same tool line as in session threads. A posted message shows itself; a failed post still gets its failure line.
+      onToolCall: ({ name, args }) => {
+        if (name !== 'post_message') post(bot, { channelId, text: formatToolLine({ name, input: parseJsonAs(toolInput, args) ?? {} }) })
+      },
+      onToolResult: (result) => {
+        const failed = toolFailedLine(result)
+        if (failed) post(bot, { channelId, text: failed })
+      },
     })
+    const live = await startLiveCall({
+      auth: settings.auth,
+      voice: settings.voice,
+      instructions: liveCallInstructions(callContext),
+      urls: { calls: bot.realtimeBaseUrls.calls ?? DEFAULT_LIVE_URLS.calls, sideband: bot.realtimeBaseUrls.sideband ?? DEFAULT_LIVE_URLS.sideband },
+      readFrame: mixer.read,
+      onOpus: speaker.play,
+      onEvent: (event) => {
+        if (holder.call) onLive(bot, { call: holder.call, event })
+      },
+    })
+    if (live instanceof Error) {
+      logger.error(`voice call`, live)
+      post(bot, { channelId, text: formatError(live.message) })
+      speaker.stop()
+      connection.destroy()
+      return
+    }
     const call: Call = {
       guildId: guild.id,
       channelId,
       connection,
-      session,
+      live,
+      agent,
       speaker,
+      mixer,
       permitted: users,
-      floor: { userId: null, lastSpeaker: null },
-      posted: new Set(),
+      lastSpeaker: null,
       background: new Set(),
       started: new Set(),
       waiting: new Set(),
+      hangup: false,
       ending: false,
     }
     holder.call = call
     calls.set(guild.id, call)
-    const connected = await session.connect()
-    if (connected instanceof Error) {
-      logger.error(`voice call`, connected)
-      post(bot, { channelId, text: formatError(connected.message) })
-      await end(bot, { guildId: guild.id, reason: null })
-      return
-    }
-    session.subscribe((event) => {
-      if (event.type === 'response.done' || event.type === 'tool.call' || (event.type === 'input.text' && event.final)) postTranscripts(bot, call)
-      if (event.type === 'error') report(bot, { channelId, label: `model error${event.code ? ` (${event.code})` : ''}`, error: event.message })
-      if (event.type === 'tool.builtin') post(bot, { channelId, text: toolCallLine(event) })
-      const failed = event.type === 'tool.result' ? toolFailedLine(event) : null
-      if (failed) post(bot, { channelId, text: failed })
-      // Subscribed after the first connect: every start is a reconnect.
-      if (event.type === 'session.started') post(bot, { channelId, text: asSubtext('⬦ reconnected to the model') })
-      // A closed socket that the session does not reopen (go away reconnects by itself).
-      const lost = (event.type === 'session.closed' && event.reason !== 'go away') || (event.type === 'error' && event.code === 'reconnect_failed')
-      if (lost && !call.ending) void end(bot, { guildId: guild.id, reason: 'the model connection closed' })
-    })
     connection.on(VoiceConnectionStatus.Disconnected, () => {
       // Discord moves or reconnects: wait shortly, else the call is over (V1 behavior).
       void Promise.race([
@@ -754,17 +665,12 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
       connection.on('stateChange', (before, after) => logger.info(`voice connection ${before.status} -> ${after.status}`))
       connection.receiver.speaking.on('start', (userId) => logger.info(`speaking start ${userId}`))
       speaker.player.on('stateChange', (before, after) => logger.info(`player ${before.status} -> ${after.status}`))
-      speaker.player.on('debug', (message) => logger.info(`player debug: ${message}`))
-      session.subscribe((event) => {
-        if (event.type !== 'output.audio') logger.info(`realtime ${JSON.stringify(event).slice(0, 300)}`)
-      })
     }
     listen(bot, call)
-    logger.info(`voice call started in ${channelId} with ${model.adapter.provider} ${model.adapter.model}, voice ${model.voice}`)
-    post(bot, { channelId, text: `-# ⬦ voice call started ⋅ ${model.adapter.model} ⋅ ${model.voice}` })
-    if (model.voiceNotice) post(bot, { channelId, text: asSubtext(`⬦ ${model.voiceNotice}`) })
-    const greeted = sendHidden(call, '<system>The call started. Greet the users by name in one short sentence.</system>')
-    if (greeted instanceof Error) report(bot, { channelId, label: 'greeting', error: greeted })
+    logger.info(`voice call started in ${channelId}, voice ${settings.voice}`)
+    post(bot, { channelId, text: `-# ⬦ voice call started ⋅ gpt-live ⋅ ${settings.voice}` })
+    if (settings.voiceNotice) post(bot, { channelId, text: asSubtext(`⬦ ${settings.voiceNotice}`) })
+    live.append({ text: 'The call started. Greet the users by name in one short sentence.', channel: 'speakable' })
   }
 
   async function end(bot: Bot, { guildId, reason }: { guildId: string; reason: string | null }) {
@@ -772,9 +678,9 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     if (!call || call.ending) return
     call.ending = true
     calls.delete(guildId)
+    call.agent.stop()
     for (const child of call.background) killGroup(child)
-    postTranscripts(bot, call)
-    await call.session.close()
+    await call.live.close()
     call.speaker.stop()
     if (call.connection.state.status !== VoiceConnectionStatus.Destroyed) call.connection.destroy()
     logger.info(`voice call ended in ${call.channelId}${reason ? `: ${reason}` : ''}`)
@@ -825,10 +731,8 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     const failure = error === null ? '' : ` Error: ${error}`
     const notice = `<system>Thread ${state}: "${thread.name}". Thread ID ${threadId}, session ID ${sessionId}, URL ${url}.${failure}</system>`
     // Answer only for threads started in this call. A pending kimaki send --wait brings the transcript next.
-    const respond = call.started.has(threadId) && !call.waiting.has(threadId)
-    const sent = call.session.sendText(notice, { respond })
-    if (sent instanceof Error) return logger.warn(`thread finished notice`, sent)
-    call.posted.add(call.session.view().messages.length - 1)
+    if (call.started.has(threadId) && !call.waiting.has(threadId)) return void respond(bot, { call, text: notice })
+    inform(call, notice)
   }
 
   const listener: { current: ((before: VoiceState, after: VoiceState) => void) | null } = { current: null }
@@ -844,12 +748,11 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     runEnded(run: RunEnded) {
       if (registered.bot) void notifyRunEnded(registered.bot, run)
     },
-    // A message in the text chat of a voice channel: to the model, if a call runs there.
-    async text(bot: Bot, { guildId, channelId, author, content }: { guildId: string; channelId: string; author: Author; content: string }) {
+    // A message in the text chat of a voice channel: to the backend, if a call runs there.
+    text(bot: Bot, { guildId, channelId, author, content }: { guildId: string; channelId: string; author: Author; content: string }) {
       const call = calls.get(guildId)
       if (!call || call.channelId !== channelId || call.ending || !content.trim()) return
-      const sent = sendHidden(call, `<chat-message from="${author.username}" user-id="${author.id}">\n${content}\n</chat-message>`)
-      if (sent instanceof Error) return new VoiceCallError({ operation: 'forward a chat message', cause: sent })
+      void respond(bot, { call, text: `<chat-message from="${author.username}" user-id="${author.id}">\n${content}\n</chat-message>` })
     },
     async stop(bot: Bot) {
       if (listener.current) bot.discord.off(Events.VoiceStateUpdate, listener.current)

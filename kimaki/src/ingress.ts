@@ -198,13 +198,12 @@ async function handleMessage(bot: Bot, message: Message) {
   if (project.channel_type === 'voice') {
     // The text chat of the voice channel talks to the running call.
     if (message.author.bot || thread || !(await canUseKimaki({ guild: message.guild, userId: message.author.id }))) return
-    const forwarded = await bot.features.voiceCalls.text(bot, {
+    bot.features.voiceCalls.text(bot, {
       guildId: message.guild.id,
       channelId,
       author: { id: message.author.id, username: message.author.username },
       content: message.content,
     })
-    if (forwarded instanceof Error) logger.warn(forwarded)
     return
   }
   if (message.author.bot) {

@@ -670,7 +670,16 @@ export type VoiceCallProject = { channelId: string; channelName: string; directo
 // skill.list entry of OpenCode's global location; path is the absolute SKILL.md.
 export type VoiceCallSkill = { id: string; path: string; description: string }
 
-function voiceCallContext({ agentsMd, skills }: { agentsMd: { path: string; content: string } | null; skills: readonly VoiceCallSkill[] }) {
+// First sentence of a skill description, for the voice model: it only needs to know the skill exists.
+function shortDescription(description: string, max = 160): string {
+  const flat = description.replace(/\s+/g, ' ').trim()
+  const sentence = /^.*?[.!?](\s|$)/.exec(flat)?.[0].trim() ?? flat
+  return sentence.length > max ? `${sentence.slice(0, max - 1).trimEnd()}…` : sentence
+}
+
+// compact: skills as one short line each. GPT-Live instructions are capped at 16,384 tokens
+// (https://developers.openai.com/api/docs/guides/live-conversations#configuration-fields).
+function voiceCallContext({ agentsMd, skills, compact }: { agentsMd: { path: string; content: string } | null; skills: readonly VoiceCallSkill[]; compact: boolean }) {
   const agentsBlock = agentsMd
     ? dedent`
         ## user instructions
@@ -683,7 +692,9 @@ function voiceCallContext({ agentsMd, skills }: { agentsMd: { path: string; cont
       `
     : ''
   const skillLines = skills.map((skill) => {
-    const description = skill.description.replace(/\s+/g, ' ').trim().replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    const flat = compact ? shortDescription(skill.description) : skill.description.replace(/\s+/g, ' ').trim()
+    const description = flat.replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    if (compact) return `  <skill name="${escapeAttribute(skill.id)}">${description}</skill>`
     return `  <skill name="${escapeAttribute(skill.id)}" path="${escapeAttribute(skill.path)}">${description}</skill>`
   })
   const skillsBlock = skills.length > 0
@@ -700,40 +711,99 @@ function voiceCallContext({ agentsMd, skills }: { agentsMd: { path: string; cont
   return [agentsBlock, skillsBlock].filter((block) => block !== '')
 }
 
-// The instructions of a realtime voice call in the Kimaki voice channel.
-// Fixed for the whole call, so the provider prompt cache keeps hitting.
-export function voiceCallInstructions({
-  users,
-  projects,
-  guildId,
-  voiceChannelId,
-  dataDir,
-  builtinSearch,
-  agentsMd,
-  skills,
-  agents,
-}: {
+export type VoiceCallContext = {
   users: readonly VoiceCallUser[]
   projects: readonly VoiceCallProject[]
   guildId: string
   voiceChannelId: string
   dataDir: string
-  // Name of the provider's server-side search tool, null when it has none.
-  builtinSearch: string | null
   // The user's global AGENTS.md, null when there is none.
   agentsMd: { path: string; content: string } | null
   skills: readonly VoiceCallSkill[]
   agents: readonly InstructionAgent[]
-}): string {
+}
+
+// Instructions of the GPT-Live voice model of a call. It has no tools: it delegates and the
+// backend (voiceCallInstructions) does the work. It still gets the full Kimaki reference of the
+// backend, so it knows what is possible. Policy headings follow OpenAI's live prompting guide:
+// https://developers.openai.com/api/docs/guides/live-prompting
+export function liveCallInstructions(context: VoiceCallContext): string {
+  const names = context.users.map((user) => user.username).join(', ')
+  const intro = dedent`
+    You are Kimaki, the voice of a Discord voice call with ${names || 'the users'}. The users control their coding agents through you: Kimaki threads, each one an OpenCode coding agent that works in a project on this computer.
+    Speak short and fast: one or two sentences per reply. Answer in the language the user speaks. Keep that language until they switch.
+    Several users can be in the call and talk to each other. Answer when someone talks to you.
+
+    Backchannel policy: Use few backchannels. Do not talk over the users.
+
+    Interruption policy: Stop speaking when a user interrupts. Listen to what they say.
+
+    Delegation policy:
+    You have no tools yourself. A backend agent does all the work: it runs every command on this computer, starts and controls threads, searches the web and posts in the text chat. You give it a request by delegating, and its result comes back to you to say. Everything in the Kimaki reference below that runs a command or uses a tool happens through a delegation.
+
+    Backend tools:
+    - Threads: start a new thread in any project for coding work, research, or anything more than a quick lookup. Start it in a git worktree, with a chosen agent or model, or with files attached. Send follow-ups to a thread (now, queued after its current run, or as a side thread). List, search, read, wait for, stop, rename and archive threads.
+    - Thread results: reports when a thread finishes or fails, and what a thread started in this call did.
+    - Schedules: one-time reminders and recurring routines.
+    - Projects: list the projects on this computer and add new ones.
+    - Web: search the web for current information and read links the users share.
+    - Text chat: post links, IDs, lists and code in the text chat of this voice channel, upload files, and read what users type there.
+    - Computer: run any command line tool installed on this computer, follow the user's skills, read the Kimaki logs.
+    - Hang up: leave the call.
+
+    Delegate to the backend when:
+    - A user asks to start, create, open or run a thread or session, or asks for any coding work. You can always start threads through the backend.
+    - A user asks for anything in the list above, about their projects, threads or code, or for current information.
+    - A user says goodbye or asks you to leave or hang up.
+    - A correction or new detail changes work already requested. Delegate it right away.
+    - You are not sure whether the backend can help.
+
+    Do not delegate to the backend when:
+    - A user greets you, makes small talk, or asks you to repeat a result you already gave.
+    - You need one short clarification to understand the request.
+
+    Put every detail the users said in the delegation: the project, the work, and the agent, model, worktree or time when they named one.
+    Delegate before giving an answer that depends on backend work. Do not guess the result while waiting. Never say you cannot do something: delegate it. Never say a thread started or an action is done before its result says so.
+    When a result comes back, say the key point in your own words. Never read IDs, hashes, paths, links, code or lists aloud: say they are in the chat.
+    Context on the commentary channel is silent background: never read it aloud, use it when it matters. Context on the speakable channel is what to say now. Never mention the backend, channels or delegation: the users talk to one assistant.
+
+    # Kimaki reference
+
+    The backend follows the instructions below. You do not run any of it yourself: use it to know what is possible and to delegate precise requests. Where it says "you", it means the backend.
+  `
+  return [intro, ...voiceCallReference({ ...context, compact: true })].join('\n\n')
+}
+
+// Instructions of the backend agent of a voice call in the Kimaki voice channel.
+// Fixed for the whole call, so the provider prompt cache keeps hitting.
+export function voiceCallInstructions(context: VoiceCallContext): string {
+  const intro = dedent`
+    You are Kimaki, the assistant behind a Discord voice call. The users control their coding agents through you. They talk to a voice model: it hands their requests to you as messages and says your final reply aloud in its own words.
+    Requests come from speech transcripts: they can have recognition errors, missing punctuation and later corrections. Use the latest context. If a needed detail is still unclear, reply with a short question instead of guessing.
+    Keep the final reply short: one or two sentences with the facts, the status and the next step. Say an action is done only after its command confirms it. Never put IDs, hashes, paths or links in it. Describe them instead and post them with the post_message tool.
+    The voice model may hand you a request that needs no work. Then answer in one short sentence without running commands.
+    Answer in the language the user speaks. Keep that language until they switch.
+  `
+  return [intro, ...voiceCallReference({ ...context, compact: false })].join('\n\n')
+}
+
+// What both models of a call know: users, projects, threads, tools, commands, AGENTS.md and skills.
+function voiceCallReference({
+  users,
+  projects,
+  guildId,
+  voiceChannelId,
+  dataDir,
+  agentsMd,
+  skills,
+  agents,
+  compact,
+}: VoiceCallContext & { compact: boolean }): string[] {
   const userArgs = users.map((user) => `--user '${user.id}'`).join(' ')
   const userList = users.map((user) => `- ${user.username} (Discord ID ${user.id})`).join('\n')
   const projectList = projects.map((project) => `- #${project.channelName}: channel ${project.channelId}, folder ${project.directory}`).join('\n')
   const agentList = agents.map((agent) => `- ${agent.name}${agent.description ? `: ${agent.description}` : ''}`).join('\n')
   const base = dedent`
-    You are Kimaki, a voice assistant in a Discord voice call. The users control their coding agents through you.
-    Speak short and fast: one or two sentences per reply. Never read IDs, hashes, paths or links aloud. Describe them instead and post them with the post_message tool.
-    Answer in the language the user speaks. Keep that language until they switch.
-
     ## users in the call
 
     ${userList || '- nobody yet'}
@@ -752,8 +822,8 @@ export function voiceCallInstructions({
 
     - shell: runs a command on the user's computer, in ${dataDir}, with the \`kimaki\` CLI on PATH. Every CLI the user has installed works here, also the ones the skills below describe. Never tell the users you cannot run a command: try it, and read \`<command> --help\` or its skill first if you do not know it.
     - post_message: posts markdown in the text chat of this voice channel. Use it for links, IDs, lists and code the users should read.
-    - end_call: leaves the call. Use it when the users say goodbye or ask you to hang up. Say a short goodbye in the same reply, then call it.
-    ${builtinSearch ? `- ${builtinSearch}: searches the web. Use it for questions about current information.` : '- To research something on the web, start a thread with kimaki send and ask it to search.'}
+    - end_call: leaves the call after your final reply is spoken. Use it when the users say goodbye or ask you to hang up, and make the final reply a short goodbye.
+    - web_search: searches the web. Use it for questions about current information.
 
     ## the text chat
 
@@ -868,5 +938,5 @@ export function voiceCallInstructions({
 
     Voice channel ID: ${voiceChannelId}. Discord guild ID: ${guildId}.
   `
-  return [base, ...voiceCallContext({ agentsMd, skills })].join('\n\n')
+  return [base, ...voiceCallContext({ agentsMd, skills, compact })]
 }

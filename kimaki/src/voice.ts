@@ -747,9 +747,9 @@ export async function generateSpeech({
 export const TRANSCRIPTION_KEY_MODAL = 'transcription_key_modal'
 
 // Writes only the given keys of the bot that uses `token`.
-export async function saveAudioKeys({ db, token, openai, gemini, xai }: { db: KimakiDb; token: string; openai?: string; gemini?: string; xai?: string }): Promise<DbError | ConfigError | void> {
-  const values = { ...(openai && { openai_api_key: openai }), ...(gemini && { gemini_api_key: gemini }), ...(xai && { xai_api_key: xai }) }
-  if (Object.keys(values).length === 0) return new ConfigError({ reason: 'Pass --openai <key>, --gemini <key> or --xai <key>' })
+export async function saveAudioKeys({ db, token, openai, gemini }: { db: KimakiDb; token: string; openai?: string; gemini?: string }): Promise<DbError | ConfigError | void> {
+  const values = { ...(openai && { openai_api_key: openai }), ...(gemini && { gemini_api_key: gemini }) }
+  if (Object.keys(values).length === 0) return new ConfigError({ reason: 'Pass --openai <key> or --gemini <key>' })
   const bot = await db.query.bot_tokens.findFirst({ where: { token } }).catch((cause) => new DbError({ operation: 'read bot_tokens', cause }))
   if (bot instanceof Error) return bot
   if (!bot) return new ConfigError({ reason: 'No saved bot credentials. Start kimaki once to onboard.' })
@@ -763,8 +763,8 @@ export async function saveAudioKeys({ db, token, openai, gemini, xai }: { db: Ki
 export function transcriptionKeyModal(): ModalBuilder {
   const input = new TextInputBuilder()
     .setCustomId('apikey')
-    .setLabel('OpenAI, Gemini or xAI API key')
-    .setPlaceholder('sk-..., AIza... or xai-...')
+    .setLabel('OpenAI or Gemini API key')
+    .setPlaceholder('sk-... or AIza...')
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
   return new ModalBuilder()
@@ -773,7 +773,7 @@ export function transcriptionKeyModal(): ModalBuilder {
     .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input))
 }
 
-// The provider follows the key prefix, like V1: sk-* is OpenAI, xai-* is xAI (voice calls only), anything else Gemini.
+// The provider follows the key prefix, like V1: sk-* is OpenAI, anything else Gemini.
 export async function handleTranscriptionKeyModal({ interaction, db }: { interaction: ModalSubmitInteraction; db: KimakiDb }): Promise<void> {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral })
   const key = interaction.fields.getTextInputValue('apikey').trim()
@@ -781,13 +781,12 @@ export async function handleTranscriptionKeyModal({ interaction, db }: { interac
     await interaction.editReply({ content: 'API key is required.' })
     return
   }
-  const provider = key.startsWith('sk-') ? 'openai' : key.startsWith('xai-') ? 'xai' : 'gemini'
+  const provider = key.startsWith('sk-') ? 'openai' : 'gemini'
   const saved = await saveAudioKeys({ db, token: interaction.client.token, [provider]: key })
   if (saved instanceof Error) {
     logger.warn(`save audio key`, saved)
     await interaction.editReply({ content: saved.message })
     return
   }
-  const enabled = provider === 'xai' ? 'Voice calls in the Kimaki voice channel are now enabled.' : 'Voice transcription, speech generation and voice calls are now enabled.'
-  await interaction.editReply({ content: `${{ openai: 'OpenAI', gemini: 'Gemini', xai: 'xAI' }[provider]} API key saved. ${enabled}` })
+  await interaction.editReply({ content: `${{ openai: 'OpenAI', gemini: 'Gemini' }[provider]} API key saved. Voice transcription and speech generation are now enabled.` })
 }

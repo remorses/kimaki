@@ -87,7 +87,7 @@ export function registerStartCommand(cli: Goke) {
     .option('--machine-name <name>', 'Name in this machine\'s category "Kimaki <name>" (default: hostname)')
     .option('--restart-onboarding', 'Choose credentials again')
     .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
-    .option('--voice <name>', 'Voice of voice calls, saved for later starts (e.g. marin, eve, Puck). "default" resets it')
+    .option('--voice <name>', 'Voice of voice calls, saved for later starts (e.g. cove, juniper, sol). "default" resets it')
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
     .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
@@ -390,11 +390,10 @@ export function registerBotCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .action(async (options) => process.stdout.write(`${(await discordApi(options.dataDir)).credentials.token}\n`))
 
-  cli.command('bot keys set', 'Store OpenAI, Gemini or xAI API keys for voice transcription, voice calls and kimaki tts')
+  cli.command('bot keys set', 'Store OpenAI or Gemini API keys for voice transcription and kimaki tts')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--openai <key>', 'OpenAI API key')
     .option('--gemini <key>', 'Gemini API key')
-    .option('--xai <key>', 'xAI API key (voice calls only)')
     .action(async (options) => {
       const [{ readSavedCredentials }, { saveAudioKeys }] = await Promise.all([import('../credentials.ts'), import('../voice.ts')])
       const opened = await openCliDb(options.dataDir)
@@ -402,11 +401,11 @@ export function registerBotCommands(cli: Goke) {
         const credentials = await readSavedCredentials({ db: opened.db })
         if (credentials instanceof Error) return credentials
         if (!credentials) return new Error('No saved bot credentials. Start kimaki once to onboard.')
-        return saveAudioKeys({ db: opened.db, token: credentials.token, openai: options.openai, gemini: options.gemini, xai: options.xai })
+        return saveAudioKeys({ db: opened.db, token: credentials.token, openai: options.openai, gemini: options.gemini })
       })()
       opened.close()
       if (result instanceof Error) fail(result)
-      process.stdout.write(`Saved ${[options.openai && 'OpenAI', options.gemini && 'Gemini', options.xai && 'xAI'].filter(Boolean).join(' and ')} API key\n`)
+      process.stdout.write(`Saved ${[options.openai && 'OpenAI', options.gemini && 'Gemini'].filter(Boolean).join(' and ')} API key\n`)
     })
 
   cli.command('bot install-url', 'Print the Discord bot install URL')

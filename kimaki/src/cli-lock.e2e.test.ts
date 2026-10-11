@@ -358,11 +358,10 @@ test('CLI help documents the supported P7 commands', async () => {
       bot token                         Print saved bot credentials for automation
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
-      bot keys set                      Store OpenAI, Gemini or xAI API keys for voice transcription, voice calls and kimaki tts
+      bot keys set                      Store OpenAI or Gemini API keys for voice transcription and kimaki tts
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --openai <key>                  OpenAI API key
         --gemini <key>                  Gemini API key
-        --xai <key>                     xAI API key (voice calls only)
 
       bot install-url                   Print the Discord bot install URL
         --data-dir <path>               Data directory (default: ~/.kimaki)
@@ -377,7 +376,7 @@ test('CLI help documents the supported P7 commands', async () => {
       --machine-name <name>         Name in this machine's category "Kimaki <name>" (default: hostname)
       --restart-onboarding          Choose credentials again
       --worktrees                   Use a fresh Git worktree for new sessions unless the channel overrides it
-      --voice <name>                Voice of voice calls, saved for later starts (e.g. marin, eve, Puck). "default" resets it
+      --voice <name>                Voice of voice calls, saved for later starts (e.g. cove, juniper, sol). "default" resets it
       --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
       --if-not-running              Start only if no bot runs; never stop the running one (used by autostart)
       -h, --help                    Display this message
