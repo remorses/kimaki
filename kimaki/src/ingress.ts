@@ -49,9 +49,20 @@ export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: st
     return false
   }
   if (!(member instanceof GuildMember)) return false
+  return memberCanUseKimaki(member)
+}
+
+// MESSAGE_CREATE carries the author's current roles: no REST fetch on the hot path.
+// Discord omits the member only for webhook and ephemeral messages, which never get here.
+function authorCanUseKimaki(message: Message<true>): Promise<boolean> {
+  if (message.member instanceof GuildMember) return Promise.resolve(memberCanUseKimaki(message.member))
+  return canUseKimaki({ guild: message.guild, userId: message.author.id })
+}
+
+function memberCanUseKimaki(member: GuildMember): boolean {
   const roleNames = member.roles.cache.map((role) => role.name.toLowerCase())
   if (roleNames.includes('no-kimaki')) return false
-  if (guild.ownerId === userId) return true
+  if (member.guild.ownerId === member.id) return true
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true
   if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true
   return roleNames.includes('kimaki')
@@ -190,14 +201,14 @@ async function handleMessage(bot: Bot, message: Message) {
   const channel = message.channel
   const thread = channel.isThread() ? channel : null
   const channelId = thread ? thread.parentId : channel.id
-  if (!channelId || !message.guild) return
+  if (!channelId || !message.inGuild()) return
 
   const project = await projectOf(bot, channelId)
   if (project instanceof Error) return logger.warn(project)
   if (!project) return
   if (project.channel_type === 'voice') {
     // The text chat of the voice channel talks to the running call.
-    if (message.author.bot || thread || !(await canUseKimaki({ guild: message.guild, userId: message.author.id }))) return
+    if (message.author.bot || thread || !(await authorCanUseKimaki(message))) return
     bot.features.voiceCalls.text(bot, {
       guildId: message.guild.id,
       channelId,
@@ -210,7 +221,7 @@ async function handleMessage(bot: Bot, message: Message) {
     if (message.author.id !== bot.discord.user?.id) return
     return handleRemoteEnvelope(bot, { message, channelId, threadId: thread?.id ?? null })
   }
-  if (!(await canUseKimaki({ guild: message.guild, userId: message.author.id }))) {
+  if (!(await authorCanUseKimaki(message))) {
     logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
     return
   }

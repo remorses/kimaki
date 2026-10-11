@@ -366,33 +366,48 @@ export async function startSession(
   const useWorktree = typeof worktree === 'string' || (worktree !== false && channelWorktrees)
   const textSlug = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40).replace(/^-|-$/g, '') || 'session'
   const slug = typeof worktree === 'string' && worktree ? worktree : `${textSlug}-${crypto.randomBytes(4).toString('hex')}`
-  const checkout = useWorktree
-    ? await createWorktree({ projectDirectory: defaults?.directory ?? requestedDirectory, dataDir: bot.dataDir, name: slug, baseBranch })
-    : null
-  if (checkout instanceof Error) return checkout
-  const directory = checkout?.directory ?? requestedDirectory
-  const plugin = await bot.features.waitForPlugin(directory)
-  if (plugin instanceof Error) return plugin
+  const threadName = explicitName ?? (useWorktree ? `⬦ ${slug}` : text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
 
-  const requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
-  const selected = requestedAgent ? await agentSelection(bot, { directory, agent: requestedAgent }) : null
-  if (selected instanceof Error) return selected
-  const agentModel = route.kind === 'steer' && route.agent ? selected?.model : null
-  const global = await globalModel(bot)
-  if (global instanceof Error) return global
-  const choice = explicitModel ?? agentModel ?? parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant) ?? selected?.model ?? global
-  const model = choice
-    ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
-    : undefined
-  const agent = selected?.agent
-
-  const channel = await textChannel(bot, channelId)
-  if (channel instanceof Error) return channel
-  const threadName = explicitName ?? (checkout ? `⬦ ${slug}` : text.replace(/\s+/g, ' ').slice(0, 80) || 'Kimaki session')
-  const thread = await channel.threads
-    .create({ name: threadName, autoArchiveDuration: 1440, ...(startMessageId && { startMessage: startMessageId }) })
-    .catch((cause) => new DiscordError({ operation: 'create thread', cause }))
-  if (thread instanceof Error) return thread
+  // The thread shows in Discord while the checkout, plugin, agent and model are resolved.
+  const creating = (async () => {
+    const channel = await textChannel(bot, channelId)
+    if (channel instanceof Error) return channel
+    const thread = await channel.threads
+      .create({ name: threadName, autoArchiveDuration: 1440, ...(startMessageId && { startMessage: startMessageId }) })
+      .catch((cause) => new DiscordError({ operation: 'create thread', cause }))
+    if (thread instanceof Error) return thread
+    // Discord only adds the thread creator (the bot); the user must be added to see it in the sidebar.
+    if (author.id !== bot.discord.user?.id) await thread.members.add(author.id).catch((e: Error) => logger.warn(`add member`, e))
+    return { channel, thread }
+  })()
+  const setup = await (async () => {
+    const checkout = useWorktree
+      ? await createWorktree({ projectDirectory: defaults?.directory ?? requestedDirectory, dataDir: bot.dataDir, name: slug, baseBranch })
+      : null
+    if (checkout instanceof Error) return checkout
+    const directory = checkout?.directory ?? requestedDirectory
+    const plugin = await bot.features.waitForPlugin(directory)
+    if (plugin instanceof Error) return plugin
+    const requestedAgent = (route.kind === 'steer' && route.agent) || defaults?.channel_agent?.agent_name
+    const selected = requestedAgent ? await agentSelection(bot, { directory, agent: requestedAgent }) : null
+    if (selected instanceof Error) return selected
+    const agentModel = route.kind === 'steer' && route.agent ? selected?.model : null
+    const global = await globalModel(bot)
+    if (global instanceof Error) return global
+    const choice = explicitModel ?? agentModel ?? parseModel(defaults?.channel_model?.model_id, defaults?.channel_model?.variant) ?? selected?.model ?? global
+    const model = choice
+      ? { providerID: choice.providerID, id: choice.id, ...(choice.variant && { variant: choice.variant }) }
+      : undefined
+    return { checkout, directory, model, agent: selected?.agent }
+  })()
+  const created = await creating
+  if (created instanceof Error) return created
+  const { channel, thread } = created
+  if (setup instanceof Error) {
+    await thread.delete('session setup failed').catch(() => undefined)
+    return setup
+  }
+  const { checkout, directory, model, agent } = setup
 
   const kimaki = {
     threadId: thread.id,
@@ -428,8 +443,6 @@ export async function startSession(
 
   const bound = await bindThread(bot, { threadId: thread.id, sessionId: session.id, channelId, directory, isNew: true })
   if (bound instanceof Error) return bound
-  // Discord only adds the thread creator (the bot); the user must be added to see it in the sidebar.
-  if (author.id !== bot.discord.user?.id) await thread.members.add(author.id).catch((e: Error) => logger.warn(`add member`, e))
   if (!run) {
     const posted = await thread
       .send({
