@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0
+
+1. **Runs only on OpenCode 2** (2.0.19 or later). OpenCode 1 is no longer supported; to stay on OpenCode 1, pin `@kimaki/automode@0.2`.
+2. **Native OpenCode 2 plugin API.** Tool policy runs in the native `execute.before` hook, so it also covers tools registered later by other plugins or MCP servers, and each tool called from Code Mode. It reads the current user turn from native context and classifies with one-shot generation, so no classifier sessions are created.
+3. **Unchanged:** the Jev classifier, read-only allowances, hard denies, timeout, confidence threshold and fail-closed behavior.
+
 ## 0.2.0
 
 1. **Add TypeSafe AI Jev support through the Vercel AI Gateway and make it the default classifier.** Jev returns a typed allow probability, and auto mode blocks uncertain, invalid, or failed evaluations. Configure it with an optional allow-probability threshold:

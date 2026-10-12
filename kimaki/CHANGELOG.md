@@ -1,5 +1,202 @@
 # Changelog
 
+## 1.0.0
+
+Kimaki 1.0 is a rewrite on top of **OpenCode 2**. The Discord side looks the same as before: one channel per project, one thread per session, same footer, same slash commands. What changed is underneath, and most of it is good news for your sessions, your cache and your OpenCode setup. A few things were removed, listed at the end.
+
+> **OpenCode 1 is no longer supported.** To stay on OpenCode 1, pin `npm i -g kimaki@0.31`.
+
+## The big change: Kimaki is a client of your OpenCode
+
+Kimaki 0.x started and owned its own OpenCode server and polled it for state. Kimaki 1.0 does not run a server. It connects to the **OpenCode 2 background service** of your machine, the same one the `opencode` TUI and CLI use, and renders what OpenCode reports.
+
+```
+Kimaki 0.x   Discord ◀──▶ kimaki ──spawns & owns──▶ private opencode server (one per bot)
+
+Kimaki 1.0   Discord ◀──▶ kimaki ──HTTP + one event stream──┐
+                                                            ├──▶ your OpenCode 2 service
+             terminal ──▶ opencode TUI ─────────────────────┘     (sessions, queue, forms,
+                                                                   permissions, event log)
+```
+
+What that gives you:
+
+1. **Restarting Kimaki keeps your sessions running.** Runs, queues, questions and permissions live in OpenCode, not in the bot. `kimaki restart`, a crash, an update or a reboot of the bot do not stop a running turn. When the bot is back it reads the state from OpenCode, reconnects the event stream and carries on. Messages sent in Discord while the bot was down are handled when it reconnects. Output the bot missed while it was away may not be in the thread; `kimaki session read <thread>` prints the full session.
+2. **Every Kimaki session is a normal OpenCode session.** Run `/session-id` in a thread and open it in the TUI: `opencode /path/to/project --session ses_abc123`. Continue it there, and the thread shows your message (`» **user:** ...`) and the reply. Sessions you already read in Discord are marked as read in OpenCode. `/resume` and `kimaki session resume` bring a TUI session into a Discord thread.
+3. **One shared server for all projects.** No second OpenCode process per bot, no port and password to configure, no `--opencode-hostname` or `--opencode-port`. If the service is not running, Kimaki starts it (`opencode serve --service`). Restart it with `opencode service restart`; Kimaki reconnects by itself.
+4. **Your OpenCode config is used as is.** Agents, commands, skills, MCP servers, providers and plugins come from `~/.config/opencode` and the project, exactly like in your TUI. Log in to providers with `kimaki login <provider>` or with OpenCode itself.
+5. **One event stream, recovered after any gap.** The bot follows a single OpenCode event stream and rebuilds thread state from OpenCode after a reconnect (sleep, network, service restart). A silent stream is detected after 45 seconds and reconnected.
+
+### Requirements and upgrade
+
+```bash
+npm i -g kimaki@latest
+kimaki
+```
+
+- **OpenCode 2.0.19 or later.** Kimaki looks for `OPENCODE_PATH`, then `opencode`, `~/.opencode/bin/opencode`, then `opencode2`. If none exists it installs OpenCode 2 with `curl -fsSL https://opencode.ai/v2/install | bash` (asks first in a terminal).
+- **OpenCode 1 found:** Kimaki stops with the install command and never replaces or restarts your OpenCode. It also never pins a version, because that would restart the shared service and kill your TUI sessions.
+- **Starting the new bot stops the old one.** If Kimaki 0.x runs, the new `kimaki` stops it and takes the lock port. To run a second bot, give it its own port and data folder: `KIMAKI_LOCK_PORT=31001 kimaki --data-dir ~/.kimaki-test`.
+- **Your data is imported.** On first start Kimaki imports `~/.kimaki/discord-sessions.db` into a new `~/.kimaki/kimaki.db`: bot credentials, channels, thread bindings, routines (scheduled tasks), model and verbosity settings, your global model. The V1 file is opened read-only and never changed, so going back to 0.31 works. No onboarding again.
+- Kimaki starts by itself when OpenCode starts (see below).
+
+## How Kimaki plugs into OpenCode
+
+Kimaki needs a few hooks inside the OpenCode process. It installs them as **plugin shims** in your OpenCode config folder, not in `opencode.json`:
+
+```
+~/.config/opencode/plugins/
+├── kimaki/                  Kimaki sessions only: Discord user context, tools, shell env, file-edit log
+├── kimaki-anthropic/        Claude Pro/Max login, all sessions
+└── kimaki-session-id/       tells the model its own session ID, all sessions
+```
+
+- **It should not change how you use OpenCode.** The `kimaki` plugin checks a marker on the session that the bot writes at creation, and does nothing for sessions without it: your TUI sessions get no Discord context, no extra tools, no changed prompts, shells or files. Subagents of marked sessions count as marked.
+- **Two plugins are global on purpose.** `kimaki-anthropic` adds Claude Pro/Max login methods (browser callback and headless paste). `kimaki-session-id` adds one stable line to the system prompt: `OpenCode session ID: ses_...`. Both apply to all your sessions, TUI included. You can load them without the bot by listing `node_modules/kimaki/dist/plugin/anthropic` or `.../session-id` in `opencode.json` `plugins`. When your global config lists a Kimaki plugin folder, the bot skips its own shim, so OpenCode never shows `Duplicate plugin ID`.
+- **Shims point at the built plugin of the running Kimaki** (`dist/plugin/`), and are only rewritten when their content changes, because OpenCode reloads plugins on any change in that folder.
+- **Sessions Kimaki creates carry a permission rule** that disables the OpenCode `question` tool. The agent offers choices with `kimaki buttons` instead, which work from any client. Forms from OpenCode itself (like the web search setup) still show as dropdowns. Pass `--permission question:allow` to `kimaki send` to allow the tool for one session.
+- Nothing else in your OpenCode setup is edited. The Kimaki system prompt is an instruction entry on Kimaki sessions only.
+
+## Sessions are cheaper: the prompt cache keeps hitting
+
+OpenCode 2 freezes a session's system prompt until compaction and appends later changes as small messages at the end. Kimaki is built around that:
+
+```
+before: [tools][system + cwd + branch + Discord user][history ........]  any change = full re-read
+after:  [tools][system (stable)             ][history ........][delta]  a change = only the delta
+```
+
+- The Kimaki system prompt is one **instruction entry**, written once per session.
+- The Discord user, thread and attachment paths go to the model through prompt **metadata**. The stored prompt is exactly what you typed, so the OpenCode TUI and other clients no longer show `<discord-user ... />` blocks.
+- A moved working directory or a new git branch no longer rewrites the system prompt. The branch is a note placed before your prompt, only when it changed.
+- `-# ⬦ prompt cache miss: 0 of 85k tokens cached, 12m 3s after the last request` appears in the thread when the cache is read less than before (expired after about 5 minutes idle on Anthropic, a model switch, or a changed prefix).
+- `/btw`, `/fork` and `. btw` forks reuse the cache of the source session.
+
+## Messages, queue and interrupts are native
+
+OpenCode 2 has a durable inbox, so Kimaki dropped its own queue, abort plugin and replay logic.
+
+| You do | What happens |
+|---|---|
+| send a message while the agent works | interrupts the current step and **steers**: your message goes in at once |
+| `message. queue` or `/queue` | OpenCode runs it when the current turn and earlier queued items end; delete the Discord message to remove it |
+| `message. btw` or `/btw` | forks the session into a new `btw:` thread |
+| `/abort` | stops the run, clears the queue, cancels questions and permissions, kills running `!` shells |
+| `!command` | runs in the project, output **streams live** into one edited message, 10 minute timeout; add `. queue` to run it after the turn |
+
+- Queued messages survive bot restarts, because OpenCode holds them.
+- Each queued answer gets its own footer, and the notification only fires for the last one.
+- `/undo` and `/redo` rewind the conversation only. They no longer touch your files.
+- A message while a question or permission is pending cancels it and steers. Voice messages do the same.
+- Messages that cannot be shown inline to the model (zip, mp4, HEIC, non-voice audio, files over 20 MB) are saved on disk and listed as local paths, instead of failing the message.
+
+## What the thread looks like
+
+The renderer was rebuilt as a pure fold over OpenCode events, so what you see is what OpenCode did, including after a reconnect.
+
+- Text is full width, never quoted. Reasoning is never shown. Two verbosity levels: `tools` (default, hides read-only tools) and `text`.
+- Tool lines keep their format. New: loaded skill names (`┣ skill _zele_`), MCP and plugin tool inputs, background shell commands and their finish line, and OpenCode 2 Code Mode calls:
+
+  ```
+  -# ┣ execute _Move session to the new worktree_
+  -# ┣ execute.opencode.session_move _/repo-wt_
+  ```
+
+- Subagents show their tool lines in the parent thread, and their questions and permissions too.
+- The banner shows the variant (`using anthropic/claude-opus-5-5 high ⋅ opus`).
+- Notifications are quiet by default: model text, tool lines, queue acks and banners are silent, and no link previews. The footer at the end of a run, errors, questions, permission requests and buttons notify. Footers of `kimaki sleep` turns are silent.
+- Every OpenCode form shows in Discord as dropdowns or a text modal, including the first `websearch` provider choice.
+- Question titles keep their full text, and plan text appears before the dropdown.
+- Prompts typed outside Discord (TUI, phone) show as `» **user:** text`.
+
+## New in 1.0
+
+### Voice calls
+
+Join the **Kimaki voice** channel and talk. **GPT-Live** answers on your ChatGPT subscription and a fast backend model (`gpt-6-luna`) runs the `kimaki` CLI to start and read your threads. You can interrupt it, everyone in the call is heard, and finished threads are announced.
+
+```
+you ──voice──▶ Kimaki voice ──WebRTC──▶ GPT-Live ──request──▶ backend ──shell──▶ kimaki send / session list
+                    ▲                      │   ◀──result──────┘
+                    └─────── speech ───────┘
+```
+
+Sign in once with `kimaki login openai` (Sign in with ChatGPT). Pick the voice with `kimaki --voice juniper` (saved). Voice **messages** also use your ChatGPT subscription now, after an OpenAI key and before Gemini; a provider blocked by a content filter falls through to hosted Whisper on gateway installs. Details: https://kimaki.dev/docs/features/voice-calls
+
+### Working directories and worktrees
+
+- `/cwd` and `kimaki session cwd [dir]` show or change the folder of a session, at a safe boundary.
+- `/new-worktree`, `kimaki send --worktree [name] --base-branch <ref>`, `/worktrees`, `/merge-worktree` and `kimaki worktree list|create|merge|remove`. Automatic worktrees with `--worktrees` or `channel worktrees on`.
+- Dependencies install with frozen lockfiles; merge and delete keep branch refs.
+
+### Autostart with OpenCode
+
+After setup, opening OpenCode brings the bot back: Kimaki writes `~/.kimaki/autostart.command`, and the plugin opens it in your default terminal when OpenCode starts and no bot answers on the lock port. It never stops a running bot, and runs once per OpenCode process. Flags `--worktrees`, `--no-analytics` and `--machine-name` are kept.
+
+### CLI
+
+- `kimaki restart`, `kimaki status`, `kimaki logs`, `kimaki profile cpu|heap`. The root process supervises the bot and starts it again with the code on disk.
+- Every command that takes a session accepts a **session ID, a Discord thread ID or a thread URL**.
+- `kimaki send` works without a local bot (CI) with `KIMAKI_BOT_TOKEN`; `--user` is repeatable.
+- `kimaki session list --active` never lists the calling session and exits `1` when none remain, `64` on errors:
+
+  ```bash
+  until kimaki session list --active; [ $? -eq 1 ]; do sleep 5; done
+  ```
+
+- Subcommands start in about 0.06s and 70 MB (was 0.46s and 330 MB).
+- Scheduled tasks are now **routines**: `kimaki routine list|edit|run|delete`, `/routines`, https://kimaki.dev/docs/features/routines. Existing V1 tasks keep working.
+- `/model` has an **All channels** scope (`kimaki channel model provider/model --global`) and reset buttons.
+- Agent selection also selects the agent's model and thinking level, like the TUI.
+- Logs are colored, show every incoming message and run (duration, model, tokens), and keep the previous run in `kimaki.previous.log`.
+- Optional companion packages: `@kimaki/plugin-fallback` (below) and `@kimaki/automode` 1.0.
+
+### Keep sessions alive on rate limits: `@kimaki/plugin-fallback`
+
+An OpenCode 2 plugin replacing the old subrouter. On a rate limit, quota or overload error it switches to your next account or model and retries the same step, without abort or replay:
+
+```jsonc
+{ "plugins": [{ "package": "@kimaki/plugin-fallback", "options": { "models": ["anthropic/claude-opus-5-5", "openai/gpt-6-sol#high"] } }] }
+```
+
+## Removed or changed from 0.x
+
+| Gone | Use instead |
+|---|---|
+| OpenCode 1 support | OpenCode 2, or pin `kimaki@0.31` |
+| Kimaki-owned OpenCode server, `--opencode-hostname`, `--opencode-port`, `/restart-opencode-server` | the shared service, `opencode service restart` |
+| OpenCode auto-install of v1, pinned versions | install OpenCode 2 (Kimaki does it when missing) |
+| Self-upgrade (`kimaki upgrade`, `/upgrade-and-restart`, background upgrade) | `npm i -g kimaki@latest`, then `kimaki restart` |
+| External session sync (`--enable-sync`, `Sync:` threads) | `/resume`, `kimaki session read` |
+| Subrouter and built-in OAuth account rotation | `@kimaki/plugin-fallback`, OpenCode credentials |
+| Prompt injection guard, `--injection-guard` | none yet |
+| `/share` | `/diff` for a shareable diff |
+| `@kimaki/opencode-plugin` (v1 plugin) | built into Kimaki |
+| Thinking lines, the third verbosity level, context % and large-output notices, footer mentions, TUI toasts | footer %, `/context-usage` |
+| Thread rename from OpenCode title, permission timeout | `kimaki session title` |
+| History replay in `/fork` and `/resume` | link to the source thread |
+| Bundled skills, image optimizer, kitty graphics plugin | not ported yet |
+| `/tasks`, `kimaki task ...` | `/routines`, `kimaki routine ...` (old commands still work, hidden) |
+
+Behavior differences to know:
+
+- A session belongs to one thread; `/resume` moves it.
+- TUI sessions appear in Discord only when you resume them (`/resume`), because background sync is gone.
+- Pending questions and permissions are held by OpenCode in memory: restarting the OpenCode service cancels them (restarting Kimaki does not).
+- `!command` runs in the project without a model turn. Reply to its output message to show it to the model.
+
+## Fixes and hardening
+
+- Voice transcription handles MP3 files labeled `audio/mpeg3` and `.m4a` files labeled `video/mp4`. Fixes #235
+- A failed database init is retried instead of cached forever. Fixes #225
+- Question dropdowns work on OpenCode 2 with full titles and text before them. Fixes #208
+- A 401 from the gateway no longer leaves the bot without a token until restart.
+- Slash commands are registered again when another Kimaki on the same Discord app overwrote them. Agent, command and skill shortcuts come from your global OpenCode catalog and stay under Discord's 100 command limit; the rest is reachable through `/agent`, `/skill` and `/command` autocomplete.
+- Ctrl+C stops the bot in about half a second.
+- `kimaki upload-to-discord` waits for Discord and reports failures; uploads split into messages under 25 MiB.
+- OpenCode server logs no longer leak into terminals started from agent shells.
+- Security: the data folder is owner-only, Anthropic OAuth state is validated, forks are limited to the current thread tree, revoked Discord members can no longer edit queued messages, new OpenCode services bind to loopback, and permission overrides are rejected where they would be silently ignored.
+
 ## 0.31.0
 
 1. **Queue a side question until the current turn ends.** In a session thread, end a message with `btw queue`, or use `/queue` with a `btw` prompt, or end a `/btw` prompt with `. queue`. Kimaki waits for earlier queued prompts, then forks the **updated** session into a new thread. The side question never starts a turn in the source thread:
