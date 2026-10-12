@@ -78,7 +78,6 @@ export function baseInstructions({
       The shell environment provides the \`kimaki\` command and OPENCODE_SESSION_ID. Do not pass stale IDs copied from another session.
     `,
     dedent`
-      OpenCode session ID: ${sessionId}
       Discord channel ID: ${channelId}
       Discord thread ID: ${threadId}
       Discord guild ID: ${guildId}
@@ -462,10 +461,13 @@ export function baseInstructions({
       kimaki session wait <session_id>
 
       # wait until every other in-progress session in this project finishes
-      until kimaki session list --active --exclude ${sessionId}; [ $? -eq 1 ]; do sleep 5; done
+      until kimaki session list --active; [ $? -eq 1 ]; do sleep 5; done
+
+      # same for another project (or --all for every project)
+      until kimaki session list --active --project /path/to/other-project; [ $? -eq 1 ]; do sleep 5; done
       \`\`\`
 
-      \`session list --active\` exits 0 while it finds active sessions, 1 when none remain, and 64 on errors. The loop stops only on 1, so an error never looks like "no active sessions". Exclude the current session so the loop does not wait for itself. Sessions can start again after the loop ends, so run the check again right before each commit. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
+      \`session list --active\` exits 0 while it finds active sessions, 1 when none remain, and 64 on errors. The loop stops only on 1, so an error never looks like "no active sessions". \`--active\` never lists the calling session (\`OPENCODE_SESSION_ID\`), so the loop does not wait for itself. Sessions can start again after the loop ends, so run the check again right before each commit. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
 
       ## provider credentials
 

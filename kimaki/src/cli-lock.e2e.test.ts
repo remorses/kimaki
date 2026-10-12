@@ -85,7 +85,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         --project <path>                Project (default: current directory)
         --all                           All projects
-        --active                        Only busy sessions; exit 1 when none remain, 64 on errors
+        --active                        Only busy sessions, never the caller; exit 1 when none remain, 64 on errors
         --exclude <id>                  Exclude session (repeatable)
         --json                          Output as JSON
 

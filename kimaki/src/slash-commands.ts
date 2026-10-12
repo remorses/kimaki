@@ -399,8 +399,14 @@ export function registerSlashCommands(
   async function registerGuild(guild: Guild, built: ReturnType<typeof buildCommands>): Promise<void> {
     const signature = JSON.stringify(built.commands)
     if (registered.get(guild.id) === signature) {
-      dynamic.set(guild.id, built.dynamic)
-      return
+      // Another Kimaki on the same app can overwrite the list, so compare with Discord.
+      const live = await discord.application?.commands.fetch({ guildId: guild.id }).catch(() => null)
+      const same = !live || (live.size === built.commands.length && built.commands.every((command) => live.some((entry) => entry.name === command.name)))
+      if (same) {
+        dynamic.set(guild.id, built.dynamic)
+        return
+      }
+      logger.warn(`commands in guild ${guild.id} changed outside this bot, registering again`)
     }
     const result = await discord.application?.commands
       .set(built.commands, guild.id)

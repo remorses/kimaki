@@ -11,5 +11,5 @@ Fix `kimaki session list --active` reporting "No active sessions" while sessions
 The wait loop in the agent system prompt now stops only on exit code `1`, and tells agents to check again right before each commit:
 
 ```bash
-until kimaki session list --active --exclude <session_id>; [ $? -eq 1 ]; do sleep 5; done
+until kimaki session list --active; [ $? -eq 1 ]; do sleep 5; done
 ```

@@ -65,6 +65,7 @@ test('bot start writes the plugin shim, OpenCode loads it, a restart does not re
   await waitForFooter({ discord: twin.discord, threadId: thread.id })
   expect(await kimakiStatus()).toBe('active')
   expect(await pluginStatus('kimaki-anthropic')).toBe('active')
+  expect(await pluginStatus('kimaki-session-id')).toBe('active')
   expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     plugin shim turn

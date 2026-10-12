@@ -37,7 +37,7 @@ export function registerSessionQueryCommands(cli: Goke) {
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--project <path>', 'Project (default: current directory)')
     .option('--all', 'All projects')
-    .option('--active', 'Only busy sessions; exit 1 when none remain, 64 on errors')
+    .option('--active', 'Only busy sessions, never the caller; exit 1 when none remain, 64 on errors')
     .option('--exclude <id>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Exclude session (repeatable)' }))
     .option('--json', 'Output as JSON')
     .action(async (options) => {
@@ -55,7 +55,9 @@ export function registerSessionQueryCommands(cli: Goke) {
       if (forms instanceof Error) fail(forms, errorCode)
       if (permissions instanceof Error) fail(permissions, errorCode)
       const waiting = new Set([...forms.data.map((form) => form.sessionID), ...permissions.data.map((permission) => permission.sessionID)])
-      const excluded = options.exclude ?? []
+      // an agent waiting for active sessions must not wait for itself
+      const self = options.active ? process.env['OPENCODE_SESSION_ID'] : undefined
+      const excluded = [...(options.exclude ?? []), ...(self ? [self] : [])]
       const rows = sessions
         .filter((session) => !excluded.includes(session.id) && (!options.active || session.id in active))
         .map((session) => ({ ...session, status: waiting.has(session.id) ? 'waiting' : session.id in active ? 'busy' : 'idle' }))
