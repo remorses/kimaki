@@ -63,7 +63,7 @@ export function HeroSection() {
             </a>
           </div>
         </div>
-        <div className='w-full min-w-0'>
+        <div className='w-full min-w-0 max-w-[920px]'>
           <DiscordPlayground />
         </div>
       </div>
