@@ -15,6 +15,7 @@
 // keyed by a short hash (custom IDs max 100 chars), dropped after 10 minutes.
 
 import crypto from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import * as orm from 'drizzle-orm'
 import {
   SlashCommandBuilder,
@@ -193,10 +194,18 @@ async function resetButtons(bot: Bot, { target, hash }: { target: InteractionTar
 
 async function enabledModels(bot: Bot, directory: string) {
   const location = { directory }
-  const [models, providers] = await Promise.all([
-    oc(bot, 'model.list', (client) => client.model.list({ location })),
-    oc(bot, 'provider.list', (client) => client.provider.list({ location })),
-  ])
+  const load = () =>
+    Promise.all([
+      oc(bot, 'model.list', (client) => client.model.list({ location })),
+      oc(bot, 'provider.list', (client) => client.provider.list({ location })),
+    ])
+  let [models, providers] = await load()
+  // TODO: drop the retry once OpenCode awaits location load. model.list and provider.list return
+  // empty data on the first call for a cold location (reproduced on v2.0.26 with a fresh directory).
+  for (let attempt = 0; attempt < 5 && !(models instanceof Error) && models.data.length === 0; attempt++) {
+    await sleep(300)
+    ;[models, providers] = await load()
+  }
   if (models instanceof Error) return models
   if (providers instanceof Error) return providers
   const names = new Map(providers.data.map((provider) => [provider.id, provider.name]))
