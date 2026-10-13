@@ -11,6 +11,7 @@ import dedent from 'string-dedent'
 import type { Goke } from 'goke'
 
 import { distCliEntry, writeAutostartScript } from '../autostart.ts'
+import { parseDisabledSkills } from '../builtin-skills.ts'
 import { callBot, DEFAULT_LOCK_PORT, RESTART_EXIT_CODE, startLockServer } from '../lock-server.ts'
 import { parseDuration } from '../duration.ts'
 import { createLogger, setLogFile } from '../logger.ts'
@@ -88,6 +89,7 @@ export function registerStartCommand(cli: Goke) {
     .option('--restart-onboarding', 'Choose credentials again')
     .option('--worktrees', 'Use a fresh Git worktree for new sessions unless the channel overrides it')
     .option('--voice <name>', 'Voice of voice calls, saved for later starts (e.g. cove, juniper, sol). "default" resets it')
+    .option('--disable-skills <list>', 'Built-in Kimaki skills to turn off: "all" or a comma separated list (kimaki-debug,kimaki-tunnel)')
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
     .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
@@ -124,6 +126,8 @@ export function registerStartCommand(cli: Goke) {
       }
       const dataDir = dataDirOrDefault(options.dataDir)
       const urls = gatewayUrlsFromEnv()
+      const disabledSkills = parseDisabledSkills(options.disableSkills)
+      if (disabledSkills instanceof Error) fail(disabledSkills)
       const machine = options.machineName ?? defaultMachineName()
       // Validated before the lock, so a typo never stops the running bot. null: reset to the default.
       const voice = (() => {
@@ -212,6 +216,7 @@ export function registerStartCommand(cli: Goke) {
         opencodeDbFile: opencodeDbFile(),
         analytics: createAnalytics({ dataDir, botMode: credentials.mode, enabled: !options.noAnalytics }),
         autoWorktrees: Boolean(options.worktrees),
+        disabledSkills,
       })
       if (bot instanceof Error) failStartup(bot)
       // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
@@ -239,6 +244,7 @@ export function registerStartCommand(cli: Goke) {
       if (lock.port === DEFAULT_LOCK_PORT) {
         const autostart = await writeAutostartScript({ dataDir, args: [
           ...(options.worktrees ? ['--worktrees'] : []),
+          ...(options.disableSkills ? ['--disable-skills', options.disableSkills] : []),
           ...(options.noAnalytics ? ['--no-analytics'] : []),
           ...(options.machineName ? ['--machine-name', options.machineName] : []),
         ] })

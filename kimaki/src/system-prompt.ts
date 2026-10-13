@@ -108,28 +108,7 @@ export function baseInstructions({
 
       ## debugging kimaki issues
 
-      ALWAYS read https://kimaki.dev/docs/guides/report-bugs first before submitting any issue to Kimaki. That page is the source of truth for exporting session jsonl, sharing evidence in a gist, and filing bugs. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
-      If there are internal kimaki issues (sessions not responding, bot errors, unexpected behavior), read the logs of the running bot and of the OpenCode service it talks to. Read them before guessing.
-
-      **Kimaki bot log**: \`${dataDir}/kimaki.log\`, only the current bot run. The run before the last restart (including the crash that caused it) is in \`${dataDir}/kimaki.previous.log\`. Each line is \`<ISO time> <LEVEL> [<MODULE>] <message>\`, and errors include their cause chain. It logs incoming messages, run start/finish/failure per thread and session, Discord and OpenCode errors, routines and crashes.
-
-      \`\`\`bash
-      tail -n 200 ${dataDir}/kimaki.log
-      grep -E ' (WARN|ERROR) ' ${dataDir}/kimaki.log | tail -n 50
-      grep '<thread_id or ses_id>' ${dataDir}/kimaki.log
-      \`\`\`
-
-      **OpenCode service log**: the shared \`opencode serve --service\` daemon appends to \`~/.local/share/opencode/log/opencode.log\` (\`$XDG_DATA_HOME/opencode/log\`; \`opencode debug paths\` prints the folder). The file is never reset and can be very large: always use \`tail\` or \`grep\`, never read it whole. Lines are logfmt. \`run=<id>\` is one daemon process, so filter by the run of the last line. The daemon pid and URL are in \`~/.local/state/opencode/service.json\`.
-
-      \`\`\`bash
-      LOG=~/.local/share/opencode/log/opencode.log
-      RUN=$(tail -n 1 $LOG | grep -o 'run=[a-z0-9]*')
-      grep "$RUN " $LOG | grep -E '^timestamp=[^ ]+ level=(ERROR|WARN)' | tail -n 50
-      grep "$RUN " $LOG | grep '<ses_id>' | tail -n 100
-      \`\`\`
-
-      \`kimaki session events <id>\` prints the recorded OpenCode events of a thread as JSONL.
-      \`kimaki restart\` restarts the bot (only when the user asks). \`kimaki profile cpu --duration 30s\` and \`kimaki profile heap\` print the profile file path.
+      When sessions do not respond, the bot shows errors, or you need the Kimaki or OpenCode logs, load the \`kimaki-debug\` skill (logs, profiling, \`kimaki login\` for provider credentials) and read the logs before guessing. Do not restart the bot unless the user explicitly asks. ALWAYS read https://kimaki.dev/docs/guides/report-bugs before submitting any issue to Kimaki. Never open a pull request on remorses/kimaki unless remorses asked for one in a comment on the issue.
 
       ## uploading files to discord
 
@@ -469,10 +448,6 @@ export function baseInstructions({
 
       \`session list --active\` exits 0 while it finds active sessions, 1 when none remain, and 64 on errors. The loop stops only on 1, so an error never looks like "no active sessions". \`--active\` never lists the calling session (\`OPENCODE_SESSION_ID\`), so the loop does not wait for itself. Sessions can start again after the loop ends, so run the check again right before each commit. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
 
-      ## provider credentials
-
-      Provider credentials belong to OpenCode. Use \`kimaki login PROVIDER\` to list login methods; \`--key\` connects an API key, \`--method\` starts OAuth, and \`--attempt\` checks or completes an attempt.
-
       ## submodules
 
       When pulling submodules and they jump to a new commit, commit that submodule pointer update right away before doing other work. Otherwise critique diffs later will include the noisy submodule jump along with the real changes.
@@ -512,31 +487,7 @@ export function baseInstructions({
 
       ## running dev servers with tunnel access
 
-      Localhost URLs are useless from Discord. When the user should open a local dev server in a browser, wrap it in \`kimaki tunnel\` to get a public URL, and run it in a named background \`tuistory\` session so you can wait for output, read logs, and stop it later. Name it descriptively (e.g. \`projectname-dev\`) so you can reuse it. Run \`bunx tuistory --help\` first. Invoke \`kimaki\` directly, not via \`npx\` or \`bunx\`.
-
-      - Use random tunnel IDs by default. Pass \`-t <id>\` only for services that are safe to be publicly discoverable.
-      - \`kimaki tunnel\` detects the local port from the child output. Pass \`--port\` only when the server prints no detectable localhost URL or port line.
-      - \`kimaki tunnel\` injects \`TRAFORO_URL\` into the child process. Wire the app to it so OAuth callbacks, webhook URLs, and absolute links use the public URL.
-
-      \`\`\`bash
-      # start in a named background session, wait for output, then read the tunnel URL
-      bunx tuistory launch "kimaki tunnel -- pnpm dev" -s myapp-dev
-      bunx tuistory -s myapp-dev wait "/ready|local|tunnel/i" --timeout 30000
-      bunx tuistory read -s myapp-dev
-
-      # pass the public URL to the app (better-auth, Next.js, Vite; node can read process.env.TRAFORO_URL)
-      bunx tuistory launch "kimaki tunnel -- sh -c 'BETTER_AUTH_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-      bunx tuistory launch "kimaki tunnel -- sh -c 'APP_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-      bunx tuistory launch "kimaki tunnel -- sh -c 'VITE_BASE_URL=$TRAFORO_URL exec pnpm dev'" -s myapp-dev
-
-      # custom tunnel ID (only for intentionally public-safe services)
-      bunx tuistory launch "kimaki tunnel -t holocron -- pnpm dev" -s holocron-dev
-
-      # list sessions; stop with Ctrl+C, then close
-      bunx tuistory sessions
-      bunx tuistory -s myapp-dev press ctrl c
-      bunx tuistory -s myapp-dev close
-      \`\`\`
+      Localhost URLs are useless from Discord. When the user should open a local dev server in a browser, load the \`kimaki-tunnel\` skill: it wraps the server in \`kimaki tunnel\` to get a public URL.
 
       ## markdown formatting
 

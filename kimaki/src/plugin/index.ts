@@ -1,13 +1,17 @@
-import { Plugin } from '@opencode/plugin'
+import { Plugin, Skill } from '@opencode/plugin'
+import { Schema } from 'effect'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
 
 import { autostartBot } from '../autostart.ts'
+import { readBuiltinSkills } from '../builtin-skills.ts'
 import { fileEditTool, recordToolEdits } from '../file-edit-log.ts'
 import { turnContext } from '../system-prompt.ts'
 
 const exec = promisify(execFile)
+
+const decodeSkill = Schema.decodeUnknownSync(Skill.Info)
 
 const BRANCH_PREFIX = '[current git branch is '
 
@@ -15,6 +19,18 @@ export default Plugin.define({
   id: 'kimaki',
   async setup(ctx) {
     autostartBot()
+    // Skills are per location, not per session, so OpenCode lists them in every
+    // session, TUI included. Descriptions say they are for Kimaki sessions only;
+    // the bot denies disabled ones per session (--disable-skills). A failed read
+    // only loses the skills.
+    const skills = await readBuiltinSkills()
+    if (!(skills instanceof Error)) {
+      await ctx.skill.transform((editor) => {
+        for (const skill of skills) {
+          editor.add(decodeSkill(skill))
+        }
+      })
+    }
     async function marker(sessionID: string) {
       const session = await ctx.session.get({ sessionID }).catch(() => null)
       const value: unknown = session?.metadata?.['kimaki']

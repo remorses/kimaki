@@ -65,6 +65,8 @@ export type StartBotOptions = {
   // How often due tasks and wakes run; null: never (tests call scheduler.runDueTasks).
   schedulerIntervalMs?: number | null
   autoWorktrees?: boolean
+  // Built-in skill ids denied in new sessions (builtin-skills.ts).
+  disabledSkills?: readonly string[]
 }
 
 export type BotHandle = Bot & {
@@ -175,6 +177,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     transcriptionBaseUrls: options.transcriptionBaseUrls ?? {},
     realtimeBaseUrls: options.realtimeBaseUrls ?? {},
     autoWorktrees: options.autoWorktrees ?? false,
+    disabledSkills: options.disabledSkills ?? [],
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
   }
   const scheduler = createScheduler({
