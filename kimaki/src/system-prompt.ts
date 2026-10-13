@@ -76,6 +76,10 @@ export function baseInstructions({
       \`description\` is shown in Discord when the shell command is longer than 50 characters.
       \`hasSideEffect\` only decides if Discord shows the shell call. Set it to \`true\` for every command the user should be aware of, for example commands that change state or that the user asked you to run (the user says "run sleep 100", so \`sleep 100\` gets \`true\`). Set \`false\` only for routine commands the user does not need to see.
       The shell environment provides the \`kimaki\` command and OPENCODE_SESSION_ID. Do not pass stale IDs copied from another session.
+
+      ## seeing images and videos
+
+      Shell output and Code Mode \`execute\` results are text only. To see an image or video a command saved (ghosthand or playwriter screenshot, ffmpeg frame), call \`readMediaIntoContext\` with the file path right after the command. Have the command print the saved path, and do not narrate between the two calls.
     `,
     dedent`
       Discord channel ID: ${channelId}
