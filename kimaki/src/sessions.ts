@@ -33,6 +33,7 @@ import { prompt, runInSession } from './prompt.ts'
 import { formatEcho } from './queue.ts'
 import type { Route } from './routes.ts'
 import * as schema from './schema.ts'
+import { disabledSkillRules } from './builtin-skills.ts'
 import { baseInstructions, INSTRUCTION_KEY, type ScheduledRun } from './system-prompt.ts'
 import { createWorktree, resolveWorkingDirectory } from './worktrees.ts'
 
@@ -423,7 +424,7 @@ export async function startSession(
       location: { directory },
       ...(model && { model }),
       ...(agent && { agent }),
-      permissions: [NO_QUESTION_TOOL, ...(permissions ?? [])],
+      permissions: [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills), ...(permissions ?? [])],
       metadata: { kimaki },
     }),
   )
@@ -533,7 +534,7 @@ async function adoptSession(
     const kimaki = { ...marker, source: scheduledTask ? 'task' : 'discord', ...cliContext(bot), threadId: thread.id, channelId: channel.id }
     // A session with its own question rule (a fork, or --permission) keeps it.
     const rules = session.permissions ?? []
-    const permissions = rules.some((rule) => rule.action === 'question') ? rules : [NO_QUESTION_TOOL, ...rules]
+    const permissions = rules.some((rule) => rule.action === 'question') ? rules : [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills), ...rules]
     const marked = await oc(bot, 'session.update', (client) =>
       client.session.update({ sessionID: sessionId, metadata: { ...session.metadata, kimaki }, permissions }),
     )

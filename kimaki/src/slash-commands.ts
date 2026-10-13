@@ -32,6 +32,7 @@
 //
 // Discord allows 100 commands per guild; skills are cut first.
 
+import { isBuiltinSkill } from './builtin-skills.ts'
 import {
   Events,
   MessageFlags,
@@ -175,7 +176,7 @@ async function readCatalog(bot: Pick<Bot, 'opencode'>, directory: string): Promi
   if (agents instanceof Error) return agents
   if (commands instanceof Error) return commands
   if (skills instanceof Error) return skills
-  return { agents: agents.data, commands: commands.data, skills: skills.data }
+  return { agents: agents.data, commands: commands.data, skills: skills.data.filter((skill) => !isBuiltinSkill(skill.id)) }
 }
 
 // Autocomplete keeps the whole project catalog reachable beyond Discord's shortcut limit.
@@ -187,7 +188,7 @@ function catalogRoutes(): InteractionRoutes {
       if (kind === 'skill') {
         const skills = await oc(bot, 'skill.list', (client) => client.skill.list({ location }))
         if (skills instanceof Error) return skills
-        return skills.data.map((skill) => ({ name: skill.id, description: skill.description }))
+        return skills.data.filter((skill) => !isBuiltinSkill(skill.id)).map((skill) => ({ name: skill.id, description: skill.description }))
       }
       const list = await oc(bot, 'command.list', (client) => client.command.list({ location }))
       if (list instanceof Error) return list

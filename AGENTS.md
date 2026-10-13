@@ -53,6 +53,7 @@ OpenCode events ──▶ opencode-server.ts ──▶ event-loop.ts ──▶ t
 - `effects.ts`: the only Discord writer for session output. `format-parts.ts`, `markdown/`: formatting.
 - `lock-server.ts`, `lock-routes.ts`: single-instance lock and the local HTTP API used by CLI subcommands.
 - `cli.ts`, `cli/*.ts`: goke CLI. `plugin/`: code that runs inside the OpenCode process.
+- `system-prompt.ts` holds the session instruction entry (the whole agent-facing CLI reference). Only two parts are opt-out skills: `kimaki-debug` and `kimaki-tunnel` (`skills/<id>/SKILL.md`, `builtin-skills.ts`), registered by the `kimaki` plugin through `ctx.skill.transform` and hidden from Discord slash commands. `kimaki --disable-skills all|id,id` denies them per session with `skill:<id>` permission rules (`disabledSkillRules`).
 - `autostart.ts`: the bot writes `<dataDir>/autostart.command`; the plugin opens it in the default terminal when OpenCode starts and no bot answers on the lock port.
 - `gateway-proxy/`: multi-tenant Discord Gateway + REST proxy. one shared bot for all users.
 - `website/`: https://kimaki.dev, OAuth callback and onboarding status routes.
@@ -416,6 +417,6 @@ represent opencode tool usage in matchers as `tool-call` parts with `toolName` a
 these V1 features have no kimaki equivalent. do not document them as existing:
 
 - self-upgrade (`kimaki upgrade`, `/upgrade-and-restart`)
-- bundled skills (`skills/` copied into the npm package, `sync-skills`)
+- `sync-skills` (V1 copied user skills; the `kimaki-*` skills in `skills/` are new, see `builtin-skills.ts`)
 - image optimizer plugin (shrink images over 2000px / 4 MB before the model sees them)
 - kitty graphics plugin (images printed by shell tools sent to Discord)

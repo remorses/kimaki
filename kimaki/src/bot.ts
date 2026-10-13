@@ -65,6 +65,8 @@ export type Bot = {
   realtimeBaseUrls: RealtimeBaseUrls
   // Default for channels without a channel_worktrees row.
   autoWorktrees: boolean
+  // Built-in skill ids (builtin-skills.ts) denied through the permissions of new sessions.
+  disabledSkills: readonly string[]
   features: BotFeatures
 }
 

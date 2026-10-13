@@ -10,7 +10,8 @@
   "files": [
     "dist",
     "!dist/.tsbuildinfo",
-    "src"
+    "src",
+    "skills"
   ],
   "scripts": {
     "build": "tsc",
