@@ -20,7 +20,7 @@ import { createLogger } from './logger.ts'
 import { installPluginShim, watchOpencode, type OpencodeEndpoint } from './opencode-server.ts'
 import { countUserProjects } from './project.ts'
 import { createScheduler, systemClock, type Clock } from './scheduler.ts'
-import { createEventRecorder } from './session-events.ts'
+import { createEventRecorder, syncSessionTranscript } from './session-events.ts'
 import { createPluginWait, refreshCliContext } from './sessions.ts'
 import { createInteractionRegistry, registerSlashCommands } from './slash-commands.ts'
 import { createSleepLock } from './sleeps.ts'
@@ -140,7 +140,12 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   })
   cleanup.defer(() => effects.stop())
   const voiceCalls = createVoiceCalls({ opencodeConfigDir: options.opencodeConfigDir })
-  const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics, onRunEnded: voiceCalls.runEnded })
+  const onTranscriptDue = (sessionId: string) => {
+    void oc({ opencode }, 'sync transcript', (client) => syncSessionTranscript({ client, dataDir: options.dataDir, sessionId })).then((result) => {
+      if (result instanceof Error) logger.warn(`transcript of ${sessionId} not synced`, result)
+    })
+  }
+  const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics, onRunEnded: voiceCalls.runEnded, onTranscriptDue })
   const loaded = await eventLoop.load()
   if (loaded instanceof Error) return loaded
   // Before the service is used, so a service started by ensure() loads it at once.

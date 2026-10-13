@@ -9,7 +9,9 @@
 //
 //   kimaki session events <sessionId|threadId>   print the JSONL
 //   kimaki session read <sessionId|threadId>     print the messages from OpenCode
+//   kimaki session sync                          write <dataDir>/transcripts/<sessionId>.md for rg
 
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { OpenCodeClient } from '@opencode/client'
@@ -106,6 +108,7 @@ export async function resolveSession({
 }
 
 type Message = Awaited<ReturnType<OpenCodeClient['message']['list']>>['data'][number]
+type Session = Awaited<ReturnType<OpenCodeClient['session']['get']>>
 
 function renderMessage(message: Message, options: { thinking?: boolean; verbose?: boolean }): string {
   const time = new Date(message.time.created).toISOString()
@@ -146,8 +149,88 @@ export async function readSessionMarkdown({
   if (session instanceof Error) return session
   const messages = await allMessages({ client, sessionId })
   if (messages instanceof Error) return messages
+  return renderSession({ session, messages, thinking, verbose })
+}
+
+function renderSession({ session, messages, thinking, verbose }: { session: Pick<Session, 'id' | 'title' | 'location'>; messages: Message[]; thinking?: boolean; verbose?: boolean }): string {
   const title = `# ${session.title} (${session.id})\n\ndirectory: ${session.location.directory}`
   return [title, ...messages.map((message) => renderMessage(message, { thinking, verbose }))].join('\n\n')
+}
+
+// Transcripts: <dataDir>/transcripts/<sessionId>.md, the `session read` markdown
+// (no thinking, no tool outputs) so agents can search every session with rg.
+// The file mtime is the session's time.updated: a file at least that new is current.
+export function transcriptsDir({ dataDir }: { dataDir: string }): string {
+  return path.join(dataDir, 'transcripts')
+}
+
+export async function writeTranscript({ client, dataDir, session }: { client: OpenCodeClient; dataDir: string; session: Pick<Session, 'id' | 'title' | 'location'> & { time: Pick<Session['time'], 'updated'> } }): Promise<OpenCodeError | ConfigError | void> {
+  const messages = await allMessages({ client, sessionId: session.id })
+  if (messages instanceof Error) return messages
+  const dir = transcriptsDir({ dataDir })
+  const file = path.join(dir, `${session.id}.md`)
+  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
+  const written = await (async () => {
+    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 })
+    await fs.promises.writeFile(temp, `${renderSession({ session, messages })}\n`, { mode: 0o600 })
+    await fs.promises.utimes(temp, session.time.updated / 1000, session.time.updated / 1000)
+    await fs.promises.rename(temp, file)
+  })().catch((cause) => new ConfigError({ reason: `Cannot write ${file}`, cause }))
+  if (written instanceof Error) await fs.promises.rm(temp, { force: true }).catch((error) => logger.warn(`cannot remove ${temp}`, error))
+  return written
+}
+
+// The bot calls this when a run ends, so transcripts of new sessions appear on their own.
+export async function syncSessionTranscript({ client, dataDir, sessionId }: { client: OpenCodeClient; dataDir: string; sessionId: string }): Promise<OpenCodeError | ConfigError | void> {
+  const session = await client.session.get({ sessionID: sessionId }).catch((cause) => new OpenCodeError({ operation: 'session.get', cause }))
+  if (session instanceof Error) return session
+  return writeTranscript({ client, dataDir, session })
+}
+
+export type SyncResult = { written: number; skipped: number; failed: number }
+
+// Sessions updated in the last `days` days (0 = all time) of every project.
+// Skips sessions whose transcript is current, unless `rebuild`.
+export async function syncTranscripts({
+  client,
+  dataDir,
+  days,
+  rebuild,
+}: {
+  client: OpenCodeClient
+  dataDir: string
+  days: number
+  rebuild: boolean
+}): Promise<OpenCodeError | SyncResult> {
+  const [sessions, active] = await Promise.all([allSessions({ client }), client.session.active().catch((cause) => new OpenCodeError({ operation: 'session.active', cause }))])
+  if (sessions instanceof Error) return sessions
+  if (active instanceof Error) return active
+  const cutoff = days > 0 ? Date.now() - days * 86_400_000 : 0
+  const recent = sessions.filter((session) => session.time.updated >= cutoff)
+  const result: SyncResult = { written: 0, skipped: 0, failed: 0 }
+  const next = { index: 0 }
+  const worker = async () => {
+    while (next.index < recent.length) {
+      const session = recent[next.index++]!
+      const file = path.join(transcriptsDir({ dataDir }), `${session.id}.md`)
+      const stat = await fs.promises.stat(file).catch(() => null)
+      // time.updated may not move when a run ends: the live hook writes busy sessions when they stop.
+      if (session.id in active || (!rebuild && stat && stat.mtimeMs >= session.time.updated - 1)) {
+        result.skipped++
+        continue
+      }
+      const written = await writeTranscript({ client, dataDir, session })
+      if (written instanceof Error) {
+        result.failed++
+        logger.warn(`transcript of ${session.id} failed`, written)
+        continue
+      }
+      result.written++
+      logger.log(`transcript ${result.written + result.skipped + result.failed}/${recent.length}: ${session.id}`)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, recent.length) }, worker))
+  return result
 }
 
 // Cursor pagination of message.list / session.list: every page, in order.

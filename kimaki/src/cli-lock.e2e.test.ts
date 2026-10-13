@@ -89,12 +89,11 @@ test('CLI help documents the supported P7 commands', async () => {
         --exclude <id>                  Exclude session (repeatable)
         --json                          Output as JSON
 
-      session search <query>            Search titles, then real message content
+      session sync                      Write session transcripts to <data-dir>/transcripts for rg; skips current ones
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        --project <path>                Project (default: current directory)
-        -c, --channel <id>              Project of this Discord channel
-        --all                           All projects
-        --days <n>                      Recent days (default: 14; 0 = all)
+        --days <n>                      Sessions updated in the last n days (default: 14)
+        --all                           All sessions, any age
+        --rebuild                       Write transcripts again, also current ones
         --json                          Output as JSON
 
       session wait <id>                 Wait until idle or waiting for input, then print the session

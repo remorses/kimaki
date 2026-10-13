@@ -21,7 +21,8 @@ From the terminal:
 ```bash
 kimaki session list                 # sessions of the current project, with status and tokens
 kimaki session list --all --active  # busy sessions of every project
-kimaki session search "auth bug"    # titles first, then message content (last 14 days)
+kimaki session sync                 # write transcripts of the last 14 days to ~/.kimaki/transcripts
+rg -il "auth bug" ~/.kimaki/transcripts   # search them; the file name is the session ID
 kimaki session resume <sessionId>   # same as /resume
 kimaki session read <sessionId>     # print the conversation as markdown
 ```

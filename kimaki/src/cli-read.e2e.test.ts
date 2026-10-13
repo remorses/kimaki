@@ -28,13 +28,15 @@ function cli(args: string[]) {
     cwd: process.cwd(), env: { ...process.env, KIMAKI_LOCK_PORT: String(bot.lock.port), KIMAKI_OPENCODE_SERVICE_FILE: server.serviceFile, KIMAKI_DISCORD_REST_URL: twin.discord.restUrl },
   })
 }
-test('session read, list, search, wait, url and events read real session history', async () => {
+test('session read, list, sync, wait, url and events read real session history', async () => {
   const first = await send(bot, { channelId: twin.channelId, prompt: 'Reader content marker' })
   if (first instanceof Error) throw first
   if (!first.sessionId) throw new Error('Expected an AI session')
   await waitForFooter({ discord: twin.discord, threadId: first.threadId })
   const list = await cli(['session', 'list', '--project', server.projectDirectory, '--json'])
-  const search = await cli(['session', 'search', 'Reader content', '--project', server.projectDirectory, '--json'])
+  const sync = JSON.parse((await cli(['session', 'sync', '--days', '1', '--json'])).stdout)
+  const again = JSON.parse((await cli(['session', 'sync', '--days', '1', '--json'])).stdout)
+  const rebuilt = JSON.parse((await cli(['session', 'sync', '--days', '1', '--rebuild', '--json'])).stdout)
   const read = await cli(['session', 'read', first.threadId])
   const wait = await cli(['session', 'wait', first.sessionId, '--timeout', '10s'])
   const url = await cli(['session', 'url', first.sessionId])
@@ -47,7 +49,10 @@ test('session read, list, search, wait, url and events read real session history
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(list.stdout).toContain(first.sessionId)
-  expect(search.stdout).toContain(first.sessionId)
+  expect(sync.written + sync.skipped).toBeGreaterThan(0)
+  expect([again.written, again.failed, rebuilt.skipped, rebuilt.failed]).toEqual([0, 0, 0, 0])
+  expect(fs.readFileSync(path.join(dataDir, 'transcripts', `${first.sessionId}.md`), 'utf8')).toContain('## user')
+  expect(fs.readFileSync(path.join(dataDir, 'transcripts', `${first.sessionId}.md`), 'utf8')).toContain('Reader content marker')
   expect(read.stdout).toContain('Reader content marker')
   expect(wait.stdout).toContain('Reader content marker')
   expect(url.stdout).toContain(first.threadId)

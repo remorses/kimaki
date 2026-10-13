@@ -365,15 +365,25 @@ export function baseInstructions({
 
       Each row shows the session ID, status (\`busy\`, \`waiting\` for input, or \`idle\`), the title, and \`tokens: N\`. Titles prefixed with \`btw:\` are side sessions that answer a related user question in parallel. They are not duplicate sessions of the main task.
 
-      To search past sessions (supports plain text or /regex/flags). Defaults to this project and the last 14 days. Use \`--days 0\` for all time. Use \`--all\` to search every project:
+      To search past sessions, search the transcripts. Kimaki writes one markdown file per session to \`${dataDir}/transcripts/<session id>.md\` when a run ends (user messages, assistant text and short tool inputs; no tool outputs, no thinking). The first lines are \`# <title> (<session id>)\` and \`directory: <folder>\`; messages start with \`## user <time>\` or \`## assistant <time> (<agent>, <model>)\`. Use rg (or \`grep -r\` when rg is missing):
 
       \`\`\`bash
-      kimaki session search "auth timeout"
-      kimaki session search "auth timeout" --days 0
-      kimaki session search "/error\\s+42/i"
-      kimaki session search "rate limit" --project /path/to/project
-      kimaki session search "/panic|crash/i" --channel <channel_id>
-      kimaki session search "auth timeout" --all
+      rg -il 'auth timeout' ${dataDir}/transcripts                     # sessions that mention it; the file name is the session ID
+      rg -i -C3 'auth timeout' ${dataDir}/transcripts/<session id>.md  # matches with context in one session
+      rg -i -m3 'rate limit' ${dataDir}/transcripts                    # first 3 matches per session
+      rg -i 'error\\s+42|panic' ${dataDir}/transcripts                 # regex
+      rg -i '^# .*billing' ${dataDir}/transcripts                      # titles
+      rg -l '^directory: /path/to/project' ${dataDir}/transcripts      # sessions of one project
+      rg -il 'auth timeout' $(find ${dataDir}/transcripts -name '*.md' -mtime -3)   # last 3 days
+      \`\`\`
+
+      Sessions that Kimaki did not run (OpenCode TUI) and old sessions are not there until you sync. The command skips current transcripts, so it is cheap to run again:
+
+      \`\`\`bash
+      kimaki session sync                # sessions updated in the last 14 days
+      kimaki session sync --days 60
+      kimaki session sync --all          # every session, any age (slow the first time)
+      kimaki session sync --rebuild      # write all again, for example after the format changed
       \`\`\`
 
       To read a session as markdown, pipe to a file. Logs go to stderr:
@@ -864,7 +874,8 @@ function voiceCallReference({
     kimaki project list --json                           # projects with channel ID, folder and guild ID
     kimaki session list --project <folder>               # threads of a project with status busy, waiting or idle
     kimaki session list --all --active                   # threads that run now, in every project
-    kimaki session search 'text' --all --days 0          # find threads by title or content, all time
+    rg -il 'text' ${dataDir}/transcripts                  # find threads by title or content; file name = session ID
+    kimaki session sync --days 60                        # write transcripts of older or non-Kimaki sessions first
     kimaki session read <thread ID or link> 2>/dev/null | tail -c 3000   # end of a thread transcript
     kimaki session wait <thread ID>                      # wait until a thread finishes, then print it
     kimaki session abort <thread ID>                     # stop the agent of a thread; the thread stays

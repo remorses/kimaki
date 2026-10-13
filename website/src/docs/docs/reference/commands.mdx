@@ -131,7 +131,7 @@ kimaki [options]
 | Command                            | Description                                                                 | Options                                                      |
 | ---------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | `session list`                     | List sessions with native status and token counts                           | `--project`, `--all`, `--active`, `--exclude`, `--json`      |
-| `session search <query>`           | Search titles, then real message content                                    | `--project`, `-c, --channel`, `--all`, `--days`, `--json`    |
+| `session sync`                     | Write session transcripts to `<data-dir>/transcripts` for rg; skips current ones | `--days`, `--all`, `--rebuild`, `--json`                |
 | `session wait <id>`                | Wait until idle or waiting for input, then print the session                | `--timeout`                                                  |
 | `session editors <file>`           | List sessions that last edited a file, newest first                         | `--json`, `--limit`                                          |
 | `session diff`                     | Upload the git diff of the session folder to critique.work and print the URL | `-s, --session`                                             |
