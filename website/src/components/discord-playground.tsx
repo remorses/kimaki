@@ -830,10 +830,11 @@ export function DiscordPlayground() {
     !ui.queueRemoved &&
     !ui.queueDrained
   const showTyping = drainingQueue || (!waitingOnUser && !lastMessage?.footer)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: 'end' })
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [selectedThreadId, messages.length])
 
   useEffect(() => {
@@ -891,10 +892,10 @@ export function DiscordPlayground() {
           'Inter, "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif',
         fontWeight: 400,
         fontSynthesis: 'none',
-        fontSize: 'clamp(11px, 1.35cqw, 13px)',
+        fontSize: 'clamp(10px, 1.1cqw, 12px)',
         containerType: 'inline-size',
-        aspectRatio: '1.5 / 1',
-        minHeight: '32em',
+        aspectRatio: '1.85 / 1',
+        minHeight: '28em',
       }}
     >
       <div className='flex h-[2.25em] shrink-0 items-center bg-[#1e1f22] pl-[0.875em]'>
@@ -1041,7 +1042,7 @@ export function DiscordPlayground() {
             </div>
           </div>
 
-          <div className='min-h-0 flex-1 overflow-y-auto pt-[1em]'>
+          <div ref={scrollRef} className='min-h-0 flex-1 overflow-y-auto pt-[1em]'>
             <div className='px-[1em] pb-[1em]'>
               <div className='mb-[0.5em] flex size-[4em] items-center justify-center rounded-[1em] bg-[#41434a] text-[#dbdee1]'>
                 <ThreadIcon size='2.25em' />
@@ -1164,7 +1165,6 @@ export function DiscordPlayground() {
                 </div>
               )
             })}
-            <div ref={messagesEndRef} />
           </div>
 
           <div className='shrink-0 px-[1em] pb-[1.5em] pt-[0.25em]'>
