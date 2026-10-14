@@ -210,7 +210,7 @@ each plugin is a directory loaded through its `index` module. OpenCode only acce
 
 each module has one `export default Plugin.define(...)`. keep utilities in separate files and import them.
 
-**the `kimaki` plugin must only act on Kimaki sessions.** OpenCode loads it for every session, including the user's own TUI sessions. every hook must first check the session's `metadata.kimaki` marker (or the parent chain for subagents, see `marker()` in `plugin/index.ts`) and return without changes when it is missing. the bot writes the marker at `session.create` and when it adopts a V1 session. never add a hook that changes prompts, tools, shell commands or files for unmarked sessions.
+**the `kimaki` plugin must only act on Kimaki sessions.** OpenCode loads it for every session, including the user's own TUI sessions. every hook must first check the session's `metadata.kimaki` marker (or the parent chain for subagents, see `marker()` in `plugin/index.ts`) and return without changes when it is missing. the only exceptions: the built-in skills and the stable `OpenCode session ID: ses_...` system line, which reach every session on purpose. the bot writes the marker at `session.create` and when it adopts a V1 session. never add a hook that changes prompts, tools, shell commands or files for unmarked sessions.
 
 the plugin gets bot state from the marker, not from env vars: `dataDir` and `lockPort`. its `execute.before` hook prefixes each shell command with `PATH=<dataDir>/bin:$PATH`, `KIMAKI_DATA_DIR`, `KIMAKI_LOCK_PORT` and `KIMAKI_TOOL_CALL`, so agents call the `<dataDir>/bin/kimaki` shim (`installShim` in `lock-server.ts`) and reach the right bot.
 

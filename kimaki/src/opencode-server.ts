@@ -147,13 +147,15 @@ export function opencodeDbFile(): string {
 // through its index module. Always dist, also when the bot runs from src: OpenCode
 // reloads the plugin when its files change, so a src target would reload half
 // edited code on every save. dist only changes on `pnpm build`.
-// `kimaki` acts only on marked sessions; `kimaki-anthropic` (provider auth) and
-// `kimaki-session-id` (session ID in the system prompt) apply to every session.
+// `kimaki` acts only on marked sessions (except the session ID line);
+// `kimaki-anthropic` (provider auth) applies to every session.
 const PLUGIN_SHIMS = [
   { name: 'kimaki', directory: '' },
   { name: 'kimaki-anthropic', directory: 'anthropic' },
-  { name: 'kimaki-session-id', directory: 'session-id' },
 ] as const
+
+// Shims of older Kimaki versions, removed on bot start. kimaki-session-id moved into the kimaki plugin.
+const LEGACY_SHIMS = ['kimaki-session-id']
 
 export function kimakiPluginEntry(directory: string = ''): string {
   // This module is <package>/src/opencode-server.ts or <package>/dist/opencode-server.js.
@@ -233,26 +235,27 @@ async function installShim({ configDir, name, entry }: { configDir: string; name
 // A shim whose plugin the global config already lists would load one plugin ID
 // twice. OpenCode keeps the first and reports the other as a failed plugin
 // ("Duplicate plugin ID", plugin/supervisor.ts), so the shim is removed instead.
-async function removeShim({ configDir, name }: { configDir: string; name: string }) {
+async function removeShim({ configDir, name, why }: { configDir: string; name: string; why: string }) {
   const directory = path.join(configDir, 'plugins', name)
   if (!fs.existsSync(directory)) return { file: directory, written: false }
   const removed = await fs.promises
     .rm(directory, { recursive: true, force: true })
     .catch((cause) => new ConfigError({ reason: `Cannot remove the Kimaki OpenCode plugin shim ${directory}. Check permissions of ${configDir}`, cause }))
   if (removed instanceof Error) return removed
-  logger.log(`removed OpenCode plugin shim ${directory}: opencode.json already loads this plugin`)
+  logger.log(`removed OpenCode plugin shim ${directory}: ${why}`)
   return { file: directory, written: true }
 }
 
 export async function installPluginShim({ configDir }: { configDir: string }): Promise<ConfigError | { written: boolean }> {
   const targets = await configuredPluginTargets({ configDir })
-  const results = await Promise.all(
-    PLUGIN_SHIMS.map(async (shim) => {
+  const results = await Promise.all([
+    ...PLUGIN_SHIMS.map(async (shim) => {
       const configured = await Promise.all(targets.map((target) => isKimakiPluginDirectory({ target, directory: shim.directory })))
-      if (configured.includes(true)) return removeShim({ configDir, name: shim.name })
+      if (configured.includes(true)) return removeShim({ configDir, name: shim.name, why: 'opencode.json already loads this plugin' })
       return installShim({ configDir, name: shim.name, entry: kimakiPluginEntry(shim.directory) })
     }),
-  )
+    ...LEGACY_SHIMS.map((name) => removeShim({ configDir, name, why: 'replaced by the kimaki plugin' })),
+  ])
   const failed = results.find((result) => result instanceof Error)
   if (failed instanceof Error) return failed
   return { written: results.some((result) => !(result instanceof Error) && result.written) }

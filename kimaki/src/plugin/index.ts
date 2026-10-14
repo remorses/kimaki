@@ -59,6 +59,9 @@ export default Plugin.define({
       await ctx.session.synthetic({ sessionID: event.sessionID, text, delivery: event.delivery, resume: false }).catch(() => undefined)
     })
     await ctx.session.hook('context', async (event) => {
+      // The only prompt change for every session, TUI included. The ID never
+      // changes in a session, so the cached prompt prefix stays stable.
+      event.system.push({ type: 'text', text: `OpenCode session ID: ${event.sessionID}` })
       if (!(await marker(event.sessionID))) return
       // The <discord-user> context of each prompt, built from its metadata, so the
       // stored text stays clean for the TUI and other clients. Same metadata, same
