@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+1. **Updated to OpenCode 2.0.29.** `@opencode/client` and `@opencode/plugin` `2.0.29` are now the expected peers.
+
 ## 1.0.0
 
 1. **Runs only on OpenCode 2** (2.0.19 or later). OpenCode 1 is no longer supported; to stay on OpenCode 1, pin `@kimaki/automode@0.2`.

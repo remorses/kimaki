@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.1.0
+
+1. **Session transcripts you search with `rg`** (replaces `kimaki session search`). Kimaki writes one markdown file per session to `<data-dir>/transcripts/<session id>.md` when a run ends: user messages, assistant text and short tool inputs. No tool outputs, no thinking.
+
+   ```bash
+   rg -il 'auth timeout' ~/.kimaki/transcripts          # sessions that mention it; the file name is the session ID
+   rg -i -C3 'auth timeout' ~/.kimaki/transcripts/ses_xxx.md
+   ```
+
+   Sessions Kimaki did not run, and old sessions, are written by the new sync command. It skips current transcripts, so running it again is cheap:
+
+   ```bash
+   kimaki session sync                # last 14 days
+   kimaki session sync --days 60
+   kimaki session sync --all          # every session, any age
+   kimaki session sync --rebuild      # write all again
+   ```
+
+2. **Exact file and image order, numbered.** `kimaki upload-to-discord` takes many files in one call and posts them in argument order, each with a numbered label, so you and the agent can point at "image 2":
+
+   ```bash
+   kimaki upload-to-discord before.png report.pdf after.png
+   ```
+
+   Files you attach to a Discord message reach the model as one numbered `<attachments>` list in the order you attached them, inline images included.
+
+3. **Built-in `kimaki-debug` and `kimaki-tunnel` skills, and `--disable-skills`.** The debugging docs (logs, profiling, `kimaki login`, bug reports) and the `kimaki tunnel` docs moved out of the agent prompt into skills that load on demand. Built-in skills do not show as Discord slash commands.
+
+   ```bash
+   kimaki --disable-skills kimaki-tunnel   # turn off one
+   kimaki --disable-skills all             # turn off all
+   ```
+
+4. **`/model` shows the real OpenCode default.** When no channel or global model is set, `/model` shows `Current (OpenCode default): provider/model` instead of a vague "OpenCode default".
+5. **Fixed autostart on Node 22.** The bot crashed with `SyntaxError: Unexpected identifier 'cleanup'`. The autostart window now also explains why it opened, which Node it uses and how to stop the bot. If the Node that last ran the bot was removed, autostart falls back to `node` from `PATH`.
+6. **Fixed `/model` saying "No providers with credentials found"** the first time it runs for a project that OpenCode has not loaded yet.
+7. **One plugin less in your OpenCode config folder.** The `OpenCode session ID: ses_...` line now comes from the `kimaki` plugin. On start the bot removes the old `~/.config/opencode/plugins/kimaki-session-id` shim. If you listed `kimaki/dist/plugin/session-id` in `opencode.json`, remove that entry.
+8. **OpenCode 1 error points to the older Kimaki** (`npx kimaki@0`) for users who must stay on OpenCode 1.
+9. **OpenCode client and plugin packages updated to 2.0.29.**
+
 ## 1.0.0
 
 Kimaki 1.0 is a rewrite on top of **OpenCode 2**. The Discord side looks the same as before: one channel per project, one thread per session, same footer, same slash commands. What changed is underneath, and most of it is good news for your sessions, your cache and your OpenCode setup. A few things were removed, listed at the end.
