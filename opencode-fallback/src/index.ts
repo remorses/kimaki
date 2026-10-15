@@ -4,7 +4,7 @@
 //
 // - Model changes are per session (session.switchModel). The plugin never
 //   moves a session back up by itself, so prompt caches survive.
-// - Account changes are global per integration (connection.activate): a
+// - Account changes are global per integration (credential.activate): a
 //   blocked account is blocked for every session.
 // - Accounts come from normal OpenCode logins (`opencode auth login`, /connect).
 // - Retry hook errors carry no headers, so http.response keeps the headers of
@@ -47,10 +47,6 @@ export default Plugin.define({
       .flatMap((entry) => (typeof entry === 'string' ? [parseModel(entry)] : []))
       .filter((model) => model !== undefined)
 
-    // TODO: drop the optional type once @opencode/plugin ships connection.activate. https://github.com/anomalyco/opencode/pull/52797
-    const connection: typeof ctx.integration.connection & { activate?: (credentialID: string) => Promise<void> } =
-      ctx.integration.connection
-
     // Last model request per session: which account it used, and the headers when it failed.
     const requests = new Map<string, { kind: string; credentialID: string; headers?: Record<string, string> }>()
 
@@ -60,16 +56,15 @@ export default Plugin.define({
     }
 
     async function activeCredential(providerID: string) {
-      const active = await connection.active(await integrationOf(providerID)).catch(() => undefined)
+      const active = await ctx.integration.connection.active(await integrationOf(providerID)).catch(() => undefined)
       return active?.type === 'credential' ? active.id : ENV_ACCOUNT
     }
 
-    // Saved accounts of a provider, active first. Without activate only the active one is usable.
+    // Saved accounts of a provider, active first.
     async function accountsOf(providerID: string) {
       const integration = await ctx.integration.get({ integrationID: await integrationOf(providerID) }).catch(() => undefined)
       const ids = (integration?.data.connections ?? []).flatMap((item) => (item.type === 'credential' ? [item.id] : []))
-      if (ids.length === 0) return [ENV_ACCOUNT]
-      return connection.activate ? ids : ids.slice(0, 1)
+      return ids.length === 0 ? [ENV_ACCOUNT] : ids
     }
 
     async function readBlocks(now: number) {
@@ -151,10 +146,8 @@ export default Plugin.define({
       const choice = pick({ ranking: candidates, accounts, blocks: await readBlocks(now), now })
       if (!choice) return
 
-      if (choice.credentialID !== ENV_ACCOUNT && connection.activate) {
-        if ((await activeCredential(choice.model.providerID)) !== choice.credentialID) {
-          await connection.activate(choice.credentialID)
-        }
+      if (choice.credentialID !== ENV_ACCOUNT && (await activeCredential(choice.model.providerID)) !== choice.credentialID) {
+        await ctx.credential.activate({ credentialID: choice.credentialID })
       }
       await ctx.session.switchModel({ sessionID: event.sessionID, model: choice.model })
       event.decision = { retry: true, delay: choice.waitUntil === undefined ? 0 : Math.max(0, choice.waitUntil - now) }
@@ -166,6 +159,7 @@ export default Plugin.define({
         credentialID: choice.credentialID,
         reason: block.reason,
         blockedUntil: block.until,
+        // The RPC event encoder rejects undefined values, so omit the key.
         ...(choice.waitUntil === undefined ? {} : { waitUntil: choice.waitUntil }),
       })
     })
