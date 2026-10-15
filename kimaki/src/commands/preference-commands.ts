@@ -140,7 +140,11 @@ async function current(bot: Bot, target: InteractionTarget) {
   if (model) return { scope: 'channel' as const, modelScope: 'channel' as const, agent, model }
   const global = await globalModel(bot)
   if (global instanceof Error) return global
-  return { scope: 'channel' as const, modelScope: 'global' as const, agent, model: global }
+  if (global) return { scope: 'channel' as const, modelScope: 'global' as const, agent, model: global }
+  const fallback = await oc(bot, 'model.default', (client) => client.model.default({ location: { directory: target.directory } }))
+  if (fallback instanceof Error) return fallback
+  const defaultModel = fallback.data ? { providerID: fallback.data.providerID, id: fallback.data.id, variant: null } : null
+  return { scope: 'channel' as const, modelScope: 'OpenCode default' as const, agent, model: defaultModel }
 }
 
 // The model a new session of the channel starts with, like startSession:
@@ -372,7 +376,7 @@ async function renderStep(
     const [now, resets] = await Promise.all([current(bot, wizard.target), resetButtons(bot, { target: wizard.target, hash })])
     if (now instanceof Error) return replyError(interaction, now)
     if (resets instanceof Error) return replyError(interaction, resets)
-    const currentText = now.model ? `**Current (${now.modelScope}):** \`${modelLabel(now.model)}\`` : '**Current:** OpenCode default'
+    const currentText = now.model ? `**Current (${now.modelScope}):** \`${modelLabel(now.model)}\`` : '**Current:** none configured'
     return reply(
       `${header}\n${currentText}\nSelect a provider:`,
       providers.map(([id, name]) => {

@@ -40,7 +40,7 @@ test('/login API key stores an OpenCode credential and makes its provider availa
     Connect OpenAI
     Connected OpenAI. Use /model to select a model.
     **Set Model Preference**
-    **Current:** OpenCode default
+    **Current (OpenCode default):** \`deterministic-provider/deterministic-v2\`
     Select a provider:"
   `)
   expect(models.select.options.some((option) => option.value === 'openai')).toBe(true)
@@ -75,7 +75,7 @@ test('/login OAuth code uses native attempts and can activate a stored credentia
     Connect OpenAI
     Connected OpenAI. Use /model to select a model.
     **Set Model Preference**
-    **Current:** OpenCode default
+    **Current (OpenCode default):** \`deterministic-provider/deterministic-v2\`
     Select a provider:
     http://127.0.0.1/authorize
     Enter the test authorization code.
