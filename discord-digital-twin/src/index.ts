@@ -67,6 +67,15 @@ function collectComponentText({
       lines.push('---')
       continue
     }
+    // Components V2 media, in the order the message places it.
+    if (component.type === ComponentType.MediaGallery && 'items' in component && Array.isArray(component.items)) {
+      for (const item of component.items) lines.push(`[media: ${item?.media?.url ?? ''}]`)
+      continue
+    }
+    if (component.type === ComponentType.File && 'file' in component && component.file && typeof component.file === 'object') {
+      lines.push(`[file: ${'url' in component.file ? String(component.file.url) : ''}]`)
+      continue
+    }
     if (
       'content' in component &&
       typeof component.content === 'string' &&

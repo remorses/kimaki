@@ -16,7 +16,14 @@
 import { execFile } from 'node:child_process'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { type Client, type MessageCreateOptions, type MessageFlags, type SendableChannels } from 'discord.js'
+import {
+  ComponentType,
+  MessageFlags,
+  type APIMessageTopLevelComponent,
+  type Client,
+  type MessageCreateOptions,
+  type SendableChannels,
+} from 'discord.js'
 
 import { formatFooter, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS, type UiMessage } from './format-parts.ts'
 import { createLogger } from './logger.ts'
@@ -83,6 +90,35 @@ function uploadBatches(files: readonly UploadFile[]): UploadFile[][] {
   return batches.map((batch) => batch.files)
 }
 
+// Media Gallery takes images and videos; everything else is a File component.
+const GALLERY_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.webm', '.mov'])
+
+// Plain `files` let the Discord client group images into a mosaic apart from
+// other files. Components V2 place each file explicitly, so the thread shows
+// them in argument order. With several files each one gets a numbered label,
+// so the user and the agent can point at "file 3".
+// https://docs.discord.com/developers/components/reference#media-gallery
+function uploadMessage({ files, first, numbered }: { files: readonly UploadFile[]; first: number; numbered: boolean }) {
+  const used = new Set<string>()
+  const components: APIMessageTopLevelComponent[] = []
+  const attachments = files.map((file, index) => {
+    const number = first + index
+    // attachment:// needs a unique name Discord keeps as is.
+    const safe = file.name.replace(/[^\w.-]/g, '_') || 'file'
+    const name = used.has(safe) ? `${number}-${safe}` : safe
+    used.add(name)
+    if (numbered) components.push({ type: ComponentType.TextDisplay, content: `-# ${number}. \`${file.name}\`` })
+    const media = { url: `attachment://${name}` }
+    components.push(
+      GALLERY_EXTENSIONS.has(path.extname(name).toLowerCase())
+        ? { type: ComponentType.MediaGallery, items: [{ media }] }
+        : { type: ComponentType.File, file: media },
+    )
+    return { attachment: file.path, name }
+  })
+  return { files: attachments, components, flags: MessageFlags.IsComponentsV2 | SILENT_MESSAGE_FLAGS }
+}
+
 // Effects that will never run: an upload still waits for its answer.
 function drop(effects: readonly Effect[]) {
   for (const effect of effects) {
@@ -141,18 +177,16 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
 
   // Unlike post(), the error goes back to the agent that uploaded.
   async function postFiles(threadId: string, files: readonly UploadFile[]): Promise<Error | null> {
+    let first = 1
     for (const batch of uploadBatches(files)) {
       if (lifecycle.closed) return new DiscordError({ operation: 'upload (bot stopped)' })
       const channel = await sendableChannel(threadId)
       if (!channel) return new DiscordError({ operation: `upload to thread ${threadId}` })
       const sent = await channel
-        .send({
-          files: batch.map((file) => ({ attachment: file.path, name: file.name })),
-          flags: SILENT_MESSAGE_FLAGS,
-          allowedMentions: { parse: [] },
-        })
+        .send({ ...uploadMessage({ files: batch, first, numbered: files.length > 1 }), allowedMentions: { parse: [] } })
         .catch((cause: Error) => new DiscordError({ operation: `upload of ${batch.map((file) => file.name).join(', ')} (${cause.message})`, cause }))
       if (sent instanceof Error) return sent
+      first += batch.length
     }
     return null
   }

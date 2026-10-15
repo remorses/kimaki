@@ -315,7 +315,7 @@ test('CLI help documents the supported P7 commands', async () => {
         -q, --query <text>              Name filter
         --json                          Output as JSON
 
-      upload-to-discord <...files>      Attach local files to a session thread or the Kimaki voice channel chat
+      upload-to-discord <...files>      Attach local files to a session thread or the Kimaki voice channel chat. Pass many files in one call: Discord shows them numbered in argument order
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         -c, --channel <id>              Kimaki voice channel to post in (default in voice calls: KIMAKI_CHANNEL_ID)

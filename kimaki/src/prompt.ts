@@ -44,7 +44,7 @@ import { allMessages } from './session-events.ts'
 import { ensureSessionMarker, forkBtw, startSession, switchAgent, threadProject } from './sessions.ts'
 import { cancelSleep } from './sleeps.ts'
 import type { ScheduledRun } from './system-prompt.ts'
-import { localFilesBlock, type TurnContext } from './system-prompt.ts'
+import { attachmentsBlock, type PromptAttachment, type TurnContext } from './system-prompt.ts'
 import { isBusy, type UploadFile } from './thread-reducer.ts'
 import { resolveWorkingDirectory } from './worktrees.ts'
 
@@ -88,10 +88,10 @@ export async function prompt(
     echo?: string
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
-  const { attached, localPaths } = await splitPromptFiles(files)
+  const { attached, attachments } = await splitPromptFiles(files)
   // The text stays as the user wrote it. The plugin renders the <discord-user>
   // context from this metadata into the model request only (turnContext()).
-  const discord: TurnContext = { userId: author.id, username: author.username, messageId, threadId, threadName, localFiles: localPaths }
+  const discord: TurnContext = { userId: author.id, username: author.username, messageId, threadId, threadName, attachments }
   const result = await oc(bot, 'session.prompt', (client) =>
     client.session.prompt({
       sessionID: sessionId,
@@ -113,19 +113,19 @@ export async function prompt(
 const OPENCODE_MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const INLINE_MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf'])
 
+// `attachments` keeps every file in the user's order, so "the second image" resolves.
 async function splitPromptFiles(files: readonly PromptFile[]) {
   const attached: Array<{ uri: string; name: string }> = []
-  const localPaths: string[] = []
+  const attachments: PromptAttachment[] = []
   for (const file of files) {
     const local = promptFilePath(file)
     const stat = await fs.promises.stat(local).catch(() => null)
     const tooBig = stat !== null && stat.size > OPENCODE_MAX_ATTACHMENT_BYTES
-    const inline = INLINE_MEDIA_EXTENSIONS.has(path.extname(file.name).toLowerCase())
     if (!tooBig) attached.push({ uri: file.uri, name: file.name })
-    // Text files also get the path: the extension cannot tell text from binary.
-    if (tooBig || !inline) localPaths.push(local)
+    // Text files count as not inline: the extension cannot tell text from binary.
+    attachments.push({ name: file.name, path: local, inline: !tooBig && INLINE_MEDIA_EXTENSIONS.has(path.extname(file.name).toLowerCase()) })
   }
-  return { attached, localPaths }
+  return { attached, attachments }
 }
 
 // Questions and permissions of the thread (root and children) that wait for the user.
@@ -299,8 +299,8 @@ async function command(
     const interrupted = await interrupt(bot, input.sessionId)
     if (interrupted instanceof Error) return interrupted
   }
-  const { attached, localPaths } = await splitPromptFiles(input.files)
-  const block = localFilesBlock(localPaths)
+  const { attached, attachments } = await splitPromptFiles(input.files)
+  const block = attachmentsBlock(attachments)
   bot.eventLoop.dispatch(input.threadId, { type: 'kimaki.command', text: typed, username: input.author.username })
   const result = await oc(bot, 'session.command', (client) =>
     client.session.command({

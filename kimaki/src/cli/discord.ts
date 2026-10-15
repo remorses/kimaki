@@ -99,7 +99,7 @@ export function registerDiscordCommands(cli: Goke) {
       printRows({ json: options.json, rows: users, line: (user) => `${user.id} ${user.username}${user.name ? ` (${user.name})` : ''}` })
     })
 
-  cli.command('upload-to-discord <...files>', 'Attach local files to a session thread or the Kimaki voice channel chat')
+  cli.command('upload-to-discord <...files>', 'Attach local files to a session thread or the Kimaki voice channel chat. Pass many files in one call: Discord shows them numbered in argument order')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
     .option('-c, --channel <id>', 'Kimaki voice channel to post in (default in voice calls: KIMAKI_CHANNEL_ID)')

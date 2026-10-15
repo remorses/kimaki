@@ -39,8 +39,11 @@ const matchers: DeterministicMatcher[] = [
   {
     id: 'image',
     priority: 500,
-    // The plugin adds <local-files> and <discord-user> to the model request only.
-    when: { latestUserTextRegex: 'image-marker[\\s\\S]*<local-files>[\\s\\S]*archive\\.zip\\n</local-files>\\n<discord-user ', rawPromptIncludes: 'image/png' },
+    // The plugin adds the numbered <attachments> and <discord-user> to the model request only.
+    when: {
+      latestUserTextRegex: 'image-marker[\\s\\S]*<attachments>[\\s\\S]*1\\. dot\\.png \\(inline\\): [^\\n]*\\n2\\. notes\\.txt: [^\\n]*\\n3\\. archive\\.zip: [^\\n]*\\n</attachments>\\n<discord-user ',
+      rawPromptIncludes: 'image/png',
+    },
     then: { parts: textParts('I see an image') },
   },
   reply('voice-steer', 'voice steer ok'),
@@ -137,7 +140,7 @@ test('image and text attachments reach the model as files', async () => {
   // OpenCode drops binary files: the model gets their local paths from metadata, the stored text stays clean.
   expect(user?.type === 'user' && user.text).toBe('What is this image-marker')
   const discord = user?.type === 'user' ? user.metadata?.['discord'] : null
-  expect(JSON.stringify(discord).replaceAll(dataDir, '<data>').replace(/\/\d+\//g, '/<message>/').replace(/\d{6,}/g, 'ID')).toMatchInlineSnapshot(`"{"userId":"ID","username":"tommy","messageId":"ID","threadId":"ID","threadName":"What is this image-marker","localFiles":["<data>/attachments/<message>/1-notes.txt","<data>/attachments/<message>/2-archive.zip"]}"`)
+  expect(JSON.stringify(discord).replaceAll(dataDir, '<data>').replace(/\/\d+\//g, '/<message>/').replace(/\d{6,}/g, 'ID')).toMatchInlineSnapshot(`"{"userId":"ID","username":"tommy","messageId":"ID","threadId":"ID","threadName":"What is this image-marker","attachments":[{"name":"dot.png","path":"<data>/attachments/<message>/0-dot.png","inline":true},{"name":"notes.txt","path":"<data>/attachments/<message>/1-notes.txt","inline":false},{"name":"archive.zip","path":"<data>/attachments/<message>/2-archive.zip","inline":false}]}"`)
 })
 
 test('voice in a channel starts a session with the transcription and the spoken agent', async () => {

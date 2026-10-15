@@ -37,6 +37,10 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
   const threads = await cli(['thread', 'list', '--channel', twin.channelId, '--json'])
   const users = await cli(['user', 'list', '--guild', twin.discord.guildId, '--query', 'tommy', '--json'])
   await cli(['upload-to-discord', path.join(server.root, 'report.txt'), '--session', started.sessionId])
+  // Many files keep argument order, numbered, images and files mixed.
+  fs.mkdirSync(path.join(server.root, 'other'), { recursive: true })
+  for (const name of ['b.png', 'my shot.png', 'other/b.png']) fs.writeFileSync(path.join(server.root, name), 'png')
+  await cli(['upload-to-discord', ...['b.png', 'report.txt', 'my shot.png', 'other/b.png'].map((name) => path.join(server.root, name)), '--session', started.sessionId])
   // The agent learns that nothing was posted.
   const missing = await cli(['upload-to-discord', path.join(server.root, 'missing.png'), '--session', started.sessionId]).catch((error: { stderr: string }) => error)
   expect(missing.stderr.replace(server.root, '<root>')).toMatchInlineSnapshot(`
@@ -51,7 +55,20 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
-    [attachment: report.txt]"
+    [file: attachment://report.txt]
+    [attachment: report.txt]
+    -# 1. \`b.png\`
+    [media: attachment://b.png]
+    -# 2. \`report.txt\`
+    [file: attachment://report.txt]
+    -# 3. \`my shot.png\`
+    [media: attachment://my_shot.png]
+    -# 4. \`b.png\`
+    [media: attachment://4-b.png]
+    [attachment: b.png]
+    [attachment: report.txt]
+    [attachment: my_shot.png]
+    [attachment: 4-b.png]"
   `)
   expect(threads.stdout).toContain(started.threadId)
   expect(users.stdout).toContain(TEST_USER_ID)

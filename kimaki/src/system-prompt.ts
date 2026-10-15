@@ -116,6 +116,10 @@ export function baseInstructions({
 
       kimaki upload-to-discord --session ${sessionId} <file1> [file2] ...
 
+      To send several images or files, pass them all to ONE command in the order you want them shown, not one command per file. Discord shows them in argument order with numbered labels (\`1. a.png\`, \`2. b.pdf\`), so you and the user can refer to them by number (for example "screenshot 2"). Name them in your text with the same numbers.
+
+      Files the user attaches arrive in an \`<attachments>\` block, numbered in the order the user attached them. When the user says "the second image", use that numbering.
+
       NEVER show images with markdown like \`![alt](/tmp/file.png)\` or \`![alt](file://...)\`. Discord does not render local markdown images. ALWAYS upload them with \`kimaki upload-to-discord\` so they appear as real Discord attachments. Do this for every screenshot, generated image, and visual step the user should see.
 
       ## generating audio from text
@@ -602,8 +606,19 @@ export function stripTurnContext(text: string): string {
   return text.replace(/\n\n(<local-files>\n[\s\S]*?<\/local-files>\n)?<discord-user [^\n]*\/>$/, '')
 }
 
-// Attachments the model cannot see inline: it reads them with tools.
-export function localFilesBlock(paths: readonly string[]): string {
+const PromptAttachmentSchema = z.object({ name: z.string(), path: z.string(), inline: z.boolean() })
+export type PromptAttachment = z.infer<typeof PromptAttachmentSchema>
+
+// Every attachment of the message, numbered in Discord order, so the user and the
+// model can refer to "image 2". Inline ones are already in the message.
+export function attachmentsBlock(attachments: readonly PromptAttachment[]): string {
+  if (attachments.length === 0) return ''
+  const lines = attachments.map((file, index) => `${index + 1}. ${file.name}${file.inline ? ' (inline)' : ''}: ${file.path}`)
+  return `<attachments>\nFiles of this message in the order the user attached them, saved on disk. Read the ones not marked inline with tools.\n${lines.join('\n')}\n</attachments>\n`
+}
+
+// Prompts before numbered attachments: only the files the model could not see inline.
+function localFilesBlock(paths: readonly string[]): string {
   if (paths.length === 0) return ''
   return `<local-files>\nAttachments saved on disk. OpenCode cannot show these inline; use tools to read them.\n${paths.join('\n')}\n</local-files>\n`
 }
@@ -615,7 +630,8 @@ const TurnContextSchema = z.object({
   messageId: z.string(),
   threadId: z.string(),
   threadName: z.string(),
-  localFiles: z.array(z.string()),
+  attachments: z.array(PromptAttachmentSchema).optional(),
+  localFiles: z.array(z.string()).optional(),
 })
 export type TurnContext = z.infer<typeof TurnContextSchema>
 
@@ -624,8 +640,9 @@ export type TurnContext = z.infer<typeof TurnContextSchema>
 export function turnContext(metadata: Readonly<Record<string, unknown>> | undefined): string | null {
   const parsed = TurnContextSchema.safeParse(metadata?.['discord'])
   if (!parsed.success) return null
-  const { username, userId, messageId, threadId, threadName, localFiles } = parsed.data
-  return `${localFilesBlock(localFiles)}<discord-user name="${escapeAttribute(username)}" user-id="${userId}" message-id="${messageId}" thread-id="${threadId}" thread-name="${escapeAttribute(threadName)}" />`
+  const { username, userId, messageId, threadId, threadName, attachments, localFiles } = parsed.data
+  const files = attachments ? attachmentsBlock(attachments) : localFilesBlock(localFiles ?? [])
+  return `${files}<discord-user name="${escapeAttribute(username)}" user-id="${userId}" message-id="${messageId}" thread-id="${threadId}" thread-name="${escapeAttribute(threadName)}" />`
 }
 
 export type VoiceCallUser = { id: string; username: string }
