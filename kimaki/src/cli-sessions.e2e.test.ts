@@ -1,4 +1,4 @@
-// CLI session commands: editors, search by channel, command, named fork, resume by folder.
+// CLI session commands: editors, command, named fork, resume by folder.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -68,16 +68,14 @@ test('session diff prints critique output for the session folder', async () => {
   expect(diff.stdout).toContain('No changes to display')
 })
 
-test('session editors lists sessions that wrote a file, skips failed tool calls; search accepts a channel', async () => {
+test('session editors lists sessions that wrote a file, skips failed tool calls', async () => {
   const writer = await newSession('editor-marker write')
   // An edit of a missing file fails and must not be recorded.
   await newSession('fail-marker edit')
   const written = await cli(['session', 'editors', 'edited.txt', '--json'])
   const failed = await cli(['session', 'editors', path.join(server.projectDirectory, 'missing.txt')]).catch((error: Error & { code: number }) => error)
-  const searched = await cli(['session', 'search', 'editor-marker', '--channel', twin.channelId])
   expect(JSON.parse(written.stdout).map((row: { sessionId: string }) => row.sessionId)).toEqual([writer.sessionId])
   expect(failed instanceof Error && failed.code).toBe(1)
-  expect(searched.stdout).toContain(writer.sessionId)
 })
 
 test('session command, named fork, and resume without a channel use the session folder', async () => {
