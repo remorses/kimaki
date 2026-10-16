@@ -4,10 +4,11 @@
 
 FROM node:24-slim
 
-# git, curl, unzip are required (git for opencode, curl+unzip for bun installer)
-RUN apt-get update && apt-get install -y git curl unzip && rm -rf /var/lib/apt/lists/*
+# git for opencode, curl for the installers, unzip for the bun installer,
+# python3/make/g++ for node-gyp (tree-sitter has no linux prebuild for the bunx tools)
+RUN apt-get update && apt-get install -y git curl unzip python3 make g++ && rm -rf /var/lib/apt/lists/*
 
-# Install bun (required by opencode)
+# Bun runs the bunx tools the agent uses (critique, tuistory, opensrc)
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
 
@@ -15,12 +16,12 @@ ENV PATH="/root/.bun/bin:$PATH"
 # IMPORTANT: always use the latest published version here.
 # Check with: npm view kimaki version
 # Bump this after publishing a new kimaki version, then fly deploy.
-RUN npm install -g kimaki@0.27.0
+RUN npm install -g kimaki@1.2.0
 
-# Pre-install opencode so kimaki doesn't need to fetch it at runtime.
-# The opencode installer can fail when GitHub API rate-limits the version lookup.
-# Pin a specific version to bypass the API call entirely.
-RUN curl -fsSL https://opencode.ai/install | bash -s -- --version 1.18.21
+# OpenCode V2. Kimaki does not bundle it and starts the OpenCode service itself.
+# Pin the version so the build does not depend on the latest-version API.
+# Check with: curl -fsSL https://opencode.ai/update/api/latest/cli/npm
+RUN curl -fsSL https://opencode.ai/v2/install | bash -s -- --version 2.0.31 --no-modify-path
 ENV PATH="/root/.opencode/bin:$PATH"
 
 # Pre-install tools the AI agent uses via bunx so first invocations are instant.
@@ -36,15 +37,13 @@ ENV OPENCODE_ENABLE_EXA=1
 
 WORKDIR /data
 
-# Allow opencode to read/write all directories without prompting.
-# The demo server creates projects in /data/projects and the agent needs
-# unrestricted filesystem access since there is no human to approve prompts.
+# OpenCode V2 config. The demo has no human to approve permission prompts,
+# so every action is allowed.
 RUN mkdir -p /root/.config/opencode && \
-    printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "model": "opencode/big-pickle",\n  "permission": "allow"\n}\n' > /root/.config/opencode/opencode.json
+    printf '{\n  "model": "opencode/big-pickle",\n  "permissions": [{ "action": "*", "resource": "*", "effect": "allow" }]\n}\n' > /root/.config/opencode/opencode.json
 
 # --gateway: use the shared Kimaki bot via gateway-proxy (no bot token needed)
 # --data-dir /data: store sqlite DB and config on the persistent volume
-# --projects-dir /data/projects: store user-created projects on the volume
 # --allow-all-users: anyone in the Discord server can use the bot
-# --auto-restart: respawn wrapper for crash recovery inside the container
-CMD ["kimaki", "--gateway", "--data-dir", "/data", "--projects-dir", "/data/projects", "--allow-all-users", "--auto-restart"]
+# The root kimaki process supervises the bot and respawns it on restart.
+CMD ["kimaki", "--gateway", "--data-dir", "/data", "--allow-all-users"]

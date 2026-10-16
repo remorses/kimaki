@@ -1,8 +1,7 @@
 ---
 title: Release process
 description: >
-  Steps to run before and after publishing the kimaki npm package: sync
-  skills, post the release to the #changelog Discord channel with the demo
+  Steps to run after publishing the kimaki npm package: post the release to the #changelog Discord channel with the demo
   bot token, deploy the website, and redeploy the kimaki-demo Fly.io app.
   Read before any kimaki publish, release, changelog post, website deploy,
   or demo deploy.
@@ -11,23 +10,12 @@ description: >
 # Release process
 
 ```
-pnpm sync-skills → commit skill changes → publish → gh release create
-  → /tmp/kimaki-release.md → #changelog post → website deploy
+publish → gh release create → /tmp/kimaki-release.md → #changelog post → website deploy
 
 kimaki-demo deploy (separate, when asked): bump Dockerfile version → pnpm fly deploy
 ```
 
-## 1. pre-publish: sync skills
-
-Before publishing to npm, always sync skills as the first step:
-
-```bash
-cd cli && pnpm sync-skills
-```
-
-This makes the npm package ship the latest synced skills from their source repos. Commit any skill changes before you continue with the publish.
-
-## 2. post-publish release notification
+## 1. post-publish release notification
 
 After every publish, once the `gh release create` step is done:
 
@@ -36,17 +24,18 @@ After every publish, once the `gh release create` step is done:
 
 The #changelog channel is in a different guild than the local bot's authorized guild, so you must use the demo bot's gateway token via sigillo. The kimaki sigillo project (org: npm) has a `KIMAKI_BOT_TOKEN` secret in the `dev` environment with the demo bot's `clientId:clientSecret`.
 
+Post it with Discord REST through the gateway proxy (the message must be at most 2000 chars):
+
 ```bash
-sigillo run -c dev -- kimaki send --channel 1514563453493313548 --prompt "$(cat /tmp/kimaki-release.md)" --notify-only --user '535922349652836367'
+jq -n --rawfile c /tmp/kimaki-release.md '{content: $c, allowed_mentions: {parse: []}}' > /tmp/kimaki-release.json
+sigillo run -c dev -- sh -c 'curl -s -w "%{http_code}\n" -X POST -H "Authorization: Bot $KIMAKI_BOT_TOKEN" -H "Content-Type: application/json" --data @/tmp/kimaki-release.json https://discord-gateway.kimaki.dev/api/v10/channels/1514563453493313548/messages'
 ```
 
-Run this from the kimakivoice repo root (where sigillo is set up). `KIMAKI_BOT_TOKEN` takes priority over local DB credentials when set, so `kimaki send` authenticates as the demo bot through the gateway proxy.
+Run this from the kimakivoice repo root (where sigillo is set up). Do not use `kimaki send` here: in V2 it goes to the local bot when one runs, and without a local bot it posts a remote-send envelope that only a bot owning a **project** channel answers. #changelog is not a project channel.
 
 The notification uses the version as a heading 1 title (e.g. `# v1.2.3`), followed by the same rich content as the gh release: descriptions, code examples, migration steps, before/after comparisons. Keep it detailed and user-facing, identical in quality to the gh release body.
 
-When `--notify-only` targets a non-project channel, the message is posted directly without a thread. For project channels, a thread is still created so users can reply to start a session.
-
-## 3. deploy the website
+## 2. deploy the website
 
 After every kimaki publish, once the changelog is generated and the gh release exists, deploy the website to production:
 
@@ -56,7 +45,7 @@ cd website && pnpm deployment:production
 
 The website shows the changelog and install instructions, so it must be updated right after each release.
 
-## 4. official Discord demo (kimaki-demo)
+## 3. official Discord demo (kimaki-demo)
 
 `kimaki-demo/` is the Fly.io app for the public try-Kimaki bot in the official Kimaki Discord. People use it to try Kimaki without a local install.
 
