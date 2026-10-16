@@ -461,7 +461,7 @@ export function registerSlashCommands(
     if (project instanceof Error) return logger.warn(project)
     if (!project) return
     const guild = interaction.guild ?? (await discord.guilds.fetch(interaction.guildId).catch(() => null))
-    if (!guild || !(await canUseKimaki({ guild, userId: interaction.user.id }))) {
+    if (!guild || !(await canUseKimaki(bot, { guild, userId: interaction.user.id }))) {
       if (interaction.isAutocomplete()) return respondChoices(interaction, [])
       if (interaction.isRepliable()) {
         await interaction.reply({ content: 'You do not have permission to use Kimaki', flags: MessageFlags.Ephemeral })

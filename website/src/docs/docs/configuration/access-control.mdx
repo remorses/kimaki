@@ -33,6 +33,16 @@ The **"Kimaki" role** is the recommended way to grant team access: create a role
 
 Create a role named **"no-kimaki"** (case-insensitive) to block specific users, **even server owners**. This is useful in shared servers to prevent accidental triggers from people who otherwise have admin rights.
 
+## Open the bot to everyone
+
+Start Kimaki with **`--allow-all-users`** to let every member of the server use it, for example on a public demo server:
+
+```bash
+kimaki --allow-all-users
+```
+
+The "no-kimaki" role still blocks, and provider logins still need an admin.
+
 ## Provider logins need an admin
 
 `/login` and `/transcription-key` store secrets for the whole bot. Only the **server owner** or a member with **Administrator** can use them. The "Kimaki" role and Manage Server are not enough.

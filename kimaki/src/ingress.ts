@@ -39,9 +39,13 @@ import { isVoiceAttachment, parseVoiceMessage, transcribe, voiceMediaType, type 
 
 const logger = createLogger('INGRESS')
 
-// Owner, Administrator, Manage Server, or a role named "Kimaki". A role named
-// "no-kimaki" always denies. Missing member data fails closed.
-export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: string }): Promise<boolean> {
+// Owner, Administrator, Manage Server, or a role named "Kimaki"; with
+// --allow-all-users every member. A role named "no-kimaki" always denies.
+// Missing member data fails closed.
+export async function canUseKimaki(
+  bot: Pick<Bot, 'allowAllUsers'>,
+  { guild, userId }: { guild: Guild; userId: string },
+): Promise<boolean> {
   const member = await guild.members.fetch({ user: userId, force: true }).catch((error: Error) => error)
   if (member instanceof Error) {
     // Still denied, but say why: a REST failure must not look like a missing role.
@@ -49,19 +53,20 @@ export async function canUseKimaki({ guild, userId }: { guild: Guild; userId: st
     return false
   }
   if (!(member instanceof GuildMember)) return false
-  return memberCanUseKimaki(member)
+  return memberCanUseKimaki(bot, member)
 }
 
 // MESSAGE_CREATE carries the author's current roles: no REST fetch on the hot path.
 // Discord omits the member only for webhook and ephemeral messages, which never get here.
-function authorCanUseKimaki(message: Message<true>): Promise<boolean> {
-  if (message.member instanceof GuildMember) return Promise.resolve(memberCanUseKimaki(message.member))
-  return canUseKimaki({ guild: message.guild, userId: message.author.id })
+function authorCanUseKimaki(bot: Bot, message: Message<true>): Promise<boolean> {
+  if (message.member instanceof GuildMember) return Promise.resolve(memberCanUseKimaki(bot, message.member))
+  return canUseKimaki(bot, { guild: message.guild, userId: message.author.id })
 }
 
-function memberCanUseKimaki(member: GuildMember): boolean {
+function memberCanUseKimaki(bot: Pick<Bot, 'allowAllUsers'>, member: GuildMember): boolean {
   const roleNames = member.roles.cache.map((role) => role.name.toLowerCase())
   if (roleNames.includes('no-kimaki')) return false
+  if (bot.allowAllUsers) return true
   if (member.guild.ownerId === member.id) return true
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true
   if (member.permissions.has(PermissionFlagsBits.ManageGuild)) return true
@@ -208,7 +213,7 @@ async function handleMessage(bot: Bot, message: Message) {
   if (!project) return
   if (project.channel_type === 'voice') {
     // The text chat of the voice channel talks to the running call.
-    if (message.author.bot || thread || !(await authorCanUseKimaki(message))) return
+    if (message.author.bot || thread || !(await authorCanUseKimaki(bot, message))) return
     bot.features.voiceCalls.text(bot, {
       guildId: message.guild.id,
       channelId,
@@ -221,7 +226,7 @@ async function handleMessage(bot: Bot, message: Message) {
     if (message.author.id !== bot.discord.user?.id) return
     return handleRemoteEnvelope(bot, { message, channelId, threadId: thread?.id ?? null })
   }
-  if (!(await authorCanUseKimaki(message))) {
+  if (!(await authorCanUseKimaki(bot, message))) {
     logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
     return
   }
@@ -317,7 +322,7 @@ export function registerIngress(bot: Bot) {
     serialize(message.channelId, async () => {
       const full = message.partial ? await message.fetch().catch(() => null) : message
       if (!full?.guild || !queuedItemFor(bot, { threadId: full.channelId, messageId: full.id })) return
-      if (!(await canUseKimaki({ guild: full.guild, userId: full.author.id }))) return
+      if (!(await canUseKimaki(bot, { guild: full.guild, userId: full.author.id }))) return
       // The re-queued prompt must carry the message's attachments again.
       const files = await saveAttachments({ dataDir: bot.dataDir, messageId: full.id, attachments: [...full.attachments.values()] })
       if (files instanceof Error) {

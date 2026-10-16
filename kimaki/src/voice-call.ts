@@ -349,7 +349,7 @@ export function createVoiceCalls({ opencodeConfigDir }: { opencodeConfigDir: str
     const states = guild.voiceStates.cache.filter((state) => state.channelId === channelId && state.id !== bot.discord.user?.id)
     const users = new Map<string, Author>()
     for (const state of states.values()) {
-      if (!(await canUseKimaki({ guild, userId: state.id }))) continue
+      if (!(await canUseKimaki(bot, { guild, userId: state.id }))) continue
       const user = await bot.discord.users.fetch(state.id).catch(() => null)
       users.set(state.id, { id: state.id, username: user?.username ?? state.id })
     }
