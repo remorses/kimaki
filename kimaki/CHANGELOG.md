@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+1. **`--allow-all-users` is back.** Every member of the server can use the bot, without the Kimaki role, Administrator or Manage Server. Useful for public demo servers:
+
+   ```bash
+   kimaki --allow-all-users
+   ```
+
+   The `no-kimaki` role still blocks a user. `/login` and `/transcription-key` stay limited to the server owner and Administrators. The flag is also kept in the autostart script.
+
 ## 1.1.0
 
 1. **Session transcripts you search with `rg`** (replaces `kimaki session search`). Kimaki writes one markdown file per session to `<data-dir>/transcripts/<session id>.md` when a run ends: user messages, assistant text and short tool inputs. No tool outputs, no thinking.
