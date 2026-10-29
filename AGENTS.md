@@ -147,6 +147,8 @@ before any publish, read `docs/release-process.md`. it covers the #changelog not
 
 ## github issues
 
+only issues are welcome: pull requests are restricted to collaborators. when a contributor wants to show a reference implementation, they link a commit on their fork in the issue. never open a pull request on remorses/kimaki unless remorses asked for one.
+
 never suggest installing kimaki from git (e.g. `npm i -g remorses/kimaki#main`). it does not work because the package needs a build step. always point users to the next npm release instead.
 
 the user-facing bug report workflow (export events, share evidence in a gist, issue vs PR) lives in `website/src/docs/docs/guides/report-bugs.mdx` and at https://kimaki.dev/docs/guides/report-bugs. keep that page in sync when the debug commands change.
