@@ -332,10 +332,6 @@ function mainmastSection({ sessionId, channelId, dataDir }: { sessionId: string;
     \`\`\`bash
     rg -n '^#+ ' MEMORY.md
     \`\`\`
-
-    ### while the user is away
-
-    You may get a reminder that the user has not replied for a while. Start work only if it clearly moves the user's goals forward: check on open threads, verify results, prepare the next step. Do it silently: reply exactly \`IDLE\` unless you found something important the user should really see.
   `
 }
 

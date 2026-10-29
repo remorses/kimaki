@@ -450,7 +450,7 @@ function applyRoot(context: Context & { event: V2Event }) {
     }
     case 'session.text.ended': {
       const text = event.data.text.trim()
-      // A mainmast turn with nothing for the user (idle nudge, a note) answers IDLE_REPLY: Discord shows nothing.
+      // A mainmast turn with nothing for the user (a note, a started worker) answers IDLE_REPLY: Discord shows nothing.
       if (!text || text === IDLE_REPLY) return
       const replyTo = draft.turn?.replyTo ?? null
       // The reply header already sets the text apart from the tool lines above.

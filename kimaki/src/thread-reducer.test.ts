@@ -77,7 +77,7 @@ test('a turn that posts nothing visible ends without a footer', () => {
   `)
 })
 
-test('any turn that answers IDLE posts no text and no footer, not only idle nudges', () => {
+test('any turn that answers IDLE posts no text and no footer', () => {
   const turn = loadFixture('tools.events.jsonl').filter((event) => !event.type.startsWith('session.tool.'))
   const idle = turn.map((event) => (event.type === 'session.text.ended' ? { ...event, data: { ...event.data, text: 'IDLE' } } : event))
   const visible = replay({ events: idle }).effects.filter((effect) => effect.type === 'markdown' || effect.type === 'footer')

@@ -307,7 +307,7 @@ markdown tables and callouts render as a Components V2 `Container` (`markdown/co
 
 use this to write tests that find messages matching specific patterns. formatting lives in `format-parts.ts`.
 
-- in a mainmast channel the coordinator replies in the channel itself (banner, text, tool lines, footer). Kimaki posts no notice when a worker thread ends: the woken coordinator reports the outcome with the `<#thread>` link. an idle-nudge turn that answers `IDLE` posts nothing, not even a footer.
+- in a mainmast channel the coordinator replies in the channel itself (banner, text, tool lines, footer). Kimaki posts no notice when a worker thread ends: the woken coordinator reports the outcome with the `<#thread>` link. a turn that answers `IDLE` posts nothing, not even a footer.
 - with `--no-mainmast`, Kimaki creates a thread on the first user message and replies in it. sessions the bot created start with a banner: `-# *using anthropic/claude-sonnet-4 ⋅ build*` (`formatBanner`).
 - assistant text is plain Discord markdown, full width, **never quoted**. reasoning is never shown.
 - tool lines are subtext: `-# ┣ shell _ls_`, file edits and writes use `◼︎`: `-# ◼︎ edit *file.ts* (+3-1)` (`formatToolLine`). subagent lines carry the agent: `-# ┣ general ⋅ glob _*.md_`. when the kind changes between text and tool, the next block starts with a blank line.
