@@ -95,7 +95,7 @@ export function registerStartCommand(cli: Goke) {
     .option('--disable-skills <list>', 'Built-in Kimaki skills to turn off: "all" or a comma separated list (kimaki-debug,kimaki-tunnel)')
     .option('--disable-prompt <section>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: `System prompt section to remove from new sessions (repeatable): ${PROMPT_SECTIONS.join(', ')}` }))
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
-    .option('--no-mainmast', 'Channel messages start a new thread each, instead of going to one long session in the channel')
+    .option('--enable-coordinator', 'Channel messages go to one long coordinator session that starts threads for the work (/toggle-coordinator sets one channel)')
     .option('--no-autostart', 'Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)')
     .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
@@ -226,7 +226,7 @@ export function registerStartCommand(cli: Goke) {
         allowAllUsers: Boolean(options.allowAllUsers),
         disabledSkills,
         disabledPrompt,
-        mainmast: !options.noMainmast,
+        enableCoordinator: Boolean(options.enableCoordinator),
       })
       if (bot instanceof Error) failStartup(bot)
       // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
@@ -262,7 +262,7 @@ export function registerStartCommand(cli: Goke) {
           ...(options.disableSkills ? ['--disable-skills', options.disableSkills] : []),
           ...disabledPrompt.flatMap((section) => ['--disable-prompt', section]),
           ...(options.noAnalytics ? ['--no-analytics'] : []),
-          ...(options.noMainmast ? ['--no-mainmast'] : []),
+          ...(options.enableCoordinator ? ['--enable-coordinator'] : []),
           ...(options.machineName ? ['--machine-name', options.machineName] : []),
         ] })
         if (autostart instanceof Error) logger.warn('cannot write the autostart script', autostart)

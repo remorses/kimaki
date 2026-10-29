@@ -18,7 +18,7 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js'
 
-import { projectOf, sessionDirectory, type Author, type Bot, type Conversation } from './bot.ts'
+import { isCoordinatorChannel, projectOf, sessionDirectory, type Author, type Bot, type Conversation } from './bot.ts'
 import { ConfigError, DiscordError } from './errors.ts'
 import { formatError, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
@@ -50,7 +50,7 @@ export type InteractionRoutes = {
 // --- Context
 
 // Where an interaction happens: the project channel and, in a session
-// thread or a mainmast channel, that conversation and its root session.
+// thread or a coordinator channel, that conversation and its root session.
 export type InteractionTarget = {
   channelId: string
   directory: string
@@ -75,8 +75,8 @@ export async function resolveTarget(bot: Bot, channelId: string | null): Promise
   const row = await projectOf(bot, projectChannelId)
   if (row instanceof Error) return row
   if (!row) return new ConfigError({ reason: 'This channel is not configured with a project directory' })
-  // A mainmast channel is the conversation of its root session. With --no-mainmast an old binding is ignored, like in ingress.
-  const conversation = thread ?? (bot.mainmast && channel?.type === ChannelType.GuildText && bot.store.getState().roots[channel.id] ? channel : null)
+  // A coordinator channel is the conversation of its root session. With coordinator mode off its binding is ignored, like in ingress.
+  const conversation = thread ?? (channel?.type === ChannelType.GuildText && isCoordinatorChannel(bot, channel.id) && bot.store.getState().roots[channel.id] ? channel : null)
   const sessionId = conversation ? (bot.store.getState().roots[conversation.id] ?? null) : null
   const directory = sessionId ? await sessionDirectory(bot, sessionId) : row.directory
   if (directory instanceof Error) return directory

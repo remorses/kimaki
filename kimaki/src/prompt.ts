@@ -55,7 +55,7 @@ const logger = createLogger('PROMPT')
 
 // Who sent a prompt that no person typed in Discord: `kimaki send`, routines,
 // remote sends, sleep wakes. Stored in the prompt metadata; at the run end
-// mainmast.ts reads it: only a run a mainmast prompted wakes that mainmast.
+// coordinator.ts reads it: only a run a coordinator prompted wakes that coordinator.
 export type Sender = {
   // The session whose shell ran `kimaki send` (OPENCODE_SESSION_ID).
   sessionId?: string
@@ -573,7 +573,7 @@ export async function send(
   // Every --user joins the thread; startSession adds them to a new session itself.
   // Not awaited: the prompt does not wait for Discord round trips.
   const addMembers = (thread: Conversation, ids: readonly string[]) => {
-    // A mainmast channel has no thread members to add.
+    // A coordinator channel has no thread members to add.
     if (!thread.isThread()) return
     for (const id of ids) void thread.members.add(id).catch((error: Error) => logger.warn(`add thread member ${id}`, error))
   }
@@ -697,6 +697,6 @@ export async function upload(bot: Bot, { id, files }: { id: string; files: Array
   }
   const urls = await new Promise<Error | string[]>((settle) => bot.effects.run(threadId, [{ type: 'attachments', files: sized, settle }]))
   if (urls instanceof Error) return urls
-  // Discord keeps attachments in upload order. The URLs let a mainmast repost the files.
+  // Discord keeps attachments in upload order. The URLs let a coordinator repost the files.
   return { uploaded: files.map((file, index) => ({ name: file.name, url: urls[index] ?? null })) }
 }

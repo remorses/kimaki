@@ -124,6 +124,14 @@ export const channel_mention_mode = s.sqliteTable('channel_mention_mode', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
+// /toggle-coordinator choice of a project channel. Missing: the `--enable-coordinator` default.
+export const channel_coordinator = s.sqliteTable('channel_coordinator', {
+  channel_id: s.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
+  enabled: s.integer('enabled', { mode: 'number' }).notNull(),
+  created_at: datetime('created_at').default(orm.sql`CURRENT_TIMESTAMP`),
+  updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
+})
+
 export const scheduled_tasks = s.sqliteTable('scheduled_tasks', {
   id: s.integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }).notNull(),
   status: s.text('status', { enum: ['planned', 'running', 'completed', 'cancelled', 'failed'] }).notNull().default('planned'),
@@ -176,6 +184,7 @@ export const relations = defineRelations({
   channel_worktrees,
   channel_verbosity,
   channel_mention_mode,
+  channel_coordinator,
   scheduled_tasks,
   session_sleeps,
 }, (r) => ({
@@ -203,6 +212,7 @@ export const relations = defineRelations({
     channel_worktree: r.one.channel_worktrees({ from: r.channel_directories.channel_id, to: r.channel_worktrees.channel_id }),
     channel_verbosity: r.one.channel_verbosity({ from: r.channel_directories.channel_id, to: r.channel_verbosity.channel_id }),
     channel_mention_mode: r.one.channel_mention_mode({ from: r.channel_directories.channel_id, to: r.channel_mention_mode.channel_id }),
+    channel_coordinator: r.one.channel_coordinator({ from: r.channel_directories.channel_id, to: r.channel_coordinator.channel_id }),
     scheduled_tasks: r.many.scheduled_tasks(),
   },
   channel_models: {
@@ -219,6 +229,9 @@ export const relations = defineRelations({
   },
   channel_mention_mode: {
     channel: r.one.channel_directories({ from: r.channel_mention_mode.channel_id, to: r.channel_directories.channel_id }),
+  },
+  channel_coordinator: {
+    channel: r.one.channel_directories({ from: r.channel_coordinator.channel_id, to: r.channel_directories.channel_id }),
   },
   scheduled_tasks: {
     channel: r.one.channel_directories({ from: r.scheduled_tasks.channel_id, to: r.channel_directories.channel_id }),

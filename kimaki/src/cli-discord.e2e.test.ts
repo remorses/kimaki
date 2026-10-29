@@ -41,7 +41,7 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
   fs.mkdirSync(path.join(server.root, 'other'), { recursive: true })
   for (const name of ['b.png', 'my shot.png', 'other/b.png']) fs.writeFileSync(path.join(server.root, name), 'png')
   const uploaded = await cli(['upload-to-discord', ...['b.png', 'report.txt', 'my shot.png', 'other/b.png'].map((name) => path.join(server.root, name)), '--session', started.sessionId])
-  // Each file with its Discord URL, in argument order, so a mainmast can repost them (the twin uses data: URLs).
+  // Each file with its Discord URL, in argument order, so a coordinator can repost them (the twin uses data: URLs).
   expect(uploaded.stdout).toMatchInlineSnapshot(`
     "{"uploaded":[{"name":"b.png","url":"data:application/octet-stream;base64,cG5n"},{"name":"report.txt","url":"data:application/octet-stream;base64,cmVwb3J0"},{"name":"my shot.png","url":"data:application/octet-stream;base64,cG5n"},{"name":"b.png","url":"data:application/octet-stream;base64,cG5n"}]}
     "

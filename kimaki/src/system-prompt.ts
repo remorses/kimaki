@@ -18,7 +18,7 @@ export type ScheduledRun = { id: number; cronExpr: string | null; timezone: stri
 const PARENT_SESSION_LINE = 'Your parent OpenCode session ID is: '
 
 // Every system-level instruction of Kimaki is built in this file, except the
-// mainmast roles: the plugin adds them (plugin/mainmast.ts). Parts are
+// coordinator roles: the plugin adds them (plugin/coordinator.ts). Parts are
 // joined in order; a tagged part is static and `--disable-prompt <tag>` drops it.
 export function baseInstructions({
   sessionId,
@@ -31,7 +31,7 @@ export function baseInstructions({
   agents,
   parentSessionId,
   scheduledTask = null,
-  mainmast: isMainmast = false,
+  coordinator: isCoordinator = false,
   disabled = [],
 }: {
   sessionId: string
@@ -46,17 +46,17 @@ export function baseInstructions({
   // Only from an explicit `kimaki send --parent-session`.
   parentSessionId: string | null
   scheduledTask?: ScheduledRun | null
-  // The coordinator of a mainmast channel. Its role instructions come from the
-  // plugin (plugin/mainmast.ts), so they update in existing sessions.
-  mainmast?: boolean
+  // The coordinator of a coordinator channel. Its role instructions come from the
+  // plugin (plugin/coordinator.ts), so they update in existing sessions.
+  coordinator?: boolean
   // `kimaki --disable-prompt`: tagged static parts to leave out.
   disabled?: readonly PromptSection[]
 }): string {
   const userArg = ` --user '${userId}'`
   const parentArg = ` --parent-session ${sessionId}`
-  // The mainmast lives in the channel itself: thread-only parts are left out.
-  // The mainmast adds the user to a worker thread only when needed (plugin/mainmast.ts).
-  const workerUserArg = isMainmast ? '' : userArg
+  // The coordinator lives in the channel itself: thread-only parts are left out.
+  // The coordinator adds the user to a worker thread only when needed (plugin/coordinator.ts).
+  const workerUserArg = isCoordinator ? '' : userArg
   const topic = channelTopic?.trim()
   const agentList = agents.map((agent) => `- \`${agent.name}\`${agent.description ? `: ${agent.description}` : ''}`).join('\n')
   const parts: Array<[PromptSection | null, string]> = [
@@ -111,7 +111,7 @@ export function baseInstructions({
     `],
     [null, dedent`
       Discord channel ID: ${channelId}
-      ${isMainmast ? 'You run in this channel, not in a thread.' : `Discord thread ID: ${threadId}`}
+      ${isCoordinator ? 'You run in this channel, not in a thread.' : `Discord thread ID: ${threadId}`}
       Discord guild ID: ${guildId}
       ${parentSessionId ? `${PARENT_SESSION_LINE}${parentSessionId}\nYou can send a message back to the parent session with:\nkimaki send --session ${parentSessionId} --prompt 'your update here' --agent <current_agent>\nDo NOT message the parent session unless the user explicitly asks you to.` : ''}
 
@@ -202,7 +202,7 @@ export function baseInstructions({
       On a wake where nothing changed, do not post a status report. Write one short line, then sleep again with a longer wait (double it, up to 1d).
     `],
     [null, scheduledTask ? scheduledTaskSection(scheduledTask) : ''],
-    [null, isMainmast ? '' : dedent`
+    [null, isCoordinator ? '' : dedent`
       ## archiving the current thread
 
       To archive the current Discord thread (hide it from sidebar) without stopping the session, run:
@@ -220,7 +220,7 @@ export function baseInstructions({
 
       This stops the AI from processing but keeps the thread visible in Discord. Different from \`kimaki session archive\` which hides the thread.
     `],
-    [null, isMainmast ? '' : dedent`
+    [null, isCoordinator ? '' : dedent`
       ## updating the session title
 
       Skip the first turn. OpenCode already auto-generates the title from the first message.
@@ -338,7 +338,7 @@ export function baseInstructions({
 
       ### session handoff
 
-      ${isMainmast ? handoffMainmast : `${handoffThread}\n\nkimaki send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${parentArg}${userArg}`}
+      ${isCoordinator ? handoffCoordinator : `${handoffThread}\n\nkimaki send --channel ${channelId} --prompt 'Continuing from previous session: <summary of current task and state>' --agent <current_agent>${parentArg}${userArg}`}
 
       ## scheduled sends and routines
 
@@ -655,7 +655,7 @@ export function baseInstructions({
 }
 
 const handoffThread = 'When you are approaching the **context window limit**, or the user asks to "handoff", "continue in new thread", or "start fresh session", or a complex task would benefit from a clean slate, start a fresh session with a summary:'
-const handoffMainmast = 'You never hand off: Kimaki compacts your context when it grows. Keep what must survive in MEMORY.md. When the user wants a fresh coordinator, tell them to run `/new-mainmast` in this channel.'
+const handoffCoordinator = 'You never hand off: Kimaki compacts your context when it grows. Keep what must survive in MEMORY.md. When the user wants a fresh coordinator, tell them to run `/reset-coordinator` in this channel.'
 
 function scheduledTaskSection(task: ScheduledRun): string {
   const schedule = task.cronExpr

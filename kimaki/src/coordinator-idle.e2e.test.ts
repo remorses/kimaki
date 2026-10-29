@@ -1,5 +1,5 @@
-// The mainmast plugin warmup (plugin/mainmast.ts) with a short window: an idle
-// mainmast with no running threads ends its warmup at the first check and is compacted.
+// The coordinator plugin warmup (plugin/coordinator.ts) with a short window: an idle
+// coordinator with no running threads ends its warmup at the first check and is compacted.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -26,7 +26,7 @@ let server: OpencodeTestServer
 let twin: TestTwin
 let bot: BotHandle
 const dataDir = tempDataDir()
-// A large context, so the compaction is worth it (plugin/mainmast.ts MIN_COMPACT_TOKENS),
+// A large context, so the compaction is worth it (plugin/coordinator.ts MIN_COMPACT_TOKENS),
 // in a 1M window like Claude Opus: only 12% of it, far below automatic compaction.
 const bigUsage = { inputTokens: 120_000, outputTokens: 1, totalTokens: 120_001 }
 
@@ -49,7 +49,7 @@ beforeAll(async () => {
   ])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true, mainmastTimers: { warmIntervalMs: 1_200, warmMaxMs: 60_000 } })
+  bot = await startTestBot({ dataDir, twin, server, coordinator: true, coordinatorTimers: { warmIntervalMs: 1_200, warmMaxMs: 60_000 } })
 }, 60_000)
 
 afterAll(async () => {
@@ -59,14 +59,14 @@ afterAll(async () => {
   fs.rmSync(dataDir, { recursive: true, force: true })
 })
 
-test('an idle mainmast gets compacted when its warmup ends', async () => {
+test('an idle coordinator gets compacted when its warmup ends', async () => {
   const { discord, channelId } = twin
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Hello idle-marker' })
   await waitForFooter({ discord, threadId: channelId })
   const client = await server.client()
   const root = bot.store.getState().roots[channelId]!
   await waitFor({
-    label: 'compaction of the idle mainmast',
+    label: 'compaction of the idle coordinator',
     check: async () => (await client.message.list({ sessionID: root, order: 'desc', limit: 10 })).data.some((message) => message.type === 'compaction') || null,
   })
 

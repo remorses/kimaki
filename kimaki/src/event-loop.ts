@@ -120,7 +120,7 @@ export function createEventLoop({
 
   // Every change of thread views goes through here. The reducer's typing only
   // sees its own view; typing follows conversationTyping instead, which also
-  // changes in the mainmast of the thread's channel.
+  // changes in the coordinator of the thread's channel.
   function commit({ threadId, effects: produced = [], update }: { threadId: string; effects?: readonly Effect[]; update: (state: State) => Partial<State> }) {
     const before = store.getState().threads
     store.setState(update)
@@ -204,7 +204,7 @@ export function createEventLoop({
       if (!sessionId) return null
       const thread = await discord.channels.fetch(threadId).catch((e) => e instanceof DiscordAPIError && e.code === RESTJSONErrorCodes.UnknownChannel ? null : new DiscordError({ operation: `fetch thread ${threadId}`, cause: e }))
       if (thread instanceof Error) return thread
-      // A mainmast channel is its own conversation.
+      // A coordinator channel is its own conversation.
       const channelId = thread?.isThread() ? thread.parentId : thread?.type === ChannelType.GuildText ? thread.id : null
       if (!channelId) return null
       const project = await db.query.channel_directories.findFirst({ where: { channel_id: channelId } }).catch((e) => new DbError({ operation: 'read channel_directories', cause: e }))
@@ -232,7 +232,7 @@ export function createEventLoop({
       return
     }
     if (!store.getState().threads[threadId]) {
-      const view = emptyView({ sessionId, channelId: loaded.channelId, directory: loaded.directory, isNew: false, mainmast: threadId === loaded.channelId })
+      const view = emptyView({ sessionId, channelId: loaded.channelId, directory: loaded.directory, isNew: false, coordinator: threadId === loaded.channelId })
       commit({ threadId, update: (current) => ({ threads: { ...current.threads, [threadId]: view } }) })
     }
     for (const event of entry.events) fold(threadId, event)
@@ -369,19 +369,22 @@ export function createEventLoop({
   }
 
   return {
-    // Bindings and channel verbosity from SQLite. Several bindings can share a
+    // Bindings, channel verbosity and coordinator mode from SQLite. Several bindings can share a
     // session after V1 /resume; the most recently updated one wins.
     async load(): Promise<DbError | void> {
-      const [rows, verbosity] = await Promise.all([
+      const [rows, verbosity, coordinator] = await Promise.all([
         db.query.thread_sessions.findMany({ orderBy: { updated_at: 'asc' } }).catch((e) => new DbError({ operation: 'read thread_sessions', cause: e })),
         db.query.channel_verbosity.findMany().catch((e) => new DbError({ operation: 'read channel_verbosity', cause: e })),
+        db.query.channel_coordinator.findMany().catch((e) => new DbError({ operation: 'read channel_coordinator', cause: e })),
       ])
       if (rows instanceof Error) return rows
       if (verbosity instanceof Error) return verbosity
+      if (coordinator instanceof Error) return coordinator
       store.setState({
         roots: Object.fromEntries(rows.map((row) => [row.thread_id, row.session_id])),
         sessionThreads: Object.fromEntries(rows.map((row) => [row.session_id, row.thread_id])),
         verbosity: Object.fromEntries(verbosity.map((row) => [row.channel_id, verbosityFromV1(row.verbosity)])),
+        coordinator: Object.fromEntries(coordinator.map((row) => [row.channel_id, row.enabled === 1])),
       })
     },
 
@@ -411,7 +414,7 @@ export function createEventLoop({
         update: (current) => ({
           roots: { ...current.roots, [threadId]: sessionId },
           sessionThreads: { ...current.sessionThreads, [sessionId]: threadId },
-          threads: { ...current.threads, [threadId]: emptyView({ sessionId, channelId, directory, isNew, mainmast: threadId === channelId }) },
+          threads: { ...current.threads, [threadId]: emptyView({ sessionId, channelId, directory, isNew, coordinator: threadId === channelId }) },
         }),
       })
       // Same synchronous turn as the routing change: no live event can come first.

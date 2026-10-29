@@ -7,7 +7,7 @@
 //   inbox.delivered (or promoted)      ─▶ "Queued message sent" reply to the user message, ack says "Queued"
 //   inbox.cancelled                    ─▶ ack says "Removed from queue"
 //
-// Every acked item gets that reply when it starts, in threads and mainmast
+// Every acked item gets that reply when it starts, in threads and coordinator
 // channels alike. The prompt text is never posted again. Prompts without a Discord
 // message (CLI, routines, TUI) have nothing for the ack to reply to: the ack
 // shows the full prompt, and the "Queued message sent" reply goes to the ack.
@@ -36,7 +36,7 @@ export type PendingInput = {
   username: string | null
   // Discord message the prompt came from (the ack replies to it).
   messageId: string | null
-  // The first answer text replies to this message. Only in a mainmast channel:
+  // The first answer text replies to this message. Only in a coordinator channel:
   // a thread holds one conversation, so turns need no extra delimiter there.
   // Not for acked items: their "Queued message sent" reply marks the start.
   replyTo: string | null
@@ -75,7 +75,7 @@ function inputFields({ payload, channelId }: { payload: { text: string; metadata
     text,
     username: typeof username === 'string' ? username : null,
     messageId,
-    // A mainmast prompt's conversation is the project channel itself.
+    // A coordinator prompt's conversation is the project channel itself.
     replyTo: discord['threadId'] === channelId ? messageId : null,
     // Shown when a prompt without a Discord message is taken (wake, scheduled run).
     echo: typeof echo === 'string' ? echo : null,
@@ -146,7 +146,7 @@ function closeAck({ emit }: Slice, item: PendingInput, status: string) {
 
 // An acked item starts running. The user message (or the ack without one)
 // already shows the prompt: a reply to it marks where it runs, instead of a
-// second copy. Also in a mainmast, where the answer may post no text (IDLE).
+// second copy. Also in a coordinator, where the answer may post no text (IDLE).
 function markStarted({ emit }: Slice, item: PendingInput) {
   const ack = textOnly(ackContent(item, item.messageId ? 'Queued' : null))
   emit({ type: 'edit', key: ackKey(item.inboxID), messages: [ack], reply: asSubtext('Queued message sent'), replyTo: item.messageId })

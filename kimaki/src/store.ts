@@ -1,5 +1,6 @@
 // The only shared mutable in-memory state of the bot (spec 27.4). One zustand
-// atom. The event loop writes bindings and views; /verbosity writes verbosity.
+// atom. The event loop writes bindings and views; /verbosity writes verbosity,
+// /toggle-coordinator writes coordinator.
 // State private to one module (held events, wizard picks, upload waits) stays
 // in that module's closure.
 
@@ -17,10 +18,12 @@ export type State = {
   threads: Readonly<Record<string, ThreadView>>
   // channelId -> verbosity, from channel_verbosity (SQLite). Missing: the default.
   verbosity: Readonly<Record<string, Verbosity>>
+  // channelId -> coordinator mode, from channel_coordinator (SQLite). Missing: bot.coordinatorDefault.
+  coordinator: Readonly<Record<string, boolean>>
 }
 
 export function createBotStore() {
-  return createStore<State>(() => ({ roots: {}, sessionThreads: {}, threads: {}, verbosity: {} }))
+  return createStore<State>(() => ({ roots: {}, sessionThreads: {}, threads: {}, verbosity: {}, coordinator: {} }))
 }
 
 export type BotStore = ReturnType<typeof createBotStore>

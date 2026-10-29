@@ -8,7 +8,7 @@ import * as errore from 'errore'
 
 import { createAgentUi } from './agent-ui.ts'
 import type { Analytics } from './analytics.ts'
-import { oc, type Bot, type MainmastTimers } from './bot.ts'
+import { oc, type Bot, type CoordinatorTimers } from './bot.ts'
 import type { PromptSection } from './builtin-skills.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
@@ -18,7 +18,7 @@ import { registerIngress } from './ingress.ts'
 import { runLockRoute } from './lock-routes.ts'
 import { installShim, type LockServer } from './lock-server.ts'
 import { createLogger } from './logger.ts'
-import { createMainmastNotes } from './mainmast.ts'
+import { createCoordinatorNotes } from './coordinator.ts'
 import { installPluginShim, watchOpencode, type OpencodeEndpoint } from './opencode-server.ts'
 import { countUserProjects } from './project.ts'
 import { createScheduler, systemClock, type Clock } from './scheduler.ts'
@@ -73,10 +73,10 @@ export type StartBotOptions = {
   disabledSkills?: readonly string[]
   // Static instruction parts left out of new sessions (system-prompt.ts).
   disabledPrompt?: readonly PromptSection[]
-  // Mainmast channels (ingress.ts). Default off, so tests opt in.
-  mainmast?: boolean
-  // Default: the plugin's warmup windows (plugin/mainmast.ts). Tests pass short ones.
-  mainmastTimers?: MainmastTimers
+  // `--enable-coordinator`: coordinator mode for channels without a /toggle-coordinator choice (ingress.ts).
+  enableCoordinator?: boolean
+  // Default: the plugin's warmup windows (plugin/coordinator.ts). Tests pass short ones.
+  coordinatorTimers?: CoordinatorTimers
 }
 
 export type BotHandle = Bot & {
@@ -155,10 +155,10 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
       if (result instanceof Error) logger.warn(`transcript of ${sessionId} not synced`, result)
     })
   }
-  const mainmastNotes = createMainmastNotes()
+  const coordinatorNotes = createCoordinatorNotes()
   const onRunEnded = (run: RunEnded) => {
     voiceCalls.runEnded(run)
-    mainmastNotes.runEnded(run)
+    coordinatorNotes.runEnded(run)
   }
   const eventLoop = createEventLoop({ store, db, discord, effects, recorder, analytics: options.analytics, onRunEnded, onTranscriptDue })
   const loaded = await eventLoop.load()
@@ -200,8 +200,8 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     allowAllUsers: options.allowAllUsers ?? false,
     disabledSkills: options.disabledSkills ?? [],
     disabledPrompt: options.disabledPrompt ?? [],
-    mainmast: options.mainmast ?? false,
-    mainmastTimers: options.mainmastTimers ?? null,
+    coordinatorDefault: options.enableCoordinator ?? false,
+    coordinatorTimers: options.coordinatorTimers ?? null,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
   }
   const scheduler = createScheduler({
@@ -214,7 +214,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // Before login: gateway-proxy replays missed messages right after READY.
   registerIngress(bot)
   voiceCalls.register(bot)
-  mainmastNotes.register(bot)
+  coordinatorNotes.register(bot)
   // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.
   cleanup.defer(() => voiceCalls.stop(bot))
 

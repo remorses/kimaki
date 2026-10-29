@@ -30,9 +30,9 @@ export type Author = { id: string; username: string }
 
 export type PromptFile = { uri: string; name: string }
 
-// Warmup windows of a mainmast (plugin/mainmast.ts): a keep-alive every
+// Warmup windows of a coordinator (plugin/coordinator.ts): a keep-alive every
 // warmIntervalMs while its channel is busy, at most warmMaxMs after its last turn.
-export type MainmastTimers = { warmIntervalMs: number; warmMaxMs: number }
+export type CoordinatorTimers = { warmIntervalMs: number; warmMaxMs: number }
 
 export type ModelChoice = { providerID: string; id: string; variant: string | null }
 
@@ -76,11 +76,11 @@ export type Bot = {
   disabledSkills: readonly string[]
   // `kimaki --disable-prompt`: static instruction parts left out of new sessions.
   disabledPrompt: readonly PromptSection[]
-  // Project channel messages go to one long coordinator session in the channel
-  // (mainmast); off with `kimaki --no-mainmast`.
-  mainmast: boolean
-  // Short mainmast warmup windows (tests); null uses the plugin defaults.
-  mainmastTimers: MainmastTimers | null
+  // Default for channels without a channel_coordinator row (`kimaki --enable-coordinator`):
+  // project channel messages go to one long coordinator session in the channel.
+  coordinatorDefault: boolean
+  // Short coordinator warmup windows (tests); null uses the plugin defaults.
+  coordinatorTimers: CoordinatorTimers | null
   features: BotFeatures
 }
 
@@ -111,6 +111,11 @@ export async function sessionDirectory(bot: Pick<Bot, 'opencode'>, sessionId: st
   return info.location.directory
 }
 
+// A project channel in coordinator mode: its /toggle-coordinator choice, else the default.
+export function isCoordinatorChannel(bot: Bot, channelId: string): boolean {
+  return bot.store.getState().coordinator[channelId] ?? bot.coordinatorDefault
+}
+
 export function rootSession(bot: Bot, threadId: string): OpenCodeError | string {
   return bot.store.getState().roots[threadId] ?? new OpenCodeError({ operation: `find the session of thread ${threadId}` })
 }
@@ -122,7 +127,7 @@ export function threadOfSession(bot: Bot, sessionId: string): string | null {
   return threadId && roots[threadId] === sessionId ? threadId : null
 }
 
-// Where a root session talks to the user: its thread, or a mainmast project
+// Where a root session talks to the user: its thread, or a coordinator project
 // channel (the channel itself is the conversation, roots[channelId]).
 export type Conversation = ThreadChannel | TextChannel
 

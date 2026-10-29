@@ -1,21 +1,21 @@
-// Mainmast sessions in the OpenCode process: their role instructions (below)
+// Coordinator sessions in the OpenCode process: their role instructions (below)
 // and the prompt cache warmup of the coordinator.
 //
 // Warmup works like OpenCode's `warming` (core/src/plugin/warming.ts): a
 // `session.generate` keep-alive reads the cached prompt prefix, which keeps the
 // provider cache alive, and stores nothing in the session. It runs only while
-// the mainmast's channel is busy, so the <session-finished> note of a worker
+// the coordinator's channel is busy, so the <session-finished> note of a worker
 // reads a warm cache instead of writing it again:
 //
 //   model request ─▶ intervalMs later: channel busy? ─▶ keep-alive, again intervalMs later
 //                                     └─▶ idle, or maxMs after the last real request ─▶ end
 //   end ─▶ compact while the cache still holds, when the context is big
 //
-// Only the bot knows the threads of a channel: it answers `mainmast.busy` on its
+// Only the bot knows the threads of a channel: it answers `coordinator.busy` on its
 // lock port. The warmup is also in plugin storage, so a plugin reload (every
-// Kimaki build or upgrade) continues it. Only the mainmast itself, never its
+// Kimaki build or upgrade) continues it. Only the coordinator itself, never its
 // threads or other sessions.
-// TODO: let the mainmast compact worker sessions too (they keep their full history now).
+// TODO: let the coordinator compact worker sessions too (they keep their full history now).
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -23,17 +23,17 @@ import type { Plugin } from '@opencode/plugin'
 import type { SessionContext } from '@opencode/plugin/promise/session'
 import dedent from 'string-dedent'
 
-// The whole answer of a mainmast turn with nothing for the user. The reducer drops it.
+// The whole answer of a coordinator turn with nothing for the user. The reducer drops it.
 export const IDLE_REPLY = 'IDLE'
 
 // OpenCode's warming defaults: a keep-alive every 4 minutes stays under Anthropic's
 // 5-minute cache TTL. Same prompt, so OpenCode's own warming, when on, ignores ours.
 const WARM_INTERVAL_MS = 4 * 60_000
 const WARM_PROMPT = 'This is a keep-alive request. Do not perform any work or use tools. Reply with exactly: OK'
-// A stuck worker must not keep the mainmast warm forever.
+// A stuck worker must not keep the coordinator warm forever.
 const WARM_MAX_MS = 90 * 60_000
 // A small history is cheap to keep: compacting it only loses detail. Tokens, not a
-// share of the window: a mainmast at 190k never reached 20% of a 1M window.
+// share of the window: a coordinator at 190k never reached 20% of a 1M window.
 const MIN_COMPACT_TOKENS = 100_000
 // Missed while no plugin ran (OpenCode was down): the cache may be cold.
 const STALE_MS = 60_000
@@ -50,12 +50,12 @@ function markerValue(session: RoleSession, key: string): unknown {
   return kimaki && typeof kimaki === 'object' ? Reflect.get(kimaki, key) : null
 }
 
-// Coordinators only. A `mainmast` marker field overrides the windows (tests).
+// Coordinators only. A `coordinator` marker field overrides the windows (tests).
 function readWindows(session: RoleSession): Windows | null {
   if (session.parentID || !coordinatorChannel(session)) return null
-  const mainmast = markerValue(session, 'mainmast')
+  const coordinator = markerValue(session, 'coordinator')
   const read = (key: string, fallback: number) => {
-    const value: unknown = mainmast && typeof mainmast === 'object' ? Reflect.get(mainmast, key) : null
+    const value: unknown = coordinator && typeof coordinator === 'object' ? Reflect.get(coordinator, key) : null
     return typeof value === 'number' && value > 0 ? value : fallback
   }
   return { intervalMs: read('warmIntervalMs', WARM_INTERVAL_MS), maxMs: read('warmMaxMs', WARM_MAX_MS) }
@@ -69,7 +69,7 @@ function readWarmup(value: unknown): Warmup | null {
   return typeof directory === 'string' && typeof last === 'number' && typeof active === 'number' ? { directory, last, active } : null
 }
 
-// The mainmast or a thread of its channel runs, from the bot's thread views
+// The coordinator or a thread of its channel runs, from the bot's thread views
 // (lock-routes.ts). No answer (bot stopped) ends the warmup.
 async function channelBusy(session: RoleSession): Promise<boolean> {
   const dataDir = markerString(session, 'dataDir')
@@ -77,7 +77,7 @@ async function channelBusy(session: RoleSession): Promise<boolean> {
   if (!dataDir || typeof lockPort !== 'number') return false
   const token = await fs.promises.readFile(path.join(dataDir, 'lock-token'), 'utf8').catch(() => null)
   if (token === null) return false
-  const response = await fetch(`http://127.0.0.1:${lockPort}/kimaki/mainmast.busy`, {
+  const response = await fetch(`http://127.0.0.1:${lockPort}/kimaki/coordinator.busy`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId: session.id }),
@@ -88,8 +88,8 @@ async function channelBusy(session: RoleSession): Promise<boolean> {
   return !!body && typeof body === 'object' && Reflect.get(body, 'busy') === true
 }
 
-export async function registerMainmastWarmup(ctx: Plugin.Context): Promise<() => void> {
-  // The marker never changes after create: one session.get per session, also for non-mainmast ones.
+export async function registerCoordinatorWarmup(ctx: Plugin.Context): Promise<() => void> {
+  // The marker never changes after create: one session.get per session, also for non-coordinator ones.
   const known = new Map<string, Promise<Windows | null>>()
   const warmups = new Map<string, Warmup>()
   const timers = new Map<string, Timer>()
@@ -187,7 +187,7 @@ export async function registerMainmastWarmup(ctx: Plugin.Context): Promise<() =>
   }
 }
 
-// Role instructions of mainmast sessions, derived from markers only:
+// Role instructions of coordinator sessions, derived from markers only:
 //
 //   root Kimaki session ─▶ marker threadId === channelId?                 ─▶ coordinator
 //                      └─▶ parent chain (marker parentSessionId, fork
@@ -205,12 +205,12 @@ export async function registerMainmastWarmup(ctx: Plugin.Context): Promise<() =>
 // prompt (a <session-finished> wake after compaction) gets the text on its last
 // user message for that request only, until the next prompt stores it.
 
-const ROLE_HEAD = '<system-reminder>\n<kimaki-mainmast>'
+const ROLE_HEAD = '<system-reminder>\n<kimaki-coordinator>'
 // Workers of workers, forks of forks: bounded against cycles.
 const MAX_PARENT_DEPTH = 10
 
 function roleText(body: string): string {
-  return [ROLE_HEAD, 'These instructions replace any earlier <kimaki-mainmast> block.', '', body, '</kimaki-mainmast>', '</system-reminder>'].join('\n')
+  return [ROLE_HEAD, 'These instructions replace any earlier Kimaki role instructions.', '', body, '</kimaki-coordinator>', '</system-reminder>'].join('\n')
 }
 
 type RoleSession = Awaited<ReturnType<Plugin.Context['session']['get']>>
@@ -230,14 +230,14 @@ function parentOf(session: RoleSession): string | undefined {
   return markerString(session, 'parentSessionId') ?? session.fork?.sessionID
 }
 
-export async function registerMainmastRoles(ctx: Plugin.Context): Promise<void> {
+export async function registerCoordinatorRoles(ctx: Plugin.Context): Promise<void> {
   // The role text this session must have, or null: TUI sessions, subagents, plain threads.
   async function expected(sessionID: string): Promise<string | null> {
     const session = await ctx.session.get({ sessionID }).catch(() => null)
     if (!session || session.parentID || !markerString(session, 'threadId')) return null
     const channelId = coordinatorChannel(session)
     const dataDir = markerString(session, 'dataDir')
-    if (channelId) return dataDir ? roleText(mainmastSection({ sessionId: sessionID, channelId, dataDir })) : null
+    if (channelId) return dataDir ? roleText(coordinatorSection({ sessionId: sessionID, channelId, dataDir })) : null
     let parent = parentOf(session)
     for (let depth = 0; parent && depth < MAX_PARENT_DEPTH; depth++) {
       const info = await ctx.session.get({ sessionID: parent }).catch(() => null)
@@ -276,14 +276,14 @@ export async function registerMainmastRoles(ctx: Plugin.Context): Promise<void> 
   await ctx.session.hook('generate', shapeRequest)
 }
 
-// The coordinator of a mainmast channel. Its best parts come from the Cursor
+// The coordinator of a coordinator channel. Its best parts come from the Cursor
 // Projects coordinator prompt (https://gist.github.com/remorses/a1d0e56f439b0bc377e6cd952b6eb3ad):
 // delegate all work, workers report short results with file paths, never guess
 // a worker's state, do not repeat confirmations. Unlike Cursor it does not
 // acknowledge a dispatch: the new Discord thread already shows it.
-function mainmastSection({ sessionId, channelId, dataDir }: { sessionId: string; channelId: string; dataDir: string }): string {
+function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: string; channelId: string; dataDir: string }): string {
   return dedent`
-    ## mainmast: you coordinate this channel
+    ## coordinator: you coordinate this channel
 
     You run directly in a Discord **channel**, not in a thread. This is one long session the user keeps coming back to, for weeks. Your job is to know what is going on in this project and to get work done through **thread sessions**, which the user can open and talk to. This session is meant to be **infinite**: it is compacted over and over, and every file you read or command output you see fills it up. Keep your context clean: it holds goals, decisions and results, not working details.
 
@@ -379,13 +379,13 @@ function mainmastSection({ sessionId, channelId, dataDir }: { sessionId: string;
   `
 }
 
-// A thread of a mainmast channel. A btw fork carries the coordinator's history: it must not take its role.
-// The channel ID always resolves to the current mainmast, also after /new-mainmast.
+// A thread of a coordinator channel. A btw fork carries the coordinator's history: it must not take its role.
+// The channel ID always resolves to the current coordinator, also after /reset-coordinator.
 function workerSection(channelId: string): string {
   return dedent`
-    ## worker of a mainmast
+    ## worker of a coordinator
 
-    This channel has a coordinator session (mainmast). You are a worker, not the coordinator, even if your history shows its context: do only your own task.
+    This channel has a coordinator session. You are a worker, not the coordinator, even if your history shows its context: do only your own task.
     For high level project context (goals, decisions, what other threads did), read it: \`kimaki session read ${channelId}\`. Project memory: \`rg -n '^#+ ' MEMORY.md\`, then read only the sections you need.
     In your final message, list your critique diff URLs. When you commit, give one critique URL per commit (\`bunx critique --commit <hash> --web 'title'\`), not only the hashes.
   `

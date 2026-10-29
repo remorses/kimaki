@@ -1,0 +1,64 @@
+---
+title: Coordinator channels
+description: Chat with one long session directly in a project channel. It delegates the work to threads and keeps track of everything.
+icon: lucide:ship
+---
+
+**Coordinator** mode turns a project channel into a chat with one long session. You write in the channel, the agent answers in the channel, and every piece of work runs in its own **thread**.
+
+```
+#my-app
+  you: fix the flaky login test
+  -# ┣ shell _Start the worker thread_
+  Fixed in #fix-flaky-login-test: the test now awaits the session cookie.
+  -# *my-app ⋅ main ⋅ 9s ⋅ 4% ⋅ claude-opus*
+```
+
+Coordinator mode is **off** by default. Turn it on for one channel with `/toggle-coordinator`, or for every channel with the start flag:
+
+```bash
+kimaki --enable-coordinator
+```
+
+`/toggle-coordinator` in a channel always wins over the flag, also after a restart.
+
+## How it works
+
+```diagram
+  channel message ──▶ coordinator session (lives in the channel, never ends)
+                            │ kimaki send --parent-session
+                            ▼
+                      worker thread ──▶ does the work, you can talk to it
+                            │ run ends
+                            ▼
+              <session-finished> note ──▶ wakes the coordinator ──▶ reply in the channel
+```
+
+- The coordinator **delegates**: edits, builds, tests and research run in visible threads you can talk to. Hidden subagents are only for quick throwaway lookups. Its own context stays small, so the session can last for weeks.
+- When a thread it started finishes, the coordinator **wakes up** with the final answer and tells you the outcome with a link.
+- Other threads of the channel and routines leave a **silent note**. The coordinator reads it at your next message, so it always knows what happened.
+- Write in a worker thread to steer that worker directly, like any Kimaki thread.
+- The coordinator keeps project memory in `MEMORY.md` (tracked in git, one section per topic). Workers read it and the coordinator session for context.
+
+## Commands
+
+| Action | How |
+| --- | --- |
+| Turn coordinator mode on or off for the channel | `/toggle-coordinator` in the channel |
+| Reset the channel context (fresh coordinator) | `/reset-coordinator` in the channel |
+| New thread without the coordinator | `/new-session` |
+| Side question in a fork | `question. btw` |
+| Stop the coordinator | `/abort` in the channel |
+| Change its model or agent | `/model`, `/agent` in the channel |
+
+Turning coordinator mode off keeps the coordinator session. Turn it on again and the channel continues the same session. `/reset-coordinator` drops it: the next message starts a fresh one, and the old session stays in OpenCode.
+
+## While you are away
+
+While the coordinator or one of its threads runs, Kimaki keeps the coordinator's **prompt cache** warm with a small keep-alive request every 4 minutes, for at most 1.5 hours after its last turn. A finished worker then wakes it with a cheap cache read instead of a full cache write. You do not need OpenCode's global `warming` config for this.
+
+When the channel goes idle, a coordinator with more than 100k tokens of context is compacted while its cache is still warm, so the next message starts from a short summary.
+
+## Reading what a session did
+
+`kimaki session read <id>` prints the prompts and final answers of a session. Add `--full` to see every tool call.

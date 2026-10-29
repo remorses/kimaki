@@ -89,6 +89,7 @@ test('fresh install gets kimaki.db with the kimaki tables; subcommands never cre
       "bot_settings",
       "bot_tokens",
       "channel_agents",
+      "channel_coordinator",
       "channel_directories",
       "channel_mention_mode",
       "channel_models",

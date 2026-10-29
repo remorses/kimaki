@@ -1,4 +1,4 @@
-// Mainmast channels: the channel is the conversation of one long session, it
+// Coordinator channels: the channel is the conversation of one long session, it
 // starts worker threads with `kimaki send --parent-session`, and a finished
 // worker wakes it with a <session-finished> note.
 
@@ -36,10 +36,10 @@ beforeAll(async () => {
   server = await startOpencodeTestServer({
       matchers: [
         // The role text reaches the model once per request, also when the plugin checks the request.
-        { id: 'role-twice', priority: 500, when: { latestUserTextIncludes: 'once-marker', rawPromptRegex: '## mainmast: you coordinate[\\s\\S]*## mainmast: you coordinate' }, then: { parts: textParts('Role text twice.') } },
-        { id: 'role-missing', priority: 400, when: { latestUserTextIncludes: 'once-marker', rawPromptRegex: '^(?![\\s\\S]*## mainmast: you coordinate)' }, then: { parts: textParts('Role text missing.') } },
-        { id: 'hello', priority: 100, when: { latestUserTextIncludes: 'hello-marker' }, then: { parts: textParts('Hello from the mainmast.') } },
-        // The mainmast delegates: one shell call to `kimaki send`, then IDLE (the new thread already shows).
+        { id: 'role-twice', priority: 500, when: { latestUserTextIncludes: 'once-marker', rawPromptRegex: '## coordinator: you coordinate[\\s\\S]*## coordinator: you coordinate' }, then: { parts: textParts('Role text twice.') } },
+        { id: 'role-missing', priority: 400, when: { latestUserTextIncludes: 'once-marker', rawPromptRegex: '^(?![\\s\\S]*## coordinator: you coordinate)' }, then: { parts: textParts('Role text missing.') } },
+        { id: 'hello', priority: 100, when: { latestUserTextIncludes: 'hello-marker' }, then: { parts: textParts('Hello from the coordinator.') } },
+        // The coordinator delegates: one shell call to `kimaki send`, then IDLE (the new thread already shows).
         ...scriptedTurn({
           marker: 'delegate-marker',
           steps: [{
@@ -53,7 +53,7 @@ beforeAll(async () => {
           }],
           finalText: 'IDLE',
         }),
-        // The default: the mainmast waits for the worker in the same shell call.
+        // The default: the coordinator waits for the worker in the same shell call.
         ...scriptedTurn({
           marker: 'waitjob-marker',
           steps: [{
@@ -68,7 +68,7 @@ beforeAll(async () => {
           finalText: 'The waited worker is done.',
         }),
         { id: 'waited-worker', priority: 100, when: { latestUserTextIncludes: 'waited-worker-marker' }, then: { parts: textParts('Waited job done.') } },
-        // Slow enough that the delegating run ends first: the note then wakes an idle mainmast.
+        // Slow enough that the delegating run ends first: the note then wakes an idle coordinator.
         { id: 'worker', priority: 100, when: { latestUserTextIncludes: 'worker-marker' }, then: { parts: textParts('Job done in the worker.'), defaultPartDelayMs: 300 } },
         // A worker that uploads a screenshot; session read lists its URL, the note does not.
         ...scriptedTurn({
@@ -91,20 +91,20 @@ beforeAll(async () => {
         { id: 'recap-unseen', priority: 150, when: { latestUserTextIncludes: 'recap-marker' }, then: { parts: textParts('Nothing new.') } },
         { id: 'woken', priority: 300, when: { latestUserTextIncludes: '<session-finished' }, then: { parts: textParts('The worker finished the job.') } },
         // A wake with a stale role text in the history: the plugin adds the current one to this request.
-        { id: 'stale-wake-current', priority: 400, when: { latestUserTextRegex: 'stale-wake-marker[\\s\\S]*## mainmast: you coordinate this channel' }, then: { parts: textParts('Current role text present.') } },
+        { id: 'stale-wake-current', priority: 400, when: { latestUserTextRegex: 'stale-wake-marker[\\s\\S]*## coordinator: you coordinate this channel' }, then: { parts: textParts('Current role text present.') } },
         { id: 'stale-wake-old', priority: 350, when: { latestUserTextIncludes: 'stale-wake-marker' }, then: { parts: textParts('Current role text missing.') } },
       ],
   })
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true })
+  bot = await startTestBot({ dataDir, twin, server, coordinator: true })
 }, 60_000)
 
-// Role texts the kimaki plugin stored in a session (plugin/mainmast.ts), oldest first.
+// Role texts the kimaki plugin stored in a session (plugin/coordinator.ts), oldest first.
 async function roleTexts(sessionID: string): Promise<string[]> {
   const client = await server.client()
   const messages = await client.message.list({ sessionID, order: 'desc', limit: 100 })
-  return [...messages.data].reverse().flatMap((message) => (message.type === 'synthetic' && message.text.includes('<kimaki-mainmast>') ? [message.text] : []))
+  return [...messages.data].reverse().flatMap((message) => (message.type === 'synthetic' && message.text.includes('<kimaki-coordinator>') ? [message.text] : []))
 }
 
 afterAll(async () => {
@@ -127,13 +127,13 @@ test('channel messages go to one session that replies in the channel', async () 
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     [reply to tommy: Say hi hello-marker]
-    Hello from the mainmast.
+    Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again hello-marker once-marker
     --- from: assistant (TestBot)
     [reply to tommy: Again hello-marker once-marker]
-    Hello from the mainmast.
+    Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await discord.channel(channelId).getThreads()).toHaveLength(0)
@@ -141,13 +141,13 @@ test('channel messages go to one session that replies in the channel', async () 
   const root = bot.store.getState().roots[channelId]!
   const roles = await roleTexts(root)
   expect(roles).toHaveLength(1)
-  expect(roles[0]).toContain('## mainmast: you coordinate this channel')
+  expect(roles[0]).toContain('## coordinator: you coordinate this channel')
   expect(roles[0]).toContain(`--parent-session ${root}`)
   const entries = await (await server.client()).session.instructions.entry.list({ sessionID: root })
-  expect(JSON.stringify(entries)).not.toContain('## mainmast')
+  expect(JSON.stringify(entries)).not.toContain('## coordinator')
 })
 
-test('a worker started with --parent-session gets a thread and wakes the mainmast when done', async () => {
+test('a worker started with --parent-session gets a thread and wakes the coordinator when done', async () => {
   const { discord, channelId } = twin
   const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project'))
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Fix it delegate-marker' })
@@ -167,13 +167,13 @@ test('a worker started with --parent-session gets a thread and wakes the mainmas
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     [reply to tommy: Say hi hello-marker]
-    Hello from the mainmast.
+    Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again hello-marker once-marker
     --- from: assistant (TestBot)
     [reply to tommy: Again hello-marker once-marker]
-    Hello from the mainmast.
+    Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Fix it delegate-marker
@@ -192,17 +192,17 @@ test('a worker started with --parent-session gets a thread and wakes the mainmas
   expect(thread.name).toBe('Worker task')
   const workerRoles = await roleTexts(bot.store.getState().roots[thread.id]!)
   expect(workerRoles).toHaveLength(1)
-  expect(workerRoles[0]).toContain(`## worker of a mainmast`)
+  expect(workerRoles[0]).toContain(`## worker of a coordinator`)
   expect(workerRoles[0]).toContain(`kimaki session read ${channelId}`)
 })
 
-test('a btw fork of a worker sent with --parent-session wakes the mainmast when done', async () => {
+test('a btw fork of a worker sent with --parent-session wakes the coordinator when done', async () => {
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]!
   const worker = (await discord.channel(channelId).getThreads()).find((candidate) => candidate.name === 'Worker task')
   if (!worker) throw new Error('no Worker task thread')
   const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
-  // What the coordinator runs: kimaki send --thread <worker> --prompt '... btw' --parent-session <mainmast>
+  // What the coordinator runs: kimaki send --thread <worker> --prompt '... btw' --parent-session <coordinator>
   const forked = await send(bot, { threadId: worker.id, prompt: 'fork-marker related job. btw', parentSessionId: root, senderSessionId: root })
   if (forked instanceof Error) throw forked
   await waitForFooter({ discord, threadId: forked.threadId })
@@ -217,7 +217,7 @@ test('a btw fork of a worker sent with --parent-session wakes the mainmast when 
   `)
   const fork = await (await server.client()).session.get({ sessionID: forked.sessionId! })
   expect(Reflect.get(Object(fork.metadata?.['kimaki']), 'parentSessionId')).toBe(root)
-  expect((await roleTexts(fork.id)).at(-1)).toContain('## worker of a mainmast')
+  expect((await roleTexts(fork.id)).at(-1)).toContain('## worker of a coordinator')
 })
 
 test('session read lists the Discord URL of a file a worker uploaded; its note does not', async () => {
@@ -264,7 +264,7 @@ test('session read lists the Discord URL of a file a worker uploaded; its note d
   `)
 })
 
-test('a run the user prompts in a worker thread is a silent note; a follow-up the mainmast sends wakes it', async () => {
+test('a run the user prompts in a worker thread is a silent note; a follow-up the coordinator sends wakes it', async () => {
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]!
   const client = await server.client()
@@ -345,7 +345,7 @@ test('another thread of the channel leaves a silent note for the next prompt', a
   const client = await server.client()
   const root = bot.store.getState().roots[channelId]!
   await waitFor({
-    label: 'silent note in the mainmast',
+    label: 'silent note in the coordinator',
     check: async () => {
       // Not delivered yet: a note without wake waits in the inbox for the next run.
       const inbox = await client.session.inbox.list({ sessionID: root })
@@ -367,7 +367,7 @@ test('another thread of the channel leaves a silent note for the next prompt', a
   `)
 })
 
-test('a btw fork of the mainmast is a worker: no coordinator timers', async () => {
+test('a btw fork of the coordinator is a worker: no coordinator timers', async () => {
   const { discord, channelId } = twin
   const before = (await discord.channel(channelId).getThreads()).length
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Why that choice btw-marker. btw' })
@@ -378,10 +378,10 @@ test('a btw fork of the mainmast is a worker: no coordinator timers', async () =
   await waitForFooter({ discord, threadId: thread.id })
   const client = await server.client()
   const fork = await client.session.get({ sessionID: bot.store.getState().roots[thread.id]! })
-  expect(Reflect.get(Object(fork.metadata?.['kimaki']), 'mainmast')).toBeUndefined()
+  expect(Reflect.get(Object(fork.metadata?.['kimaki']), 'coordinator')).toBeUndefined()
   // The fork copied the coordinator role; its own worker role comes after it.
   const roles = await roleTexts(fork.id)
-  expect(roles.map((text) => (text.includes('## worker of a mainmast') ? 'worker' : 'coordinator'))).toEqual(['coordinator', 'worker'])
+  expect(roles.map((text) => (text.includes('## worker of a coordinator') ? 'worker' : 'coordinator'))).toEqual(['coordinator', 'worker'])
 })
 
 test('a stale coordinator role text is replaced: on a wake for that request, then stored at the next prompt', async () => {
@@ -391,7 +391,7 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
   const current = (await roleTexts(root)).at(-1)!
   const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
   // Like a role text of older plugin code, as the latest one in the history, waking the session.
-  await client.session.synthetic({ sessionID: root, text: '<system-reminder>\n<kimaki-mainmast>\nold role text stale-wake-marker\n</kimaki-mainmast>\n</system-reminder>' })
+  await client.session.synthetic({ sessionID: root, text: '<system-reminder>\n<kimaki-coordinator>\nold role text stale-wake-marker\n</kimaki-coordinator>\n</system-reminder>' })
   await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Again hello-marker' })
   await waitForFooter({ discord, threadId: channelId, count: footers + 2 })
@@ -404,7 +404,7 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
     --- from: user (tommy)
     Again hello-marker
     --- from: assistant (TestBot)
-    Hello from the mainmast.
+    Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const roles = await roleTexts(root)
@@ -412,7 +412,7 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
   expect(roles.at(-2)).toContain('stale-wake-marker')
 })
 
-test('the mainmast shows typing while a worker runs in the background', async () => {
+test('the coordinator shows typing while a worker runs in the background', async () => {
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]!
   const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
@@ -434,14 +434,52 @@ test('the mainmast shows typing while a worker runs in the background', async ()
   expect(workerAtTyping).not.toContain('-# *project')
 })
 
-test('the mainmast survives a bot restart; /new-mainmast starts a fresh one', async () => {
+test('/toggle-coordinator turns coordinator mode off and on per channel; the choice survives a restart', async () => {
+  const { discord, channelId } = twin
+  const root = bot.store.getState().roots[channelId]
+  const toggle = async () => {
+    const { id: interactionId } = await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'toggle-coordinator' })
+    await discord.channel(channelId).waitForInteractionAck({ interactionId, timeout: 4_000 })
+  }
+  await toggle()
+  const threads = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Mode off hello-marker' })
+  const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (found) => !threads.has(found.id) })
+  await waitForFooter({ discord, threadId: thread.id })
+  expect(bot.store.getState().roots[channelId]).toBe(root)
+
+  await toggle()
+  // Started without --enable-coordinator: the channel keeps its choice and its coordinator.
+  await bot.stop()
+  bot = await startTestBot({ dataDir, twin, server })
+  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Mode on hello-marker' })
+  await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
+  expect(bot.store.getState().roots[channelId]).toBe(root)
+
+  const text = await discord.channel(channelId).text()
+  expect(text.slice(text.lastIndexOf('Coordinator mode **off**'))).toMatchInlineSnapshot(`
+    "Coordinator mode **off** for this channel. Each channel message starts a new thread.
+    --- from: user (tommy)
+    Mode off hello-marker
+    --- from: assistant (TestBot)
+    Coordinator mode **on** for this channel. Channel messages go to one long coordinator session that starts threads for the work. It continues the coordinator session this channel had before; /reset-coordinator starts a fresh one.
+    --- from: user (tommy)
+    Mode on hello-marker
+    --- from: assistant (TestBot)
+    Hello from the coordinator.
+    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+})
+
+test('the coordinator survives a bot restart; /reset-coordinator starts a fresh one', async () => {
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]
   await bot.stop()
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true })
+  bot = await startTestBot({ dataDir, twin, server, coordinator: true })
   expect(bot.store.getState().roots[channelId]).toBe(root)
 
-  const { id: interactionId } = await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'new-mainmast' })
+  const { id: interactionId } = await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'reset-coordinator' })
   await discord.channel(channelId).waitForInteractionAck({ interactionId, timeout: 4_000 })
   expect(bot.store.getState().roots[channelId]).toBeUndefined()
   const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
@@ -456,7 +494,7 @@ test('the mainmast survives a bot restart; /new-mainmast starts a fresh one', as
     Fresh start hello-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    Hello from the mainmast.
+    Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

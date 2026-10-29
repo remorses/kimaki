@@ -1,4 +1,4 @@
-// The queue in a mainmast channel: the channel itself is the conversation, so
+// The queue in a coordinator channel: the channel itself is the conversation, so
 // acks and "Queued message sent" replies land in the channel. Every queued
 // prompt that got an ack is marked when it starts, also when the coordinator
 // answers IDLE; its answer is then not a second reply to the same message.
@@ -53,8 +53,8 @@ beforeAll(async () => {
   ;[server, twin] = await Promise.all([startOpencodeTestServer({ matchers }), startTwin()])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true })
-  // The mainmast session exists before any test: its banner is not part of one test's snapshot.
+  bot = await startTestBot({ dataDir, twin, server, coordinator: true })
+  // The coordinator session exists before any test: its banner is not part of one test's snapshot.
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'Start hello-marker' })
   await waitForFooter({ discord: twin.discord, threadId: twin.channelId })
 }, 60_000)
@@ -85,16 +85,16 @@ async function startSlowTurn(content: string) {
 }
 
 async function waitForIdle() {
-  await waitFor({ label: 'mainmast idle', check: async () => !bot.store.getState().threads[twin.channelId]?.turn || null })
+  await waitFor({ label: 'coordinator idle', check: async () => !bot.store.getState().threads[twin.channelId]?.turn || null })
 }
 
 function rootSession(): string {
   const sessionID = bot.store.getState().roots[twin.channelId]
-  if (!sessionID) throw new Error('no mainmast session')
+  if (!sessionID) throw new Error('no coordinator session')
   return sessionID
 }
 
-test('. queue in a busy mainmast: each queued message gets a reply when it starts, also when it answers IDLE', async () => {
+test('. queue in a busy coordinator: each queued message gets a reply when it starts, also when it answers IDLE', async () => {
   const before = await footers()
   await startSlowTurn('First a long one')
   const user = twin.discord.channel(twin.channelId).user(TEST_USER_ID)
@@ -131,7 +131,7 @@ test('. queue in a busy mainmast: each queued message gets a reply when it start
   expect(sent.map((message) => message.message_reference?.message_id)).toEqual([silent.id, answered.id])
 })
 
-test('/queue and /clear-queue in a mainmast', async () => {
+test('/queue and /clear-queue in a coordinator', async () => {
   const before = await footers()
   await startSlowTurn('Slash queue here')
   const user = twin.discord.channel(twin.channelId).user(TEST_USER_ID)
@@ -163,9 +163,9 @@ test('/queue and /clear-queue in a mainmast', async () => {
   `)
 })
 
-test('deleting a queued mainmast message removes it from the queue', async () => {
+test('deleting a queued coordinator message removes it from the queue', async () => {
   const before = await footers()
-  await startSlowTurn('Delete in mainmast')
+  await startSlowTurn('Delete in coordinator')
   const user = twin.discord.channel(twin.channelId).user(TEST_USER_ID)
   const queued = await user.sendMessage({ content: 'Never mind queued-one. queue' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'position 1' })
@@ -173,19 +173,19 @@ test('deleting a queued mainmast message removes it from the queue', async () =>
   await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'Removed from queue' })
   await waitForFooter({ discord: twin.discord, threadId: twin.channelId, count: before + 1 })
   await waitForIdle()
-  expect(await channelTextFrom('Delete in mainmast')).toMatchInlineSnapshot(`
+  expect(await channelTextFrom('Delete in coordinator')).toMatchInlineSnapshot(`
     "--- from: user (tommy)
-    Delete in mainmast slow-marker
+    Delete in coordinator slow-marker
     --- from: assistant (TestBot)
     [reply to unknown message]
     -# Removed from queue
-    [reply to tommy: Delete in mainmast slow-marker]
+    [reply to tommy: Delete in coordinator slow-marker]
     slow-done
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
-test('kimaki send . queue and a TUI prompt queued on the mainmast show their text, then a reply when they run', async () => {
+test('kimaki send . queue and a TUI prompt queued on the coordinator show their text, then a reply when they run', async () => {
   const before = await footers()
   await startSlowTurn('Other sources')
   await exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'send', '--session', rootSession(), '--prompt', 'From the CLI queued-one. queue', '--data-dir', dataDir], {
@@ -215,18 +215,18 @@ test('kimaki send . queue and a TUI prompt queued on the mainmast show their tex
   `)
 })
 
-test('a plain message in a busy mainmast runs first, then the queued one gets its reply', async () => {
+test('a plain message in a busy coordinator runs first, then the queued one gets its reply', async () => {
   const before = await footers()
-  await startSlowTurn('Steer the mainmast')
+  await startSlowTurn('Steer the coordinator')
   const user = twin.discord.channel(twin.channelId).user(TEST_USER_ID)
   await user.sendMessage({ content: 'Afterwards queued-one. queue' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'position 1' })
   await user.sendMessage({ content: 'Right now steer-marker' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'queued one ok' })
   await waitForFooter({ discord: twin.discord, threadId: twin.channelId, count: before + 2 })
-  expect(await channelTextFrom('Steer the mainmast')).toMatchInlineSnapshot(`
+  expect(await channelTextFrom('Steer the coordinator')).toMatchInlineSnapshot(`
     "--- from: user (tommy)
-    Steer the mainmast slow-marker
+    Steer the coordinator slow-marker
     Afterwards queued-one. queue
     --- from: assistant (TestBot)
     [reply to tommy: Afterwards queued-one. queue]
@@ -244,17 +244,17 @@ test('a plain message in a busy mainmast runs first, then the queued one gets it
   `)
 })
 
-test('/abort in a mainmast stops the run and clears the queue', async () => {
-  await startSlowTurn('Abort the mainmast')
+test('/abort in a coordinator stops the run and clears the queue', async () => {
+  await startSlowTurn('Abort the coordinator')
   const user = twin.discord.channel(twin.channelId).user(TEST_USER_ID)
   await user.sendMessage({ content: 'Never runs queued-one. queue' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'position 1' })
   await user.runSlashCommand({ name: 'abort' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: twin.channelId, text: 'Removed from queue' })
   await waitForIdle()
-  expect(await channelTextFrom('Abort the mainmast')).toMatchInlineSnapshot(`
+  expect(await channelTextFrom('Abort the coordinator')).toMatchInlineSnapshot(`
     "--- from: user (tommy)
-    Abort the mainmast slow-marker
+    Abort the coordinator slow-marker
     Never runs queued-one. queue
     --- from: assistant (TestBot)
     [reply to tommy: Never runs queued-one. queue]
@@ -263,7 +263,7 @@ test('/abort in a mainmast stops the run and clears the queue', async () => {
   `)
 })
 
-test('. queue on an idle mainmast runs at once: the answer replies to the message', async () => {
+test('. queue on an idle coordinator runs at once: the answer replies to the message', async () => {
   const before = await footers()
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'Nothing waits idle-marker. queue' })
   await waitForFooter({ discord: twin.discord, threadId: twin.channelId, count: before + 1 })

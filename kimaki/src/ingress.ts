@@ -28,7 +28,7 @@ import {
 } from 'discord.js'
 import * as errore from 'errore'
 
-import { projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts'
+import { isCoordinatorChannel, projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts'
 import { formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { parseInput, sendInput } from './lock-routes.ts'
@@ -36,7 +36,7 @@ import { cancelQueuedPrompt, dispatch, requeueEdited, send } from './prompt.ts'
 import { REMOTE_PROMPT_FILE, REMOTE_RESULT_PREFIX, REMOTE_SEND_PREFIX } from './remote-send.ts'
 import { echoPayloads, formatEcho, queuedItemFor } from './queue.ts'
 import { parseTextMessage, type Route } from './routes.ts'
-import { primaryAgents, startMainmast, startSession } from './sessions.ts'
+import { primaryAgents, startCoordinator, startSession } from './sessions.ts'
 import { isVoiceAttachment, parseVoiceMessage, transcribe, voiceMediaType, type AttachmentLike } from './voice.ts'
 
 const logger = createLogger('INGRESS')
@@ -235,8 +235,9 @@ async function handleMessage(bot: Bot, message: Message) {
     logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
     return
   }
-  // A mainmast channel has its root session under the channel ID.
-  const sessionId = bot.store.getState().roots[thread?.id ?? (bot.mainmast ? channelId : '')]
+  // A coordinator channel has its root session under the channel ID.
+  const coordinator = !thread && isCoordinatorChannel(bot, channelId)
+  const sessionId = bot.store.getState().roots[thread?.id ?? (coordinator ? channelId : '')]
   if (thread && !sessionId) return
   const author = { id: message.author.id, username: message.author.username }
   const reportError = async (error: Error) => {
@@ -263,7 +264,7 @@ async function handleMessage(bot: Bot, message: Message) {
   const attached = files.length > 0 ? `, ${files.length} file(s)` : ''
   logger.log(`${route.kind}${detail} from ${author.username} in ${thread ? `thread ${thread.id}` : `channel ${channelId}`}${attached}`)
   // The transcription is not visible anywhere else.
-  if (voice && (thread || bot.mainmast) && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
+  if (voice && (thread || coordinator) && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
     // A long transcript continues in more messages after the reply.
     for (const [index, payload] of echoPayloads(formatEcho({ username: author.username, text: route.text })).entries()) {
       const options = { ...payload, allowedMentions: { parse: [] }, flags: ('flags' in payload ? payload.flags : 0) | SILENT_MESSAGE_FLAGS }
@@ -272,13 +273,13 @@ async function handleMessage(bot: Bot, message: Message) {
     }
   }
 
-  // Mainmast: the channel is the conversation of one long session.
-  if (!thread && bot.mainmast && channel.type === ChannelType.GuildText) {
+  // Coordinator: the channel is the conversation of one long session.
+  if (coordinator && channel.type === ChannelType.GuildText) {
     const result = bot.store.getState().roots[channel.id]
       ? await dispatch(bot, { conversation: channel, route, author, messageId: message.id, files })
       : route.kind === 'new-session'
         ? await startSession(bot, { channelId, directory: project.directory, route: { kind: 'steer', text: route.text, ...(route.agent && { agent: route.agent }) }, author, messageId: message.id, startMessageId: null, files })
-        : await startMainmast(bot, {
+        : await startCoordinator(bot, {
             channel,
             // Queue and btw need a session to wait for or fork from: the first input is a plain prompt.
             route: route.kind === 'shell' || route.kind === 'command' || route.kind === 'skill' || route.kind === 'steer' ? route : { kind: 'steer', text: route.text },

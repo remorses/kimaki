@@ -423,7 +423,7 @@ export async function createTask(bot: Bot, { send: input, options }: { send: Sen
     if (threadId) {
       const thread = await bot.discord.channels.fetch(threadId).catch((cause) => new DiscordError({ operation: `fetch thread ${threadId}`, cause }))
       if (thread instanceof Error) return thread
-      // A mainmast channel is its own project channel.
+      // A coordinator channel is its own project channel.
       const channelId = thread?.isThread() ? thread.parentId : thread?.id
       if (!channelId) return null
       return projectOf(bot, channelId)

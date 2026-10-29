@@ -1,4 +1,4 @@
-// Commands for the session of the current thread: run control (/abort,
+// Commands for the session of the current thread: run control (/abort, /reset-coordinator,
 // /queue, /queue-command, /clear-queue, /btw), history (/compact, /undo,
 // /redo) and info (/context-usage, /session-id, /diff). They only call the
 // writers in prompt.ts and sessions.ts; session output comes from events.
@@ -31,7 +31,7 @@ import {
 import { shellQuote } from '../lock-server.ts'
 import { abort, clearQueue, dispatch, redo, undo } from '../prompt.ts'
 import type { Route } from '../routes.ts'
-import { endMainmast, forkBtw } from '../sessions.ts'
+import { endCoordinator, forkBtw } from '../sessions.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -99,14 +99,22 @@ async function abortCommand(bot: Bot, interaction: ChatInputCommandInteraction, 
   await interaction.editReply({ content: `Request **aborted**${note}` })
 }
 
-async function newMainmastCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
-  if (conversation.isThread()) return replyError(interaction, new ConfigError({ reason: 'Use /new-mainmast in a project channel' }))
+// Also with coordinator mode off: the channel keeps its binding until a reset.
+async function resetCoordinatorCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return replyError(interaction, target)
+  if (target.conversation?.isThread()) return replyError(interaction, new ConfigError({ reason: 'Use /reset-coordinator in the project channel, not in a thread' }))
+  const channelId = target.channelId
+  if (!bot.store.getState().roots[channelId]) {
+    await interaction.reply({ content: 'This channel has no coordinator session', flags: MessageFlags.Ephemeral })
+    return
+  }
   await interaction.deferReply()
-  const stopped = await abort(bot, { threadId: conversation.id })
+  const stopped = await abort(bot, { threadId: channelId })
   if (stopped instanceof Error) return replyError(interaction, stopped)
-  const ended = await endMainmast(bot, conversation.id)
+  const ended = await endCoordinator(bot, channelId)
   if (ended instanceof Error) return replyError(interaction, ended)
-  await interaction.editReply({ content: 'The next message starts a new mainmast session' })
+  await interaction.editReply({ content: 'Coordinator context reset. The next message starts a new coordinator session' })
 }
 
 // /queue and /queue-command: the echo reply is the queued message the ack points at.
@@ -279,9 +287,9 @@ export const threadRoutes: InteractionRoutes = {
       definition: new SlashCommandBuilder().setName('abort').setDescription('Stop the current run and clear the queue'),
       run: inThread(abortCommand),
     },
-    'new-mainmast': {
-      definition: new SlashCommandBuilder().setName('new-mainmast').setDescription('Start a fresh mainmast session in this channel'),
-      run: inThread(newMainmastCommand),
+    'reset-coordinator': {
+      definition: new SlashCommandBuilder().setName('reset-coordinator').setDescription('Reset the context of this channel: the next message starts a fresh coordinator session'),
+      run: resetCoordinatorCommand,
     },
     queue: {
       definition: new SlashCommandBuilder()

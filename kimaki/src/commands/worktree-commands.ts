@@ -187,7 +187,7 @@ async function newWorktreeCommand(bot: Bot, interaction: ChatInputCommandInterac
   if (!target) return
   const result = await newWorktree(bot, {
     channelId: target.channelId,
-    // In a mainmast channel a new worktree is a fresh session, not a fork of the mainmast.
+    // In a coordinator channel a new worktree is a fresh session, not a fork of the coordinator.
     source: target.conversation?.isThread() ? target.conversation : undefined,
     name: interaction.options.getString('name') ?? undefined,
     baseBranch: interaction.options.getString('base-branch') ?? undefined,

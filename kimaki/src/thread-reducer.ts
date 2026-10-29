@@ -55,7 +55,7 @@ import {
   type ToolInput,
   type UiMessage,
 } from './format-parts.ts'
-import { IDLE_REPLY } from './plugin/mainmast.ts'
+import { IDLE_REPLY } from './plugin/coordinator.ts'
 import { closePermission, hydratePermissions, showPermission, STATUS, type PendingPermission } from './permissions.ts'
 import { closeForm, formatAnswer, hydrateForms, showForm, withAnswer, type PendingForm } from './questions.ts'
 import { cancelQueued, deliverQueued, enqueueInput, hydrateQueue, promoteQueued, queuedItems, type PendingInput } from './queue.ts'
@@ -68,9 +68,9 @@ export type Turn = {
   tokens: number
   // `kimaki sleep` ran in this turn: the session wakes later, so the footer is silent.
   slept: boolean
-  // Discord message the next answer text replies to (a mainmast prompt, queue.ts). Taken by the first text.
+  // Discord message the next answer text replies to (a coordinator prompt, queue.ts). Taken by the first text.
   replyTo: string | null
-  // The current answer posted model text. A mainmast answer without it gets no footer.
+  // The current answer posted model text. A coordinator answer without it gets no footer.
   texted: boolean
 }
 
@@ -103,8 +103,8 @@ export type ThreadView = {
   sessionId: string
   // Project channel of the thread: its verbosity applies.
   channelId: string
-  // The view is a mainmast channel itself, not a thread.
-  mainmast: boolean
+  // The view is a coordinator channel itself, not a thread.
+  coordinator: boolean
   // Current working directory of the root session (session.moved changes it).
   directory: string
   // True only for sessions this bot created: the first step shows a banner.
@@ -214,18 +214,18 @@ export function emptyView({
   channelId,
   directory,
   isNew,
-  mainmast,
+  coordinator,
 }: {
   sessionId: string
   channelId: string
   directory: string
   isNew: boolean
-  mainmast: boolean
+  coordinator: boolean
 }): ThreadView {
   return {
     sessionId,
     channelId,
-    mainmast,
+    coordinator,
     directory,
     bannerPending: isNew,
     turn: null,
@@ -261,14 +261,14 @@ function isTyping(view: ThreadView): boolean {
   return isBusy(view) && !waitsForUser(view)
 }
 
-// Typing of one conversation across all views: a mainmast (a view whose channel
+// Typing of one conversation across all views: a coordinator (a view whose channel
 // is its own conversation) also types while a thread of its channel does, so
 // background workers show there. Other conversations: isTyping of their view.
 export function conversationTyping({ threads, threadId }: { threads: Readonly<Record<string, ThreadView>>; threadId: string }): boolean {
   const view = threads[threadId]
   if (!view || waitsForUser(view)) return false
   if (isBusy(view)) return true
-  if (!view.mainmast) return false
+  if (!view.coordinator) return false
   return workersTyping({ threads, channelId: threadId })
 }
 
@@ -322,7 +322,7 @@ function showCompacted(context: Context, size: { tokens: number | null; percent:
   toolLine(context, formatCompacted(size))
 }
 
-// A compaction in an execution with no model step (`/compact`, the idle mainmast compaction) stays silent:
+// A compaction in an execution with no model step (`/compact`, the idle coordinator compaction) stays silent:
 // the user did not ask for anything, so the line is only noise. Auto compaction in a turn shows.
 function endCompaction(context: Context) {
   if (context.draft.compacted && context.draft.turn?.model) showCompacted(context, { tokens: null, percent: null })
@@ -342,8 +342,8 @@ function emitFooter({ draft, prefs, emit, turn, at, notify }: Context & { turn: 
   if (!turn.model) return
   // The answer posted no text or tool line (e.g. an IDLE_REPLY, only hidden tools).
   if (draft.lastKind === null) return
-  // A mainmast answer with only tool lines (it started a worker, then answered IDLE): its thread shows the work.
-  if (draft.mainmast && !turn.texted) return
+  // A coordinator answer with only tool lines (it started a worker, then answered IDLE): its thread shows the work.
+  if (draft.coordinator && !turn.texted) return
   // A child still runs: the answer comes later.
   if (Object.values(draft.children).some((child) => child.running)) return
   emit({
@@ -455,7 +455,7 @@ function applyRoot(context: Context & { event: V2Event }) {
     }
     case 'session.text.ended': {
       const text = event.data.text.trim()
-      // A mainmast turn with nothing for the user (a note, a started worker) answers IDLE_REPLY: Discord shows nothing.
+      // A coordinator turn with nothing for the user (a note, a started worker) answers IDLE_REPLY: Discord shows nothing.
       if (!text || text === IDLE_REPLY) return
       const replyTo = draft.turn?.replyTo ?? null
       // The reply header already sets the text apart from the tool lines above.
@@ -656,7 +656,7 @@ function showShellFinished({
   ...context
 }: Context & { metadata: Readonly<Record<string, unknown>>; label: string | null }) {
   const { shellID, jobID, state, exit } = metadata
-  // A <session-finished> note (mainmast.ts) shows nothing: the coordinator reports the outcome.
+  // A <session-finished> note (coordinator.ts) shows nothing: the coordinator reports the outcome.
   if (metadata['source'] !== 'shell' || typeof shellID !== 'string' || typeof jobID !== 'string') return
   const description = context.draft.shells[shellID] ?? null
   delete context.draft.shells[shellID]

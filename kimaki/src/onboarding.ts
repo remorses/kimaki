@@ -25,8 +25,8 @@ import { ConfigError, DbError, DiscordError, OpenCodeMissingError, type OpenCode
 import { NOTIFY_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { checkOpencode, findOpencodeBinary, installedOpencodeBinary, OPENCODE_INSTALL_COMMAND } from './opencode-server.ts'
-import type { Bot } from './bot.ts'
-import { startMainmast, startSession } from './sessions.ts'
+import { isCoordinatorChannel, type Bot } from './bot.ts'
+import { startCoordinator, startSession } from './sessions.ts'
 import { addProjectChannel, defaultChannelName, defaultProjectDirectory } from './project.ts'
 
 const logger = createLogger('ONBOARD')
@@ -253,11 +253,12 @@ export async function runOnboarding({
     .fetch(installerId ?? selectedGuild.ownerId)
     .catch((e) => new DiscordError({ operation: 'fetch installer', cause: e }))
   if (owner instanceof Error) return owner
+  const coordinator = isCoordinatorChannel(bot, channel.channelId)
   const welcome = await textChannel
     .send({
       content: dedent`
-        **Kimaki** lets you code from Discord. Each project channel is linked to a folder on your computer. ${bot.mainmast ? 'Write in the channel: one long session answers there and starts threads for the work.' : 'A message there starts an AI coding session in that folder.'}
-        Reply ${bot.mainmast ? 'here' : 'in the thread below'} to add channels for your projects. <@${owner.id}>
+        **Kimaki** lets you code from Discord. Each project channel is linked to a folder on your computer. ${coordinator ? 'Write in the channel: one long session answers there and starts threads for the work.' : 'A message there starts an AI coding session in that folder.'}
+        Reply ${coordinator ? 'here' : 'in the thread below'} to add channels for your projects. <@${owner.id}>
       `,
       allowedMentions: { users: [owner.id] },
       flags: NOTIFY_MESSAGE_FLAGS,
@@ -267,8 +268,8 @@ export async function runOnboarding({
 
   const author = { id: owner.id, username: owner.user.username }
   const route = { kind: 'steer' as const, text: onboardingPrompt() }
-  const session = bot.mainmast
-    ? await startMainmast(bot, { channel: textChannel, route, author, messageId: welcome.id })
+  const session = coordinator
+    ? await startCoordinator(bot, { channel: textChannel, route, author, messageId: welcome.id })
     : await startSession(bot, { channelId: channel.channelId, directory, route, author, messageId: welcome.id, threadName: 'Kimaki onboarding', worktree: false })
   if (session instanceof Error) {
     // Leaves the channel empty, so the next start onboards again.

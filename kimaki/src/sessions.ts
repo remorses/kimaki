@@ -225,7 +225,7 @@ async function putInstructions(
     parentSessionId,
     scheduledTask,
     // Derived from where the session lives, never from bindings that can be stale.
-    mainmast: conversation.id === channel.id,
+    coordinator: conversation.id === channel.id,
     disabled: bot.disabledPrompt,
   })
   const put = await oc(bot, 'instructions.entry.put', (client) =>
@@ -521,9 +521,9 @@ export async function startSession(
   return { threadId: thread.id, sessionId: session.id }
 }
 
-// The first message of a mainmast channel: one long session that lives in the
+// The first message of a coordinator channel: one long session that lives in the
 // channel itself, bound like a thread with the channel ID as its conversation.
-export async function startMainmast(
+export async function startCoordinator(
   bot: Bot,
   {
     channel,
@@ -549,7 +549,7 @@ export async function startMainmast(
   if (plugin instanceof Error) return plugin
   const chosen = await agentAndModel(bot, { defaults, route, directory })
   if (chosen instanceof Error) return chosen
-  const title = `mainmast: ${channel.name}`
+  const title = `coordinator: ${channel.name}`
   const session = await oc(bot, 'session.create', (client) =>
     client.session.create({
       title,
@@ -557,7 +557,7 @@ export async function startMainmast(
       ...(chosen.model && { model: chosen.model }),
       ...(chosen.agent && { agent: chosen.agent }),
       permissions: [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills)],
-      metadata: { kimaki: { threadId: channel.id, channelId: channel.id, source: 'discord', ...(bot.mainmastTimers && { mainmast: bot.mainmastTimers }), ...cliContext(bot) } },
+      metadata: { kimaki: { threadId: channel.id, channelId: channel.id, source: 'discord', ...(bot.coordinatorTimers && { coordinator: bot.coordinatorTimers }), ...cliContext(bot) } },
     }),
   )
   if (session instanceof Error) return session
@@ -580,13 +580,13 @@ export async function startMainmast(
   return { threadId: channel.id, sessionId: session.id }
 }
 
-// /new-mainmast: the channel forgets its mainmast. The next message starts a fresh
+// /reset-coordinator: the channel forgets its coordinator. The next message starts a fresh
 // one; the old session stays in OpenCode for /resume.
-export async function endMainmast(bot: Bot, channelId: string): Promise<DbError | void> {
+export async function endCoordinator(bot: Bot, channelId: string): Promise<DbError | void> {
   const deleted = await bot.db
     .delete(schema.thread_sessions)
     .where(orm.eq(schema.thread_sessions.thread_id, channelId))
-    .catch((cause) => new DbError({ operation: 'delete mainmast binding', cause }))
+    .catch((cause) => new DbError({ operation: 'delete coordinator binding', cause }))
   if (deleted instanceof Error) return deleted
   bot.eventLoop.unbind(channelId)
 }
@@ -641,8 +641,8 @@ async function adoptSession(
       .catch((cause) => new DiscordError({ operation: 'send intro', cause }))
     if (posted instanceof Error) return posted
     // Merge: other metadata stays. Task fields stay only for a resumed task session.
-    // A thread is never a mainmast: a fork of one drops its warmup windows (plugin/mainmast.ts).
-    const { task: _task, taskId: _taskId, mainmast: _mainmast, ...rest } = readMarker(session.metadata)?.fields ?? {}
+    // A thread is never a coordinator: a fork of one drops its warmup windows (plugin/coordinator.ts).
+    const { task: _task, taskId: _taskId, coordinator: _coordinator, ...rest } = readMarker(session.metadata)?.fields ?? {}
     const marker = scheduledTask ? { ...rest, taskId: scheduledTask.id, task: scheduledTask } : rest
     const kimaki = { ...marker, source: scheduledTask ? 'task' : 'discord', ...cliContext(bot), threadId: thread.id, channelId: channel.id }
     // A session with its own question rule (a fork, or --permission) keeps it.
@@ -887,12 +887,12 @@ export async function forkBtw(
   }
 
   const kimaki = { threadId: thread.id, channelId: project.channelId, source: 'discord', ...cliContext(bot), ...(parentSessionId && { parentSessionId }) }
-  const fromMainmast = !source.isThread()
+  const fromCoordinator = !source.isThread()
   const marked = await oc(bot, 'session.update', (client) => client.session.update({ sessionID: forked.id, metadata: { kimaki } }))
   if (marked instanceof Error) return marked
-  // A fork of a thread keeps its copied instructions (prompt cache); a fork of a mainmast gets thread
-  // ones. The plugin makes it a worker (plugin/mainmast.ts).
-  if (fromMainmast) {
+  // A fork of a thread keeps its copied instructions (prompt cache); a fork of a coordinator gets thread
+  // ones. The plugin makes it a worker (plugin/coordinator.ts).
+  if (fromCoordinator) {
     const instructions = await putInstructions(bot, { sessionId: forked.id, conversation: thread, channel, directory: project.directory, userId: author.id, parentSessionId: sourceSessionId })
     if (instructions instanceof Error) return instructions
   }

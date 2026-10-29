@@ -13,7 +13,7 @@ Tommy: commit everything with a descriptive message. queue
 ↳ replying to Tommy: -# Queued message sent
 ```
 
-Mainmast channels get the same reply. It shows that the queued prompt started even when the coordinator answers with no text, for example after it starts a worker. The answer that follows is not a second reply to the same message.
+Coordinator channels get the same reply. It shows that the queued prompt started even when the coordinator answers with no text, for example after it starts a worker. The answer that follows is not a second reply to the same message.
 
 A prompt queued with `kimaki send --thread ... . queue` (or a routine, or the OpenCode TUI) has no Discord message. Before, the thread only showed `Queued at position 1` and later `Queued message sent`, with no hint of what was queued. Now the queue notice holds the prompt as subtext, and the reply goes to that notice:
 

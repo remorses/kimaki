@@ -1,4 +1,4 @@
-// The mainmast warmup (plugin/mainmast.ts) with short windows: keep-alives while
+// The coordinator warmup (plugin/coordinator.ts) with short windows: keep-alives while
 // a worker thread runs, compaction when the channel is idle again, and the cap
 // that stops the warmup while a worker is stuck.
 
@@ -28,7 +28,7 @@ let server: OpencodeTestServer
 let twin: TestTwin
 let bot: BotHandle
 const dataDir = tempDataDir()
-// Big enough to be worth compacting (plugin/mainmast.ts MIN_COMPACT_TOKENS).
+// Big enough to be worth compacting (plugin/coordinator.ts MIN_COMPACT_TOKENS).
 const bigUsage = { inputTokens: 120_000, outputTokens: 1, totalTokens: 120_001 }
 const WARM_INTERVAL_MS = 400
 const WARM_MAX_MS = 1_500
@@ -42,7 +42,7 @@ function bigText(text: string) {
   ] as const
 }
 
-// The mainmast starts a worker thread, then answers IDLE.
+// The coordinator starts a worker thread, then answers IDLE.
 function delegate({ marker, worker, channelId }: { marker: string; worker: string; channelId: string }) {
   const command = `kimaki send --channel ${channelId} --name 'Worker ${worker}' --prompt '${worker} run' --parent-session "$OPENCODE_SESSION_ID"`
   return [
@@ -73,7 +73,7 @@ beforeAll(async () => {
   })
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true, mainmastTimers: { warmIntervalMs: WARM_INTERVAL_MS, warmMaxMs: WARM_MAX_MS } })
+  bot = await startTestBot({ dataDir, twin, server, coordinator: true, coordinatorTimers: { warmIntervalMs: WARM_INTERVAL_MS, warmMaxMs: WARM_MAX_MS } })
 }, 60_000)
 
 afterAll(async () => {
@@ -96,10 +96,10 @@ async function compactions(sessionId: string): Promise<number> {
   return messages.data.filter((message) => message.type === 'compaction').length
 }
 
-test('the mainmast stays warm while its worker runs, then compacts', async () => {
+test('the coordinator stays warm while its worker runs, then compacts', async () => {
   const { discord, channelId } = twin
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Start keepwarm-marker' })
-  const root = await waitFor({ label: 'mainmast session', check: async () => bot.store.getState().roots[channelId] })
+  const root = await waitFor({ label: 'coordinator session', check: async () => bot.store.getState().roots[channelId] })
   await waitForFooter({ discord, threadId: channelId })
   await waitFor({ label: 'compaction after the wake', check: async () => (await compactions(root)) === 1 || null })
 

@@ -8,7 +8,7 @@ import path from 'node:path'
 import { autostartBot } from '../autostart.ts'
 import { readBuiltinSkills } from '../builtin-skills.ts'
 import { fileEditTool, recordToolEdits } from '../file-edit-log.ts'
-import { registerMainmastRoles, registerMainmastWarmup } from './mainmast.ts'
+import { registerCoordinatorRoles, registerCoordinatorWarmup } from './coordinator.ts'
 import { turnContext } from '../system-prompt.ts'
 
 const exec = promisify(execFile)
@@ -132,8 +132,8 @@ export default Plugin.define({
         Object.assign(event.env, pending.env)
       })
     }
-    await registerMainmastRoles(ctx)
-    const stopWarmup = await registerMainmastWarmup(ctx)
+    await registerCoordinatorRoles(ctx)
+    const stopWarmup = await registerCoordinatorWarmup(ctx)
     // File edits feed `kimaki session editors` (v1-compatible JSONL index).
     await ctx.tool.hook('execute.after', async (event) => {
       if (event.status !== 'completed' || !fileEditTool(event.tool)) return

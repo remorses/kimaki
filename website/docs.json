@@ -55,7 +55,7 @@
             "group": "Features",
             "icon": "lucide:sparkles",
             "pages": [
-              "docs/features/mainmast",
+              "docs/features/coordinator",
               "docs/features/queue",
               "docs/features/btw",
               "docs/features/worktrees",

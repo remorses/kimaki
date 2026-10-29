@@ -13,7 +13,7 @@ import * as orm from 'drizzle-orm'
 import { z } from 'zod'
 
 import { parseButton } from './agent-ui.ts'
-import { fetchConversation, oc, parseModel, projectOf, type Bot } from './bot.ts'
+import { fetchConversation, isCoordinatorChannel, oc, parseModel, projectOf, type Bot } from './bot.ts'
 import { credential, loginCli } from './commands/login-commands.ts'
 import { setChannelAgent, setChannelModel, setGlobalModel, setVerbosity } from './commands/preference-commands.ts'
 import { channelWorktrees, manageWorktree, newWorktree, setAutoWorktrees } from './commands/worktree-commands.ts'
@@ -83,9 +83,9 @@ const sendFields = {
   // '' asks for an automatic name.
   worktree: z.string({ error: 'worktree must be a name or an empty string for an automatic name' }).optional(),
   notifyOnly: z.boolean({ error: 'notifyOnly must be boolean' }).optional(),
-  // The CLI waits for the run (`--wait`), so its end sends no mainmast note.
+  // The CLI waits for the run (`--wait`), so its end sends no coordinator note.
   wait: z.boolean({ error: 'wait must be boolean' }).optional(),
-  // OPENCODE_SESSION_ID of the shell that ran `kimaki send`: a mainmast wakes when the runs it prompted end.
+  // OPENCODE_SESSION_ID of the shell that ran `kimaki send`: a coordinator wakes when the runs it prompted end.
   senderSessionId: text('senderSessionId').optional(),
   permissions: z.array(z.string(), { error: 'Permission rules must be strings' }).optional(),
   prompt: text('prompt'),
@@ -302,15 +302,16 @@ export const lockRoutes = {
       }
     },
   }),
-  // The plugin keeps a mainmast's prompt cache warm while this is true (plugin/mainmast.ts).
-  'mainmast.busy': route({
+  // The plugin keeps a coordinator's prompt cache warm while this is true (plugin/coordinator.ts).
+  'coordinator.busy': route({
     input: z.object({ sessionId: text('sessionId') }),
     run: async (bot, { sessionId }) => {
       const { sessionThreads, roots, threads } = bot.store.getState()
-      // A mainmast's conversation is its channel. A replaced one (/new-mainmast) is never busy.
+      // A coordinator's conversation is its channel. A replaced one (/reset-coordinator) or one
+      // of a channel with coordinator mode off is never busy.
       const channelId = sessionThreads[sessionId]
-      if (!channelId || roots[channelId] !== sessionId) return { busy: false }
-      // An idle mainmast has no view after a bot restart; its threads do.
+      if (!channelId || roots[channelId] !== sessionId || !isCoordinatorChannel(bot, channelId)) return { busy: false }
+      // An idle coordinator has no view after a bot restart; its threads do.
       return { busy: threads[channelId] ? conversationTyping({ threads, threadId: channelId }) : workersTyping({ threads, channelId }) }
     },
   }),
@@ -525,7 +526,7 @@ export const lockRoutes = {
       if (renamed instanceof Error) return renamed
       const thread = await fetchConversation(bot, target.threadId)
       if (thread instanceof Error) return thread
-      // A mainmast channel keeps its project name.
+      // A coordinator channel keeps its project name.
       if (!thread.isThread()) return { title }
       const updated = await thread.setName(title.slice(0, 100)).catch((cause) => new DiscordError({ operation: 'rename thread', cause }))
       if (updated instanceof Error) return updated
@@ -539,7 +540,7 @@ export const lockRoutes = {
       if (target instanceof Error) return target
       const thread = await fetchConversation(bot, target.threadId)
       if (thread instanceof Error) return thread
-      if (!thread.isThread()) return new ConfigError({ reason: 'A mainmast channel cannot be archived' })
+      if (!thread.isThread()) return new ConfigError({ reason: 'A coordinator channel cannot be archived' })
       const archived = await thread.setArchived(true).catch((cause) => new DiscordError({ operation: 'archive thread', cause }))
       if (archived instanceof Error) return archived
       return { archived: true }

@@ -44,7 +44,7 @@ If the session is **busy**, the message waits and Kimaki replies with its positi
 
 If the session is **idle** and nothing else waits, the message runs at once, like a normal message.
 
-The queue exists in a session thread and in a mainmast channel. In a project channel with `--no-mainmast`, a queued message starts a new session.
+The queue exists in a session thread and in a coordinator channel. In a project channel with coordinator mode off, a queued message starts a new session.
 
 ## When a queued message is sent
 

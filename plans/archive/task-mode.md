@@ -1,4 +1,4 @@
-Status: superseded by the mainmast implementation (plans/decisions/mainmast.md). Subagent threads were dropped for `kimaki send` threads.
+Status: superseded by the coordinator implementation (plans/decisions/coordinator.md). Subagent threads were dropped for `kimaki send` threads.
 
 # Task mode plan
 
