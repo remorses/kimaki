@@ -269,7 +269,12 @@ export function conversationTyping({ threads, threadId }: { threads: Readonly<Re
   if (!view || waitsForUser(view)) return false
   if (isBusy(view)) return true
   if (!view.mainmast) return false
-  return Object.entries(threads).some(([id, thread]) => id !== threadId && thread.channelId === threadId && isTyping(thread))
+  return workersTyping({ threads, channelId: threadId })
+}
+
+// A thread of the channel runs and does not wait for the user.
+export function workersTyping({ threads, channelId }: { threads: Readonly<Record<string, ThreadView>>; channelId: string }): boolean {
+  return Object.entries(threads).some(([id, thread]) => id !== channelId && thread.channelId === channelId && isTyping(thread))
 }
 
 export function eventSessionId(event: V2Event): string | null {

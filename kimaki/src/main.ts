@@ -75,7 +75,7 @@ export type StartBotOptions = {
   disabledPrompt?: readonly PromptSection[]
   // Mainmast channels (ingress.ts). Default off, so tests opt in.
   mainmast?: boolean
-  // Default: from the OpenCode warming config (mainmastTimers in mainmast.ts). Tests pass short ones.
+  // Default: the plugin's warmup windows (plugin/mainmast.ts). Tests pass short ones.
   mainmastTimers?: MainmastTimers
 }
 

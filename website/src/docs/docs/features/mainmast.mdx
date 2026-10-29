@@ -47,13 +47,9 @@ Mainmast is on by default. Start Kimaki with `--no-mainmast` to go back to one n
 
 ## While you are away
 
-Halfway through the OpenCode [prompt cache warming](https://opencode.ai/v2/docs/warming) window (30 minutes without warming), the mainmast gets a reminder to start useful work while you are away. When it has none it answers `IDLE`, which Kimaki hides.
+While the mainmast or one of its threads runs, Kimaki keeps the mainmast's **prompt cache** warm with a small keep-alive request every 4 minutes, for at most 1.5 hours after its last turn. A finished worker then wakes it with a cheap cache read instead of a full cache write. You do not need OpenCode's global `warming` config for this.
 
-With warming on, the mainmast is compacted when the window ends, while its cache is still warm, so the next message starts from a short summary. Turn it on in your `opencode.json`:
-
-```json
-{ "warming": { "duration": "1 hour" } }
-```
+When the channel goes idle, a mainmast with more than 100k tokens of context is compacted while its cache is still warm, so the next message starts from a short summary.
 
 ## Reading what a session did
 

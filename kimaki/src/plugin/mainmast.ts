@@ -1,77 +1,107 @@
 // Mainmast sessions in the OpenCode process: their role instructions (below)
-// and the timers of the coordinator.
+// and the prompt cache warmup of the coordinator.
 //
-// Timers of mainmast sessions (the coordinator of a mainmast channel), from
-// the `mainmast` field of the marker the bot writes at session.create:
+// Warmup works like OpenCode's `warming` (core/src/plugin/warming.ts): a
+// `session.generate` keep-alive reads the cached prompt prefix, which keeps the
+// provider cache alive, and stores nothing in the session. It runs only while
+// the mainmast's channel is busy, so the <session-finished> note of a worker
+// reads a warm cache instead of writing it again:
 //
-//   user prompt ─▶ armed ─▶ no model request for nudgeMs ─▶ "the user is away: any useful work?"
-//   model request ──compactMs──▶ compact, while the warmed prompt cache still holds
+//   model request ─▶ intervalMs later: channel busy? ─▶ keep-alive, again intervalMs later
+//                                     └─▶ idle, or maxMs after the last real request ─▶ end
+//   end ─▶ compact while the cache still holds, when the context is big
 //
-// Quiet for nudgeMs means idle, so the nudge never lands in a running turn; it
-// fires once per user prompt. compactMs is the OpenCode warming window: warm
-// requests stop then, so compaction is the last cheap read of the cached prefix.
-// Deadlines are also in plugin storage, so a plugin reload re-arms them.
-// Only the mainmast itself, never its threads or other sessions.
+// Only the bot knows the threads of a channel: it answers `mainmast.busy` on its
+// lock port. The warmup is also in plugin storage, so a plugin reload (every
+// Kimaki build or upgrade) continues it. Only the mainmast itself, never its
+// threads or other sessions.
 // TODO: let the mainmast compact worker sessions too (they keep their full history now).
 
+import fs from 'node:fs'
+import path from 'node:path'
 import type { Plugin } from '@opencode/plugin'
 import type { SessionContext } from '@opencode/plugin/promise/session'
 import dedent from 'string-dedent'
 
-const IDLE_NUDGE_SOURCE = 'kimaki-idle'
 // The whole answer of a mainmast turn with nothing for the user. The reducer drops it.
 export const IDLE_REPLY = 'IDLE'
 
-export function idleNudgeText(minutes: number) {
-  return [
-    '<system-reminder>',
-    `The user has not replied for ${minutes} minutes. If there is useful work that clearly moves their goals forward, start it now.`,
-    'Do not reply in chat now unless it is important and they should really see it: a failure, a blocker, a decision only they can make, or a result they asked for. Never post a status, a plan or a recap of what you did or are doing.',
-    `In every other case your whole reply is exactly ${IDLE_REPLY}, also after starting work.`,
-    '</system-reminder>',
-  ].join('\n')
-}
-
-type Timers = { nudgeMs: number; compactMs: number | null }
-type Timer = ReturnType<typeof setTimeout>
-type Kind = 'nudge' | 'compact'
-// A pending nudge or compaction, also in plugin storage: OpenCode reloads the plugin
-// on every Kimaki build or upgrade, which clears its timers.
-type Deadline = { directory: string; at: number }
-
+// OpenCode's warming defaults: a keep-alive every 4 minutes stays under Anthropic's
+// 5-minute cache TTL. Same prompt, so OpenCode's own warming, when on, ignores ours.
+const WARM_INTERVAL_MS = 4 * 60_000
+const WARM_PROMPT = 'This is a keep-alive request. Do not perform any work or use tools. Reply with exactly: OK'
+// A stuck worker must not keep the mainmast warm forever.
+const WARM_MAX_MS = 90 * 60_000
 // A small history is cheap to keep: compacting it only loses detail. Tokens, not a
 // share of the window: a mainmast at 190k never reached 20% of a 1M window.
 const MIN_COMPACT_TOKENS = 100_000
-// Missed while no plugin ran (OpenCode was down): the nudge is late, the cache cold.
-const STALE_DEADLINE_MS = 60_000
+// Missed while no plugin ran (OpenCode was down): the cache may be cold.
+const STALE_MS = 60_000
+const BUSY_TIMEOUT_MS = 5_000
+const STORAGE_PREFIX = 'warm/'
 
-function readTimers(metadata: Readonly<Record<string, unknown>> | undefined): Timers | null {
-  const kimaki = metadata?.['kimaki']
-  const mainmast: unknown = kimaki && typeof kimaki === 'object' ? Reflect.get(kimaki, 'mainmast') : null
-  if (!mainmast || typeof mainmast !== 'object') return null
-  const nudgeMs: unknown = Reflect.get(mainmast, 'nudgeMs')
-  const compactMs: unknown = Reflect.get(mainmast, 'compactMs')
-  if (typeof nudgeMs !== 'number' || nudgeMs <= 0) return null
-  return { nudgeMs, compactMs: typeof compactMs === 'number' && compactMs > 0 ? compactMs : null }
+type Timer = ReturnType<typeof setTimeout>
+type Windows = { intervalMs: number; maxMs: number }
+// last: the latest model request, keep-alives included. active: the latest real one.
+type Warmup = { directory: string; last: number; active: number }
+
+function markerValue(session: RoleSession, key: string): unknown {
+  const kimaki = session.metadata?.['kimaki']
+  return kimaki && typeof kimaki === 'object' ? Reflect.get(kimaki, key) : null
 }
 
-export async function registerMainmastTimers(ctx: Plugin.Context): Promise<() => void> {
-  // Marker timers never change after create: one session.get per session, also for non-mainmast ones.
-  const known = new Map<string, Promise<Timers | null>>()
-  // By storage key, `<kind>/<sessionID>`.
-  const pending = new Map<string, Timer>()
+// Coordinators only. A `mainmast` marker field overrides the windows (tests).
+function readWindows(session: RoleSession): Windows | null {
+  if (session.parentID || !coordinatorChannel(session)) return null
+  const mainmast = markerValue(session, 'mainmast')
+  const read = (key: string, fallback: number) => {
+    const value: unknown = mainmast && typeof mainmast === 'object' ? Reflect.get(mainmast, key) : null
+    return typeof value === 'number' && value > 0 ? value : fallback
+  }
+  return { intervalMs: read('warmIntervalMs', WARM_INTERVAL_MS), maxMs: read('warmMaxMs', WARM_MAX_MS) }
+}
 
-  function timers(sessionID: string): Promise<Timers | null> {
+function readWarmup(value: unknown): Warmup | null {
+  if (!value || typeof value !== 'object') return null
+  const directory: unknown = Reflect.get(value, 'directory')
+  const last: unknown = Reflect.get(value, 'last')
+  const active: unknown = Reflect.get(value, 'active')
+  return typeof directory === 'string' && typeof last === 'number' && typeof active === 'number' ? { directory, last, active } : null
+}
+
+// The mainmast or a thread of its channel runs, from the bot's thread views
+// (lock-routes.ts). No answer (bot stopped) ends the warmup.
+async function channelBusy(session: RoleSession): Promise<boolean> {
+  const dataDir = markerString(session, 'dataDir')
+  const lockPort = markerValue(session, 'lockPort')
+  if (!dataDir || typeof lockPort !== 'number') return false
+  const token = await fs.promises.readFile(path.join(dataDir, 'lock-token'), 'utf8').catch(() => null)
+  if (token === null) return false
+  const response = await fetch(`http://127.0.0.1:${lockPort}/kimaki/mainmast.busy`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: session.id }),
+    signal: AbortSignal.timeout(BUSY_TIMEOUT_MS),
+  }).catch(() => null)
+  if (!response?.ok) return false
+  const body: unknown = await response.json().catch(() => null)
+  return !!body && typeof body === 'object' && Reflect.get(body, 'busy') === true
+}
+
+export async function registerMainmastWarmup(ctx: Plugin.Context): Promise<() => void> {
+  // The marker never changes after create: one session.get per session, also for non-mainmast ones.
+  const known = new Map<string, Promise<Windows | null>>()
+  const warmups = new Map<string, Warmup>()
+  const timers = new Map<string, Timer>()
+
+  function windows(sessionID: string): Promise<Windows | null> {
     const cached = known.get(sessionID)
     if (cached) return cached
-    // A failed read is not cached: it would turn the timers off until the plugin reloads.
-    const found = ctx.session.get({ sessionID }).then(
-      (session) => (session.parentID ? null : readTimers(session.metadata)),
-      () => {
-        known.delete(sessionID)
-        return null
-      },
-    )
+    // A failed read is not cached: it would turn the warmup off until the plugin reloads.
+    const found = ctx.session.get({ sessionID }).then(readWindows, () => {
+      known.delete(sessionID)
+      return null
+    })
     known.set(sessionID, found)
     return found
   }
@@ -83,62 +113,76 @@ export async function registerMainmastTimers(ctx: Plugin.Context): Promise<() =>
     return tokens >= MIN_COMPACT_TOKENS
   }
 
-  async function run(kind: Kind, sessionID: string) {
-    const found = await timers(sessionID)
-    if (!found) return
-    if (kind === 'nudge') {
-      await ctx.session.synthetic({ sessionID, text: idleNudgeText(Math.round(found.nudgeMs / 60_000)), delivery: 'queue', metadata: { source: IDLE_NUDGE_SOURCE } })
+  function save(sessionID: string, warmup: Warmup) {
+    warmups.set(sessionID, warmup)
+    void ctx.storage.set(STORAGE_PREFIX + sessionID, warmup).catch(() => undefined)
+  }
+
+  function arm(sessionID: string, found: Windows) {
+    const warmup = warmups.get(sessionID)
+    if (!warmup) return
+    clearTimeout(timers.get(sessionID))
+    const timer = setTimeout(() => {
+      timers.delete(sessionID)
+      // Plugins stay silent: a failed keep-alive or compaction only loses that one.
+      void tick(sessionID, warmup, found).catch(() => undefined)
+    }, Math.max(0, Math.min(warmup.last + found.intervalMs, warmup.active + found.maxMs) - Date.now()))
+    timer.unref?.()
+    timers.set(sessionID, timer)
+  }
+
+  async function tick(sessionID: string, warmup: Warmup, found: Windows) {
+    const session = await ctx.session.get({ sessionID }).catch(() => null)
+    const busy = !!session && Date.now() < warmup.active + found.maxMs && (await channelBusy(session))
+    // A model request during the checks moved the warmup.
+    if (warmups.get(sessionID) !== warmup) return
+    if (busy) {
+      // Before the request, so a failing keep-alive waits a whole interval.
+      save(sessionID, { ...warmup, last: Date.now() })
+      arm(sessionID, found)
+      await ctx.session.generate({ sessionID, prompt: WARM_PROMPT })
       return
     }
+    warmups.delete(sessionID)
+    await ctx.storage.remove(STORAGE_PREFIX + sessionID).catch(() => undefined)
     if (await worthCompacting(sessionID)) await ctx.session.compact({ sessionID, delivery: 'queue' })
   }
 
-  function arm(kind: Kind, sessionID: string, at: number) {
-    const key = `${kind}/${sessionID}`
-    clearTimeout(pending.get(key))
-    const timer = setTimeout(() => {
-      pending.delete(key)
-      // Plugins stay silent: a failed nudge or compaction only loses that one.
-      void ctx.storage.remove(key).catch(() => undefined).then(() => run(kind, sessionID)).catch(() => undefined)
-    }, Math.max(0, at - Date.now()))
-    timer.unref?.()
-    pending.set(key, timer)
-  }
-
-  function schedule(kind: Kind, sessionID: string, ms: number) {
-    const deadline: Deadline = { directory: ctx.location.directory, at: Date.now() + ms }
-    arm(kind, sessionID, deadline.at)
-    void ctx.storage.set(`${kind}/${sessionID}`, deadline).catch(() => undefined)
-  }
-
-  // Deadlines of the plugin before a reload. Storage is shared by all locations: each takes its own.
-  const stored = await ctx.storage.scan({ prefix: '' }).catch(() => null)
-  for (const { key, value } of stored?.entries ?? []) {
-    const [kind, sessionID] = key.split('/')
-    if ((kind !== 'nudge' && kind !== 'compact') || !sessionID || !value || typeof value !== 'object') continue
-    const at: unknown = Reflect.get(value, 'at')
-    if (typeof at !== 'number') continue
-    if (at < Date.now() - STALE_DEADLINE_MS) void ctx.storage.remove(key).catch(() => undefined)
-    else if (Reflect.get(value, 'directory') === ctx.location.directory) arm(kind, sessionID, at)
-  }
-
-  // Quiet for nudgeMs after a user prompt: one nudge, pushed back by every request until it fires.
-  await ctx.session.hook('prompt', async (event) => {
-    const found = await timers(event.sessionID)
-    if (found) schedule('nudge', event.sessionID, found.nudgeMs)
-  })
-  // Every model request of the session: the session is not idle yet, and the warming window moves.
-  await ctx.session.hook('context', async (event) => {
-    const found = await timers(event.sessionID)
+  async function touch(sessionID: string, real: boolean) {
+    const found = await windows(sessionID)
     if (!found) return
-    if (pending.has(`nudge/${event.sessionID}`)) schedule('nudge', event.sessionID, found.nudgeMs)
-    if (found.compactMs) schedule('compact', event.sessionID, found.compactMs)
-  })
+    const current = warmups.get(sessionID)
+    // Keep-alives (also OpenCode's own warming) only move a running warmup.
+    if (!real && !current) return
+    const now = Date.now()
+    save(sessionID, { directory: ctx.location.directory, last: now, active: real || !current ? now : current.active })
+    arm(sessionID, found)
+  }
 
-  // Storage keeps the deadlines for the next plugin instance.
+  // Warmups of the plugin before a reload. Storage is shared by all locations: each takes its own.
+  const stored = await ctx.storage.scan({ prefix: STORAGE_PREFIX }).catch(() => null)
+  await Promise.all((stored?.entries ?? []).map(async ({ key, value }) => {
+    const sessionID = key.slice(STORAGE_PREFIX.length)
+    const warmup = readWarmup(value)
+    if (!sessionID || warmup?.directory !== ctx.location.directory) return
+    const found = await windows(sessionID)
+    if (!found || Date.now() > warmup.last + found.intervalMs + STALE_MS) {
+      await ctx.storage.remove(key).catch(() => undefined)
+      return
+    }
+    warmups.set(sessionID, warmup)
+    arm(sessionID, found)
+  }))
+
+  // Turns of the session start or move the warmup; compaction requests do not.
+  await ctx.session.hook('context', (event) => touch(event.sessionID, true))
+  await ctx.session.hook('generate', (event) => touch(event.sessionID, false))
+
+  // Storage keeps the warmups for the next plugin instance.
   return () => {
-    for (const timer of pending.values()) clearTimeout(timer)
-    pending.clear()
+    for (const timer of timers.values()) clearTimeout(timer)
+    timers.clear()
+    warmups.clear()
     known.clear()
   }
 }

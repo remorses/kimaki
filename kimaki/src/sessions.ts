@@ -30,7 +30,6 @@ import {
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import { SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
-import { mainmastTimers } from './mainmast.ts'
 import type { OpenCodeClient, OpencodeEndpoint } from './opencode-server.ts'
 import { prompt, runInSession, type Sender } from './prompt.ts'
 import { formatEcho } from './queue.ts'
@@ -551,7 +550,6 @@ export async function startMainmast(
   const chosen = await agentAndModel(bot, { defaults, route, directory })
   if (chosen instanceof Error) return chosen
   const title = `mainmast: ${channel.name}`
-  const timers = await mainmastTimers(bot, directory)
   const session = await oc(bot, 'session.create', (client) =>
     client.session.create({
       title,
@@ -559,7 +557,7 @@ export async function startMainmast(
       ...(chosen.model && { model: chosen.model }),
       ...(chosen.agent && { agent: chosen.agent }),
       permissions: [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills)],
-      metadata: { kimaki: { threadId: channel.id, channelId: channel.id, source: 'discord', mainmast: timers, ...cliContext(bot) } },
+      metadata: { kimaki: { threadId: channel.id, channelId: channel.id, source: 'discord', ...(bot.mainmastTimers && { mainmast: bot.mainmastTimers }), ...cliContext(bot) } },
     }),
   )
   if (session instanceof Error) return session
@@ -643,7 +641,7 @@ async function adoptSession(
       .catch((cause) => new DiscordError({ operation: 'send intro', cause }))
     if (posted instanceof Error) return posted
     // Merge: other metadata stays. Task fields stay only for a resumed task session.
-    // A thread is never a mainmast: a fork of one drops its timers (plugin/mainmast.ts).
+    // A thread is never a mainmast: a fork of one drops its warmup windows (plugin/mainmast.ts).
     const { task: _task, taskId: _taskId, mainmast: _mainmast, ...rest } = readMarker(session.metadata)?.fields ?? {}
     const marker = scheduledTask ? { ...rest, taskId: scheduledTask.id, task: scheduledTask } : rest
     const kimaki = { ...marker, source: scheduledTask ? 'task' : 'discord', ...cliContext(bot), threadId: thread.id, channelId: channel.id }

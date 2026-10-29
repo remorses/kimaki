@@ -24,6 +24,7 @@ import { createTask, deleteTask, editTask, runTaskNow } from './scheduler.ts'
 import * as schema from './schema.ts'
 import { channelForDirectory, channelForSession, fork, resume, sessionCwd } from './sessions.ts'
 import { createSleep } from './sleeps.ts'
+import { conversationTyping, workersTyping } from './thread-reducer.ts'
 import { worktreeName } from './worktrees.ts'
 
 type LockRoute<S extends z.ZodType, R> = {
@@ -299,6 +300,18 @@ export const lockRoutes = {
         opencode: { connected: bot.opencode.connected, url: endpoint?.url ?? null, version: endpoint?.version ?? null },
         guilds: [...bot.discord.guilds.cache.values()].map((guild) => ({ id: guild.id, name: guild.name })),
       }
+    },
+  }),
+  // The plugin keeps a mainmast's prompt cache warm while this is true (plugin/mainmast.ts).
+  'mainmast.busy': route({
+    input: z.object({ sessionId: text('sessionId') }),
+    run: async (bot, { sessionId }) => {
+      const { sessionThreads, roots, threads } = bot.store.getState()
+      // A mainmast's conversation is its channel. A replaced one (/new-mainmast) is never busy.
+      const channelId = sessionThreads[sessionId]
+      if (!channelId || roots[channelId] !== sessionId) return { busy: false }
+      // An idle mainmast has no view after a bot restart; its threads do.
+      return { busy: threads[channelId] ? conversationTyping({ threads, threadId: channelId }) : workersTyping({ threads, channelId }) }
     },
   }),
   restart: route({

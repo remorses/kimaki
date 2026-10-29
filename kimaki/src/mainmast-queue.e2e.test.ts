@@ -53,7 +53,7 @@ beforeAll(async () => {
   ;[server, twin] = await Promise.all([startOpencodeTestServer({ matchers }), startTwin()])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true, mainmastTimers: { nudgeMs: 3_600_000, compactMs: null } })
+  bot = await startTestBot({ dataDir, twin, server, mainmast: true })
   // The mainmast session exists before any test: its banner is not part of one test's snapshot.
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'Start hello-marker' })
   await waitForFooter({ discord: twin.discord, threadId: twin.channelId })

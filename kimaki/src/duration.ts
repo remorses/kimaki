@@ -1,5 +1,4 @@
-// Relative durations like `30m`, `2h` or `1 hour` (`session wait --timeout`, `kimaki sleep --duration`,
-// OpenCode's `warming.duration`).
+// Relative durations like `30m`, `2h` or `1 hour` (`session wait --timeout`, `kimaki sleep --duration`).
 // Dependency-light so the CLI can use it without loading bot modules.
 
 import { ConfigError } from './errors.ts'

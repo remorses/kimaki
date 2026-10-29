@@ -10,8 +10,7 @@
 // OpenCode's own subagent completion (core/src/session/subagent-completion.ts):
 // `resume` decides if it wakes the session.
 
-import { oc, projectOf, readMarker, type Bot, type MainmastTimers } from './bot.ts'
-import { parseDuration } from './duration.ts'
+import { oc, projectOf, readMarker, type Bot } from './bot.ts'
 import type { RunEnded } from './event-loop.ts'
 import { createLogger } from './logger.ts'
 import { IDLE_REPLY } from './plugin/mainmast.ts'
@@ -28,25 +27,6 @@ const USER_PROMPT_CHARS = 1_000
 const RUN_PAGE_MESSAGES = 30
 // A run longer than this only loses uploads from its first steps.
 const MAX_RUN_PAGES = 10
-
-// OpenCode's warming default (core/src/plugin/warming.ts) and the nudge when warming is off.
-const OPENCODE_WARMING_MS = 30 * 60_000
-const UNWARMED_NUDGE_MS = 30 * 60_000
-
-// Timers of a new mainmast (plugin/mainmast.ts) from the OpenCode `warming` config of its
-// directory, like OpenCode reads it (Config.latest): nudge at half the window, compact at its end.
-// Without warming the cache is cold after minutes, so there is nothing to compact cheaply.
-export async function mainmastTimers(bot: Bot, directory: string): Promise<MainmastTimers> {
-  if (bot.mainmastTimers) return bot.mainmastTimers
-  const entries = await oc(bot, 'config.get', (client) => client.config.get({ location: { directory } }))
-  if (entries instanceof Error) logger.warn('read warming config', entries)
-  const documents = entries instanceof Error ? [] : entries.flatMap((entry) => (entry.type === 'document' ? [entry.info] : []))
-  const warming = documents.findLast((info) => info.warming !== undefined)?.warming
-  if (!warming) return { nudgeMs: UNWARMED_NUDGE_MS, compactMs: null }
-  const parsed = warming === true || !warming.duration ? OPENCODE_WARMING_MS : parseDuration(warming.duration, 'warming.duration')
-  const window = parsed instanceof Error ? OPENCODE_WARMING_MS : parsed
-  return { nudgeMs: window / 2, compactMs: window }
-}
 
 // The messages of the last run, oldest first: pages back until its user prompt.
 async function lastRunMessages(bot: Bot, sessionId: string) {

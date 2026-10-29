@@ -7,7 +7,6 @@ import path from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
-import { mainmastTimers } from './mainmast.ts'
 import { send } from './prompt.ts'
 import { readSessionMarkdown } from './session-events.ts'
 import {
@@ -98,7 +97,7 @@ beforeAll(async () => {
   })
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true, mainmastTimers: { nudgeMs: 3_600_000, compactMs: null } })
+  bot = await startTestBot({ dataDir, twin, server, mainmast: true })
 }, 60_000)
 
 // Role texts the kimaki plugin stored in a session (plugin/mainmast.ts), oldest first.
@@ -439,10 +438,8 @@ test('the mainmast survives a bot restart; /new-mainmast starts a fresh one', as
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]
   await bot.stop()
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true, mainmastTimers: { nudgeMs: 3_600_000, compactMs: null } })
+  bot = await startTestBot({ dataDir, twin, server, mainmast: true })
   expect(bot.store.getState().roots[channelId]).toBe(root)
-  // No `warming` in the test config: a nudge after 30 minutes, nothing to compact cheaply.
-  expect(await mainmastTimers({ ...bot, mainmastTimers: null }, server.projectDirectory)).toEqual({ nudgeMs: 1_800_000, compactMs: null })
 
   const { id: interactionId } = await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'new-mainmast' })
   await discord.channel(channelId).waitForInteractionAck({ interactionId, timeout: 4_000 })

@@ -1,6 +1,5 @@
-// The mainmast plugin timers (plugin/mainmast.ts) with short windows: an idle
-// mainmast is asked for work once and stays silent when it has none, then it is
-// compacted when the warming window ends.
+// The mainmast plugin warmup (plugin/mainmast.ts) with a short window: an idle
+// mainmast with no running threads ends its warmup at the first check and is compacted.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -44,20 +43,13 @@ beforeAll(async () => {
           when: { latestUserTextIncludes: 'idle-marker' },
           then: { parts: [{ type: 'text-start', id: 't' }, { type: 'text-delta', id: 't', delta: 'Hi there.' }, { type: 'text-end', id: 't' }, { type: 'finish', finishReason: 'stop', usage: bigUsage }] },
         },
-        // Nothing to do while the user is away: the IDLE reply that Discord hides.
-        {
-          id: 'nudge',
-          priority: 500,
-          when: { latestUserTextIncludes: 'has not replied' },
-          then: { parts: [{ type: 'text-start', id: 'n' }, { type: 'text-delta', id: 'n', delta: 'IDLE' }, { type: 'text-end', id: 'n' }, { type: 'finish', finishReason: 'stop', usage: bigUsage }] },
-        },
       ],
     }),
     startTwin(),
   ])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, mainmast: true, mainmastTimers: { nudgeMs: 300, compactMs: 1_200 } })
+  bot = await startTestBot({ dataDir, twin, server, mainmast: true, mainmastTimers: { warmIntervalMs: 1_200, warmMaxMs: 60_000 } })
 }, 60_000)
 
 afterAll(async () => {
@@ -67,7 +59,7 @@ afterAll(async () => {
   fs.rmSync(dataDir, { recursive: true, force: true })
 })
 
-test('an idle mainmast is nudged once, stays silent, then gets compacted', async () => {
+test('an idle mainmast gets compacted when its warmup ends', async () => {
   const { discord, channelId } = twin
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Hello idle-marker' })
   await waitForFooter({ discord, threadId: channelId })
@@ -87,15 +79,11 @@ test('an idle mainmast is nudged once, stays silent, then gets compacted', async
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await client.message.list({ sessionID: root, order: 'asc', limit: 20 })
-  // One nudge, answered with nothing, before the compaction.
   expect(messages.data.map((message) => message.type)).toMatchInlineSnapshot(`
     [
       "synthetic",
       "synthetic",
       "user",
-      "assistant",
-      "idle",
-      "synthetic",
       "assistant",
       "idle",
       "compaction",
@@ -105,7 +93,7 @@ test('an idle mainmast is nudged once, stays silent, then gets compacted', async
 })
 
 // OpenCode reloads the plugin when its files change (every Kimaki build or upgrade).
-test('a plugin reload keeps the pending nudge and compaction', async () => {
+test('a plugin reload keeps the pending compaction', async () => {
   const { discord, channelId } = twin
   const client = await server.client()
   const root = bot.store.getState().roots[channelId]!
@@ -117,14 +105,13 @@ test('a plugin reload keeps the pending nudge and compaction', async () => {
   await waitFor({ label: 'compaction after the plugin reload', check: async () => (await compactions()) === 2 || null })
 
   const messages = await client.message.list({ sessionID: root, order: 'asc', limit: 30 })
-  expect(messages.data.slice(10).map((message) => message.type)).toMatchInlineSnapshot(`
+  const firstCompaction = messages.data.findIndex((message) => message.type === 'compaction')
+  expect(messages.data.slice(firstCompaction + 1).map((message) => message.type)).toMatchInlineSnapshot(`
     [
+      "idle",
       "synthetic",
       "synthetic",
       "user",
-      "assistant",
-      "idle",
-      "synthetic",
       "assistant",
       "idle",
       "compaction",
