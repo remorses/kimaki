@@ -161,19 +161,14 @@ test('kimaki --gateway without a TTY installs, onboards and reports ready on std
   `)
 
   const kimakiChannel = channels.find((channel) => channel.name === 'kimaki')!
-  // Coordinator mode is off by default: onboarding answers in a thread.
-  const onboarding = await twin.discord.channel(kimakiChannel.id).waitForThread({ timeout: 8_000 })
-  await waitForFooter({ discord: twin.discord, threadId: onboarding.id })
+  // Coordinator mode is on by default: onboarding answers in the channel.
+  await waitForFooter({ discord: twin.discord, threadId: kimakiChannel.id })
   expect(await twin.discord.channel(kimakiChannel.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    **Kimaki** lets you code from Discord. Each project channel is linked to a folder on your computer. A message there starts an AI coding session in that folder.
-    Reply in the thread below to add channels for your projects. <@200000000000000001>"
-  `)
-  expect(await twin.discord.thread(onboarding.id).text()).toMatchInlineSnapshot(`
-    "--- from: assistant (TestBot)
-    **Kimaki** lets you code from Discord. Each project channel is linked to a folder on your computer. A message there starts an AI coding session in that folder.
-    Reply in the thread below to add channels for your projects. <@200000000000000001>
+    **Kimaki** lets you code from Discord. Each project channel is linked to a folder on your computer. Write in the channel: one long session answers there and starts threads for the work.
+    Reply here to add channels for your projects. <@200000000000000001>
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     Want channels for your projects?
     -# *kimaki ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)

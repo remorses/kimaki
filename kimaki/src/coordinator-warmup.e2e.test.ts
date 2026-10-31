@@ -108,6 +108,7 @@ test('the coordinator stays warm while its worker runs, then compacts', async ()
     Start keepwarm-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     -# ┣ shell _Start the worker_
     The worker finished.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"

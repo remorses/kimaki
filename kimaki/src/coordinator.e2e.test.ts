@@ -126,6 +126,7 @@ test('channel messages go to one session that replies in the channel', async () 
     Say hi hello-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     [reply to tommy: Say hi hello-marker]
     Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -166,6 +167,7 @@ test('a worker started with --parent-session gets a thread and wakes the coordin
     Say hi hello-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     [reply to tommy: Say hi hello-marker]
     Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
@@ -449,7 +451,7 @@ test('/toggle-coordinator turns coordinator mode off and on per channel; the cho
   expect(bot.store.getState().roots[channelId]).toBe(root)
 
   await toggle()
-  // Started without --enable-coordinator: the channel keeps its choice and its coordinator.
+  // Started with coordinator mode off by default: the channel keeps its choice and its coordinator.
   await bot.stop()
   bot = await startTestBot({ dataDir, twin, server })
   const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
@@ -494,6 +496,7 @@ test('the coordinator survives a bot restart; /reset-coordinator starts a fresh 
     Fresh start hello-marker
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     Hello from the coordinator.
     -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)

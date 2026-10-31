@@ -522,7 +522,7 @@ export async function startTestBot({
   // Scheduling tests pass manualClock() and null, then call bot.scheduler.runDueTasks().
   clock?: Clock
   schedulerIntervalMs?: number | null
-  // Default off, like the CLI without --enable-coordinator; coordinator tests pass short timers.
+  // Default off (`--coordinator false`) so most tests get threads; coordinator tests pass true and short timers.
   coordinator?: boolean
   coordinatorTimers?: CoordinatorTimers
 }): Promise<BotHandle> {
@@ -554,7 +554,7 @@ export async function startTestBot({
     ...(clock && { clock }),
     ...(schedulerIntervalMs !== undefined && { schedulerIntervalMs }),
     ...(realtimeBaseUrls && { realtimeBaseUrls }),
-    ...(coordinator && { enableCoordinator: coordinator }),
+    coordinator: coordinator ?? false,
     ...(coordinatorTimers && { coordinatorTimers }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),

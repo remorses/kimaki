@@ -437,7 +437,7 @@ test('CLI help documents the supported P7 commands', async () => {
       --disable-skills <list>       Built-in Kimaki skills to turn off: "all" or a comma separated list (kimaki-debug,kimaki-tunnel)
       --disable-prompt <section>    System prompt section to remove from new sessions (repeatable): discord-permissions, kimaki-debugging, file-upload-requests, action-buttons, session-sleep, session-abort, cross-project-commands, waiting-sessions, critique-diffs, markdown-formatting, discord-callouts, search-result-urls, diagrams
       --no-analytics                Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)
-      --enable-coordinator          Channel messages go to one long coordinator session that starts threads for the work (/toggle-coordinator sets one channel)
+      --coordinator [enabled]       Channel messages go to one long coordinator session that starts threads for the work. "false" turns it off (/toggle-coordinator sets one channel) (default: true)
       --no-autostart                Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)
       --if-not-running              Start only if no bot runs; never stop the running one (used by autostart)
       -h, --help                    Display this message

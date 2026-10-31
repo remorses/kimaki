@@ -124,7 +124,7 @@ export const channel_mention_mode = s.sqliteTable('channel_mention_mode', {
   updated_at: datetime('updated_at').default(orm.sql`CURRENT_TIMESTAMP`).$onUpdate(() => new Date()),
 })
 
-// /toggle-coordinator choice of a project channel. Missing: the `--enable-coordinator` default.
+// /toggle-coordinator choice of a project channel. Missing: the `--coordinator` default.
 export const channel_coordinator = s.sqliteTable('channel_coordinator', {
   channel_id: s.text('channel_id').primaryKey().notNull().references(() => channel_directories.channel_id, { onUpdate: 'cascade' }),
   enabled: s.integer('enabled', { mode: 'number' }).notNull(),

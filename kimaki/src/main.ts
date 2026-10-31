@@ -73,8 +73,8 @@ export type StartBotOptions = {
   disabledSkills?: readonly string[]
   // Static instruction parts left out of new sessions (system-prompt.ts).
   disabledPrompt?: readonly PromptSection[]
-  // `--enable-coordinator`: coordinator mode for channels without a /toggle-coordinator choice (ingress.ts).
-  enableCoordinator?: boolean
+  // `--coordinator`: coordinator mode for channels without a /toggle-coordinator choice (ingress.ts). Default: on.
+  coordinator?: boolean
   // Default: the plugin's warmup windows (plugin/coordinator.ts). Tests pass short ones.
   coordinatorTimers?: CoordinatorTimers
 }
@@ -200,7 +200,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     allowAllUsers: options.allowAllUsers ?? false,
     disabledSkills: options.disabledSkills ?? [],
     disabledPrompt: options.disabledPrompt ?? [],
-    coordinatorDefault: options.enableCoordinator ?? false,
+    coordinatorDefault: options.coordinator ?? true,
     coordinatorTimers: options.coordinatorTimers ?? null,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
   }

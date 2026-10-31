@@ -130,10 +130,13 @@ export function formatDuration(ms: number): string {
 
 export type ModelRef = { providerID: string; id: string }
 
-export function formatBanner({ model, agent }: { model: ModelRef & { variant?: string }; agent: string }): string {
+const COORDINATOR_NOTICE = 'Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with `--coordinator false`.'
+
+export function formatBanner({ model, agent, coordinator = false }: { model: ModelRef & { variant?: string }; agent: string; coordinator?: boolean }): string {
   // OpenCode reports `default` when no variant is selected.
   const variant = model.variant && model.variant !== 'default' ? ` ${model.variant}` : ''
-  return asSubtext(`*using ${model.providerID}/${model.id}${variant} ⋅ ${agent}*`)
+  const banner = asSubtext(`*using ${model.providerID}/${model.id}${variant} ⋅ ${agent}*`)
+  return coordinator ? `${banner}\n${asSubtext(COORDINATOR_NOTICE)}` : banner
 }
 
 // "Switched model to Claude Opus 5.5 (high)", for a root session switch after its banner.

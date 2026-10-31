@@ -14,13 +14,13 @@ icon: lucide:ship
   -# *my-app ⋅ main ⋅ 9s ⋅ 4% ⋅ claude-opus*
 ```
 
-Coordinator mode is **off** by default. Turn it on for one channel with `/toggle-coordinator`, or for every channel with the start flag:
+Coordinator mode is **on** by default. Turn it off for one channel with `/toggle-coordinator`, or for every channel with the start flag:
 
 ```bash
-kimaki --enable-coordinator
+kimaki --coordinator false
 ```
 
-`/toggle-coordinator` in a channel always wins over the flag, also after a restart.
+`/toggle-coordinator` in a channel always wins over the flag, also after a restart. A new coordinator session says so in a subtext line under its model banner.
 
 ## How it works
 

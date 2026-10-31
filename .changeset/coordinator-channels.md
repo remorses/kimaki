@@ -5,11 +5,13 @@
 
 Add **coordinator** mode for project channels. A coordinator channel is a chat with one long session: you write in the channel, it answers in the channel, and it starts a thread for each piece of work.
 
-It is off by default. Turn it on for one channel with `/toggle-coordinator`, or for every channel without its own choice with the start flag:
+It is on by default. Turn it off for one channel with `/toggle-coordinator`, or for every channel without its own choice with the start flag:
 
 ```bash
-kimaki --enable-coordinator
+kimaki --coordinator false
 ```
+
+The first message of a new coordinator session shows a subtext note under the model banner: the channel is now one session that manages project threads for you, and how to turn it off.
 
 ```
 #my-app
@@ -31,7 +33,7 @@ kimaki --enable-coordinator
 - The coordinator and worker instructions come from the Kimaki OpenCode plugin. After a Kimaki upgrade, an existing coordinator or worker gets the new instructions at its next message, added after the history, so the prompt cache stays warm.
 - A coordinator turn with nothing for you (a started worker, notes of threads you already see) posts nothing: the coordinator answers `IDLE`, which Kimaki hides with no footer, instead of filler like "nothing new".
 - The first answer text to each of your messages (text, voice or queued) is a Discord reply to that message, so you can see where each answer starts when you open the channel from a notification. Tool lines, wake answers and worker threads never reply, and the reply does not ping you.
-- `/toggle-coordinator` turns coordinator mode on or off for the channel. The choice is saved and wins over `--enable-coordinator`. Turning it off keeps the coordinator session, so turning it on again continues it.
+- `/toggle-coordinator` turns coordinator mode on or off for the channel. The choice is saved and wins over `--coordinator`. Turning it off keeps the coordinator session, so turning it on again continues it.
 - `/reset-coordinator` resets the channel context: the next message starts a fresh coordinator. The old session stays in OpenCode.
-- With coordinator mode on, onboarding answers in the `#kimaki` channel instead of a thread.
+- With coordinator mode on (the default), onboarding answers in the `#kimaki` channel instead of a thread.
 - `kimaki session read <id>` now prints only prompts and final answers. Use `--full` for every tool call. `kimaki session wait` and `kimaki send --wait` print the same short output.
