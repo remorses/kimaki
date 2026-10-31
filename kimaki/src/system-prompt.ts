@@ -223,9 +223,9 @@ export function baseInstructions({
     [null, isCoordinator ? '' : dedent`
       ## updating the session title
 
-      Skip the first turn. OpenCode already auto-generates the title from the first message.
-      Exception: a btw fork keeps the parent title, so rename it as its prompt asks.
-      On later turns, if the scope or goal changed, run:
+      Kimaki names new threads after the first prompt. If the title is still \`Kimaki session\` (a thread started without a prompt), rename it on the first turn.
+      A btw fork keeps the parent title, so rename it as its prompt asks.
+      Otherwise rename only when the scope or goal changed, with:
 
       kimaki session title 'Short title' --session ${sessionId}
 
