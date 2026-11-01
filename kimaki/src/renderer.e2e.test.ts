@@ -166,7 +166,7 @@ test('shell and edit lines are shown, read is hidden at the default verbosity', 
     -# ◼︎ edit *notes.md* (+1-0)
 
     Edited notes.md.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -182,7 +182,7 @@ test('Code Mode execute shows its description, then one line per inner tool call
     -# ┣ execute.opencode.list\\_mcp\\_resources
 
     Found the models.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -199,7 +199,7 @@ test('Code Mode execute shows failed inner calls and the code error', async () =
     -#  ⨯  execute _Error: broken on purpose_
 
     The code failed.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -252,7 +252,7 @@ test('table and callout render as components, long code splits into valid messag
       {
         "components": false,
         "fences": 0,
-        "length": 49,
+        "length": 39,
       },
     ]
   `)
@@ -356,7 +356,7 @@ test('table and callout render as components, long code splits into valid messag
     const value78 = compute(78) // line 78
     const value79 = compute(79) // line 79
     \`\`\`
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -371,7 +371,7 @@ test('foreground subagent: child tool lines labelled with the agent, one footer'
     -# ┣ general ⋅ shell _ls \\*.md_
 
     The child found notes.md.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -385,6 +385,6 @@ test('channel verbosity text shows only text and edit lines', async () => {
     -# ◼︎ edit *notes.md* (+1-0)
 
     Edited notes.md.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

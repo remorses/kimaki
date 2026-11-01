@@ -150,28 +150,35 @@ export function formatAgentSwitched({ agent, previous }: { agent: string; previo
   return asSubtext(`Switched agent ${previous ? `from ${agentLabel(previous)} ` : ''}to ${agentLabel(agent)}`)
 }
 
+// The folder and agent only show when they differ from the channel's defaults.
+// `projectDirectory` / `defaultAgent`: null when unknown, then both show.
 export function formatFooter({
-  folder,
+  directory,
+  projectDirectory,
   branch,
   durationMs,
   contextPercent,
   model,
   agent,
+  defaultAgent,
 }: {
-  folder: string
+  directory: string
+  projectDirectory: string | null
   branch: string | null
   durationMs: number
   contextPercent: number | null
   model: ModelRef | null
   agent: string | null
+  defaultAgent: string | null
 }): string {
+  const inProject = projectDirectory !== null && path.resolve(directory) === path.resolve(projectDirectory)
   const parts = [
-    folder,
+    inProject ? null : path.basename(directory),
     branch,
     formatDuration(durationMs),
     contextPercent === null ? null : `${contextPercent}%`,
     model?.id ?? null,
-    agent && agent !== 'build' ? agent : null,
+    agent && agent.toLowerCase() !== defaultAgent?.toLowerCase() ? agent : null,
   ].filter((part): part is string => Boolean(part))
   return asSubtext(`*${parts.join(' ⋅ ')}*`)
 }

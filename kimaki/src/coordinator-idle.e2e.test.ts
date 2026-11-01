@@ -77,7 +77,7 @@ test('an idle coordinator gets compacted when its warmup ends', async () => {
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     Hi there.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await client.message.list({ sessionID: root, order: 'asc', limit: 20 })
   expect(messages.data.map((message) => message.type)).toMatchInlineSnapshot(`

@@ -62,12 +62,12 @@ test('restarted bot continues the session of an existing thread', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     --- from: user (tommy)
     second message after restart
     --- from: assistant (TestBot)
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   const rows = await bot.db.query.thread_sessions.findMany()
   expect(rows.map((row) => row.session_id)).toEqual([binding?.session_id])

@@ -132,7 +132,7 @@ test('Accept runs the command', async () => {
     ✓ _Accepted_
 
     accept turn done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -163,7 +163,7 @@ test('Deny stops the run, the next message is answered', async () => {
     Go on after-deny
     --- from: assistant (TestBot)
     continued after deny
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -186,6 +186,6 @@ test('a subagent permission shows in the parent thread', async () => {
     ✓ _Accepted always_
 
     parent done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

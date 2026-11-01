@@ -107,14 +107,14 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
     Reply in the thread below to add channels for your projects. <@200000000000000001>
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Want channels for your projects? I can search for git repositories.
-    -# *kimaki ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     yes, add-other-project
     --- from: assistant (TestBot)
     -# ┣ shell _add project channel_
 
     Added the channel for other-project.
-    -# *kimaki ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await guildChannels()).toMatchInlineSnapshot(`
     [

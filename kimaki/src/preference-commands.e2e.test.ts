@@ -146,7 +146,7 @@ test('/agent switches the session agent in a thread and the default in a channel
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     Switched to **plan** agent for this session
     The agent changes from the next step.
     -# Switched agent to Plan
@@ -154,7 +154,7 @@ test('/agent switches the session agent in a thread and the default in a channel
     Next message
     --- from: assistant (TestBot)
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ plan*"
   `)
   expect((await sessionModel(thread.id)).agent).toBe('plan')
 
@@ -238,7 +238,7 @@ test('/model switches the session model from the next step, /model-variant its t
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     Model set for this session:
     **Deterministic Provider** / **deterministic-thinker** (high)
     \`deterministic-provider/deterministic-thinker (high)\`
@@ -248,7 +248,7 @@ test('/model switches the session model from the next step, /model-variant its t
     With the new model
     --- from: assistant (TestBot)
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker*
+    -# *main ⋅ Ns ⋅ deterministic-thinker*
     Model set for this session:
     **Deterministic Provider** / **deterministic-thinker** (low)
     \`deterministic-provider/deterministic-thinker (low)\`
@@ -301,7 +301,7 @@ test('/model with channel scope sets the model of new sessions', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-thinker ⋅ plan*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ plan*"
+    -# *main ⋅ Ns ⋅ deterministic-thinker*"
   `)
   const row = await bot.db.query.channel_models.findFirst({ where: { channel_id: channelId } })
   expect({ model: row?.model_id, variant: row?.variant }).toMatchInlineSnapshot(`
@@ -355,12 +355,12 @@ test('/verbosity applies to running sessions of the channel at once', async () =
     -# ┣ shell _Say hi_
 
     tools done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again tools-marker
     --- from: assistant (TestBot)
     tools done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await discord.channel(channelId).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
@@ -418,12 +418,12 @@ test('/<agent>-agent variant: sets the thinking level with the agent, per sessio
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **tommy:** (plan, deep) Think hard
     -# Switched model to deterministic-v2 (deep)
     -# Switched agent to Plan
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ plan*
+    -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ plan*
     \`deterministic-provider/deterministic-v2\` has no thinking level \`nope\`. Available: \`fast\`, \`deep\`"
   `)
 
@@ -470,7 +470,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 fast ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# Switched model to missing/stale-model
     Switched to **thinker** agent for this session (was **build**)
     Model: \`deterministic-provider/deterministic-thinker (high)\`
@@ -495,7 +495,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 fast ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# Switched model to missing/stale-model
     Switched to **thinker** agent for this session (was **build**)
     Model: \`deterministic-provider/deterministic-thinker (high)\`
@@ -509,7 +509,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     -# Switched model to Thinker (low)
     -# Switched agent from Build to Thinker
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
+    -# *main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
   `)
   expect((await sessionModel(thread.id)).model).toEqual({ providerID: 'deterministic-provider', id: 'deterministic-thinker', variant: 'low' })
 
@@ -521,7 +521,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 fast ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# Switched model to missing/stale-model
     Switched to **thinker** agent for this session (was **build**)
     Model: \`deterministic-provider/deterministic-thinker (high)\`
@@ -535,7 +535,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     -# Switched model to Thinker (low)
     -# Switched agent from Build to Thinker
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*
+    -# *main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*
     -# Switched model to Thinker (high)
     Using **thinker** agent for this session
     Model: \`deterministic-provider/deterministic-thinker (high)\`
@@ -551,7 +551,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-thinker high ⋅ thinker*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
+    -# *main ⋅ Ns ⋅ deterministic-thinker*"
   `)
   expect((await sessionModel(fresh.id)).model).toEqual({ providerID: 'deterministic-provider', id: 'deterministic-thinker', variant: 'high' })
 
@@ -564,7 +564,7 @@ test('agent selection replaces a stale model and uses the agent model for varian
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-thinker low ⋅ thinker*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
+    -# *main ⋅ Ns ⋅ deterministic-thinker*"
   `)
   expect((await sessionModel(low.id)).model).toEqual({ providerID: 'deterministic-provider', id: 'deterministic-thinker', variant: 'low' })
 })
@@ -602,7 +602,7 @@ test('/model with all channels scope sets the model of channels without their ow
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-thinker low ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker*"
+    -# *main ⋅ Ns ⋅ deterministic-thinker*"
   `)
   expect((await sessionModel(thread.id)).model).toMatchInlineSnapshot(`
     {
@@ -643,16 +643,16 @@ test('naming the current agent again keeps the session model, and --model wins o
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# Switched model to deterministic-v2
     -# Switched agent to Thinker
     -# » **CLI:** Explicit model
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ thinker*
+    -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ thinker*
     -# Switched model to Thinker (low)
     -# » **CLI:** Same agent again
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
+    -# *main ⋅ Ns ⋅ deterministic-thinker ⋅ thinker*"
   `)
   expect({ explicit, kept }).toMatchInlineSnapshot(`
     {

@@ -145,7 +145,7 @@ test('single question answered from the dropdown', async () => {
     ✓ _Blue_
     [user selects dropdown: 1]
     answers received ask-one
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -172,7 +172,7 @@ test('two questions: the form is answered after both, multi-select keeps options
     Which fruits do you like?
     ✓ _Apple, Kiwi, Banana_
     answers received ask-two
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const sessionId = bot.store.getState().roots[thread.id]!
   const messages = await (await server.client()).message.list({ sessionID: sessionId })
@@ -195,7 +195,7 @@ test('Other opens a modal and sends the typed answer', async () => {
     Which color do you prefer?
     ✓ _Teal_
     answers received ask-other
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -249,7 +249,7 @@ test('OpenCode forms without the question tool (web search setup, yes/no) show l
     -# » **CLI:** Hello instead-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     did the other thing
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     **Web Search**
     Allow OpenCode to search the web for up-to-date information?
     ✓ _Disable web search_
@@ -275,7 +275,7 @@ test('a new message cancels the pending question and is answered', async () => {
     Forget it instead-marker
     --- from: assistant (TestBot)
     did the other thing
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -302,7 +302,7 @@ test('a restarted bot shows the pending question again and it still works', asyn
     Which color do you prefer?
     ✓ _Red_
     answers received ask-restart
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -318,7 +318,7 @@ test('Kimaki sessions hide the question tool by default', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     answers received ask-denied
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await twin.discord.thread(thread.id).getMessages()
   expect(messages.flatMap(selectsOf)).toEqual([])

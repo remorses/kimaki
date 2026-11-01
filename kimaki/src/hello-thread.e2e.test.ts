@@ -121,12 +121,12 @@ test('channel message creates a thread with reply and footer, follow-up continue
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Hello from the deterministic model.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again please second-marker
     --- from: assistant (TestBot)
     Second answer, same session.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(thread.name).toBe('Say hello hello-marker')
 
@@ -154,7 +154,7 @@ test('channel message creates a thread with reply and footer, follow-up continue
       {
         "silent": false,
         "suppressEmbeds": true,
-        "text": "-# *project ⋅ main ⋅",
+        "text": "-# *main ⋅ <1s ⋅ 0% ",
       },
       {
         "silent": true,
@@ -164,7 +164,7 @@ test('channel message creates a thread with reply and footer, follow-up continue
       {
         "silent": false,
         "suppressEmbeds": true,
-        "text": "-# *project ⋅ main ⋅",
+        "text": "-# *main ⋅ <1s ⋅ 0% ",
       },
     ]
   `)
@@ -196,7 +196,7 @@ test('a reply with a Discord media URL keeps its embed, other lines stay suppres
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Here is the screenshot: https://cdn.discordapp.com/attachments/1012345678900020080/1234567891233211234/shot.png?ex=65d903de&is=65c68ede&hm=2481f30d&
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   const messages = await discord.thread(thread.id).getMessages()
@@ -218,7 +218,7 @@ test('a reply with a Discord media URL keeps its embed, other lines stay suppres
       },
       {
         "suppressEmbeds": true,
-        "text": "-# *project ⋅ main ⋅",
+        "text": "-# *main ⋅ <1s ⋅ 0% ",
       },
     ]
   `)
@@ -257,7 +257,7 @@ test('another bot needs the Kimaki role, and no-kimaki still denies it', async (
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Hello from the deterministic model.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   const withRole = (await discord.channel(channelId).getThreads()).length

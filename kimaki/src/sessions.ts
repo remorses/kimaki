@@ -130,13 +130,27 @@ export async function catalogReady(bot: Pick<Bot, 'opencode'>, directory: string
   if (ready instanceof Error) return ready
 }
 
-// Agents a session may switch to (not subagents, not hidden ones).
-export async function primaryAgents(bot: Bot, directory: string) {
+// Agents a session may switch to (not subagents, not hidden ones). OpenCode lists
+// its default agent (`default_agent`, else build) first: core/src/agent.ts `list`.
+export async function primaryAgents(bot: Pick<Bot, 'opencode'>, directory: string) {
   const ready = await catalogReady(bot, directory)
   if (ready instanceof Error) return ready
   const agents = await oc(bot, 'agent.list', (client) => client.agent.list({ location: { directory } }))
   if (agents instanceof Error) return agents
   return agents.data.filter((agent) => agent.mode !== 'subagent' && !agent.hidden)
+}
+
+// What a new session of the channel starts with: its project folder, and the channel agent or OpenCode's default agent.
+export async function channelDefaults(bot: Pick<Bot, 'db' | 'opencode'>, channelId: string) {
+  const row = await bot.db.query.channel_directories
+    .findFirst({ where: { channel_id: channelId }, with: { channel_agent: true } })
+    .catch((cause) => new DbError({ operation: 'read channel defaults', cause }))
+  if (row instanceof Error) return row
+  if (!row) return null
+  if (row.channel_agent) return { projectDirectory: row.directory, defaultAgent: row.channel_agent.agent_name }
+  const agents = await primaryAgents(bot, row.directory)
+  if (agents instanceof Error) return agents
+  return { projectDirectory: row.directory, defaultAgent: agents[0]?.id ?? null }
 }
 
 export async function agentSelection(bot: Bot, { directory, agent }: { directory: string; agent: string }) {

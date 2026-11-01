@@ -95,7 +95,7 @@ test('an Ogg Opus voice message is converted to WAV and transcribed by OpenAI', 
     -# » **tommy:** Hello from the phone voice-openai
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     openai voice ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const [request] = openai.requests
   expect({
@@ -150,7 +150,7 @@ test('the OpenAI key wins over the ChatGPT credential from OpenCode, which takes
     -# » **tommy:** Hello from the phone voice-openai
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     openai voice ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect({ chatgptRequests: chatgpt.requests.length, openaiRequests: openai.requests.length - openaiRequests }).toMatchInlineSnapshot(`
     {
@@ -169,7 +169,7 @@ test('the OpenAI key wins over the ChatGPT credential from OpenCode, which takes
     -# » **tommy:** Hello from ChatGPT voice-openai
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     openai voice ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const [request] = chatgpt.requests
   expect({
@@ -206,7 +206,7 @@ test('KIMAKI_WHISPER_URL is the only transcriber: no cloud request, and its fail
     -# » **tommy:** Hello from Whisper voice-openai
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     openai voice ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const request = whisper.requests.at(-1)
   expect({ ...request, audio: request?.audio.equals(ogg) }).toMatchInlineSnapshot(`

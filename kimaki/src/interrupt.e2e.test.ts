@@ -97,7 +97,7 @@ test('plain message interrupts the run and is answered', async () => {
     Stop and do this steer-marker
     --- from: assistant (TestBot)
     steer ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   await expectNever({ threadId: thread.id, text: 'slow-done' })
 })
@@ -149,6 +149,6 @@ test('a restarted bot still echoes and runs the queue it did not see', async () 
     [reply to tommy: Survives restart queued-one. queue]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

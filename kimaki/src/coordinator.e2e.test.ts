@@ -11,6 +11,7 @@ import { send } from './prompt.ts'
 import { readSessionMarkdown } from './session-events.ts'
 import {
   TEST_USER_ID,
+  isFooter,
   scriptedTurn,
   seedProjectChannel,
   startOpencodeTestServer,
@@ -129,13 +130,13 @@ test('channel messages go to one session that replies in the channel', async () 
     -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     [reply to tommy: Say hi hello-marker]
     Hello from the coordinator.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again hello-marker once-marker
     --- from: assistant (TestBot)
     [reply to tommy: Again hello-marker once-marker]
     Hello from the coordinator.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await discord.channel(channelId).getThreads()).toHaveLength(0)
   // The coordinator role comes from the plugin, once: not from the frozen instructions entry.
@@ -150,7 +151,7 @@ test('channel messages go to one session that replies in the channel', async () 
 
 test('a worker started with --parent-session gets a thread and wakes the coordinator when done', async () => {
   const { discord, channelId } = twin
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project'))
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter)
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Fix it delegate-marker' })
   const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000 })
   await waitForFooter({ discord, threadId: thread.id })
@@ -170,26 +171,26 @@ test('a worker started with --parent-session gets a thread and wakes the coordin
     -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     [reply to tommy: Say hi hello-marker]
     Hello from the coordinator.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again hello-marker once-marker
     --- from: assistant (TestBot)
     [reply to tommy: Again hello-marker once-marker]
     Hello from the coordinator.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Fix it delegate-marker
     --- from: assistant (TestBot)
     -# ┣ shell _Start the worker thread_
     The worker finished the job.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await discord.thread(thread.id).text({ showReplies: true })).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     -# » **CLI:** worker-marker do the job
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Job done in the worker.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(thread.name).toBe('Worker task')
   const workerRoles = await roleTexts(bot.store.getState().roots[thread.id]!)
@@ -203,7 +204,7 @@ test('a btw fork of a worker sent with --parent-session wakes the coordinator wh
   const root = bot.store.getState().roots[channelId]!
   const worker = (await discord.channel(channelId).getThreads()).find((candidate) => candidate.name === 'Worker task')
   if (!worker) throw new Error('no Worker task thread')
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
   // What the coordinator runs: kimaki send --thread <worker> --prompt '... btw' --parent-session <coordinator>
   const forked = await send(bot, { threadId: worker.id, prompt: 'fork-marker related job. btw', parentSessionId: root, senderSessionId: root })
   if (forked instanceof Error) throw forked
@@ -213,9 +214,9 @@ test('a btw fork of a worker sent with --parent-session wakes the coordinator wh
   const text = await discord.channel(channelId).text()
   expect(text.slice(text.lastIndexOf('The worker finished the job.'))).toMatchInlineSnapshot(`
     "The worker finished the job.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     The fork finished the job.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const fork = await (await server.client()).session.get({ sessionID: forked.sessionId! })
   expect(Reflect.get(Object(fork.metadata?.['kimaki']), 'parentSessionId')).toBe(root)
@@ -226,17 +227,17 @@ test('session read lists the Discord URL of a file a worker uploaded; its note d
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]!
   fs.writeFileSync(path.join(server.projectDirectory, 'shot.png'), 'png')
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
   const started = await send(bot, { channelId, name: 'Screenshot task', prompt: 'upload-marker take a screenshot', parentSessionId: root, senderSessionId: root })
   if (started instanceof Error) throw started
   await waitForFooter({ discord, threadId: started.threadId })
   await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
 
   const text = await discord.channel(channelId).text()
-  expect(text.slice(text.lastIndexOf('-# *project', text.lastIndexOf('-# *project') - 1))).toMatchInlineSnapshot(`
-    "-# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+  expect(text.slice(text.lastIndexOf('-# *main', text.lastIndexOf('-# *main') - 1))).toMatchInlineSnapshot(`
+    "-# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     Here is the screenshot.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const client = await server.client()
   const messages = await client.message.list({ sessionID: root, order: 'desc', limit: 10 })
@@ -272,9 +273,9 @@ test('a run the user prompts in a worker thread is a silent note; a follow-up th
   const client = await server.client()
   const worker = (await discord.channel(channelId).getThreads()).find((candidate) => candidate.name === 'Worker task')
   if (!worker) throw new Error('no Worker task thread')
-  const footers = () => discord.channel(channelId).getMessages().then((messages) => messages.filter((message) => message.content.startsWith('-# *project')).length)
+  const footers = () => discord.channel(channelId).getMessages().then((messages) => messages.filter(isFooter).length)
   const before = await footers()
-  const workerFooters = (await discord.thread(worker.id).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  const workerFooters = (await discord.thread(worker.id).getMessages()).filter(isFooter).length
   await discord.thread(worker.id).user(TEST_USER_ID).sendMessage({ content: 'Also check the logs user-steer-marker' })
   await waitForFooter({ discord, threadId: worker.id, count: workerFooters + 1 })
   const note = await waitFor({
@@ -305,16 +306,16 @@ test('a run the user prompts in a worker thread is a silent note; a follow-up th
   if (followed instanceof Error) throw followed
   await waitForFooter({ discord, threadId: channelId, count: before + 1 })
   const text = await discord.channel(channelId).text()
-  expect(text.slice(text.lastIndexOf('-# *project', text.lastIndexOf('-# *project') - 1))).toMatchInlineSnapshot(`
-    "-# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+  expect(text.slice(text.lastIndexOf('-# *main', text.lastIndexOf('-# *main') - 1))).toMatchInlineSnapshot(`
+    "-# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     The follow-up finished.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
 test('a worker started with --wait answers through the wait, with no note', async () => {
   const { discord, channelId } = twin
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project'))
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter)
   const threads = (await discord.channel(channelId).getThreads()).length
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Fix it waitjob-marker' })
   await waitForFooter({ discord, threadId: channelId, count: footers.length + 1 })
@@ -340,7 +341,7 @@ test('a worker started with --wait answers through the wait, with no note', asyn
 
 test('another thread of the channel leaves a silent note for the next prompt', async () => {
   const { discord, channelId } = twin
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project'))
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter)
   const started = await send(bot, { channelId, prompt: 'side-marker check something' })
   if (started instanceof Error) throw started
   await waitForFooter({ discord, threadId: started.threadId })
@@ -355,7 +356,7 @@ test('another thread of the channel leaves a silent note for the next prompt', a
     },
   })
   // Not woken: no new footer in the channel until the user writes.
-  expect((await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project'))).toHaveLength(footers.length)
+  expect((await discord.channel(channelId).getMessages()).filter(isFooter)).toHaveLength(footers.length)
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'What happened? recap-marker' })
   await waitForFooter({ discord, threadId: channelId, count: footers.length + 1 })
 
@@ -365,7 +366,7 @@ test('another thread of the channel leaves a silent note for the next prompt', a
     What happened? recap-marker
     --- from: assistant (TestBot)
     A side thread finished meanwhile.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -391,7 +392,7 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
   const root = bot.store.getState().roots[channelId]!
   const client = await server.client()
   const current = (await roleTexts(root)).at(-1)!
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
   // Like a role text of older plugin code, as the latest one in the history, waking the session.
   await client.session.synthetic({ sessionID: root, text: '<system-reminder>\n<kimaki-coordinator>\nold role text stale-wake-marker\n</kimaki-coordinator>\n</system-reminder>' })
   await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
@@ -402,12 +403,12 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
   expect(text.slice(text.lastIndexOf('Session forked!')).replace(/<#\d+>/, '<#btw-thread>')).toMatchInlineSnapshot(`
     "Session forked! Continue in <#btw-thread>
     Current role text present.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again hello-marker
     --- from: assistant (TestBot)
     Hello from the coordinator.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const roles = await roleTexts(root)
   expect(roles.at(-1)).toBe(current)
@@ -417,7 +418,7 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
 test('the coordinator shows typing while a worker runs in the background', async () => {
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]!
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
   discord.channel(channelId).clearTypingEvents()
   const started = await send(bot, { channelId, name: 'Slow task', prompt: 'slow-job-marker take your time', parentSessionId: root, senderSessionId: root })
   if (started instanceof Error) throw started
@@ -428,12 +429,12 @@ test('the coordinator shows typing while a worker runs in the background', async
   await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
 
   const text = await discord.channel(channelId).text()
-  expect(text.slice(text.lastIndexOf('-# *project', text.lastIndexOf('-# *project') - 1))).toMatchInlineSnapshot(`
-    "-# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+  expect(text.slice(text.lastIndexOf('-# *main', text.lastIndexOf('-# *main') - 1))).toMatchInlineSnapshot(`
+    "-# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     The slow job finished.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
-  expect(workerAtTyping).not.toContain('-# *project')
+  expect(workerAtTyping).not.toContain('-# *main')
 })
 
 test('/toggle-coordinator turns coordinator mode off and on per channel; the choice survives a restart', async () => {
@@ -454,7 +455,7 @@ test('/toggle-coordinator turns coordinator mode off and on per channel; the cho
   // Started with coordinator mode off by default: the channel keeps its choice and its coordinator.
   await bot.stop()
   bot = await startTestBot({ dataDir, twin, server })
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Mode on hello-marker' })
   await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
   expect(bot.store.getState().roots[channelId]).toBe(root)
@@ -470,7 +471,7 @@ test('/toggle-coordinator turns coordinator mode off and on per channel; the cho
     Mode on hello-marker
     --- from: assistant (TestBot)
     Hello from the coordinator.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -484,7 +485,7 @@ test('the coordinator survives a bot restart; /reset-coordinator starts a fresh 
   const { id: interactionId } = await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'reset-coordinator' })
   await discord.channel(channelId).waitForInteractionAck({ interactionId, timeout: 4_000 })
   expect(bot.store.getState().roots[channelId]).toBeUndefined()
-  const footers = (await discord.channel(channelId).getMessages()).filter((message) => message.content.startsWith('-# *project')).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Fresh start hello-marker' })
   await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
 
@@ -498,6 +499,6 @@ test('the coordinator survives a bot restart; /reset-coordinator starts a fresh 
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     Hello from the coordinator.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

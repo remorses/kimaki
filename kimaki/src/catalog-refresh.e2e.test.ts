@@ -71,7 +71,7 @@ test('agents loaded after startup get their slash commands', async () => {
     -# » **tommy:** Go late-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ late*
     late reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ late*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ late*"
   `)
 })
 

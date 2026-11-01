@@ -142,7 +142,7 @@ test('/new-session starts a thread with attached files and an agent', async () =
     -# Files: notes.txt
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     saw the file
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)
   // A slash command thread has no start message: the user must be added explicitly.
   expect(await discord.channel(thread.id).getMemberIds()).toContain(TEST_USER_ID)
@@ -169,7 +169,7 @@ test('/new-session without a prompt waits for the first thread message', async (
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     started on the first message
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)
   expect(thread.name).toBe('Kimaki session')
 })
@@ -207,10 +207,10 @@ test('/resume binds an existing session to a new thread and moves the binding', 
     Go on resumed-marker
     --- from: assistant (TestBot)
     resumed answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     -# » **user:** Back in the TUI tui-marker
     tui answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   // Resuming again moves the session: the old thread stops following it.
@@ -256,7 +256,7 @@ test('/fork forks before a user message into a new thread', async () => {
     Check fork-check
     --- from: assistant (TestBot)
     fork has only the first message
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(hide(await discord.thread(source.id).text())).toMatchInlineSnapshot(`
     "--- from: user (tommy)
@@ -264,12 +264,12 @@ test('/fork forks before a user message into a new thread', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     first answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Then second-marker
     --- from: assistant (TestBot)
     second answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     Session forked! Continue in <#THREAD>"
   `)
 })
@@ -323,7 +323,7 @@ test('/fork-subagent forks a subagent session into a new thread', async () => {
     More child-followup
     --- from: assistant (TestBot)
     child fork continues
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ general*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ general*"
   `)
 })
 
@@ -348,6 +348,6 @@ test('/resume of a session waiting on a question shows the question in the new t
     Which color?
     ✓ _Red_
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 })

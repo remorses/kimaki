@@ -87,14 +87,14 @@ test('. btw forks into a side thread while the source run continues', async () =
     --- from: assistant (TestBot)
     Session forked! Continue in <#THREAD>
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(hideIds(await discord.thread(fork.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     Reusing context from <#THREAD> to answer prompt...
     What is 2+2 side-marker
     side answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const rows = await bot.db.query.thread_sessions.findMany({ where: { thread_id: fork.id } })
   expect(rows.length).toBe(1)
@@ -125,6 +125,6 @@ test('/btw forks from a thread with an idle session', async () => {
     Reusing context from <#THREAD> to answer prompt...
     Side slash-marker
     slash answer
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

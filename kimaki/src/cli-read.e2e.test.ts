@@ -46,7 +46,7 @@ test('session read, list, sync, wait, url and events read real session history',
     -# » **CLI:** Reader content marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(list.stdout).toContain(first.sessionId)
   expect(sync.written + sync.skipped).toBeGreaterThan(0)

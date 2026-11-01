@@ -60,7 +60,7 @@ test('a one-shot routine starts a thread at its time, then is gone', async () =>
     -# » **routine #1:** Check the deploy once
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   const thread = (await twin.discord.channel(twin.channelId).getThreads()).find((candidate) => candidate.id === threadId)
   expect(thread?.name).toBe('Deploy check')
@@ -102,7 +102,7 @@ test('a cron routine fires once per occurrence, in a new thread each time', asyn
     -# » **routine #2:** Hourly report
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await listTasks()).find((row) => row.id === task.routineId)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-01T13:00:00.000Z' })
   await request('task.delete', { id: task.routineId })
@@ -123,13 +123,13 @@ test('a routine for an existing thread prompts that thread, with or without . qu
     -# » **CLI:** Thread for a reminder
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **routine #3:** Reminder: check the logs
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **routine #4:** Then summarize them
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 })
 
@@ -147,7 +147,7 @@ test('--pre-run: a failing command skips the run, output is appended to the prom
     -# issue 42 is new
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   // A skipped one-shot is done too, like V1.
   expect((await listTasks()).filter((row) => row.id === skipped.routineId || row.id === ran.routineId)).toEqual([])
@@ -199,10 +199,10 @@ test('a . queue routine with --allow-concurrency that fires while its thread is 
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# » **routine #8:** Report when done
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **routine #8:** Report when done]
     -# Queued message sent
     report ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

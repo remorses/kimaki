@@ -134,7 +134,7 @@ test('image and text attachments reach the model as files', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     I see an image
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const sessionId = bot.store.getState().roots[thread.id]!
   const messages = await (await server.client()).message.list({ sessionID: sessionId })
@@ -163,7 +163,7 @@ test('voice in a channel starts a session with the transcription and the spoken 
     -# » **tommy:** Plan the refactor voice-plan
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     voice plan ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)
 })
 
@@ -181,14 +181,14 @@ test('a text sent while a voice message is transcribed waits for it', async () =
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     order start ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     [attachment: voice-message.ogg]
     Typed second order-text
     --- from: assistant (TestBot)
     -# » **tommy:** Spoken first order-voice
     order text ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const sessionId = bot.store.getState().roots[thread.id]!
   const messages = await (await server.client()).message.list({ sessionID: sessionId, order: 'asc' })
@@ -219,14 +219,14 @@ test('a long voice transcript is echoed in full over several messages, in a chan
     -# <w415..w449>
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     voice steer ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     [attachment: voice-message.ogg]
     --- from: assistant (TestBot)
     -# » **tommy:** Long voice-steer <w0..w414>
     -# <w415..w449>
     voice steer ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const echoed = (await twin.discord.thread(thread.id).getMessages()).map((message) => message.content).filter((content) => /\bw\d/.test(content))
   expect(echoed.join(' ').replaceAll('-# ', '')).toBe(`» **tommy:** ${transcription} » **tommy:** ${transcription}`)
@@ -251,7 +251,7 @@ test('uploaded audio files with odd Discord media types are transcribed', async 
     -# » **tommy:** From m4a voice-steer
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     voice steer ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect([m4a.name, mp3.name]).toMatchInlineSnapshot(`
     [
@@ -313,11 +313,11 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     [reply to tommy: ]
     Started a new session in <#THREAD>
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: ]
     -# Queued message sent
     voice queue ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect([btw.name, fresh.name]).toMatchInlineSnapshot(`
     [
@@ -330,14 +330,14 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     Reusing context from <#THREAD> to answer prompt...
     Side voice-btw
     voice btw ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(hide(await twin.discord.thread(fresh.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     -# » **tommy:** Fresh start voice-new
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     voice new session ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   // The transcription request offers btw and queue only inside a session thread.
   expect(gemini.requests.map((request) => request.routes)).toMatchInlineSnapshot(`

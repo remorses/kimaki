@@ -86,7 +86,7 @@ test('/diff with a clean working tree and /context-usage after a turn', async ()
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     counted
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     No changes to show
     **Context usage:** 0%, 2 / 200,000 tokens
     **Model:** deterministic-provider/deterministic-v2"
@@ -108,7 +108,7 @@ test('/compact summarizes the history without a footer', async () => {
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     Compacting the session context"
   `)
 })
@@ -135,7 +135,7 @@ test('/undo hides the last turn but keeps its files, /redo restores the turn', a
     -# ◼︎ write *undo.txt* (2 lines)
 
     wrote undo.txt
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     Undone - removed the last turn from the session. File changes were kept
     Restored - session fully back to its previous state
     Nothing to redo - no previous undo found"

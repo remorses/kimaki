@@ -133,13 +133,13 @@ test('/skill and /command run catalog entries through project autocomplete', asy
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **tommy:** /opencode explain skill-marker
     skill reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     -# » **tommy:** /hello world
     command reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -183,14 +183,14 @@ test('/<agent>-agent sets the channel agent, or starts a session with a prompt',
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     plan reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await discord.thread(built.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     -# » **tommy:** Build it build-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     build reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ build*"
   `)
 })
 
@@ -211,18 +211,18 @@ test('/<cmd>-cmd, /<skill>-skill and a `/server:prompt` message run in the threa
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ plan*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ plan*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **tommy:** /hello world
     command reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     -# » **tommy:** /opencode explain skill-marker
     skill reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     /fake:greet World
     --- from: assistant (TestBot)
     mcp reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   const sessionId = bot.store.getState().roots[thread.id]!
@@ -285,10 +285,10 @@ test('/queue-command queues an OpenCode command after the current run', async ()
     [reply to TestBot: -# » **tommy:** /later please]
     -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **tommy:** /later please]
     -# Queued message sent
     queued command reply
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

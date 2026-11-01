@@ -77,7 +77,7 @@ test('bot start writes the plugin shim, OpenCode loads it, a restart does not re
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 
   const written = fs.statSync(shim).mtimeMs

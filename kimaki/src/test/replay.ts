@@ -25,6 +25,8 @@ export function rootSessionId(events: V2Event[]): string {
   return created.data.sessionID
 }
 
+const REPLAY_PROJECT = '/project'
+
 export const DEFAULT_PREFS: Prefs = {
   verbosity: 'tools',
   models: { 'openai/gpt-6-luna': { name: 'GPT 6 Luna', context: 400_000 } },
@@ -44,7 +46,7 @@ export function replay({
     emptyView({
       sessionId: rootSessionId(events.filter((event): event is V2Event => !event.type.startsWith('kimaki.'))),
       channelId: 'channel',
-      directory: '/project',
+      directory: REPLAY_PROJECT,
       isNew: true,
       coordinator: false,
     })
@@ -84,9 +86,9 @@ export function effectLines(effects: Effect[]): string[] {
       const reply = effect.reply === undefined ? [] : [`[reply to ${effect.replyTo ?? effect.key}] ${effect.reply}`]
       return [`[edit ${effect.key}] ${effect.messages.map(uiLine).join(' | ')}`, ...reply]
     }
-    // Tests have no git checkout: the branch is always main.
+    // Tests have no git checkout: the branch is always main. The channel runs build in /project.
     if (effect.type === 'footer') {
-      const footer = formatFooter({ ...effect, folder: path.basename(effect.directory), branch: 'main' })
+      const footer = formatFooter({ ...effect, branch: 'main', projectDirectory: REPLAY_PROJECT, defaultAgent: 'build' })
       return effect.notify ? footer : `[silent] ${footer}`
     }
     return effect.text.replace(/^\n/, '\\n')

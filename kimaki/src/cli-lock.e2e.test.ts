@@ -44,13 +44,13 @@ test('CLI send starts and continues a session through the authenticated bot API'
     -# » **CLI:** CLI first
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **CLI:** CLI second
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **CLI:** CLI third
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(ids.sessionId).toMatch(/^ses_/)
   const tokenFile = path.join(dataDir, 'lock-token')
@@ -103,7 +103,7 @@ test('CLI send shows a prompt over 2000 chars in full, split into messages', asy
     -# line 29: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   const messages = await twin.discord.thread(ids.threadId).getMessages()
   expect(messages.every((message) => message.content.length <= 2000)).toBe(true)
@@ -474,10 +474,10 @@ test('CLI registry shares thread actions, preferences, title and archive', async
     -# » **CLI:** Registry first
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **CLI:** Registry queued
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ build*"
   `)
   expect((await twin.discord.channel(twin.channelId).getThreads()).find((thread) => thread.id === started.threadId)?.name).toBe('CLI renamed')
 })
@@ -493,7 +493,7 @@ test('send settings reach native session creation; notifications create no sessi
     -# » **CLI:** Send settings
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *subfolder ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *subfolder ⋅ main ⋅ Ns ⋅ deterministic-v2 ⋅ build*"
   `)
   const info = await (await server.client()).session.get({ sessionID: ids.sessionId })
   expect(info.location.directory).toBe(subdir)

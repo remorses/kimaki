@@ -119,15 +119,15 @@ test('. queue waits for the run, acks with position, replies to the message when
     [reply to tommy: Second queued-two. queue]
     -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: First queued-one. queue]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: Second queued-two. queue]
     -# Queued message sent
     queued two ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await twin.discord.thread(thread.id).getMessages()
   const sent = messages.filter((message) => message.content === '-# Queued message sent')
@@ -189,11 +189,11 @@ test('message delete takes items out of the queue, edit re-queues', async () => 
     [reply to tommy: New text edited-marker. queue]
     -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: New text edited-marker. queue]
     -# Queued message sent
     edited ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   await expectNever({ threadId: thread.id, text: 'queued one ok' })
   await expectNever({ threadId: thread.id, text: 'queued two ok' })
@@ -228,11 +228,11 @@ test('a revoked user cannot replace a queued prompt', async () => {
     [reply to tommy: Replacement edited-marker. queue]
     -# Queued
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: Replacement edited-marker. queue]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await twin.discord.thread(thread.id).text()).toContain('queued one ok')
   expect(await twin.discord.thread(thread.id).text()).not.toContain('edited ok')
@@ -261,11 +261,11 @@ test('/queue and /clear-queue', async () => {
     -# Queued
     -# Cleared 1 queued message
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **tommy:** Slash queued-two]
     -# Queued message sent
     queued two ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   await expectNever({ threadId: thread.id, text: 'queued one ok' })
 })

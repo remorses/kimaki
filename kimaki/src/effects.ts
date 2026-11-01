@@ -43,10 +43,24 @@ async function gitBranch(directory: string): Promise<string | null> {
   return result?.stdout.trim() || null
 }
 
-async function footerText(effect: Extract<Effect, { type: 'footer' }>): Promise<string> {
-  const { directory, durationMs, contextPercent, model, agent } = effect
-  const branch = await gitBranch(directory)
-  return formatFooter({ folder: path.basename(directory), branch, durationMs, contextPercent, model, agent })
+// Project folder and default agent of a channel, read when a footer is posted. null: not a project channel.
+export type FooterDefaults = (channelId: string) => Promise<Error | null | { projectDirectory: string; defaultAgent: string | null }>
+
+async function footerText({ effect, footerDefaults }: { effect: Extract<Effect, { type: 'footer' }>; footerDefaults: FooterDefaults }): Promise<string> {
+  const { channelId, directory, durationMs, contextPercent, model, agent } = effect
+  const [branch, defaults] = await Promise.all([gitBranch(directory), footerDefaults(channelId)])
+  if (defaults instanceof Error) logger.warn(`footer defaults of channel ${channelId} failed`, defaults)
+  const known = defaults instanceof Error ? null : defaults
+  return formatFooter({
+    directory,
+    projectDirectory: known?.projectDirectory ?? null,
+    branch,
+    durationMs,
+    contextPercent,
+    model,
+    agent,
+    defaultAgent: known?.defaultAgent ?? null,
+  })
 }
 
 // post() adds the notification flags to the payload's own flag.
@@ -139,7 +153,7 @@ function drop(effects: readonly Effect[]) {
 
 export type MarkViewed = (input: { sessionId: string; idle: number }) => Promise<Error | void>
 
-export function createEffectsRunner({ discord, markViewed }: { discord: Client; markViewed: MarkViewed }) {
+export function createEffectsRunner({ discord, markViewed, footerDefaults }: { discord: Client; markViewed: MarkViewed; footerDefaults: FooterDefaults }) {
   const workers = new Map<string, ThreadWorker>()
   // After stop(): no more sends or typing, even from effects already queued.
   const lifecycle = { closed: false }
@@ -311,7 +325,7 @@ export function createEffectsRunner({ discord, markViewed }: { discord: Client; 
         await runOne(threadId, effect)
         continue
       }
-      const text = effect.type === 'send' ? effect.text : await footerText(effect)
+      const text = effect.type === 'send' ? effect.text : await footerText({ effect, footerDefaults })
       const notify = effect.notify === true
       const echo = effect.type === 'send' && effect.echo === true
       const mentions = !echo

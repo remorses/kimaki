@@ -95,10 +95,10 @@ test('kimaki sleep wakes the same thread at the clock time', async () => {
     -# ┣ shell _Sleep until the deploy is done_
 
     Sleeping until the deploy is done.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     -# Woke after sleeping until 2030-01-01 11:00 UTC. Reason: waiting for the deploy
     Awake, checking the deploy.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const row = await sleepRow(sessionId)
   expect(row?.status).toBe('consumed')
@@ -138,11 +138,11 @@ test('a user message cancels the sleep', async () => {
     -# ┣ shell _Sleep until the deploy is done_
 
     Sleeping until the deploy is done.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Never mind, it is deployed
     --- from: assistant (TestBot)
     Noted, no wake needed.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

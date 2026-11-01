@@ -95,7 +95,7 @@ test('a routine row written by V1 runs unchanged', async () => {
     -# » **routine #3:** V1 weekly check
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await listTasks()).find((task) => task.id === row!.id)).toMatchObject({ status: 'planned', nextRunAt: '2030-01-14T09:00:00.000Z' })
   // V1 history: finished rows only show with the V1 `task list --all`.

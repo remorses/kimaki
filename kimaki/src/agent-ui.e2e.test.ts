@@ -64,14 +64,14 @@ test('agent shim shows buttons after text and a click resumes the real session',
     -# clicked "Proceed"
 
     Buttons shown.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     -# $ printf synthetic
     \`\`\`
     synthetic
     \`\`\`
 
     Proceed accepted.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await twin.discord.thread(threadId).getMessages()
   expect(messages.findIndex((message) => message.content.includes('Choose the next action.'))).toBeLessThan(messages.findIndex((message) => message.id === shown.message.id))
@@ -96,7 +96,7 @@ test('native file upload modal returns local paths to the agent shell', async ()
     Uploaded 1 file(s)
 
     Upload received.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const dirs = fs.readdirSync(`${server.projectDirectory}/uploads`)
   expect(fs.readFileSync(`${server.projectDirectory}/uploads/${dirs[0]}/0-logo.txt`, 'utf8')).toBe('logo')
@@ -109,7 +109,7 @@ test('git context is added only to marked Discord sessions', async () => {
     -# » **CLI:** git-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Git context received.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect((await twin.discord.thread(threadId).text()).includes('Git context received.')).toBe(true)
   const client = await server.client()

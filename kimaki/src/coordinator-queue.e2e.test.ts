@@ -13,6 +13,7 @@ import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
 import {
   TEST_USER_ID,
+  isFooter,
   seedProjectChannel,
   slowTextMatcher,
   startOpencodeTestServer,
@@ -73,7 +74,7 @@ async function channelTextFrom(content: string): Promise<string> {
 }
 
 function footers(): Promise<number> {
-  return twin.discord.channel(twin.channelId).getMessages().then((messages) => messages.filter((message) => message.content.startsWith('-# *project')).length)
+  return twin.discord.channel(twin.channelId).getMessages().then((messages) => messages.filter(isFooter).length)
 }
 
 // Sends a slow prompt and waits until the coordinator runs it.
@@ -118,13 +119,13 @@ test('. queue in a busy coordinator: each queued message gets a reply when it st
     -# Queued
     [reply to tommy: First a long one slow-marker]
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: Start a worker queued-idle. queue]
     -# Queued message sent
     [reply to tommy: Then answer queued-two. queue]
     -# Queued message sent
     queued two ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   const messages = await twin.discord.channel(twin.channelId).getMessages()
   const sent = messages.filter((message) => message.content === '-# Queued message sent')
@@ -155,11 +156,11 @@ test('/queue and /clear-queue in a coordinator', async () => {
     -# Cleared 1 queued message
     [reply to tommy: Slash queue here slow-marker]
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **tommy:** Slash queued-two]
     -# Queued message sent
     queued two ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -181,7 +182,7 @@ test('deleting a queued coordinator message removes it from the queue', async ()
     -# Removed from queue
     [reply to tommy: Delete in coordinator slow-marker]
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -203,15 +204,15 @@ test('kimaki send . queue and a TUI prompt queued on the coordinator show their 
     -# » **user:** From the TUI queued-two
     [reply to tommy: Other sources slow-marker]
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **CLI:** From the CLI queued-one]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **user:** From the TUI queued-two]
     -# Queued message sent
     queued two ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -236,11 +237,11 @@ test('a plain message in a busy coordinator runs first, then the queued one gets
     --- from: assistant (TestBot)
     [reply to tommy: Right now steer-marker]
     steer ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: Afterwards queued-one. queue]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -273,6 +274,6 @@ test('. queue on an idle coordinator runs at once: the answer replies to the mes
     --- from: assistant (TestBot)
     [reply to tommy: Nothing waits idle-marker. queue]
     idle ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

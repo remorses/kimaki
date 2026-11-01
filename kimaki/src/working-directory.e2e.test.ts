@@ -64,7 +64,7 @@ test('session cwd changes preserve the session and use the new location after re
     -# » **CLI:** Start cwd session
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# Working directory changed to PROJECT/sub
     --- from: user (tommy)
     write-cwd-marker

@@ -91,11 +91,11 @@ test('CLI . queue into a busy thread shows the full text, then replies to it whe
     -# » **CLI:** From the CLI queued-one
     -# second line
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **CLI:** From the CLI queued-one -#]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -112,11 +112,11 @@ test('a prompt queued from the TUI shows its text, then a reply to it when it ru
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# » **user:** Typed in the TUI queued-one
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to TestBot: -# » **user:** Typed in the TUI queued-o]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -142,7 +142,7 @@ test('a queued item the TUI sends now (steer) gets its reply when promoted, once
     -# Queued message sent
     slow-done
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -168,11 +168,11 @@ test('a plain message while an item waits runs first, then the queued item gets 
     Now steer-marker
     --- from: assistant (TestBot)
     steer ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: Later queued-one. queue]
     -# Queued message sent
     queued one ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -187,11 +187,11 @@ test('. queue on an idle thread runs at once, like a plain message', async () =>
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     slow-done
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Nothing waits idle-marker. queue
     --- from: assistant (TestBot)
     idle ok
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

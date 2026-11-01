@@ -70,12 +70,12 @@ test('messages sent while the bot is offline are handled after it reconnects', a
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     --- from: user (tommy)
     thread message while offline
     --- from: assistant (TestBot)
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(await discord.thread(offlineThread.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
@@ -83,7 +83,7 @@ test('messages sent while the bot is offline are handled after it reconnects', a
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 })
 
@@ -111,6 +111,6 @@ test('the bot keeps working after the gateway answered 401 for a while', async (
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 })

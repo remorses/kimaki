@@ -59,7 +59,7 @@ test('independent Discord CLI lists threads and users, uploads a file, and reads
     -# » **CLI:** Discord CLI flow
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     [file: data:application/octet-stream;base64,cmVwb3J0]
     [attachment: report.txt]
     -# 1. \`b.png\`

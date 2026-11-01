@@ -82,7 +82,7 @@ test('bot starts on a V1 database and answers in an old thread with the old sess
     hello again after the upgrade
     --- from: assistant (TestBot)
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
 
   const messages = await client.message.list({ sessionID: session.id })

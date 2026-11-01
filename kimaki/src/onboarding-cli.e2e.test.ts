@@ -170,7 +170,7 @@ test('kimaki --gateway without a TTY installs, onboards and reports ready on std
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     Want channels for your projects?
-    -# *kimaki ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 
   // `kimaki restart`: the supervisor starts a new bot process, which reports ready again.

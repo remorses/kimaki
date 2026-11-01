@@ -23,7 +23,7 @@ test('tools: names from tool.input.started, failed tool lines, read-only tools h
       "-# ┣ shell _python3 -c "from pathlib import Path; p=Path('tmp-events/hello.txt'); p.write\\_t…_",
       "\\nDone. \`tmp-events/hello.txt\` contains \`hello world\`.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 17s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 17s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
 })
@@ -42,7 +42,7 @@ test('tools at text verbosity: text, edits and errors only', () => {
       "-#  ⨯  shell _Invalid arguments for tool "shell":_",
       "\\nDone. \`tmp-events/hello.txt\` contains \`hello world\`.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 17s ⋅ gpt-6-luna*",
+      "-# *main ⋅ 17s ⋅ gpt-6-luna*",
     ]
   `)
 })
@@ -57,7 +57,7 @@ test('task-subagent: child tool lines labelled with the agent, no child text, fo
       "-# ┣ general **Find SQLite schema file**",
       "\\nThe Drizzle SQLite schema is defined in \`cli/src/schema.ts\`. Its first lines confirm it defines tables for Kimaki’s local SQLite database.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 12s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 12s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
   expect(view.children).toMatchInlineSnapshot(`
@@ -124,7 +124,7 @@ test('abort: no error line for the aborted tool, no footer, next turn is normal'
       "[typing on]",
       "resumed after abort",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 1s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 1s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
 })
@@ -194,16 +194,16 @@ test('queue-plain: acks with positions while busy, silent footer before each del
       "[show queue:msg_0f20347e500196F4o0voD7LGMV] -# » **user:** QUEUED-2: reply with the word cherry.
     -# Queued at position 2. Remove it with /clear-queue position:2",
       "\\nDone.",
-      "[silent] -# *project ⋅ main ⋅ 10s ⋅ 6% ⋅ gpt-6-luna*",
+      "[silent] -# *main ⋅ 10s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# » **user:** QUEUED-1: reply with the word apple.",
       "[reply to queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued message sent",
       "apple",
-      "[silent] -# *project ⋅ main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
+      "[silent] -# *main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f20347e500196F4o0voD7LGMV] -# » **user:** QUEUED-2: reply with the word cherry.",
       "[reply to queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued message sent",
       "cherry",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
   expect(view.inbox).toMatchInlineSnapshot(`[]`)
@@ -231,7 +231,7 @@ test('steer-queue: cancelled item edits its ack, interrupted run has no footer',
       "-# ┣ shell _date_",
       "\\nDone. The current date is Wed Sep 30 2026.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
   // The recorded order (prompt, then interrupt with resume) parks queued items.
@@ -257,12 +257,12 @@ test('queue-parked: parked item runs and echoes after the next prompt, with a fo
       "-# » **user:** NEW: reply with the word kiwi.",
       "[typing on]",
       "kiwi",
-      "[silent] -# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
+      "[silent] -# *main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
       "[edit queue:msg_0f2039909001oR0GJKPGqxOjml] -# » **user:** PARKED-1: reply with the word apple.",
       "[reply to queue:msg_0f2039909001oR0GJKPGqxOjml] -# Queued message sent",
       "apple",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 3s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
 })
@@ -286,7 +286,7 @@ test('question: one dropdown per question, typing off while waiting, edited on r
     ✓ _apple, kiwi_",
       "You prefer green, and you like apples and kiwi.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 5s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 5s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
   expect(view.forms).toMatchInlineSnapshot(`{}`)
@@ -322,7 +322,7 @@ test('permission: two requests, the rejected one fails its tool call', () => {
       "-#  ⨯  shell _Unable to execute command: echo second_",
       "\\n\`echo first\` printed \`first\`; \`echo second\` failed to execute.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 5s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 5s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
   expect(view.permissions).toMatchInlineSnapshot(`{}`)
@@ -339,17 +339,17 @@ test('shell-background: background shell line even without side effects, finishe
       "-# ┣ shell _Run sleep 100 in background_ (background)",
       "\\nI started \`sleep 100\` in the background (shell ID \`sh_11a929cf5001mAukdL6rQFIbLg\`). It ends in about 100 seconds, and I get a notification when it does.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 4s ⋅ claude-opus-5-5 ⋅ opus*",
+      "-# *main ⋅ 4s ⋅ claude-opus-5-5 ⋅ opus*",
       "-# » **user:** is it still running",
       "[typing on]",
       "Yes, it is still running (PID 47861). I have not had the completion notification yet.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 5s ⋅ claude-opus-5-5 ⋅ opus*",
+      "-# *main ⋅ 5s ⋅ claude-opus-5-5 ⋅ opus*",
       "-# background shell finished: _Run sleep 100 in background_",
       "[typing on]",
       "\\nThe background \`sleep 100\` has finished. It printed no output.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 2s ⋅ claude-opus-5-5 ⋅ opus*",
+      "-# *main ⋅ 2s ⋅ claude-opus-5-5 ⋅ opus*",
     ]
   `)
   expect(end.shells).toMatchInlineSnapshot(`{}`)
@@ -375,7 +375,7 @@ test('shell: user !cmd output while idle and while busy, synthetic items render 
     \`\`\`",
       "\\nYour shell command printed \`user-shell-idle\` and \`05de62d feat: make external opencode session sync opt-in via --enable-sync\`. The deploy tag is \`v9.9.9\`.",
       "[typing off]",
-      "-# *project ⋅ main ⋅ 9s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 9s ⋅ 6% ⋅ gpt-6-luna*",
     ]
   `)
 })

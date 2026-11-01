@@ -149,8 +149,8 @@ export type Effect =
   // Files from `kimaki upload-to-discord` (never from the reducer). `settle`
   // answers the waiting CLI call: the Discord URL of each file once posted, or why not.
   | { type: 'attachments'; files: readonly UploadFile[]; settle: (result: Error | string[]) => void }
-  // The executor adds folder and git branch of `directory` when it posts.
-  | { type: 'footer'; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null; notify: boolean }
+  // The executor adds the git branch of `directory` and the defaults of `channelId` when it posts.
+  | { type: 'footer'; channelId: string; directory: string; durationMs: number; contextPercent: number | null; model: ModelRef; agent: string | null; notify: boolean }
   // Posts the messages in order; the first replies to `replyTo` when set. `echo`: holds user text, no mentions.
   | { type: 'show'; key: string; messages: readonly UiMessage[]; replyTo: string | null; notify: boolean; echo?: boolean }
   // Edits the messages `show` posted under `key` (by index; the last one covers the rest),
@@ -348,6 +348,7 @@ function emitFooter({ draft, prefs, emit, turn, at, notify }: Context & { turn: 
   if (Object.values(draft.children).some((child) => child.running)) return
   emit({
     type: 'footer',
+    channelId: draft.channelId,
     directory: draft.directory,
     durationMs: at - turn.startedAt,
     contextPercent: contextPercent({ tokens: turn.tokens, model: turn.model, prefs }),

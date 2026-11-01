@@ -42,13 +42,13 @@ test('CLI remote envelope runs only on the owning bot and returns its IDs', asyn
     -# Files: remote.txt
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     Remote queued. queue
     [embed]
     Delivered to <#THREAD>
     [embed]
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(a.store.getState().roots[ids.threadId]).toBeUndefined()
   expect(b.store.getState().roots[ids.threadId]).toBe(ids.sessionId)
@@ -70,7 +70,7 @@ test('CI send with only KIMAKI_BOT_TOKEN and no local bot reaches the owning bot
     -# » **CLI:** From CI
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect(b.store.getState().roots[ids.threadId]).toBe(ids.sessionId)
   expect(fs.readdirSync(ciDataDir)).toEqual([])

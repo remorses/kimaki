@@ -23,7 +23,7 @@ import { installPluginShim, watchOpencode, type OpencodeEndpoint } from './openc
 import { countUserProjects } from './project.ts'
 import { createScheduler, systemClock, type Clock } from './scheduler.ts'
 import { createEventRecorder, syncSessionTranscript } from './session-events.ts'
-import { createPluginWait, refreshCliContext } from './sessions.ts'
+import { channelDefaults, createPluginWait, refreshCliContext } from './sessions.ts'
 import { createInteractionRegistry, registerSlashCommands } from './slash-commands.ts'
 import { createSleepLock } from './sleeps.ts'
 import { createBotStore } from './store.ts'
@@ -147,6 +147,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
       const result = await oc({ opencode }, 'mark session viewed', (client) => client.session.view({ sessionID: sessionId, idle }))
       if (result instanceof Error) return result
     },
+    footerDefaults: (channelId) => channelDefaults({ db, opencode }, channelId),
   })
   cleanup.defer(() => effects.stop())
   const voiceCalls = createVoiceCalls({ opencodeConfigDir: options.opencodeConfigDir })

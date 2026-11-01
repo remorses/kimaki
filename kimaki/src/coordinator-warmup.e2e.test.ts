@@ -111,7 +111,7 @@ test('the coordinator stays warm while its worker runs, then compacts', async ()
     -# Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with \`--coordinator false\`.
     -# ┣ shell _Start the worker_
     The worker finished.
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   // The worker runs 1.2s, a keep-alive is due every 0.4s.
   expect(keepAlives(root)).toBeGreaterThan(0)
@@ -150,7 +150,7 @@ test('a stuck worker stops the warmup at the cap', async () => {
   const atCap = keepAlives(root)
   await waitForFooter({ discord, threadId: worker.id })
 
-  expect(workerText).not.toContain('-# *project')
+  expect(workerText).not.toContain('-# *main')
   // 1.5s cap, one keep-alive every 0.4s: at most 3, none after the cap.
   expect(atCap - before).toBeGreaterThan(0)
   expect(atCap - before).toBeLessThanOrEqual(3)

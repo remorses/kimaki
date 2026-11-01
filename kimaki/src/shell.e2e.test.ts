@@ -95,12 +95,12 @@ test('!cmd while busy runs at once, does not interrupt, and its output reaches t
 
     slow-done
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     --- from: user (tommy)
     What did it print? shell-check
     --- from: assistant (TestBot)
     I saw your shell output
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
@@ -163,11 +163,11 @@ test('/command args runs an OpenCode command; unknown names are plain text', asy
     --- from: assistant (TestBot)
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     reviewed
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     /nope unknown-marker
     --- from: assistant (TestBot)
     plain text
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })

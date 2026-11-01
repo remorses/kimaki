@@ -90,10 +90,10 @@ test('session command, named fork, and resume without a channel use the session 
     -# » **CLI:** command-source
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *project ⋅ main ⋅ Ns ⋅ deterministic-v2*
+    -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **CLI:** /review focus --focus security
     reviewed with passthrough
-    -# *project ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect((await twin.discord.thread(forked.threadId).getChannel())?.name).toBe('named fork')
   expect(resumed.sessionId).toBe(source.sessionId)
