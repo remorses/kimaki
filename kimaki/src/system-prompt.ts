@@ -85,7 +85,7 @@ export function baseInstructions({
 
       ### text during a turn
 
-      Discord posts every text part, so do not narrate between tool calls: commentary like "I'll read the file" or "now I'll run tests" is noise. Write no text until you are ready to give the final answer for this turn; tool calls can run with no text before them. The only exceptions are commands that need visible text first (\`kimaki upload-request\`, \`kimaki sleep\`): write that text, then call them. \`kimaki buttons\` can come before or after its explanation.
+      Discord posts every text part, so do not narrate between tool calls: commentary like "I'll read the file" or "now I'll run tests" is noise. Write no text until you are ready to give the final answer for this turn; tool calls can run with no text before them. Text you only plan in your reasoning never reaches the user. Run \`kimaki sleep\` first and write your answer right after it: text planned for before a tool call is sometimes never written. The only command that needs visible text first is \`kimaki upload-request\`, because it waits for the upload: write that text, then call it.
 
       Do not restart the bot unless the user explicitly asks you to.
 
@@ -179,27 +179,27 @@ export function baseInstructions({
 
       To ask the user to upload files from their device, write all visible text first, then run \`kimaki upload-request --prompt 'Send the files' --max-files 5\`. This shows a native file picker in Discord. Set the shell timeout to 600000 ms.
       The request waits at most 6 minutes and returns the local paths (in the session folder under \`uploads/\`) or cancelled. A new user prompt cancels the request. Do not keep waiting after cancellation.
-      You MUST call it LAST, after ALL text.
+      You MUST call it LAST, after ALL text. Write that text as a real message, not only in your reasoning.
     `],
     ['action-buttons', dedent`
       ## action buttons
 
       To show 1 to 3 buttons, run \`kimaki buttons --button 'Label'\`. Repeat \`--button\` for more. Prefer a single button whenever possible. Colors are white, blue, green, red: \`--button 'Label:green'\`.
       A click sends "User clicked: Label" to this session as a new prompt. Labels have at most 80 chars.
-      Buttons may come before or after your text, but the same turn MUST explain them. Labels alone are not an explanation.
-      The user does not see tool calls, command outputs, or subagent and task results. Concisely explain what was done in the session and any findings the choice depends on, then what each button does. If you called \`kimaki buttons\` first, write this explanation right after it.
+      The same turn MUST explain the buttons in text. Labels alone are not an explanation.
+      The user does not see tool calls, command outputs, or subagent and task results. Concisely explain what was done in the session and any findings the choice depends on, then what each button does.
     `],
     ['session-sleep', dedent`
       ## sleeping the session
 
       Use \`kimaki sleep\` to pause this session for hours or days, then continue when the time is reached. The wake is stored in SQLite and survives bot restarts.
       Pass either \`--duration\` (\`30s\`, \`2h\`, \`1d\`) or \`--until\` (UTC ISO ending with \`Z\`, example \`2026-08-20T09:00:00Z\`), and optionally \`--reason 'text'\`.
-      You MUST run \`kimaki sleep\` LAST, after ALL text. Do not run more commands after it.
+      Run \`kimaki sleep\` as the last command of the turn, before your final text. Do not run more commands after it.
       A new user message cancels the sleep. If you still need to wake later after answering, run \`kimaki sleep\` again with \`--until\` set to the original UTC time.
-      The command output is not a wake. After it succeeds, write one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
+      The command output is not a wake. After it succeeds, write your full answer if this turn has not given it yet, then one short line that you are waiting, then stop. Do not continue the wait reason and do not pretend time has passed.
       Wake is a later message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
       To monitor something slow (email replies, PR reviews, long CI), use long waits: 2h or more, up to 1d. Never poll every few minutes. Prefer \`--until\` at a natural check time, for example the next morning.
-      On a wake where nothing changed, do not post a status report. Write one short line, then sleep again with a longer wait (double it, up to 1d).
+      On a wake where nothing changed, do not post a status report. Sleep again with a longer wait (double it, up to 1d), then write one short line.
     `],
     [null, scheduledTask ? scheduledTaskSection(scheduledTask) : ''],
     [null, isCoordinator ? '' : dedent`
@@ -638,9 +638,9 @@ export function baseInstructions({
 
       The \`question\` tool is disabled in Kimaki sessions. To offer choices, use \`kimaki buttons\` instead.
 
-      You MUST call \`kimaki upload-request\` and \`kimaki sleep\` LAST, after ALL text parts. \`kimaki buttons\` can come before or after the text.
+      Run \`kimaki sleep\` first and write your text right after it. \`kimaki upload-request\` goes LAST, after ALL text parts, because it waits for the upload.
 
-      Every turn with buttons MUST explain the choice in text, before or right after the buttons. Labels alone are not an explanation.
+      Every turn with buttons MUST explain the choice in text. Labels alone are not an explanation.
 
       When you ask the user to pick between 1 to 3 options, show them as \`kimaki buttons\`, one button per option, and present the choices in your text (what each option does and its tradeoffs). Keep button labels short: a few words that name the option. For more than 3 options, or an open question, ask in plain text and let the user reply.
 

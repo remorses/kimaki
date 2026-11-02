@@ -234,7 +234,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -c, --channel <id>              Destination channel (default: channel of the session folder)
 
-      buttons                           Show 1-3 action buttons. Call last, after visible text
+      buttons                           Show 1-3 action buttons. Explain them in your text
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
         -b, --button <spec>             Repeatable: Label[:white|blue|green|red]

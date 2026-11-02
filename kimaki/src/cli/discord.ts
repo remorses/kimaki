@@ -17,13 +17,15 @@ function agentShell() {
   return { fromShell: Boolean(process.env['OPENCODE_SESSION_ID']), toolCall: process.env['KIMAKI_TOOL_CALL'] }
 }
 
-// The model reads this after `kimaki buttons`: buttons may come first, the explanation can follow.
+// The model reads this after `kimaki buttons`. Text planned before a tool call
+// is sometimes never written (#256), so it asks for a missing answer or explanation.
 const BUTTONS_SHOWN = dedent`
 
   Buttons shown in Discord.
 
-  The user cannot see tool calls, command outputs, or subagent and task results. They only see your text.
-  If your text in this turn does not explain them yet, write it now:
+  The user cannot see tool calls, command outputs, your reasoning, or subagent and task results. They only see your text.
+  If this turn has no text yet that answers the user and explains the buttons, write it now:
+  - your answer to what the user asked, if anything
   - what was done in this session, concisely, including any findings from tool or task outputs that the choice depends on
   - what each button does and its tradeoffs
   Be concise: a few short lines in plain sentences, no walls of text. Do not only repeat the button labels. Then stop and wait for the click.
@@ -31,7 +33,7 @@ const BUTTONS_SHOWN = dedent`
 `
 // buttons, upload-request
 export function registerAgentUiCommands(cli: Goke) {
-  cli.command('buttons', 'Show 1-3 action buttons. Call last, after visible text')
+  cli.command('buttons', 'Show 1-3 action buttons. Explain them in your text')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('-s, --session <id>', SESSION_HELP)
     .option('-b, --button <spec>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: "Repeatable: Label[:white|blue|green|red]" }))

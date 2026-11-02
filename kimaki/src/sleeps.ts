@@ -58,7 +58,7 @@ export function sleepOutput({ wakeAt, reason }: { wakeAt: number; reason: string
   return [
     `Sleeping until ${utcLabel(wakeAt)}.${reason ? ` Reason: ${reason}.` : ''}`,
     'This result is not a wake. Do not continue the waited work. Do not run more commands.',
-    'Reply with one short line that you are waiting until that time, then stop.',
+    'If this turn has no text yet that answers the user, write your full answer now: text you only planned in your reasoning never reaches Discord. Then write one short line that you are waiting until that time, and stop.',
     'The real wake is a later message that starts with "Woke after sleeping until". Only then continue the wait reason.',
     'A new user message in this thread cancels the sleep. If you still need that later wake after answering, run kimaki sleep again with --until set to the same UTC time.',
     'When monitoring something slow (email replies, PR reviews), wait 2h or more and never post a status report on a wake where nothing changed.',

@@ -92,5 +92,5 @@ Use **sleep** when the current conversation must continue later. Use **routines*
 
 - The wake always goes to the **main session** of the thread, also when a subagent runs the command.
 - Kimaki checks for due wakes about every **5 seconds**, so very short sleeps can be a little late.
-- The agent must run `kimaki sleep` **last**, after its text, and then stop. The command output is not a wake. Work continues only after the **wake message**.
+- The agent runs `kimaki sleep` as its **last command**, then writes its answer and a short waiting line, and stops. The command output is not a wake. Work continues only after the **wake message**.
 - If no thread owns the session when the wake is due, the wake is dropped.
