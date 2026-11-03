@@ -21,6 +21,8 @@ const logger = createLogger('TASK')
 
 const WAKE_RETRY_MS = 30_000
 const WAKE_MAX_ATTEMPTS = 5
+// Longer sleeps let the prompt cache expire: past ~45 minutes, keep-alives (0.1x input each) cost more than one cache write at the wake (1.25x).
+const WARM_SLEEP_MAX_MS = 45 * 60_000
 
 type SleepRow = typeof schema.session_sleeps.$inferSelect
 
@@ -142,6 +144,19 @@ export async function createSleep(
   bot.eventLoop.dispatch(threadId, { type: 'kimaki.sleep' })
   logger.log(`session ${root} sleeps until ${new Date(wakeAt).toISOString()}`)
   return { sessionId: root, threadId, wakeAt: new Date(wakeAt).toISOString(), output: sleepOutput({ wakeAt, reason: why }) }
+}
+
+// The session waits for a wake at most 45 minutes after its sleep started: the plugin
+// keeps its prompt cache warm until then (plugin/coordinator.ts, `session.warmup` route).
+export async function sleepsWarm(bot: Bot, sessionId: string): Promise<DbError | boolean> {
+  const row = await bot.db.query.session_sleeps
+    .findFirst({ where: { session_id: sessionId, status: 'planned' } })
+    .catch((cause) => new DbError({ operation: 'read session_sleeps', cause }))
+  if (row instanceof Error) return row
+  // Sleeps imported from V1 may have no start time.
+  if (!row?.created_at) return false
+  const wakeAt = row.wake_at.getTime()
+  return wakeAt > bot.clock.now() && wakeAt - row.created_at.getTime() <= WARM_SLEEP_MAX_MS
 }
 
 // Delivers a due wake if it is still the planned sleep and its retry delay

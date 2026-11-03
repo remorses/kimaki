@@ -49,7 +49,7 @@ beforeAll(async () => {
   ])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
-  bot = await startTestBot({ dataDir, twin, server, coordinator: true, coordinatorTimers: { warmIntervalMs: 1_200, warmMaxMs: 60_000 } })
+  bot = await startTestBot({ dataDir, twin, server, coordinator: true, warmupTimers: { intervalMs: 1_200, maxMs: 60_000 } })
 }, 60_000)
 
 afterAll(async () => {

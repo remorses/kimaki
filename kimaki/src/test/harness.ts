@@ -29,7 +29,7 @@ import {
 } from 'opencode-deterministic-provider'
 
 import { disabledAnalytics, type Analytics } from '../analytics.ts'
-import type { CoordinatorTimers } from '../bot.ts'
+import type { WarmupTimers } from '../bot.ts'
 import { GATEWAY_APP_ID, saveCredentials, type Credentials } from '../credentials.ts'
 import { openDb, verbosityToV1, type Verbosity } from '../db.ts'
 import type { ToolInput } from '../format-parts.ts'
@@ -549,7 +549,7 @@ export async function startTestBot({
   clock,
   schedulerIntervalMs,
   coordinator,
-  coordinatorTimers,
+  warmupTimers,
 }: {
   dataDir: string
   twin: TestTwin
@@ -570,9 +570,9 @@ export async function startTestBot({
   // Scheduling tests pass manualClock() and null, then call bot.scheduler.runDueTasks().
   clock?: Clock
   schedulerIntervalMs?: number | null
-  // Default off (`--coordinator false`) so most tests get threads; coordinator tests pass true and short timers.
+  // Default off (`--coordinator false`) so most tests get threads; coordinator tests pass true.
   coordinator?: boolean
-  coordinatorTimers?: CoordinatorTimers
+  warmupTimers?: WarmupTimers
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -603,7 +603,7 @@ export async function startTestBot({
     ...(schedulerIntervalMs !== undefined && { schedulerIntervalMs }),
     ...(realtimeBaseUrls && { realtimeBaseUrls }),
     coordinator: coordinator ?? false,
-    ...(coordinatorTimers && { coordinatorTimers }),
+    ...(warmupTimers && { warmupTimers }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),

@@ -30,9 +30,10 @@ export type Author = { id: string; username: string }
 
 export type PromptFile = { uri: string; name: string }
 
-// Warmup windows of a coordinator (plugin/coordinator.ts): a keep-alive every
-// warmIntervalMs while its channel is busy, at most warmMaxMs after its last turn.
-export type CoordinatorTimers = { warmIntervalMs: number; warmMaxMs: number }
+// Prompt cache warmup windows (plugin/coordinator.ts): a keep-alive every
+// intervalMs while a coordinator's channel is busy (at most maxMs after its
+// last turn) or a session sleeps.
+export type WarmupTimers = { intervalMs: number; maxMs: number }
 
 export type ModelChoice = { providerID: string; id: string; variant: string | null }
 
@@ -79,8 +80,8 @@ export type Bot = {
   // Default for channels without a channel_coordinator row (`kimaki --coordinator`, on unless false):
   // project channel messages go to one long coordinator session in the channel.
   coordinatorDefault: boolean
-  // Short coordinator warmup windows (tests); null uses the plugin defaults.
-  coordinatorTimers: CoordinatorTimers | null
+  // Short warmup windows (tests), written into session markers; null uses the plugin defaults.
+  warmupTimers: WarmupTimers | null
   features: BotFeatures
 }
 

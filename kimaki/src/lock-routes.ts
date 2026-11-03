@@ -23,7 +23,7 @@ import { abort, cancelQueuedPrompt, clearQueue, send, shell, upload } from './pr
 import { createTask, deleteTask, editTask, runTaskNow } from './scheduler.ts'
 import * as schema from './schema.ts'
 import { channelForDirectory, channelForSession, fork, resume, sessionCwd } from './sessions.ts'
-import { createSleep } from './sleeps.ts'
+import { createSleep, sleepsWarm } from './sleeps.ts'
 import { conversationTyping, workersTyping } from './thread-reducer.ts'
 import { worktreeName } from './worktrees.ts'
 
@@ -270,6 +270,19 @@ async function snapshotHeap({ dataDir }: { dataDir: string }) {
   return { path: written }
 }
 
+// The coordinator or a thread of its channel runs, from the thread views.
+function coordinatorBusy(bot: Bot, sessionId: string): boolean {
+  const { sessionThreads, roots, threads } = bot.store.getState()
+  // A coordinator's conversation is its channel. A replaced one (/reset-coordinator), one of a
+  // channel with coordinator mode off, or a thread session is never busy.
+  const channelId = sessionThreads[sessionId]
+  if (!channelId || roots[channelId] !== sessionId || !isCoordinatorChannel(bot, channelId)) return false
+  const view = threads[channelId]
+  // An idle coordinator has no view after a bot restart; its threads do.
+  if (!view) return workersTyping({ threads, channelId })
+  return view.coordinator && conversationTyping({ threads, threadId: channelId })
+}
+
 const loginField = z.string({ error: 'Login fields must be non-empty strings' }).min(1, { error: 'Login fields must be non-empty strings' }).optional()
 
 export const lockRoutes = {
@@ -302,17 +315,14 @@ export const lockRoutes = {
       }
     },
   }),
-  // The plugin keeps a coordinator's prompt cache warm while this is true (plugin/coordinator.ts).
-  'coordinator.busy': route({
+  // The plugin keeps a session's prompt cache warm while its coordinator channel is busy
+  // or it sleeps (plugin/coordinator.ts).
+  'session.warmup': route({
     input: z.object({ sessionId: text('sessionId') }),
     run: async (bot, { sessionId }) => {
-      const { sessionThreads, roots, threads } = bot.store.getState()
-      // A coordinator's conversation is its channel. A replaced one (/reset-coordinator) or one
-      // of a channel with coordinator mode off is never busy.
-      const channelId = sessionThreads[sessionId]
-      if (!channelId || roots[channelId] !== sessionId || !isCoordinatorChannel(bot, channelId)) return { busy: false }
-      // An idle coordinator has no view after a bot restart; its threads do.
-      return { busy: threads[channelId] ? conversationTyping({ threads, threadId: channelId }) : workersTyping({ threads, channelId }) }
+      const sleeping = await sleepsWarm(bot, sessionId)
+      if (sleeping instanceof Error) return sleeping
+      return { busy: coordinatorBusy(bot, sessionId), sleeping }
     },
   }),
   restart: route({

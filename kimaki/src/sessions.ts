@@ -488,6 +488,7 @@ export async function startSession(
     channelId,
     source: task ? 'task' : 'discord',
     ...(task && { taskId: task.id, task }),
+    ...(bot.warmupTimers && { warmup: bot.warmupTimers }),
     ...cliContext(bot),
     ...(parentSessionId && { parentSessionId }),
   }
@@ -582,7 +583,7 @@ export async function startCoordinator(
       ...(chosen.model && { model: chosen.model }),
       ...(chosen.agent && { agent: chosen.agent }),
       permissions: [NO_QUESTION_TOOL, ...disabledSkillRules(bot.disabledSkills)],
-      metadata: { kimaki: { threadId: channel.id, channelId: channel.id, source: 'discord', ...(bot.coordinatorTimers && { coordinator: bot.coordinatorTimers }), ...cliContext(bot) } },
+      metadata: { kimaki: { threadId: channel.id, channelId: channel.id, source: 'discord', ...(bot.warmupTimers && { warmup: bot.warmupTimers }), ...cliContext(bot) } },
     }),
   )
   if (session instanceof Error) return session
@@ -666,8 +667,7 @@ async function adoptSession(
       .catch((cause) => new DiscordError({ operation: 'send intro', cause }))
     if (posted instanceof Error) return posted
     // Merge: other metadata stays. Task fields stay only for a resumed task session.
-    // A thread is never a coordinator: a fork of one drops its warmup windows (plugin/coordinator.ts).
-    const { task: _task, taskId: _taskId, coordinator: _coordinator, ...rest } = readMarker(session.metadata)?.fields ?? {}
+    const { task: _task, taskId: _taskId, ...rest } = readMarker(session.metadata)?.fields ?? {}
     const marker = scheduledTask ? { ...rest, taskId: scheduledTask.id, task: scheduledTask } : rest
     const kimaki = { ...marker, source: scheduledTask ? 'task' : 'discord', ...cliContext(bot), threadId: thread.id, channelId: channel.id }
     // A session with its own question rule (a fork, or --permission) keeps it.

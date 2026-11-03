@@ -1,8 +1,10 @@
 // `kimaki sleep` end to end (spec 10.5, 12.1, Phase 8): the agent runs the
 // command through the shim, the bot stores the wake with its clock, the
 // scheduler wakes the same thread, and a user message cancels the sleep.
+// Sleeps of at most 45 minutes keep the prompt cache warm (plugin/coordinator.ts).
 
 import fs from 'node:fs'
+import path from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
 import { afterAll, beforeAll, expect, test } from 'vitest'
@@ -18,11 +20,14 @@ import {
   tempDataDir,
   textParts,
   toolParts,
+  waitFor,
   waitForFooter,
   warmUp,
   type OpencodeTestServer,
   type TestTwin,
 } from './test/harness.ts'
+
+const WARM_INTERVAL_MS = 200
 
 function sleepTurn({ marker, command }: { marker: string; command: string }): DeterministicMatcher[] {
   const callId = `${marker}-call`
@@ -44,16 +49,16 @@ let bot: BotHandle
 
 beforeAll(async () => {
   ;[server, twin] = await Promise.all([
-    startOpencodeTestServer({ matchers: [
-      ...sleepTurn({ marker: 'sleep-marker', command: "kimaki sleep --duration 2h --reason 'waiting for the deploy'" }),
-      ...sleepTurn({ marker: 'cancel-marker', command: 'kimaki sleep --until 2030-01-01T12:00:00Z' }),
+    startOpencodeTestServer({ plugins: [path.resolve('src/test/generate-log-plugin')], matchers: [
+      ...sleepTurn({ marker: 'sleep-marker', command: "kimaki sleep --duration 30m --reason 'waiting for the deploy'" }),
+      ...sleepTurn({ marker: 'cancel-marker', command: 'kimaki sleep --until 2030-01-01T10:30:00Z' }),
       { id: 'wake', priority: 200, when: { latestUserTextIncludes: 'Woke after sleeping until' }, then: { parts: textParts('Awake, checking the deploy.') } },
       { id: 'never-mind', priority: 200, when: { latestUserTextIncludes: 'Never mind' }, then: { parts: textParts('Noted, no wake needed.') } },
     ] }),
     startTwin(),
   ])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
-  bot = await startTestBot({ dataDir, twin, server, clock, schedulerIntervalMs: null })
+  bot = await startTestBot({ dataDir, twin, server, clock, schedulerIntervalMs: null, warmupTimers: { intervalMs: WARM_INTERVAL_MS, maxMs: 60_000 } })
   await warmUp({ server })
 }, 60_000)
 
@@ -72,17 +77,26 @@ async function start(prompt: string) {
   return { threadId: thread.id, sessionId: bot.store.getState().roots[thread.id]! }
 }
 
+// Keep-alive requests of a session, from the test plugin.
+function keepAlives(sessionId: string): number {
+  const file = path.join(server.root, 'generate.log')
+  if (!fs.existsSync(file)) return 0
+  return fs.readFileSync(file, 'utf8').split('\n').filter((line) => line === sessionId).length
+}
+
 async function sleepRow(sessionId: string) {
   return bot.db.query.session_sleeps.findFirst({ where: { session_id: sessionId } })
 }
 
 test('kimaki sleep wakes the same thread at the clock time', async () => {
   const { threadId, sessionId } = await start('Deploy and then sleep-marker')
-  expect((await sleepRow(sessionId))?.wake_at.toISOString()).toBe('2030-01-01T11:00:00.000Z')
+  expect((await sleepRow(sessionId))?.wake_at.toISOString()).toBe('2030-01-01T09:30:00.000Z')
+  // A 30 minute sleep stays warm until the wake.
+  await waitFor({ label: 'keep-alive while sleeping', check: async () => keepAlives(sessionId) > 0 || null })
 
-  clock.set(Date.parse('2030-01-01T10:59:59Z'))
+  clock.set(Date.parse('2030-01-01T09:29:59Z'))
   await bot.scheduler.runDueTasks()
-  clock.set(Date.parse('2030-01-01T11:00:00Z'))
+  clock.set(Date.parse('2030-01-01T09:30:00Z'))
   await bot.scheduler.runDueTasks()
   await waitForFooter({ discord: twin.discord, threadId, count: 2 })
   expect(await twin.discord.thread(threadId).text()).toMatchInlineSnapshot(`
@@ -96,7 +110,7 @@ test('kimaki sleep wakes the same thread at the clock time', async () => {
 
     Sleeping until the deploy is done.
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    -# Woke after sleeping until 2030-01-01 11:00 UTC. Reason: waiting for the deploy
+    -# Woke after sleeping until 2030-01-01 09:30 UTC. Reason: waiting for the deploy
     Awake, checking the deploy.
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
@@ -116,11 +130,14 @@ test('kimaki sleep wakes the same thread at the clock time', async () => {
 test('a user message cancels the sleep', async () => {
   const { threadId, sessionId } = await start('Deploy and then cancel-marker')
   expect((await sleepRow(sessionId))?.status).toBe('planned')
+  // The clock is at 09:30 after the first test: a 1 hour sleep is too long to keep warm, no keep-alive after a few intervals.
+  await sleep(WARM_INTERVAL_MS * 3)
+  expect(keepAlives(sessionId)).toBe(0)
   await twin.discord.thread(threadId).user(TEST_USER_ID).sendMessage({ content: 'Never mind, it is deployed' })
   await waitForFooter({ discord: twin.discord, threadId, count: 2 })
   expect((await sleepRow(sessionId))?.status).toBe('cancelled')
 
-  clock.set(Date.parse('2030-01-01T12:00:00Z'))
+  clock.set(Date.parse('2030-01-01T10:30:00Z'))
   await bot.scheduler.runDueTasks()
   // Nothing may appear: poll briefly instead of a wait helper.
   for (let attempt = 0; attempt < 10; attempt++) {

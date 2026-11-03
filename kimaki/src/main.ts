@@ -8,7 +8,7 @@ import * as errore from 'errore'
 
 import { createAgentUi } from './agent-ui.ts'
 import type { Analytics } from './analytics.ts'
-import { oc, type Bot, type CoordinatorTimers } from './bot.ts'
+import { oc, type Bot, type WarmupTimers } from './bot.ts'
 import type { PromptSection } from './builtin-skills.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
@@ -75,8 +75,8 @@ export type StartBotOptions = {
   disabledPrompt?: readonly PromptSection[]
   // `--coordinator`: coordinator mode for channels without a /toggle-coordinator choice (ingress.ts). Default: on.
   coordinator?: boolean
-  // Default: the plugin's warmup windows (plugin/coordinator.ts). Tests pass short ones.
-  coordinatorTimers?: CoordinatorTimers
+  // Default: the plugin's prompt cache warmup windows (plugin/coordinator.ts). Tests pass short ones.
+  warmupTimers?: WarmupTimers
 }
 
 export type BotHandle = Bot & {
@@ -202,7 +202,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     disabledSkills: options.disabledSkills ?? [],
     disabledPrompt: options.disabledPrompt ?? [],
     coordinatorDefault: options.coordinator ?? true,
-    coordinatorTimers: options.coordinatorTimers ?? null,
+    warmupTimers: options.warmupTimers ?? null,
     features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
   }
   const scheduler = createScheduler({

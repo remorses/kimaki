@@ -1,20 +1,23 @@
 // Coordinator sessions in the OpenCode process: their role instructions (below)
-// and the prompt cache warmup of the coordinator.
+// and the prompt cache warmup of Kimaki sessions.
 //
 // Warmup works like OpenCode's `warming` (core/src/plugin/warming.ts): a
 // `session.generate` keep-alive reads the cached prompt prefix, which keeps the
-// provider cache alive, and stores nothing in the session. It runs only while
-// the coordinator's channel is busy, so the <session-finished> note of a worker
-// reads a warm cache instead of writing it again:
+// provider cache alive, and stores nothing in the session. It runs while a
+// coordinator's channel is busy, so the <session-finished> note of a worker
+// reads a warm cache, and while a session sleeps (`kimaki sleep` of at most 45
+// minutes), so its wake does:
 //
-//   model request ─▶ intervalMs later: channel busy? ─▶ keep-alive, again intervalMs later
-//                                     └─▶ idle, or maxMs after the last real request ─▶ end
-//   end ─▶ compact while the cache still holds, when the context is big
+//   model request ─▶ intervalMs later: sleeping, or coordinator ─▶ keep-alive, again intervalMs later
+//                                      channel busy (at most maxMs
+//                                      after the last real request)?
+//                                     └─▶ no ─▶ end
+//   end of a coordinator ─▶ compact while the cache still holds, when the context is big
 //
-// Only the bot knows the threads of a channel: it answers `coordinator.busy` on its
-// lock port. The warmup is also in plugin storage, so a plugin reload (every
-// Kimaki build or upgrade) continues it. Only the coordinator itself, never its
-// threads or other sessions.
+// Only the bot knows the threads of a channel and the sleeps: it answers
+// `session.warmup` on its lock port. The warmup is also in plugin storage, so a
+// plugin reload (every Kimaki build or upgrade) continues it. Root Kimaki
+// sessions only, never subagents or TUI sessions.
 // TODO: let the coordinator compact worker sessions too (they keep their full history now).
 
 import fs from 'node:fs'
@@ -41,7 +44,7 @@ const BUSY_TIMEOUT_MS = 5_000
 const STORAGE_PREFIX = 'warm/'
 
 type Timer = ReturnType<typeof setTimeout>
-type Windows = { intervalMs: number; maxMs: number }
+type Windows = { intervalMs: number; maxMs: number; coordinator: boolean }
 // last: the latest model request, keep-alives included. active: the latest real one.
 type Warmup = { directory: string; last: number; active: number }
 
@@ -50,15 +53,15 @@ function markerValue(session: RoleSession, key: string): unknown {
   return kimaki && typeof kimaki === 'object' ? Reflect.get(kimaki, key) : null
 }
 
-// Coordinators only. A `coordinator` marker field overrides the windows (tests).
+// Root Kimaki sessions only. A `warmup` marker field overrides the windows (tests).
 function readWindows(session: RoleSession): Windows | null {
-  if (session.parentID || !coordinatorChannel(session)) return null
-  const coordinator = markerValue(session, 'coordinator')
+  if (session.parentID || !markerString(session, 'threadId')) return null
+  const warmup = markerValue(session, 'warmup')
   const read = (key: string, fallback: number) => {
-    const value: unknown = coordinator && typeof coordinator === 'object' ? Reflect.get(coordinator, key) : null
+    const value: unknown = warmup && typeof warmup === 'object' ? Reflect.get(warmup, key) : null
     return typeof value === 'number' && value > 0 ? value : fallback
   }
-  return { intervalMs: read('warmIntervalMs', WARM_INTERVAL_MS), maxMs: read('warmMaxMs', WARM_MAX_MS) }
+  return { intervalMs: read('intervalMs', WARM_INTERVAL_MS), maxMs: read('maxMs', WARM_MAX_MS), coordinator: !!coordinatorChannel(session) }
 }
 
 function readWarmup(value: unknown): Warmup | null {
@@ -69,27 +72,29 @@ function readWarmup(value: unknown): Warmup | null {
   return typeof directory === 'string' && typeof last === 'number' && typeof active === 'number' ? { directory, last, active } : null
 }
 
-// The coordinator or a thread of its channel runs, from the bot's thread views
-// (lock-routes.ts). No answer (bot stopped) ends the warmup.
-async function channelBusy(session: RoleSession): Promise<boolean> {
+// busy: a coordinator or a thread of its channel runs. sleeping: a sleep of at most
+// 45 minutes waits for its wake. From the bot (lock-routes.ts); no answer (bot stopped) ends the warmup.
+async function warmupState(session: RoleSession): Promise<{ busy: boolean; sleeping: boolean }> {
+  const idle = { busy: false, sleeping: false }
   const dataDir = markerString(session, 'dataDir')
   const lockPort = markerValue(session, 'lockPort')
-  if (!dataDir || typeof lockPort !== 'number') return false
+  if (!dataDir || typeof lockPort !== 'number') return idle
   const token = await fs.promises.readFile(path.join(dataDir, 'lock-token'), 'utf8').catch(() => null)
-  if (token === null) return false
-  const response = await fetch(`http://127.0.0.1:${lockPort}/kimaki/coordinator.busy`, {
+  if (token === null) return idle
+  const response = await fetch(`http://127.0.0.1:${lockPort}/kimaki/session.warmup`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId: session.id }),
     signal: AbortSignal.timeout(BUSY_TIMEOUT_MS),
   }).catch(() => null)
-  if (!response?.ok) return false
+  if (!response?.ok) return idle
   const body: unknown = await response.json().catch(() => null)
-  return !!body && typeof body === 'object' && Reflect.get(body, 'busy') === true
+  if (!body || typeof body !== 'object') return idle
+  return { busy: Reflect.get(body, 'busy') === true, sleeping: Reflect.get(body, 'sleeping') === true }
 }
 
-export async function registerCoordinatorWarmup(ctx: Plugin.Context): Promise<() => void> {
-  // The marker never changes after create: one session.get per session, also for non-coordinator ones.
+export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
+  // The marker never changes after create: one session.get per session, also for TUI ones.
   const known = new Map<string, Promise<Windows | null>>()
   const warmups = new Map<string, Warmup>()
   const timers = new Map<string, Timer>()
@@ -126,17 +131,19 @@ export async function registerCoordinatorWarmup(ctx: Plugin.Context): Promise<()
       timers.delete(sessionID)
       // Plugins stay silent: a failed keep-alive or compaction only loses that one.
       void tick(sessionID, warmup, found).catch(() => undefined)
-    }, Math.max(0, Math.min(warmup.last + found.intervalMs, warmup.active + found.maxMs) - Date.now()))
+    }, Math.max(0, warmup.last + found.intervalMs - Date.now()))
     timer.unref?.()
     timers.set(sessionID, timer)
   }
 
   async function tick(sessionID: string, warmup: Warmup, found: Windows) {
     const session = await ctx.session.get({ sessionID }).catch(() => null)
-    const busy = !!session && Date.now() < warmup.active + found.maxMs && (await channelBusy(session))
+    const state = session ? await warmupState(session) : null
+    // The bot bounds sleeps (45 minutes); the plugin bounds busy channels, against stuck workers.
+    const warm = !!state && (state.sleeping || (state.busy && Date.now() < warmup.active + found.maxMs))
     // A model request during the checks moved the warmup.
     if (warmups.get(sessionID) !== warmup) return
-    if (busy) {
+    if (warm) {
       // Before the request, so a failing keep-alive waits a whole interval.
       save(sessionID, { ...warmup, last: Date.now() })
       arm(sessionID, found)
@@ -145,7 +152,7 @@ export async function registerCoordinatorWarmup(ctx: Plugin.Context): Promise<()
     }
     warmups.delete(sessionID)
     await ctx.storage.remove(STORAGE_PREFIX + sessionID).catch(() => undefined)
-    if (await worthCompacting(sessionID)) await ctx.session.compact({ sessionID, delivery: 'queue' })
+    if (found.coordinator && (await worthCompacting(sessionID))) await ctx.session.compact({ sessionID, delivery: 'queue' })
   }
 
   async function touch(sessionID: string, real: boolean) {
