@@ -186,6 +186,9 @@ test('CLI help documents the supported P7 commands', async () => {
       session archive [id]              Archive a session thread
         --data-dir <path>               Data directory (default: ~/.kimaki)
 
+      session compact [id]              Summarize the session history after its current turn (default: this session)
+        --data-dir <path>               Data directory (default: ~/.kimaki)
+
       session title <title>             Rename the session and its Discord thread
         --data-dir <path>               Data directory (default: ~/.kimaki)
         -s, --session <id>              Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)
@@ -467,6 +470,8 @@ test('CLI registry shares thread actions, preferences, title and archive', async
   await cli(['session', 'queue', 'add', 'Registry queued', '--session', started.threadId])
   await expect(cli(['session', 'queue', 'list', '--session', 'not-an-id'])).rejects.toThrow('Not a session ID, Discord thread ID or thread URL: not-an-id')
   await waitForFooter({ discord: twin.discord, threadId: started.threadId, count: 2 })
+  // The deterministic model writes no summary template, so the compaction runs and fails.
+  expect(JSON.parse((await cli(['session', 'compact', started.threadId])).stdout)).toEqual({ sessionId: started.sessionId, queued: true })
   await cli(['session', 'abort', started.sessionId])
   await cli(['session', 'archive', started.threadId])
   expect(await twin.discord.thread(started.threadId).text()).toMatchInlineSnapshot(`
@@ -477,7 +482,8 @@ test('CLI registry shares thread actions, preferences, title and archive', async
     -# *main ⋅ Ns ⋅ deterministic-v2*
     -# » **CLI:** Registry queued
     ok
-    -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ build*"
+    -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ build*
+    ✗ compaction failed: Compaction summary did not match the required template"
   `)
   expect((await twin.discord.channel(twin.channelId).getThreads()).find((thread) => thread.id === started.threadId)?.name).toBe('CLI renamed')
 })

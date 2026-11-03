@@ -150,7 +150,7 @@ export function registerSessionQueryCommands(cli: Goke) {
     })
 }
 
-// abort, archive, title, queue, command, shell, btw, fork, resume: all through the bot.
+// abort, archive, compact, title, queue, command, shell, btw, fork, resume: all through the bot.
 export function registerSessionActionCommands(cli: Goke) {
   cli.command('session abort [id]', 'Stop the running turn and clear its queue')
     .option('--data-dir <path>', DATA_DIR_HELP)
@@ -159,6 +159,10 @@ export function registerSessionActionCommands(cli: Goke) {
   cli.command('session archive [id]', 'Archive a session thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .action(async (id, options) => action({ route: 'session.archive', dataDir: options.dataDir, input: targetOrEnv(id) }))
+
+  cli.command('session compact [id]', 'Summarize the session history after its current turn (default: this session)')
+    .option('--data-dir <path>', DATA_DIR_HELP)
+    .action(async (id, options) => action({ route: 'session.compact', dataDir: options.dataDir, input: targetOrEnv(id) }))
 
   cli.command('session title <title>', 'Rename the session and its Discord thread')
     .option('--data-dir <path>', DATA_DIR_HELP)

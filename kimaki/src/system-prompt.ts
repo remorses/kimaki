@@ -219,6 +219,8 @@ export function baseInstructions({
       kimaki session abort <session_id>
 
       This stops the AI from processing but keeps the thread visible in Discord. Different from \`kimaki session archive\` which hides the thread.
+
+      To free context, \`kimaki session compact [session_id]\` summarizes a session's history after its current turn ends. With no ID it compacts this session.
     `],
     [null, isCoordinator ? '' : dedent`
       ## updating the session title

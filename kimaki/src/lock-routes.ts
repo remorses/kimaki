@@ -554,6 +554,18 @@ export const lockRoutes = {
       return abort(bot, { threadId: target.threadId })
     },
   }),
+  'session.compact': route({
+    input: sessionInput({}),
+    run: async (bot, input) => {
+      const target = localSession(bot, input)
+      if (target instanceof Error) return target
+      // Queued, so an agent compacting its own session finishes its turn first.
+      const sessionID = input.sessionId ?? target.sessionId
+      const compaction = await oc(bot, 'session.compact', (client) => client.session.compact({ sessionID, delivery: 'queue' }))
+      if (compaction instanceof Error) return compaction
+      return { sessionId: sessionID, queued: true }
+    },
+  }),
   'session.fork': route({
     input: sessionInput({ before: text('before').optional(), name: text('name').optional() }),
     run: async (bot, input) => {
