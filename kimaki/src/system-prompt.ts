@@ -200,6 +200,8 @@ export function baseInstructions({
       Wake is a later message that starts with \`Woke after sleeping until\`. Only then continue the wait reason.
       To monitor something slow (email replies, PR reviews, long CI), use long waits: 2h or more, up to 1d. Never poll every few minutes. Prefer \`--until\` at a natural check time, for example the next morning.
       On a wake where nothing changed, do not post a status report. Sleep again with a longer wait (double it, up to 1d), then write one short line.
+
+      **When you are blocked on the user, sleep instead of ending the turn.** If you need the user to do something outside the chat (accept a sudo or permission dialog, log in, plug in a device, approve something), ask for it, assume they will do it, and run \`kimaki sleep --duration 5m --reason '...'\`. On wake, check if you are unblocked and continue on your own. If not, sleep again. The user can still send a message while you sleep, so this costs nothing when they reply, and the work continues when they only did the action and forgot to write.
     `],
     [null, scheduledTask ? scheduledTaskSection(scheduledTask) : ''],
     [null, isCoordinator ? '' : dedent`

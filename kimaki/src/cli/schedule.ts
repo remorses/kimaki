@@ -148,7 +148,7 @@ export function registerScheduleCommands(cli: Goke) {
     }
   }
 
-  cli.command('sleep', 'Wake this session later with a new message in the same thread. Run it last, after your text. To monitor slow events (email replies, PR reviews), wait 2h or more; never poll every few minutes')
+  cli.command('sleep', 'Wake this session later with a new message in the same thread. Run it last, after your text. To monitor slow events (email replies, PR reviews), wait 2h or more; never poll every few minutes. When blocked on a user action outside the chat (a sudo or permission dialog, a login), ask for it, assume they will do it, and sleep 5m, then check and continue on your own')
     .option('--data-dir <path>', DATA_DIR_HELP)
     .option('--duration <duration>', 'Relative wait, e.g. 30m, 2h, 1d')
     .option('--until <date>', 'UTC ISO date ending in Z')
