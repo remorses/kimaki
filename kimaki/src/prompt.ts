@@ -59,8 +59,8 @@ const logger = createLogger('PROMPT')
 export type Sender = {
   // The session whose shell ran `kimaki send` (OPENCODE_SESSION_ID).
   sessionId?: string
-  // `kimaki send --wait`: the sender reads the result itself, so no note.
-  waited?: boolean
+  // `kimaki send --wait`: until this time (epoch ms) the sender waits for the result itself, so a run that ends before it sends no note.
+  waitUntil?: number
 }
 
 // Prompt IDs map a Discord message to its inbox item without stored state (spec 9.2.2).
@@ -579,7 +579,7 @@ export async function send(
   }
   const messageId = shownIn ?? crypto.randomUUID()
   // Also set without a session (routines, a terminal): it marks the prompt as not typed by a person.
-  const sender: Sender = { ...(input.senderSessionId && { sessionId: input.senderSessionId }), ...(input.wait && { waited: true }) }
+  const sender: Sender = { ...(input.senderSessionId && { sessionId: input.senderSessionId }), ...(input.wait !== undefined && { waitUntil: Date.now() + input.wait * 1000 }) }
   const route = parseTextMessage({ content: input.prompt })
   if (!route) return new ConfigError({ reason: 'Prompt is empty' })
   if (input.agent && (route.kind === 'steer' || route.kind === 'btw')) route.agent = input.agent

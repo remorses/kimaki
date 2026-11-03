@@ -1,7 +1,7 @@
 // Coordinator notes: when a thread session finishes a run, its coordinator learns
 // about it, so the coordinator always knows what happened in its project.
 //
-//   thread run ends ─▶ `kimaki send --wait` prompt, target still busy? ─▶ no note: the wait prints the answer
+//   thread run ends ─▶ `kimaki send --wait` prompt, wait not over, target busy? ─▶ no note: the wait prints the answer
 //                  ├─▶ run prompt sent by a coordinator (`sender`)?      ─▶ note + wake that coordinator
 //                  └─▶ else (user steered, routine), channel coordinator? ─▶ silent note (read at next prompt)
 //
@@ -52,7 +52,8 @@ function runPrompt(messages: readonly Message[]): { sender: Sender | null; user:
   const sender: unknown = prompt.metadata?.['sender']
   if (sender && typeof sender === 'object') {
     const sessionId: unknown = Reflect.get(sender, 'sessionId')
-    return { sender: { ...(typeof sessionId === 'string' && { sessionId }), waited: Reflect.get(sender, 'waited') === true }, user: null }
+    const waitUntil: unknown = Reflect.get(sender, 'waitUntil')
+    return { sender: { ...(typeof sessionId === 'string' && { sessionId }), ...(typeof waitUntil === 'number' && { waitUntil }) }, user: null }
   }
   const discord: unknown = prompt.metadata?.['discord']
   const username: unknown = discord && typeof discord === 'object' ? Reflect.get(discord, 'username') : null
@@ -87,9 +88,10 @@ async function channelOfThread(bot: Bot, threadId: string): Promise<string | nul
   return channel?.isThread() ? channel.parentId : null
 }
 
-// The run's prompt came from `kimaki send --wait` and the target still runs:
-// it is waiting in that shell call, which prints the answer. A target that is
-// idle lost its wait (shell timeout, interrupt), so it gets the note.
+// The run's prompt came from `kimaki send --wait`, the run ended before the wait
+// ran out and the target still runs: it is waiting in that shell call, which
+// prints the answer. A target that is idle lost its wait (shell timeout,
+// interrupt), so it gets the note.
 async function isWaiting(bot: Bot, target: string): Promise<boolean> {
   const active = await oc(bot, 'session.active', (client) => client.session.active())
   // On a failed check the note goes out: a duplicate is better than a lost result.
@@ -121,7 +123,7 @@ async function noteRunEnded(bot: Bot, run: RunEnded): Promise<void> {
   const wake = sentBy !== null
   const target = sentBy ?? (isCoordinatorChannel(bot, channelId) ? bot.store.getState().roots[channelId] : undefined)
   if (!target || target === run.sessionId) return
-  if (sender?.waited && (await isWaiting(bot, target))) return
+  if (sender?.waitUntil !== undefined && Date.now() < sender.waitUntil && (await isWaiting(bot, target))) return
   const answer = run.error ?? finalAnswer(messages) ?? 'Finished without a text answer.'
   const state = run.error ? 'error' : 'completed'
   const title = info.title || 'Untitled'

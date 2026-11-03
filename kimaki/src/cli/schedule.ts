@@ -9,6 +9,9 @@ import { BotNotRunningError } from '../errors.ts'
 import { callBot } from '../lock-server.ts'
 import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, openCliDb, parseTarget, printJson, readClient, SESSION_HELP, targetOrEnv, waitAndPrintSessions } from './shared.ts'
 
+// Bare `--wait`: long enough that the shell timeout ends it first.
+const DEFAULT_WAIT_SECONDS = 24 * 60 * 60
+
 export function registerSendCommand(cli: Goke) {
   cli.command('send', 'Start a session in a channel, or continue a thread')
     .option('--data-dir <path>', DATA_DIR_HELP)
@@ -28,12 +31,14 @@ export function registerSendCommand(cli: Goke) {
     .option('--parent-session <id>', 'Record the parent session in session metadata')
     .option('--permission <rule>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Repeatable: tool[:pattern]:allow|deny|ask' }))
     .option('--notify-only', 'Post a notification thread without a model turn')
-    .option('--wait', 'Wait until idle or input is needed, then print the session')
+    .option('--wait [seconds]', 'Wait until idle or input is needed (at most this many seconds, default 1 day), then print the session')
     .option('--send-at <when>', 'Schedule: UTC ISO date ending in Z, or cron expression (UTC)')
     .option('--pre-run <command>', 'Scheduled only: run first in the project. Exit 0 starts, stdout is appended')
     .option('--allow-concurrency', 'Scheduled only: allow overlapping runs of this routine')
     .action(async (options) => {
-      if (options.wait && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the routine runs later'))
+      const wait = options.wait === undefined ? undefined : options.wait === '' ? DEFAULT_WAIT_SECONDS : Number(options.wait)
+      if (wait !== undefined && !(Number.isFinite(wait) && wait > 0 && wait <= DEFAULT_WAIT_SECONDS)) fail(new Error('--wait takes a positive number of seconds, at most 86400'))
+      if (wait !== undefined && options.sendAt) fail(new Error('--wait cannot be used with --send-at: the routine runs later'))
       if (options.thread !== undefined && options.session !== undefined) fail(new Error('Use exactly one of --channel, --thread, --session, --project'))
       const continued = options.thread ?? options.session
       const target = continued === undefined ? {} : parseTarget(continued)
@@ -50,13 +55,13 @@ export function registerSendCommand(cli: Goke) {
         route: 'send',
         signal: AbortSignal.timeout(25 * 60_000),
         input: {
-          ...input, wait: options.wait, sendAt: options.sendAt, preRun: options.preRun, allowConcurrency: options.allowConcurrency,
+          ...input, wait, sendAt: options.sendAt, preRun: options.preRun, allowConcurrency: options.allowConcurrency,
           senderSessionId: process.env['OPENCODE_SESSION_ID'] || undefined,
         },
       })
       if (result instanceof BotNotRunningError) {
         // No local bot (CI, another machine): the bot that owns the channel runs it (remote-send.ts).
-        if (options.sendAt || options.wait) fail(new Error('Kimaki bot is not running here. --send-at and --wait need a local bot.'))
+        if (options.sendAt || wait !== undefined) fail(new Error('Kimaki bot is not running here. --send-at and --wait need a local bot.'))
         const [{ sendInput }, { sendWithoutBot }] = await Promise.all([import('../lock-routes.ts'), import('../remote-send.ts')])
         const parsed = sendInput.safeParse(input)
         if (!parsed.success) fail(new Error(parsed.error.issues.map((issue) => issue.message).join('; ')))
@@ -68,10 +73,16 @@ export function registerSendCommand(cli: Goke) {
       }
       if (result instanceof Error) fail(result)
       process.stdout.write(`${JSON.stringify(result.data)}\n`)
-      if (!options.wait) return
+      if (wait === undefined) return
       const data = result.data
       if (!data || typeof data !== 'object' || !('sessionId' in data) || typeof data.sessionId !== 'string') fail(new Error('--wait requires an AI session, not --notify-only'))
-      await waitAndPrintSessions({ client: await readClient(), sessionIds: [data.sessionId], dataDir: options.dataDir, timeout: '' })
+      await waitAndPrintSessions({
+        client: await readClient(),
+        sessionIds: [data.sessionId],
+        dataDir: options.dataDir,
+        signal: AbortSignal.timeout(wait * 1000),
+        timeout: `${wait}s`,
+      })
     })
 }
 

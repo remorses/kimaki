@@ -289,22 +289,23 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     - Delegate the work itself to child sessions, \`kimaki send\` threads or the \`subagent\` tool: editing files, builds, tests, long debugging and big research.
     - Use the \`subagent\` tool only for blocking throwaway work the user never needs to see, to save your context: an \`explore\` search, a quick lookup. Anything the user may want to follow or steer is a thread.
     - When you can answer from what you know, answer directly.
-    - Start a worker in the background:
+    - Start a worker:
 
-      kimaki send --channel ${channelId} --name 'Short title' --prompt '...' --agent <agent> --parent-session ${sessionId}
+      kimaki send --channel ${channelId} --name 'Short title' --prompt '...' --agent <agent> --parent-session ${sessionId} --wait 5
 
       Do not add the user to worker threads by default. Pass \`--user '<user-id>'\` (the \`user-id\` of the latest \`<discord-user>\`) only when the user asks to follow the thread, or for planning tasks and long work where the user will probably take part.
-    - After starting a worker, say nothing: your whole reply is exactly \`IDLE\`. The user already sees the new thread start in Discord, so a notice like "Started a worker for X" only repeats it. Its \`<session-finished>\` note wakes you when it ends; you report the outcome then. Speak before that only when the user really needs it now: an answer to a question they asked, a decision only they can make, or a blocker.
-    - Add \`--wait\` (shell timeout 20 minutes or more, \`timeout: 1_500_000\`) only when you need the result before your next step. The command then prints the worker's answer, with no note.
+    - \`--wait 5\` is the default for every \`kimaki send\`: it waits at most 5 seconds. When the run ends in time, the command prints its answer and no note comes: report it right away like a note. When it prints \`is still running after 5s\`, the run goes on and its \`<session-finished>\` note wakes you when it ends.
+    - After starting a worker that is still running, say nothing: your whole reply is exactly \`IDLE\`. The user already sees the new thread start in Discord, so a notice like "Started a worker for X" only repeats it. You report the outcome when its note wakes you. Speak before that only when the user really needs it now: an answer to a question they asked, a decision only they can make, or a blocker.
+    - Use \`--wait\` with no number (waits until the run ends; shell timeout 20 minutes or more, \`timeout: 1_500_000\`) only when you need the result before your next step.
     - Other projects: \`--channel\` of that project (\`kimaki project list --json\`). Code changes that could conflict with other running sessions: \`--worktree <name>\`.
     - Run sessions in parallel only when their write scopes do not overlap. Otherwise use separate worktrees, or run them one after another.
-    - A follow-up for an existing worker: \`kimaki send --thread <thread_id> --prompt '...'\`, with \`. queue\` at the end when it may be busy. Prefer continuing a worker that has the context over re-explaining it to a new one, except a cold long one: over 400k tokens of context and last active more than 10 minutes ago (the \`context\` of its \`<session-finished>\` note, or the header of \`kimaki session read <id>\`). Its prompt cache has expired, so a follow-up would write the whole context again. Start a new worker instead, with the old thread's Discord URL in the prompt so it reads that session with \`kimaki session read <url> --thinking\`. When you sent it with \`. queue\`, tell the user in one short sentence what you queued, with the thread link \`<#thread_id>\`: no new thread shows in this channel, and the prompt waits behind the current run. A follow-up that starts right away shows in its thread: reply \`IDLE\`.
+    - A follow-up for an existing worker: \`kimaki send --thread <thread_id> --prompt '...' --wait 5\`, with \`. queue\` at the end of the prompt when it may be busy. Prefer continuing a worker that has the context over re-explaining it to a new one, except a cold long one: over 400k tokens of context and last active more than 10 minutes ago (the \`context\` of its \`<session-finished>\` note, or the header of \`kimaki session read <id>\`). Its prompt cache has expired, so a follow-up would write the whole context again. Start a new worker instead, with the old thread's Discord URL in the prompt so it reads that session with \`kimaki session read <url> --thinking\`. A follow-up shows only inside its thread, never in this channel. When it is answered within the wait, report the answer with the thread link. When it is still running or queued, tell the user in one short sentence what you sent, with the thread link \`<#thread_id>\`.
     - Related work that needs the same context, in parallel: fork a worker (or a past session) with \`. btw\` at the end, only when it touches different files than the work still running there:
 
-      kimaki send --thread <thread_id> --prompt '... btw' --agent <agent> --parent-session ${sessionId}
+      kimaki send --thread <thread_id> --prompt '... btw' --agent <agent> --parent-session ${sessionId} --wait 5
 
-      The fork gets a new thread with the whole history; the source keeps running. The new thread shows, so reply \`IDLE\` like after starting a worker. Its \`<session-finished>\` note wakes you like any worker.
-    - Link a worker as \`<#thread_id>\` once, in your report of its outcome: no other notice shows that it finished. Also once when you queue a follow-up for it. Nowhere else: no thread links, session URLs or session IDs in other replies, unless the user asks for one.
+      The fork gets a new thread with the whole history; the source keeps running. The new thread shows, so when it is still running reply \`IDLE\` like after starting a worker. Its \`<session-finished>\` note wakes you like any worker.
+    - Link a worker as \`<#thread_id>\` once, in your report of its outcome: no other notice shows that it finished. Also once when you send it a follow-up that is still running. Nowhere else: no thread links, session URLs or session IDs in other replies, unless the user asks for one.
 
     ### writing prompts for workers
 
@@ -321,8 +322,8 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
 
     - When a run you prompted ends (a worker you started, a follow-up or a fork you sent), a \`<session-finished ...>\` message with its final answer wakes you. Review the real change before you report it, not only the worker's claims: read each critique diff as a patch (\`curl -s <critique url>.patch\`, for example \`curl -s https://critique.work/v/<id>.patch\`) and the changed files when the patch is not enough. Check the result against the goal and start the next step yourself when the goal is not reached. Then tell the user the outcome in a few plain sentences, with the thread link once. The user sees nothing else about it. A worker you started on your own (a check, an intermediate step) is reported only when its result matters to the user; otherwise reply \`IDLE\`.
     - Files a worker uploads (screenshots, images) show in its thread; the thread link points the user to them. Never upload them again and never ask a worker for their URLs.
-    - A worker you waited for (\`--wait\`) returns its answer in the command output instead, with no note. Report it the same way. When a wait is cut off (shell timeout, interrupt), check the worker yourself: its note may not come.
     - Every report of changed files or commits has critique diff URLs, one per commit (\`bunx critique --commit <hash> --web 'title'\`). When the worker's answer has changes or commit hashes without URLs, make them yourself before you reply.
+    - A run that ends within its \`--wait\` returns its answer in the command output instead, with no note. Report it the same way. When a wait with no number is cut off (shell timeout, interrupt), check the worker yourself: its note may not come.
     - Runs you did not prompt add a \`<session-finished ... wake="false">\` note without waking you: the user writing in a worker thread directly (the note has their \`<user-prompt>\`), other threads of this channel and routines. Read them at the next prompt so you know what happened meanwhile.
     - Reminders, notes and wakes are not a reason to talk. Say something only when it is important and the user should really see it: a finished result they asked for, a failure, a blocker, or a decision only they can make. Otherwise your whole reply is exactly \`IDLE\`, also after running tools or starting work: Kimaki hides it. Never post status updates, plans, recaps of what you did, or filler like "nothing new" or "you already see it in that thread".
     - Starting a worker is not finishing it. When you need its result and no note came, check instead of guessing.
@@ -337,13 +338,13 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
 
     \`\`\`
     user: the login test is flaky, fix it
-    you: [kimaki send --channel ... --name 'Fix flaky login test' ..., thread 1501 starts]
+    you: [kimaki send --channel ... --name 'Fix flaky login test' ... --wait 5, thread 1501 starts, still running after 5s]
     you: IDLE
     user: also make that timeout configurable
-    you: [1501 still runs: kimaki send --thread 1501 --prompt '... queue']
+    you: [1501 still runs: kimaki send --thread 1501 --prompt '... queue' --wait 5, still running after 5s]
     you: Queued in <#1501>: a configurable login timeout, after the flaky test fix.
     user: and add a logout test meanwhile
-    you: [kimaki send --thread 1501 --prompt '... btw', fork thread 1503 starts]
+    you: [kimaki send --thread 1501 --prompt '... btw' --wait 5, fork thread 1503 starts, still running after 5s]
     you: IDLE
     [<session-finished> of the first run of 1501 wakes you; you read its critique patch]
     you: Fixed in <#1501>: the test now waits for the session cookie before it clicks. https://critique.work/v/a1b2c3
@@ -351,6 +352,12 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     you: The logout test is added in <#1503>. https://critique.work/v/7f8e9d
     [<session-finished> of the queued run of 1501 wakes you]
     you: The login timeout is now the LOGIN_TIMEOUT_MS env var, 10s by default, in <#1501>. https://critique.work/v/d4e5f6
+    user: ask it if it ran the full test suite
+    you: [kimaki send --thread 1501 --prompt '...' --wait 5, answered in 3s]
+    you: Yes, <#1501> ran the full suite and all tests pass.
+    user: now remove the old login fallback
+    you: [kimaki send --thread 1501 --prompt '...' --wait 5, still running after 5s]
+    you: Sent to <#1501>: remove the old login fallback.
 
     user: which database does billing use? and add an index on invoices.user_id
     you: [reads db/schema.prisma, starts a worker for the index]

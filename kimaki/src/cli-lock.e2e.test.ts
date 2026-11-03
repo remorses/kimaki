@@ -280,7 +280,7 @@ test('CLI help documents the supported P7 commands', async () => {
         --parent-session <id>           Record the parent session in session metadata
         --permission <rule>             Repeatable: tool[:pattern]:allow|deny|ask
         --notify-only                   Post a notification thread without a model turn
-        --wait                          Wait until idle or input is needed, then print the session
+        --wait [seconds]                Wait until idle or input is needed (at most this many seconds, default 1 day), then print the session
         --send-at <when>                Schedule: UTC ISO date ending in Z, or cron expression (UTC)
         --pre-run <command>             Scheduled only: run first in the project. Exit 0 starts, stdout is appended
         --allow-concurrency             Scheduled only: allow overlapping runs of this routine

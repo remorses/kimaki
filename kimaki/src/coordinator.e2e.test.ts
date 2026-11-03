@@ -66,6 +66,25 @@ beforeAll(async () => {
           finalText: 'The waited worker is done.',
         }),
         { id: 'waited-worker', priority: 100, when: { latestUserTextIncludes: 'waited-worker-marker' }, then: { parts: textParts('Waited job done.') } },
+        // A bounded wait runs out; the coordinator is still busy when the worker ends, so the note must still come.
+        ...scriptedTurn({
+          marker: 'boundedwait-marker',
+          steps: [
+            {
+              id: 'call-send-bounded',
+              tool: 'shell',
+              input: {
+                command: `kimaki send --channel ${twin.channelId} --name 'Bounded task' --prompt 'boundedwait-job-marker do the job' --parent-session "$OPENCODE_SESSION_ID" --wait 0.1`,
+                description: 'Start the worker, wait briefly',
+                hasSideEffect: true,
+              },
+            },
+            { id: 'call-stay-busy', tool: 'shell', input: { command: 'sleep 2', description: 'Stay busy', hasSideEffect: false } },
+          ],
+          finalText: 'IDLE',
+        }),
+        { id: 'bounded-worker', priority: 100, when: { latestUserTextIncludes: 'boundedwait-job-marker' }, then: { parts: textParts('Bounded job done.'), defaultPartDelayMs: 100 } },
+        { id: 'woken-by-bounded', priority: 345, when: { latestUserTextRegex: '<session-finished[\\s\\S]*Bounded job done' }, then: { parts: textParts('The bounded job finished.') } },
         // Slow enough that the delegating run ends first: the note then wakes an idle coordinator.
         { id: 'worker', priority: 100, when: { latestUserTextIncludes: 'worker-marker' }, then: { parts: textParts('Job done in the worker.'), defaultPartDelayMs: 300 } },
         // A worker that uploads a screenshot; session read lists its URL, the note does not.
@@ -340,6 +359,22 @@ test('a worker started with --wait answers through the wait, with no note', asyn
   expect(await discord.channel(channelId).getThreads()).toHaveLength(threads + 1)
   const messages = await client.message.list({ sessionID: root, order: 'desc', limit: 20 })
   expect(messages.data.some((message) => message.type === 'synthetic' && JSON.stringify(message).includes('Waited task'))).toBe(false)
+})
+
+test('a worker that outlives a bounded --wait wakes the coordinator with a note', async () => {
+  const { discord, channelId } = twin
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter)
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Do it boundedwait-marker' })
+  await waitForFooter({ discord, threadId: channelId, count: footers.length + 1 })
+  const text = await discord.channel(channelId).text()
+  expect(text.slice(text.lastIndexOf('Do it boundedwait-marker'))).toMatchInlineSnapshot(`
+    "Do it boundedwait-marker
+    --- from: assistant (TestBot)
+    -# ┣ shell _Start the worker, wait briefly_
+    The bounded job finished.
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  expect(server.model.requests.some((request) => request.raw.includes('is still running after 0.1s'))).toBe(true)
 })
 
 test('another thread of the channel leaves a silent note for the next prompt', async () => {
