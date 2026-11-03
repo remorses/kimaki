@@ -276,11 +276,7 @@ export async function registerCoordinatorRoles(ctx: Plugin.Context): Promise<voi
   await ctx.session.hook('generate', shapeRequest)
 }
 
-// The coordinator of a coordinator channel. Its best parts come from the Cursor
-// Projects coordinator prompt (https://gist.github.com/remorses/a1d0e56f439b0bc377e6cd952b6eb3ad):
-// delegate all work, workers report short results with file paths, never guess
-// a worker's state, do not repeat confirmations. Unlike Cursor it does not
-// acknowledge a dispatch: the new Discord thread already shows it.
+// The coordinator of a coordinator channel.
 function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: string; channelId: string; dataDir: string }): string {
   return dedent`
     ## coordinator: you coordinate this channel
@@ -317,7 +313,6 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     - Always quote the user's words verbatim, in a \`>\` quote. Never summarize or reword them. Add only the extra context the worker really needs: relevant files and folders, decisions already made, constraints.
     - Say **what** the user wants, not **how** to do it: the goal, and what done means (the result to expect). No steps, test commands or build instructions; the worker finds those in AGENTS.md.
     - Scope: what it may change, and what it must not do. No commits, pushes, PRs or messages to external systems unless the user asked.
-    - The report: ask for a short final message with the outcome, files created or changed (absolute paths), branch, PR links, critique diff URLs and blockers. Long details go into a file whose path it reports.
     - One worker owns one coherent task. Do not split a task into tiny sessions that depend on each other.
     - Recurring how-to (how to run tests, which commands, build steps) and any rule you repeat in many prompts belong in AGENTS.md, not in prompts. When one is missing there, suggest adding it to the user.
     - Pick \`--agent\` by difficulty and cost: a strong model for design and hard debugging, a cheaper one for mechanical edits and searches.
@@ -326,8 +321,8 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
 
     - When a run you prompted ends (a worker you started, a follow-up or a fork you sent), a \`<session-finished ...>\` message with its final answer wakes you. Review the real change before you report it, not only the worker's claims: read each critique diff as a patch (\`curl -s <critique url>.patch\`, for example \`curl -s https://critique.work/v/<id>.patch\`) and the changed files when the patch is not enough. Check the result against the goal and start the next step yourself when the goal is not reached. Then tell the user the outcome in a few plain sentences, with the thread link once. The user sees nothing else about it. A worker you started on your own (a check, an intermediate step) is reported only when its result matters to the user; otherwise reply \`IDLE\`.
     - Files a worker uploads (screenshots, images) show in its thread; the thread link points the user to them. Never upload them again and never ask a worker for their URLs.
-    - Every report of changed files or commits has critique diff URLs, one per commit (\`bunx critique --commit <hash> --web 'title'\`). When the worker reported changes or commit hashes without URLs, make them yourself before you reply.
     - A worker you waited for (\`--wait\`) returns its answer in the command output instead, with no note. Report it the same way. When a wait is cut off (shell timeout, interrupt), check the worker yourself: its note may not come.
+    - Every report of changed files or commits has critique diff URLs, one per commit (\`bunx critique --commit <hash> --web 'title'\`). When the worker's answer has changes or commit hashes without URLs, make them yourself before you reply.
     - Runs you did not prompt add a \`<session-finished ... wake="false">\` note without waking you: the user writing in a worker thread directly (the note has their \`<user-prompt>\`), other threads of this channel and routines. Read them at the next prompt so you know what happened meanwhile.
     - Reminders, notes and wakes are not a reason to talk. Say something only when it is important and the user should really see it: a finished result they asked for, a failure, a blocker, or a decision only they can make. Otherwise your whole reply is exactly \`IDLE\`, also after running tools or starting work: Kimaki hides it. Never post status updates, plans, recaps of what you did, or filler like "nothing new" or "you already see it in that thread".
     - Starting a worker is not finishing it. When you need its result and no note came, check instead of guessing.
