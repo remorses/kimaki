@@ -94,6 +94,10 @@ export type DeterministicMatcher = {
 export type DeterministicProviderSettings = {
   name?: string
   matchers?: DeterministicMatcher[]
+  // POSTs `{ prompt }` here and streams the `DeterministicResponse` it returns, instead of
+  // matching locally. Lets a test process outside the OpenCode binary script the model and
+  // record what it saw (like OpenCode's in-process TestLLM).
+  responderUrl?: string
   defaultPartDelayMs?: number
   strict?: boolean
   defaultParts?: DeterministicStreamPart[]
@@ -114,7 +118,7 @@ type NormalizedMatcher = DeterministicMatcher & {
   compiledRegex?: RegExp
 }
 
-type ResolvedMatch = {
+export type DeterministicResponse = {
   parts: DeterministicStreamPart[]
   partDelaysMs?: number[]
   defaultPartDelayMs?: number
@@ -134,6 +138,23 @@ export function createDeterministicProvider(
     matchers: normalizedSettings.matchers || [],
   })
 
+  const respond = async (options: LanguageModelV3CallOptions): Promise<DeterministicResponse> => {
+    const url = normalizedSettings.responderUrl
+    if (!url) {
+      return resolveMatch({ prompt: options.prompt, normalizedMatchers, settings: normalizedSettings })
+    }
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: options.prompt }),
+      signal: options.abortSignal,
+    })
+    if (!response.ok) {
+      throw new Error(`Deterministic responder ${url} failed: ${response.status} ${await response.text()}`)
+    }
+    return (await response.json()) as DeterministicResponse
+  }
+
   const buildLanguageModel = ({ modelId }: { modelId: string }): LanguageModelV3 => {
     return {
       specificationVersion: 'v3',
@@ -141,11 +162,7 @@ export function createDeterministicProvider(
       modelId,
       supportedUrls: {},
       doGenerate: async (options) => {
-        const resolved = resolveMatch({
-          options,
-          normalizedMatchers,
-          settings: normalizedSettings,
-        })
+        const resolved = await respond(options)
         const ensured = ensureTerminalStreamPartsAndDelays({
           parts: resolved.parts,
           partDelaysMs: resolved.partDelaysMs,
@@ -153,11 +170,7 @@ export function createDeterministicProvider(
         return buildGenerateResult({ parts: ensured.parts })
       },
       doStream: async (options) => {
-        const resolved = resolveMatch({
-          options,
-          normalizedMatchers,
-          settings: normalizedSettings,
-        })
+        const resolved = await respond(options)
         const ensured = ensureTerminalStreamPartsAndDelays({
           parts: resolved.parts,
           partDelaysMs: resolved.partDelaysMs,
@@ -347,6 +360,8 @@ function normalizeSettingsInput({
   return {
     name: typeof candidate['name'] === 'string' ? candidate['name'] : undefined,
     matchers: parseMatchers(),
+    responderUrl:
+      typeof candidate['responderUrl'] === 'string' ? candidate['responderUrl'] : undefined,
     defaultPartDelayMs:
       typeof candidate['defaultPartDelayMs'] === 'number'
         ? candidate['defaultPartDelayMs']
@@ -356,20 +371,35 @@ function normalizeSettingsInput({
   }
 }
 
+// The matcher step of the provider, for a responder that runs in another process.
+export function resolveResponse({
+  prompt,
+  settings,
+}: {
+  prompt: LanguageModelV3Prompt
+  settings: DeterministicProviderSettings
+}): DeterministicResponse {
+  return resolveMatch({
+    prompt,
+    normalizedMatchers: normalizeMatchers({ matchers: settings.matchers || [] }),
+    settings,
+  })
+}
+
 function resolveMatch({
-  options,
+  prompt,
   normalizedMatchers,
   settings,
 }: {
-  options: LanguageModelV3CallOptions
+  prompt: LanguageModelV3Prompt
   normalizedMatchers: NormalizedMatcher[]
   settings: DeterministicProviderSettings
-}): ResolvedMatch {
+}): DeterministicResponse {
   const sortedMatchers = [...normalizedMatchers].sort((a, b) => {
     return (b.priority || 0) - (a.priority || 0)
   })
   const matched = sortedMatchers.find((matcher) => {
-    return matcherMatches({ matcher, options })
+    return matcherMatches({ matcher, prompt })
   })
   if (matched) {
     return {
@@ -379,8 +409,8 @@ function resolveMatch({
     }
   }
   if (settings.strict) {
-    const latestUserText = getLatestUserText({ prompt: options.prompt })
-    const lastMessageRole = getLastMessageRole({ prompt: options.prompt })
+    const latestUserText = getLatestUserText({ prompt })
+    const lastMessageRole = getLastMessageRole({ prompt })
     throw new Error(
       `No deterministic matcher matched current prompt (lastRole=${String(lastMessageRole)}, latestUserText=${JSON.stringify(latestUserText)})`,
     )
@@ -393,10 +423,10 @@ function resolveMatch({
 
 function matcherMatches({
   matcher,
-  options,
+  prompt,
 }: {
   matcher: NormalizedMatcher
-  options: LanguageModelV3CallOptions
+  prompt: LanguageModelV3Prompt
 }) {
   if (matcher.enabled === false) {
     return false
@@ -407,11 +437,11 @@ function matcherMatches({
     return true
   }
 
-  const lastRole = getLastMessageRole({ prompt: options.prompt })
+  const lastRole = getLastMessageRole({ prompt })
   if (when.lastMessageRole && when.lastMessageRole !== lastRole) {
     return false
   }
-  const lastMessageText = getLastMessageText({ prompt: options.prompt })
+  const lastMessageText = getLastMessageText({ prompt })
   if (
     when.lastMessageTextIncludes !== undefined &&
     !lastMessageText.includes(when.lastMessageTextIncludes)
@@ -425,7 +455,7 @@ function matcherMatches({
     return false
   }
 
-  const promptText = getPromptText({ prompt: options.prompt })
+  const promptText = getPromptText({ prompt })
   if (
     when.promptTextIncludes !== undefined &&
     !promptText.includes(when.promptTextIncludes)
@@ -436,7 +466,7 @@ function matcherMatches({
     return false
   }
 
-  const rawPromptText = JSON.stringify(options.prompt)
+  const rawPromptText = JSON.stringify(prompt)
   if (
     when.rawPromptIncludes !== undefined &&
     !rawPromptText.includes(when.rawPromptIncludes)
@@ -450,7 +480,7 @@ function matcherMatches({
     return false
   }
 
-  const latestUserText = getLatestUserText({ prompt: options.prompt })
+  const latestUserText = getLatestUserText({ prompt })
   if (
     when.latestUserTextEquals !== undefined &&
     latestUserText !== when.latestUserTextEquals
@@ -503,7 +533,7 @@ function getLastMessageText({ prompt }: { prompt: LanguageModelV3Prompt }) {
   }, '')
 }
 
-function getLatestUserText({ prompt }: { prompt: LanguageModelV3Prompt }) {
+export function getLatestUserText({ prompt }: { prompt: LanguageModelV3Prompt }) {
   const latestUserMessage = [...prompt].reverse().find((message) => {
     return message.role === 'user'
   })

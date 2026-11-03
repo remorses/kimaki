@@ -399,6 +399,7 @@ always add `expect(await discord.thread(id).text()).toMatchInlineSnapshot()` (or
 
 - **always assert on Discord messages (what the user sees), not internal state or logs.** never match log text in expectations.
 - e2e tests use `opencode-deterministic-provider` (model `deterministic-v2`), which returns canned responses instantly. build turns with `scriptedTurn`, `textParts`, `toolParts`, `slowTextMatcher` from the harness.
+- the provider inside the OpenCode binary POSTs each prompt to the test process (`startTestModel` in the harness), which runs the matchers and records it in `server.model.requests`. to check what the model saw (plugin context, role text, attachments), assert on `requests` (`latestUserText`, `raw` JSON). do not add a matcher whose only job is to reply differently when the prompt contains something.
 - `waitFor` clamps every timeout into **8s..10s** and polls every 100ms: the first turn on a fresh server costs 2-4s. `waitForFooter`, `waitForBotMessageContaining` and `waitForSelectMenu` build on it. tests asserting something never appears must use their own loop.
 - snapshot a finished turn only after `waitForFooter`. never treat a `-# *using ...` banner as a footer (`isFooter` excludes it).
 - to assert something doesn't appear (e.g. no footer after abort), poll the thread messages: sleep 20ms, max 10 iterations (200ms total is enough, everything is deterministic). fail immediately if the unwanted message appears.

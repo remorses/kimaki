@@ -2,7 +2,8 @@
 // temp root with private XDG dirs and SQLite DB, started with the same
 // `serve --service` command the user's service uses, so the bot connects
 // through Service.discover() exactly like production. The bot runs in-process
-// against discord-digital-twin.
+// against discord-digital-twin. The model is opencode-deterministic-provider,
+// answered by startTestModel() in this process.
 
 import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -22,6 +23,8 @@ import { ChannelType, ComponentType, type APIMessage } from 'discord.js'
 import { DigitalDiscord } from 'discord-digital-twin/src'
 import {
   buildDeterministicOpencode2Config,
+  getLatestUserText,
+  resolveResponse,
   type DeterministicMatcher,
 } from 'opencode-deterministic-provider'
 
@@ -61,8 +64,50 @@ export function opencodeBinary(): string {
   return path.join(path.dirname(packageJsonPath), 'bin/opencode.exe')
 }
 
+export type TestModelRequest = {
+  latestUserText: string
+  // The whole prompt as JSON: system, history and tool results.
+  raw: string
+}
+
+// The deterministic model, answered in this process: OpenCode's provider POSTs each
+// prompt here. Tests read `requests` to check what the model saw and may push matchers.
+export type TestModel = {
+  matchers: DeterministicMatcher[]
+  requests: TestModelRequest[]
+}
+
+async function startTestModel({ matchers }: { matchers: DeterministicMatcher[] }) {
+  const model: TestModel = { matchers, requests: [] }
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', () => {
+      try {
+        const { prompt } = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Parameters<typeof resolveResponse>[0]
+        model.requests.push({ latestUserText: getLatestUserText({ prompt }), raw: JSON.stringify(prompt) })
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify(resolveResponse({ prompt, settings: { strict: false, matchers: model.matchers } })))
+      } catch (error) {
+        // The provider turns this into a model error, so the run fails visibly instead of hanging.
+        response.statusCode = 500
+        response.end(error instanceof Error ? error.stack : String(error))
+      }
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address !== 'object') throw new Error('test model has no port')
+  return {
+    model,
+    url: `http://127.0.0.1:${address.port}`,
+    stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  }
+}
+
 export type OpencodeTestServer = {
   root: string
+  model: TestModel
   serviceFile: string
   // Global OpenCode config dir of this server (XDG_CONFIG_HOME/opencode).
   configDir: string
@@ -105,9 +150,10 @@ export async function startOpencodeTestServer({
   fs.mkdirSync(projectDirectory, { recursive: true })
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: projectDirectory })
   const serviceFile = path.join(root, 'state', 'opencode', 'service.json')
+  const testModel = await startTestModel({ matchers })
   const config = buildDeterministicOpencode2Config({
     model: TEST_MODEL,
-    settings: { strict: false, matchers },
+    settings: { responderUrl: testModel.url },
     permissions: [
       { action: 'shell', resource: '*', effect: 'allow' },
       { action: 'edit', resource: '*', effect: 'allow' },
@@ -184,6 +230,7 @@ export async function startOpencodeTestServer({
   await start()
   return {
     root,
+    model: testModel.model,
     serviceFile,
     configDir: path.join(env.XDG_CONFIG_HOME, 'opencode'),
     dbFile: path.join(env.XDG_DATA_HOME, 'opencode', 'opencode.db'),
@@ -194,6 +241,7 @@ export async function startOpencodeTestServer({
     start,
     stop: async () => {
       await kill()
+      await testModel.stop()
       fs.rmSync(root, { recursive: true, force: true })
     },
   }

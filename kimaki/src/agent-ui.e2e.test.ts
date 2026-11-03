@@ -19,7 +19,6 @@ beforeAll(async () => {
     { id: 'click', priority: 200, when: { latestUserTextIncludes: 'User clicked: Proceed' }, then: { parts: textParts('Proceed accepted.') } },
     { id: 'upload', priority: 100, when: { latestUserTextIncludes: 'upload-marker' }, then: { parts: toolParts({ toolCallId: 'upload-call', toolName: 'shell', input: { command: "kimaki upload-request --prompt 'Send the logo' --max-files 2", timeout: 600000, description: 'Request logo', hasSideEffect: true } }) } },
     { id: 'upload-done', priority: 110, when: { latestUserTextIncludes: 'upload-marker', rawPromptIncludes: 'upload-call' }, then: { parts: textParts('Upload received.') } },
-    { id: 'branch', priority: 200, when: { latestUserTextIncludes: 'git-marker', rawPromptIncludes: '[current git branch is main]' }, then: { parts: textParts('Git context received.') } },
   ] }), startTwin()])
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   bot = await startTestBot({ dataDir, twin, server })
@@ -108,10 +107,11 @@ test('git context is added only to marked Discord sessions', async () => {
     "--- from: assistant (TestBot)
     -# » **CLI:** git-marker
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
-    Git context received.
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    ok
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
   `)
-  expect((await twin.discord.thread(threadId).text()).includes('Git context received.')).toBe(true)
+  const branchSeen = (requests: typeof server.model.requests) => requests.some((request) => request.latestUserText.includes('git-marker') && request.raw.includes('[current git branch is main]'))
+  expect(branchSeen(server.model.requests)).toBe(true)
   const client = await server.client()
   // The branch is a synthetic message before the prompt, added again only when it changes.
   const sessionId = bot.store.getState().roots[threadId]!
@@ -128,7 +128,9 @@ test('git context is added only to marked Discord sessions', async () => {
   const plugins = await client.plugin.list({ location: { directory: server.projectDirectory } })
   expect(plugins.data.find((plugin) => plugin.id === 'kimaki')?.state.status).toBe('active')
   const session = await client.session.create({ location: { directory: server.projectDirectory } })
+  const before = server.model.requests.length
   await client.session.prompt({ sessionID: session.id, text: 'git-marker' })
   await client.session.wait({ sessionID: session.id })
-  expect(JSON.stringify(await client.message.list({ sessionID: session.id }))).not.toContain('Git context received.')
+  expect(server.model.requests.length).toBeGreaterThan(before)
+  expect(branchSeen(server.model.requests.slice(before))).toBe(false)
 })

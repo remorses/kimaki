@@ -36,9 +36,6 @@ beforeAll(async () => {
   twin = await startTwin()
   server = await startOpencodeTestServer({
       matchers: [
-        // The role text reaches the model once per request, also when the plugin checks the request.
-        { id: 'role-twice', priority: 500, when: { latestUserTextIncludes: 'once-marker', rawPromptRegex: '## coordinator: you coordinate[\\s\\S]*## coordinator: you coordinate' }, then: { parts: textParts('Role text twice.') } },
-        { id: 'role-missing', priority: 400, when: { latestUserTextIncludes: 'once-marker', rawPromptRegex: '^(?![\\s\\S]*## coordinator: you coordinate)' }, then: { parts: textParts('Role text missing.') } },
         { id: 'hello', priority: 100, when: { latestUserTextIncludes: 'hello-marker' }, then: { parts: textParts('Hello from the coordinator.') } },
         // The coordinator delegates: one shell call to `kimaki send`, then IDLE (the new thread already shows).
         ...scriptedTurn({
@@ -91,9 +88,7 @@ beforeAll(async () => {
         { id: 'recap-seen', priority: 200, when: { latestUserTextIncludes: 'recap-marker', rawPromptIncludes: 'Side check done.' }, then: { parts: textParts('A side thread finished meanwhile.') } },
         { id: 'recap-unseen', priority: 150, when: { latestUserTextIncludes: 'recap-marker' }, then: { parts: textParts('Nothing new.') } },
         { id: 'woken', priority: 300, when: { latestUserTextIncludes: '<session-finished' }, then: { parts: textParts('The worker finished the job.') } },
-        // A wake with a stale role text in the history: the plugin adds the current one to this request.
-        { id: 'stale-wake-current', priority: 400, when: { latestUserTextRegex: 'stale-wake-marker[\\s\\S]*## coordinator: you coordinate this channel' }, then: { parts: textParts('Current role text present.') } },
-        { id: 'stale-wake-old', priority: 350, when: { latestUserTextIncludes: 'stale-wake-marker' }, then: { parts: textParts('Current role text missing.') } },
+        { id: 'stale-wake', priority: 350, when: { latestUserTextIncludes: 'stale-wake-marker' }, then: { parts: textParts('Woke on the stale role text.') } },
       ],
   })
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
@@ -139,6 +134,9 @@ test('channel messages go to one session that replies in the channel', async () 
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await discord.channel(channelId).getThreads()).toHaveLength(0)
+  // The role text reaches the model once per request, also when the plugin checks the request.
+  const request = server.model.requests.findLast((item) => item.latestUserText.includes('once-marker'))
+  expect(request?.raw.split('## coordinator: you coordinate').length).toBe(2)
   // The coordinator role comes from the plugin, once: not from the frozen instructions entry.
   const root = bot.store.getState().roots[channelId]!
   const roles = await roleTexts(root)
@@ -402,7 +400,7 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
   const text = await discord.channel(channelId).text()
   expect(text.slice(text.lastIndexOf('Session forked!')).replace(/<#\d+>/, '<#btw-thread>')).toMatchInlineSnapshot(`
     "Session forked! Continue in <#btw-thread>
-    Current role text present.
+    Woke on the stale role text.
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     --- from: user (tommy)
     Again hello-marker
@@ -410,6 +408,9 @@ test('a stale coordinator role text is replaced: on a wake for that request, the
     Hello from the coordinator.
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
+  // The wake request already had the current role text after the stale one.
+  const wake = server.model.requests.findLast((item) => item.latestUserText.includes('stale-wake-marker'))
+  expect(wake?.latestUserText).toMatch(/stale-wake-marker[\s\S]*## coordinator: you coordinate this channel/)
   const roles = await roleTexts(root)
   expect(roles.at(-1)).toBe(current)
   expect(roles.at(-2)).toContain('stale-wake-marker')
