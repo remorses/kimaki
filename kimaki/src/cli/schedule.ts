@@ -7,7 +7,7 @@ import { wrapJsonSchema, type Goke } from 'goke'
 
 import { BotNotRunningError } from '../errors.ts'
 import { callBot } from '../lock-server.ts'
-import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, openCliDb, parseTarget, printJson, readClient, SESSION_HELP, targetOrEnv, waitAndPrintSession } from './shared.ts'
+import { action, DATA_DIR_HELP, dataDirOrDefault, discordApi, fail, openCliDb, parseTarget, printJson, readClient, SESSION_HELP, targetOrEnv, waitAndPrintSessions } from './shared.ts'
 
 export function registerSendCommand(cli: Goke) {
   cli.command('send', 'Start a session in a channel, or continue a thread')
@@ -71,7 +71,7 @@ export function registerSendCommand(cli: Goke) {
       if (!options.wait) return
       const data = result.data
       if (!data || typeof data !== 'object' || !('sessionId' in data) || typeof data.sessionId !== 'string') fail(new Error('--wait requires an AI session, not --notify-only'))
-      await waitAndPrintSession({ client: await readClient(), sessionId: data.sessionId })
+      await waitAndPrintSessions({ client: await readClient(), sessionIds: [data.sessionId], dataDir: options.dataDir, timeout: '' })
     })
 }
 

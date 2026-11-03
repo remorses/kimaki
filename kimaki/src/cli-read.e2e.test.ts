@@ -62,11 +62,14 @@ test('session read, list, sync, wait, url and events read real session history',
   expect(none instanceof Error && none.code).toBe(1)
 })
 
-test('session wait returns for a real pending question; active discovery errors use exit 64', async () => {
-  const first = await send(bot, { channelId: twin.channelId, prompt: 'wait-form-marker', permissions: ['question:allow'] })
-  if (first instanceof Error || !first.sessionId) throw new Error('Expected a session')
-  await waitForSelectMenu({ discord: twin.discord, channelId: first.threadId, prefix: 'form:' })
-  const result = await cli(['session', 'wait', first.sessionId, '--timeout', '3s'])
+test('session wait waits for many sessions and says a question paused one; active discovery errors use exit 64', async () => {
+  const [first, done] = await Promise.all([
+    send(bot, { channelId: twin.channelId, prompt: 'wait-form-marker', permissions: ['question:allow'] }),
+    send(bot, { channelId: twin.channelId, prompt: 'Second waited session' }),
+  ])
+  if (first instanceof Error || !first.sessionId || done instanceof Error || !done.sessionId) throw new Error('Expected sessions')
+  await Promise.all([waitForSelectMenu({ discord: twin.discord, channelId: first.threadId, prefix: 'form:' }), waitForFooter({ discord: twin.discord, threadId: done.threadId })])
+  const result = await cli(['session', 'wait', first.sessionId, done.threadId, '--timeout', '8s'])
   expect(await twin.discord.thread(first.threadId).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     -# » **CLI:** wait-form-marker
@@ -75,6 +78,11 @@ test('session wait returns for a real pending question; active discovery errors 
     Continue?"
   `)
   expect(result.stdout).toContain('Continue?')
+  expect(result.stdout.split('\n').filter((line) => line.startsWith('==='))).toEqual([
+    `=== ${first.sessionId} is paused: it waits for the user to answer a question, so its work is not done ===`,
+    `=== ${done.sessionId} was already idle: its last run ended before the wait started ===`,
+  ])
+  expect(result.stdout.indexOf('Second waited session')).toBeGreaterThan(result.stdout.indexOf('Continue?'))
   const failure = await exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'session', 'list', '--active'], {
     env: { ...process.env, KIMAKI_OPENCODE_SERVICE_FILE: path.join(server.root, 'missing-service.json') },
   }).catch((error: Error & { code: number }) => error)

@@ -133,7 +133,7 @@ kimaki [options]
 | ---------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | `session list`                     | List sessions with native status and token counts                           | `--project`, `--all`, `--active`, `--exclude`, `--json`      |
 | `session sync`                     | Write session transcripts to `<data-dir>/transcripts` for rg; skips current ones | `--days`, `--all`, `--rebuild`, `--json`                |
-| `session wait <id>`                | Wait until idle or waiting for input, then print the session                | `--timeout`                                                  |
+| `session wait [...ids]`            | Wait until every session is idle or waits for the user, then print each one and why it returned | `--timeout`                                  |
 | `session editors <file>`           | List sessions that last edited a file, newest first                         | `--json`, `--limit`                                          |
 | `session diff`                     | Upload the git diff of the session folder to critique.work and print the URL | `-s, --session`                                             |
 | `session url <id>`                 | Print the Discord URL of a session or thread                                |                                                              |

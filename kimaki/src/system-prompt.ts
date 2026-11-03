@@ -499,21 +499,29 @@ export function baseInstructions({
 
       \`--wait\` blocks until a session completes and prints its full conversation to stdout. Use it when you need another session's result before continuing: fixing a bug in another project first, or chaining sessions where the next depends on the previous output. When the user asks you to wait for an existing session, run \`kimaki session wait <session_id>\` yourself via the shell tool and continue from the printed markdown. Do not tell the user to run it.
 
-      IMPORTANT: for \`kimaki send --wait\`, \`kimaki session wait\`, or the active-session loop below, set the shell tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). The default is 2 minutes and cuts long sessions off. If the timeout triggers anyway, read the output from disk with \`kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null\`.
+      IMPORTANT: for \`kimaki send --wait\` and \`kimaki session wait\`, set the shell tool \`timeout\` to **20 minutes or more** (example: \`timeout: 1_500_000\`). The default is 2 minutes and cuts long sessions off. If the timeout triggers anyway, read the output from disk with \`kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null\`.
 
       \`\`\`bash
       kimaki send --channel <channel_id> --prompt 'Fix the auth bug' --wait --agent <current_agent>
       kimaki send --thread <thread_id> --prompt 'Run the tests' --wait --agent <current_agent>
       kimaki session wait <session_id>
+      kimaki session wait <session_id> <thread_id> <thread_url>   # many sessions: returns when all are done
+      kimaki session wait <session_id> --timeout 30m               # exit 1 if one still runs after 30m
 
-      # wait until every other in-progress session in this project finishes
-      until kimaki session list --active; [ $? -eq 1 ]; do sleep 5; done
-
-      # same for another project (or --all for every project)
-      until kimaki session list --active --project /path/to/other-project; [ $? -eq 1 ]; do sleep 5; done
+      # wait for every other in-progress session, in every project
+      kimaki session wait $(kimaki session list --all --active | awk '{print $1}')
       \`\`\`
 
-      \`session list --active\` exits 0 while it finds active sessions, 1 when none remain, and 64 on errors. The loop stops only on 1, so an error never looks like "no active sessions". \`--active\` never lists the calling session (\`OPENCODE_SESSION_ID\`), so the loop does not wait for itself. Sessions can start again after the loop ends, so run the check again right before each commit. \`session wait\` returns once the model finishes responding, or when the session pauses to show the user a question (it does not finish on its own until answered).
+      \`session wait\` prints each session in argument order. Every session starts with a \`=== <session id> ... ===\` line that says why it returned. Read it before you treat the work as done:
+
+      - \`finished its run\`: the model finished responding.
+      - \`is paused: it waits for the user to answer a question\` or \`to allow a permission\`: the work is **not** done. It does not continue on its own.
+      - \`is paused: it showed buttons (...)\`: the session ended its turn with \`kimaki buttons\` and waits for a click. The work may not be done.
+      - \`ended its run with an error\`, \`was interrupted\`, \`was already idle\`, or \`is still running after <timeout>\`.
+
+      \`session list --active\` never lists the calling session (\`OPENCODE_SESSION_ID\`), so you do not wait for yourself. It exits 1 when no session is active and 64 on errors; with no IDs \`session wait\` prints \`No sessions to wait for\`. Sessions can start again after the wait, so check \`kimaki session list --all --active\` again right before each commit.
+
+      **A session can edit a repo outside its own project**: a session of project A can work in the folder of project B. \`session list --project B --active\` lists only sessions of project B, so it misses that session. To check if someone else is editing a repo, use \`kimaki session list --all --active\`, and \`kimaki session editors <file>\` for the sessions that last edited a file.
     `],
     ['critique-diffs', dedent`
       ## showing diffs
@@ -976,7 +984,7 @@ function voiceCallReference({
     rg -il 'text' ${dataDir}/transcripts                  # find threads by title or content; file name = session ID
     kimaki session sync --days 60                        # write transcripts of older or non-Kimaki sessions first
     kimaki session read <thread ID or link> 2>/dev/null | tail -c 3000   # end of a thread transcript
-    kimaki session wait <thread ID>                      # wait until a thread finishes, then print it
+    kimaki session wait <thread ID> [thread ID...]       # wait until all threads finish or wait for the user; says which
     kimaki session abort <thread ID>                     # stop the agent of a thread; the thread stays
     kimaki session archive <thread ID>                   # hide a thread from the sidebar; only when asked
     kimaki session title 'Short title' --session <thread ID>   # rename a thread

@@ -1,10 +1,14 @@
 import fs from 'node:fs'
+import path from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { ComponentType } from 'discord.js'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import type { BotHandle } from './main.ts'
 import { TEST_USER_ID, seedProjectChannel, startOpencodeTestServer, startTestBot, startTwin, tempDataDir, waitFor, waitForFooter, warmUp, toolParts, textParts, type OpencodeTestServer, type TestTwin } from './test/harness.ts'
 import { send, shell } from './prompt.ts'
 
+const exec = promisify(execFile)
 const dataDir = tempDataDir()
 let server: OpencodeTestServer
 let twin: TestTwin
@@ -48,6 +52,11 @@ test('agent shim shows buttons after text and a click resumes the real session',
   const shown = await ui(threadId, 'action_button:')
   await waitForFooter({ discord: twin.discord, threadId })
   const sessionId = bot.store.getState().roots[threadId]!
+  // The turn ended with buttons: `session wait` must say the session waits for a click.
+  const waited = await exec(process.execPath, ['--import', 'tsx', path.resolve('src/cli.ts'), 'session', 'wait', threadId, '--timeout', '8s', '--data-dir', dataDir], {
+    env: { ...process.env, KIMAKI_LOCK_PORT: String(bot.lock.port), KIMAKI_OPENCODE_SERVICE_FILE: server.serviceFile },
+  })
+  expect(waited.stdout.split('\n')[0]).toBe(`=== ${sessionId} is paused: it showed buttons (Proceed, Build) and waits for the user to click one, so its work may not be done ===`)
   const started = shell(bot, { threadId, sessionId, command: 'printf synthetic' })
   if (started instanceof Error) throw started
   await waitFor({ label: 'synthetic shell output', check: async () => (await twin.discord.thread(threadId).text()).includes('```\nsynthetic\n```') })

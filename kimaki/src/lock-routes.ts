@@ -389,6 +389,17 @@ export const lockRoutes = {
       return bot.features.agentUi.request({ ...input, sessionId, content: { buttons }, signal })
     },
   }),
+  // Labels of buttons each session showed and the user did not click yet (`kimaki session wait`).
+  'session.buttons': route({
+    input: z.object({ sessionIds: z.array(text('sessionId'), { error: 'sessionIds must be an array' }) }),
+    run: async (bot, { sessionIds }) => {
+      const prompts = Object.values(bot.store.getState().threads).flatMap((view) => view.agentUi)
+      return Object.fromEntries(sessionIds.map((sessionId) => [
+        sessionId,
+        prompts.flatMap((prompt) => prompt.sessionId === sessionId ? (prompt.buttons ?? []).map((item) => item.label) : []),
+      ]))
+    },
+  }),
   'upload-request': route({
     input: z.object({
       ...agentUiFields,

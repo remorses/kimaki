@@ -14,7 +14,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { OpenCodeClient } from '@opencode/client'
+import type { OpenCodeClient, V2Event } from '@opencode/client'
 
 import type { KimakiDb } from './db.ts'
 import { ConfigError, DbError, OpenCodeError } from './errors.ts'
@@ -378,7 +378,27 @@ export function allSessions({ client, project }: { client: OpenCodeClient; proje
   })
 }
 
-export async function waitForSessionReady({ client, sessionId, signal }: { client: OpenCodeClient; sessionId: string; signal?: AbortSignal }): Promise<OpenCodeError | void> {
+// Why `kimaki session wait` returned for a session. `idle`: no run was in progress
+// when the wait started. `running`: the timeout ended the wait first.
+export type WaitStatus = 'finished' | 'failed' | 'interrupted' | 'idle' | 'question' | 'permission' | 'running'
+
+function eventStatus(event: V2Event): { sessionId: string; status: WaitStatus } | null {
+  if (event.type === 'form.created') return { sessionId: event.data.form.sessionID, status: 'question' }
+  if (event.type === 'permission.asked') return { sessionId: event.data.sessionID, status: 'permission' }
+  if (event.type === 'session.execution.succeeded') return { sessionId: event.data.sessionID, status: 'finished' }
+  if (event.type === 'session.execution.failed') return { sessionId: event.data.sessionID, status: 'failed' }
+  if (event.type === 'session.execution.interrupted') return { sessionId: event.data.sessionID, status: 'interrupted' }
+  return null
+}
+
+// Waits until every session ended its run or paused for the user, on one event stream.
+// When `signal` ends the wait, the sessions not done yet get `running`.
+export async function waitForSessions({ client, sessionIds, signal }: { client: OpenCodeClient; sessionIds: readonly string[]; signal?: AbortSignal }): Promise<OpenCodeError | Map<string, WaitStatus>> {
+  const statuses = new Map<string, WaitStatus>()
+  const settle = (sessionId: string, status: WaitStatus) => {
+    if (sessionIds.includes(sessionId) && !statuses.has(sessionId)) statuses.set(sessionId, status)
+  }
+  const done = () => statuses.size === new Set(sessionIds).size
   const controller = new AbortController()
   const subscriptionSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const iterator = client.event.subscribe({ signal: subscriptionSignal })[Symbol.asyncIterator]()
@@ -386,27 +406,39 @@ export async function waitForSessionReady({ client, sessionId, signal }: { clien
     const first = await iterator.next().catch((cause) => new OpenCodeError({ operation: 'event.subscribe', cause }))
     if (first instanceof Error) return first
     if (first.done || first.value.type !== 'server.connected') return new OpenCodeError({ operation: 'connect session wait stream' })
+    // Subscribed before hydrating, so no run can end unseen in between.
     const consume = (async () => {
       while (!subscriptionSignal.aborted) {
         const next = await iterator.next().catch((cause) => new OpenCodeError({ operation: 'event.subscribe', cause }))
         if (next instanceof Error) return next
         if (next.done) return new OpenCodeError({ operation: 'session wait stream ended' })
-        const event = next.value
-        if (event.type === 'form.created' && event.data.form.sessionID === sessionId) return
-        if (event.type === 'permission.asked' && event.data.sessionID === sessionId) return
-        if ((event.type === 'session.execution.succeeded' || event.type === 'session.execution.failed' || event.type === 'session.execution.interrupted') && event.data.sessionID === sessionId) return
+        const ended = eventStatus(next.value)
+        if (ended) settle(ended.sessionId, ended.status)
+        if (done()) return
       }
       return new OpenCodeError({ operation: 'session wait cancelled' })
     })()
     const hydrated = await Promise.all([
-      client.session.active(), client.session.form.list({ sessionID: sessionId }), client.permission.list({ sessionID: sessionId }),
+      client.session.active({ signal: subscriptionSignal }),
+      Promise.all(sessionIds.map((sessionID) => Promise.all([
+        client.session.form.list({ sessionID }, { signal: subscriptionSignal }),
+        client.permission.list({ sessionID }, { signal: subscriptionSignal }),
+      ]))),
     ]).catch((cause) => new OpenCodeError({ operation: 'hydrate session wait', cause }))
     if (hydrated instanceof Error) return hydrated
-    const [active, forms, permissions] = hydrated
-    if (!(sessionId in active) || forms.length > 0 || permissions.length > 0) return
+    const [active, pending] = hydrated
+    for (const [index, sessionId] of sessionIds.entries()) {
+      const [forms, permissions] = pending[index] ?? [[], []]
+      if (forms.length > 0) settle(sessionId, 'question')
+      if (permissions.length > 0) settle(sessionId, 'permission')
+      if (!active[sessionId]) settle(sessionId, 'idle')
+    }
+    if (done()) return
     return consume
   })()
   controller.abort()
   await iterator.return?.(undefined).catch(() => undefined)
-  return result
+  if (result instanceof Error && !signal?.aborted) return result
+  for (const sessionId of sessionIds) settle(sessionId, 'running')
+  return statuses
 }

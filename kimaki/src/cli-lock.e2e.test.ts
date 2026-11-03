@@ -149,9 +149,9 @@ test('CLI help documents the supported P7 commands', async () => {
         --rebuild                       Write transcripts again, also current ones
         --json                          Output as JSON
 
-      session wait <id>                 Wait until idle or waiting for input, then print the session
+      session wait [...ids]             Wait until every session is idle or waits for the user, then print each one and why it returned
         --data-dir <path>               Data directory (default: ~/.kimaki)
-        --timeout <duration>            Timeout, for example 30m or 2h
+        --timeout <duration>            Timeout, for example 30m or 2h; exit 1 when a session still runs
 
       session editors <file>            List sessions that last edited a file, newest first
         --data-dir <path>               Data directory (default: ~/.kimaki)

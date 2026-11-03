@@ -10,12 +10,12 @@ import path from 'node:path'
 import type { OpenCodeClient } from '@opencode/client'
 import { ChannelType } from 'discord-api-types/v10'
 
-import { DbError } from '../errors.ts'
+import { BotNotRunningError, DbError } from '../errors.ts'
 import { canonicalPath } from '../file-edit-log.ts'
 import type { LockRouteInput, LockRouteName } from '../lock-routes.ts'
 import { callBot } from '../lock-server.ts'
 import { resolveOpencode } from '../opencode-server.ts'
-import { readSessionMarkdown, resolveSession, waitForSessionReady } from '../session-events.ts'
+import { readSessionMarkdown, resolveSession, waitForSessions, type WaitStatus } from '../session-events.ts'
 
 export const DATA_DIR_HELP = 'Data directory (default: ~/.kimaki)'
 export const SESSION_HELP = 'Session ID, Discord thread ID or thread URL (default: OPENCODE_SESSION_ID)'
@@ -90,12 +90,47 @@ export async function resolveTarget(value: string, dataDir: string | undefined):
   fail(result)
 }
 
-export async function waitAndPrintSession({ client, sessionId, signal }: { client: OpenCodeClient; sessionId: string; signal?: AbortSignal }) {
-  const waited = await waitForSessionReady({ client, sessionId, signal })
-  if (waited instanceof Error) fail(waited)
-  const markdown = await readSessionMarkdown({ client, sessionId })
-  if (markdown instanceof Error) fail(markdown)
-  process.stdout.write(`${markdown}\n`)
+function statusText({ sessionId, status, buttons, timeout }: { sessionId: string; status: WaitStatus; buttons: string[]; timeout: string }): string {
+  // `kimaki buttons` ends the turn, so the run looks finished while the session waits for a click.
+  if (buttons.length > 0 && status !== 'running' && status !== 'question' && status !== 'permission') {
+    return `is paused: it showed buttons (${buttons.join(', ')}) and waits for the user to click one, so its work may not be done`
+  }
+  if (status === 'finished') return 'finished its run'
+  if (status === 'failed') return 'ended its run with an error'
+  if (status === 'interrupted') return 'was interrupted, by an abort or by a new user message that started another run'
+  if (status === 'idle') return 'was already idle: its last run ended before the wait started'
+  if (status === 'question') return 'is paused: it waits for the user to answer a question, so its work is not done'
+  if (status === 'permission') return 'is paused: it waits for the user to allow a permission, so its work is not done'
+  return `is still running after ${timeout}. Run kimaki session wait ${sessionId} to wait for the rest`
+}
+
+// Waits until every session ended its run or paused for the user, then prints each one in
+// order under a header that says why it returned. Returns false when `signal` ended the wait first.
+export async function waitAndPrintSessions({ client, sessionIds, dataDir, signal, timeout }: {
+  client: OpenCodeClient
+  sessionIds: readonly string[]
+  dataDir: string | undefined
+  signal?: AbortSignal
+  timeout: string
+}): Promise<boolean> {
+  const statuses = await waitForSessions({ client, sessionIds, signal })
+  if (statuses instanceof Error) fail(statuses)
+  // Buttons live in the bot's memory. Without a bot nothing can show them.
+  const buttons = await callBot({ dataDir: dataDirOrDefault(dataDir), route: 'session.buttons', input: { sessionIds: [...sessionIds] } })
+  if (buttons instanceof Error && !(buttons instanceof BotNotRunningError)) process.stderr.write(`cannot read pending buttons: ${buttons.message}\n`)
+  for (const sessionId of sessionIds) {
+    const status = statuses.get(sessionId) ?? 'running'
+    const text = statusText({ sessionId, status, buttons: buttons instanceof Error ? [] : buttons.data[sessionId] ?? [], timeout })
+    const header = `=== ${sessionId} ${text} ===`
+    if (status === 'running') {
+      process.stdout.write(`${header}\n\n`)
+      continue
+    }
+    const markdown = await readSessionMarkdown({ client, sessionId })
+    if (markdown instanceof Error) fail(markdown)
+    process.stdout.write(`${header}\n\n${markdown}\n\n`)
+  }
+  return [...statuses.values()].every((status) => status !== 'running')
 }
 
 // Discord REST with the bot token: KIMAKI_BOT_TOKEN (no kimaki.db needed, e.g. CI), else saved credentials.

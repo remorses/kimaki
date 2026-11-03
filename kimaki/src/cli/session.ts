@@ -26,7 +26,7 @@ import {
   SESSION_HELP,
   resolveTarget,
   targetOrEnv,
-  waitAndPrintSession,
+  waitAndPrintSessions,
 } from './shared.ts'
 
 const execFileAsync = promisify(execFile)
@@ -85,15 +85,30 @@ export function registerSessionQueryCommands(cli: Goke) {
       process.stdout.write(`${transcriptsDir({ dataDir })}: ${result.written} written, ${result.skipped} skipped, ${result.failed} failed\n`)
     })
 
-  cli.command('session wait <id>', 'Wait until idle or waiting for input, then print the session')
+  cli.command('session wait [...ids]', 'Wait until every session is idle or waits for the user, then print each one and why it returned')
+    .example('kimaki session wait ses_abc 1495130000000000000')
+    .example(`kimaki session wait $(kimaki session list --all --active | awk '{print $1}')`)
     .option('--data-dir <path>', DATA_DIR_HELP)
-    .option('--timeout <duration>', 'Timeout, for example 30m or 2h')
-    .action(async (id, options) => {
-      const { sessionId } = await resolveTarget(id, options.dataDir)
+    .option('--timeout <duration>', 'Timeout, for example 30m or 2h; exit 1 when a session still runs')
+    .action(async (ids, options) => {
       const timeout = options.timeout ? parseDuration(options.timeout) : undefined
       if (timeout instanceof Error) fail(new Error('Use --timeout 30m, 2h, or another positive duration'))
+      // Empty when `$(kimaki session list --active)` found nothing.
+      if (ids.length === 0) {
+        process.stdout.write('No sessions to wait for\n')
+        return
+      }
+      const sessionIds: string[] = []
+      for (const id of ids) sessionIds.push((await resolveTarget(id, options.dataDir)).sessionId)
       const client = await readClient()
-      await waitAndPrintSession({ client, sessionId, signal: timeout === undefined ? undefined : AbortSignal.timeout(timeout) })
+      const done = await waitAndPrintSessions({
+        client,
+        sessionIds: [...new Set(sessionIds)],
+        dataDir: options.dataDir,
+        signal: timeout === undefined ? undefined : AbortSignal.timeout(timeout),
+        timeout: options.timeout ?? '',
+      })
+      if (!done) process.exitCode = 1
     })
 
   cli.command('session editors <file>', 'List sessions that last edited a file, newest first')
