@@ -4,6 +4,7 @@
 // Startup must stay light: bot modules (main.ts, onboarding.ts, scheduler.ts)
 // are imported lazily inside the commands that need them.
 
+import { createRequire } from 'node:module'
 import { goke } from 'goke'
 
 import { registerBotCommands, registerLoginCommands, registerStartCommand, registerToolCommands } from './cli/bot.ts'
@@ -48,4 +49,5 @@ cli.section('Bot')
 registerBotCommands(cli)
 
 cli.help()
+cli.version(createRequire(import.meta.url)('../package.json').version, '-V, --version')
 void cli.parse()

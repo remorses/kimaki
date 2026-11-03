@@ -257,8 +257,8 @@ importers:
         specifier: ^3.0.6
         version: 3.1.1
       goke:
-        specifier: ^6.15.1
-        version: 6.15.1
+        specifier: ^6.18.0
+        version: 6.18.0
       htmlparser2:
         specifier: ^10.1.0
         version: 10.1.0
@@ -520,8 +520,8 @@ importers:
   traforo:
     dependencies:
       goke:
-        specifier: ^6.8.0
-        version: 6.12.3
+        specifier: ^6.18.0
+        version: 6.18.0
       http-cache-semantics:
         specifier: ^4.2.0
         version: 4.2.0
@@ -2593,6 +2593,10 @@ packages:
 
   '@opentelemetry/semantic-conventions@1.43.0':
     resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
+    engines: {node: '>=14'}
+
+  '@opentelemetry/semantic-conventions@1.44.0':
+    resolution: {integrity: sha512-E3JkOlMBi3N8OGGkbl7tFyqk2MAS6/lySRZBK3Mu7AzjF1fT8oIChH9ChE48SUWzDn9Kdwta+G/p5LJ4xW4CLQ==}
     engines: {node: '>=14'}
 
   '@opentunnel/client@0.6.0':
@@ -5457,12 +5461,8 @@ packages:
     resolution: {integrity: sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==}
     engines: {node: 18 || 20 || >=22}
 
-  goke@6.12.3:
-    resolution: {integrity: sha512-zB5CsmtGFY0a9VjUmGBhQZOf5C/TGQoAKV2gai7mrj1RIOhfEzAjFF60yRI2M6d6OSWtn03JcV2oBe0x9nIQFw==}
-    engines: {node: '>=18'}
-
-  goke@6.15.1:
-    resolution: {integrity: sha512-jt/g3938xzRKRKcXWgULiEzFgs/jgnCZJWTEB/yBMm6JAlsCGBMs56eoIKAzsoFXBVF6IhGQzN5Q/uXNDra5Vw==}
+  goke@6.18.0:
+    resolution: {integrity: sha512-50yQYkbPtevovbdSk0faBAAzo9ph3ndgnMRu2eONZy/5/JHXeSpfHTw/w0PGZlqu6W3CtenhZjNf/x2xnbiIVw==}
     engines: {node: '>=18'}
 
   google-auth-library@10.5.0:
@@ -9137,7 +9137,7 @@ snapshots:
       '@clack/prompts': 1.7.0
       '@opencode-ai/sdk': 1.18.5
       fflate: 0.8.3
-      goke: 6.15.1
+      goke: 6.18.0
       mdast-util-frontmatter: 2.0.1
       mdast-util-gfm: 3.1.0
       mdast-util-mdx: 3.0.0
@@ -9168,7 +9168,7 @@ snapshots:
       '@octokit/rest': 22.0.1
       '@opencode-ai/sdk': 1.18.5
       fflate: 0.8.3
-      goke: 6.15.1
+      goke: 6.18.0
       mdast-util-frontmatter: 2.0.1
       mdast-util-gfm: 3.1.0
       mdast-util-mdx: 3.0.0
@@ -10086,13 +10086,13 @@ snapshots:
   '@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.0)':
     dependencies:
       '@opentelemetry/api': 1.9.0
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/core@2.10.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/core@2.8.0(@opentelemetry/api@1.9.0)':
@@ -10129,14 +10129,14 @@ snapshots:
     dependencies:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.0)
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/resources@2.10.0(@opentelemetry/api@1.9.1)':
     dependencies:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/resources@2.8.0(@opentelemetry/api@1.9.0)':
@@ -10165,7 +10165,7 @@ snapshots:
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/sdk-trace': 2.10.0(@opentelemetry/api@1.9.0)
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/sdk-trace-base@2.10.0(@opentelemetry/api@1.9.1)':
@@ -10174,7 +10174,7 @@ snapshots:
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-trace': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/sdk-trace-base@2.8.0(@opentelemetry/api@1.9.0)':
@@ -10210,7 +10210,7 @@ snapshots:
       '@opentelemetry/api': 1.9.0
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.0)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.0)
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/sdk-trace@2.10.0(@opentelemetry/api@1.9.1)':
@@ -10218,12 +10218,15 @@ snapshots:
       '@opentelemetry/api': 1.9.1
       '@opentelemetry/core': 2.10.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/resources': 2.10.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/semantic-conventions': 1.43.0
+      '@opentelemetry/semantic-conventions': 1.44.0
     optional: true
 
   '@opentelemetry/semantic-conventions@1.41.1': {}
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
+
+  '@opentelemetry/semantic-conventions@1.44.0':
+    optional: true
 
   '@opentunnel/client@0.6.0(effect@4.0.1)':
     dependencies:
@@ -13399,9 +13402,7 @@ snapshots:
       minipass: 7.1.3
       path-scurry: 2.0.2
 
-  goke@6.12.3: {}
-
-  goke@6.15.1: {}
+  goke@6.18.0: {}
 
   google-auth-library@10.5.0:
     dependencies:

@@ -16,7 +16,7 @@ export function registerSendCommand(cli: Goke) {
     .option('-d, --project <path>', 'Project directory of the new thread')
     .option('--thread <id>', 'Continue this thread (ID or URL)')
     .option('-s, --session <id>', 'Continue this session: session ID, thread ID or thread URL')
-    .option('-p, --prompt <text>', 'Prompt; thread suffixes . queue and . btw are supported')
+    .option('-p, --prompt <text>', 'Prompt; thread suffixes . queue and . btw are supported').required()
     .option('-f, --file <path>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: 'Attach a local file (repeatable)' }))
     .option('-n, --name <text>', 'Thread name')
     .option('--agent <name>', 'Agent ID')

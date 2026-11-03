@@ -113,8 +113,9 @@ test('CLI help documents the supported P7 commands', async () => {
   const output = await cli(['--help'])
   expect(output.stdout).toContain('send')
   expect(output.stdout).toContain('upload-request')
-  expect(output.stdout).toMatchInlineSnapshot(`
-    "kimaki
+  // The header is `kimaki/<version>`; keep the snapshot stable across releases.
+  expect(output.stdout.replace(/^kimaki\/[^\n]+/, 'kimaki/<version>')).toMatchInlineSnapshot(`
+    "kimaki/<version>
 
     Usage:
       $ kimaki [options]
@@ -267,7 +268,7 @@ test('CLI help documents the supported P7 commands', async () => {
         -d, --project <path>            Project directory of the new thread
         --thread <id>                   Continue this thread (ID or URL)
         -s, --session <id>              Continue this session: session ID, thread ID or thread URL
-        -p, --prompt <text>             Prompt; thread suffixes . queue and . btw are supported
+        -p, --prompt <text>             Prompt; thread suffixes . queue and . btw are supported (required)
         -f, --file <path>               Attach a local file (repeatable)
         -n, --name <text>               Thread name
         --agent <name>                  Agent ID
@@ -444,6 +445,7 @@ test('CLI help documents the supported P7 commands', async () => {
       --no-autostart                Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)
       --if-not-running              Start only if no bot runs; never stop the running one (used by autostart)
       -h, --help                    Display this message
+      -V, --version                 Display version number
     "
   `)
 })
