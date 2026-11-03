@@ -384,6 +384,8 @@ export function baseInstructions({
 
       For simple reminders and notifications (\`--notify-only\`), inline the prompt directly since there is no AI session to read files.
 
+      After creating or editing a routine, quote the exact prompt it uses in your reply with a \`>\` markdown quote, next to its schedule, agent and model, so the user can check it.
+
       Notification strategy:
       - For autonomous routines, do not pass \`--user\`. It adds the user to every run's thread before the result is known. Put the user's Discord ID in the routine md file instead, and tell the agent to mention it only after completing work worth reviewing, when reporting an issue, or when asking for a decision.
       - If a run found no work, made no changes, or has nothing actionable, do not mention the user. Archive that session instead with \`kimaki session archive\`.
