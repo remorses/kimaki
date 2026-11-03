@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+1. **Newer models in the default fallback ranking:** `openai/gpt-6.1-sol`, `xai/grok-4.7`, then `opencode-go/kimi-k3`. Copilot now falls back to `github-copilot/gpt-6.1-sol`. Set `options.models` to use your own ranking.
+
 ## 0.2.0
 
 1. **Switches accounts, not only models.** On a rate limit, quota, overload or auth error the plugin now moves to your next saved account of the same provider before it falls back to the next model.
