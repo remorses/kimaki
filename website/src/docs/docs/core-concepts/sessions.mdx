@@ -55,7 +55,7 @@ To read the session's recorded events and file a Kimaki bug, see [Debug sessions
 
 Long sessions fill the model's context window. Keep them healthy:
 
-- **`/context-usage`**: show the tokens used, the percentage of the context window, the model, and the session cost.
+- **`/context-usage`**: show the tokens used, the percentage of the context window, the model, the session cost, and whether the session is working: how long the run has gone, what it does now (thinking, a tool) and its last activity, or how long it has been idle.
 - **`/compact`**: summarize the conversation so far to free up context. Kimaki posts `-# context compacted` when it is done.
 
 The footer at the end of every finished turn also shows the context percentage:

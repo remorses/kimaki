@@ -79,7 +79,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/clear-queue: Remove queued messages",
       "/command: Run any OpenCode command in this project",
       "/compact: Compact the session context by summarizing the history",
-      "/context-usage: Show token usage and context window percentage",
+      "/context-usage: Show token usage, context window percentage and whether the session is working",
       "/cwd: Show or change this session working directory",
       "/diff: Show the git diff as a shareable URL",
       "/fork: Fork the session from a past user message",

@@ -31,6 +31,7 @@ import {
 import { shellQuote } from '../lock-server.ts'
 import { abort, clearQueue, dispatch, redo, undo } from '../prompt.ts'
 import type { Route } from '../routes.ts'
+import { formatDuration, type Message } from '../session-events.ts'
 import { endCoordinator, forkBtw } from '../sessions.ts'
 
 const execFileAsync = promisify(execFile)
@@ -204,18 +205,62 @@ async function redoCommand(bot: Bot, interaction: ChatInputCommandInteraction, {
 
 // --- Info
 
+// What the session does right now, from OpenCode's own message timestamps. Newest-first messages.
+function sessionStatus({ running, messages, now }: { running: boolean; messages: readonly Message[]; now: number }): string[] {
+  const ago = (time: number) => formatDuration(now - time)
+  const promptIndex = messages.findIndex((message) => message.type === 'user')
+  const replyIndex = messages.findIndex((message) => message.type === 'assistant')
+  const prompt = messages[promptIndex]
+  const latest = messages[replyIndex]
+  const reply = latest?.type === 'assistant' ? latest : undefined
+  const unanswered = prompt !== undefined && (reply === undefined || replyIndex > promptIndex)
+  if (!running) {
+    if (unanswered) return [`**Status:** idle, the last prompt (${ago(prompt.time.created)} ago) has no reply`]
+    return [reply ? `**Status:** idle for ${ago(reply.time.completed ?? reply.time.created)}` : '**Status:** idle']
+  }
+  // A run starts at a user prompt; synthetic items also arrive mid-run, so they count only without one.
+  const start = prompt ?? messages.find((message) => message.type === 'synthetic')
+  const status = start ? `**Status:** running for ${ago(start.time.created)}` : '**Status:** running'
+  if (unanswered || !reply) return [`${status}, waiting for the first model response`]
+  const tool = reply.content.findLast((part) => part.type === 'tool' && part.time.completed === undefined)
+  const reasoning = reply.content.findLast((part) => part.type === 'reasoning' && part.time !== undefined && part.time.completed === undefined)
+  const doing =
+    reply.time.completed !== undefined ? 'between steps'
+    : tool?.type === 'tool' ? `running ${tool.name} for ${ago(tool.time.ran ?? tool.time.created)}`
+    : reasoning?.type === 'reasoning' && reasoning.time ? `thinking for ${ago(reasoning.time.created)}`
+    : reply.time.streamed === undefined ? `waiting for the model for ${ago(reply.time.created)}`
+    : 'writing'
+  const activity = [
+    { at: reply.time.streamed, what: 'output' },
+    { at: reply.time.completed, what: 'step ended' },
+    ...reply.content.flatMap((part) => {
+      if (part.type === 'tool') return [{ at: part.time.completed ?? part.time.ran ?? part.time.created, what: part.name }]
+      if (part.type === 'reasoning') return [{ at: part.time?.completed ?? part.time?.created, what: 'thinking' }]
+      return []
+    }),
+  ]
+  const last = activity.reduce<{ at: number; what: string }>(
+    (latest, { at, what }) => (at !== undefined && at >= latest.at ? { at, what } : latest),
+    { at: reply.time.created, what: 'step started' },
+  )
+  return [`${status}, ${doing}`, `**Last activity:** ${ago(last.at)} ago, ${last.what}`]
+}
+
 async function contextUsageCommand(bot: Bot, interaction: ChatInputCommandInteraction, { sessionId, directory }: SessionTarget) {
   await interaction.deferReply()
-  const [info, messages, models] = await Promise.all([
+  const [info, messages, models, recent, active] = await Promise.all([
     oc(bot, 'session.get', (client) => client.session.get({ sessionID: sessionId })),
     oc(bot, 'message.list', (client) => client.message.list({ sessionID: sessionId, type: 'assistant', order: 'desc', limit: 20 })),
     oc(bot, 'model.list', (client) => client.model.list({ location: { directory } })),
+    oc(bot, 'message.list', (client) => client.message.list({ sessionID: sessionId, order: 'desc', limit: 20 })),
+    oc(bot, 'session.active', (client) => client.session.active()),
   ])
   if (info instanceof Error) return replyError(interaction, info)
   if (messages instanceof Error) return replyError(interaction, messages)
+  const status = recent instanceof Error || active instanceof Error ? [] : sessionStatus({ running: active[sessionId] !== undefined, messages: recent.data, now: Date.now() })
   const last = messages.data.find((message) => message.type === 'assistant' && message.tokens)
   if (!last || last.type !== 'assistant' || !last.tokens) {
-    await interaction.editReply({ content: 'Token usage not available for this session yet' })
+    await interaction.editReply({ content: ['Token usage not available for this session yet', ...status].join('\n') })
     return
   }
   const { tokens, model } = last
@@ -228,6 +273,7 @@ async function contextUsageCommand(bot: Bot, interaction: ChatInputCommandIntera
       : `**Context usage:** ${formatted} tokens (context limit unavailable)`,
     `**Model:** ${model.providerID}/${model.id}`,
     ...(info.cost > 0 ? [`**Session cost:** $${info.cost.toFixed(4)}`] : []),
+    ...status,
   ]
   await interaction.editReply({ content: lines.join('\n') })
 }
@@ -333,7 +379,7 @@ export const threadRoutes: InteractionRoutes = {
       run: diffCommand,
     },
     'context-usage': {
-      definition: new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage and context window percentage'),
+      definition: new SlashCommandBuilder().setName('context-usage').setDescription('Show token usage, context window percentage and whether the session is working'),
       run: inThread(contextUsageCommand),
     },
     'session-id': {

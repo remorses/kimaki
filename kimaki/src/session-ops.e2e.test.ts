@@ -33,6 +33,21 @@ const matchers: DeterministicMatcher[] = [
     then: { parts: textParts('## Objective\n- Test compaction') },
   },
   { id: 'usage', priority: 500, when: { latestUserTextIncludes: 'usage-marker' }, then: { parts: textParts('counted') } },
+  // A reasoning block that stays open long enough to run /context-usage inside it.
+  {
+    id: 'slow-thinking',
+    priority: 500,
+    when: { latestUserTextIncludes: 'thinking-marker' },
+    then: {
+      parts: [
+        { type: 'reasoning-start', id: 'r1' },
+        { type: 'reasoning-delta', id: 'r1', delta: 'pondering' },
+        { type: 'reasoning-end', id: 'r1' },
+        ...textParts('thought it through'),
+      ],
+      partDelaysMs: [0, 0, 2_500, 0, 0, 0, 0],
+    },
+  },
   ...scriptedTurn({
     marker: 'write-marker',
     steps: [{ id: 'call-write-1', tool: 'write', input: { path: 'undo.txt', content: 'written by the agent\n' } }],
@@ -76,11 +91,16 @@ async function command(threadId: string, name: string, text: string) {
   return waitForBotMessageContaining({ discord: twin.discord, threadId, text })
 }
 
+// /context-usage status durations depend on timing.
+function stableDurations(text: string) {
+  return text.replace(/<1s|\b\d+m \d+s\b|\b\d+s\b/g, 'Ns')
+}
+
 test('/diff with a clean working tree and /context-usage after a turn', async () => {
   const thread = await newThread('Hello usage-marker')
   await command(thread.id, 'diff', 'No changes')
   await command(thread.id, 'context-usage', 'Context usage')
-  expect(await twin.discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+  expect(stableDurations(await twin.discord.thread(thread.id).text())).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     Hello usage-marker
     --- from: assistant (TestBot)
@@ -89,7 +109,38 @@ test('/diff with a clean working tree and /context-usage after a turn', async ()
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     No changes to show
     **Context usage:** 0%, 2 / 200,000 tokens
-    **Model:** deterministic-provider/deterministic-v2"
+    **Model:** deterministic-provider/deterministic-v2
+    **Status:** idle for Ns"
+  `)
+})
+
+test('/context-usage while the model thinks shows the run and what it does', async () => {
+  const { discord, channelId } = twin
+  const before = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Ponder this thinking-marker' })
+  const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (candidate) => !before.has(candidate.id) })
+  const client = await server.client()
+  await waitFor({
+    label: 'open reasoning block',
+    check: async () => {
+      const sessionId = bot.store.getState().roots[thread.id]
+      if (!sessionId) return null
+      const messages = await client.message.list({ sessionID: sessionId, type: 'assistant', order: 'desc', limit: 1 })
+      return messages.data.some((message) => message.type === 'assistant' && message.content.some((part) => part.type === 'reasoning')) || null
+    },
+  })
+  await command(thread.id, 'context-usage', 'Status:')
+  await waitForFooter({ discord, threadId: thread.id })
+  expect(stableDurations(await discord.thread(thread.id).text())).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Ponder this thinking-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    Token usage not available for this session yet
+    **Status:** running for Ns, thinking for Ns
+    **Last activity:** Ns ago, thinking
+    thought it through
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
 })
 
