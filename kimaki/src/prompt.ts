@@ -441,20 +441,24 @@ export async function dispatch(
         files,
         sender,
       })
-    default:
+    default: {
+      // The coordinator keeps its agent and model: a worker's `kimaki send --agent <current_agent>` names the worker's agent.
+      const coordinator = !conversation.isThread()
+      if (coordinator && route.kind === 'steer' && route.agent) logger.log(`ignoring agent ${route.agent} of a prompt to coordinator ${conversation.id}`)
       return runInSession(bot, {
         sessionId,
         threadId: conversation.id,
         threadName: conversation.name,
         directory: project.directory,
-        route,
+        route: coordinator && route.kind === 'steer' ? { kind: 'steer', text: route.text } : route,
         author,
         messageId,
         files,
         echo,
         sender,
-        model,
+        model: coordinator ? null : model,
       })
+    }
   }
 }
 
@@ -599,7 +603,9 @@ export async function send(
     addMembers(thread, userIds)
     const explicit = input.model ? parseModel(input.model, null) : null
     if (input.model && !explicit) return new ConfigError({ reason: 'Use --model provider/model' })
-    const model = explicit ? { ...explicit, variant: null } : null
+    // The coordinator keeps its model; /model in its channel changes it.
+    const model = explicit && thread.isThread() ? { ...explicit, variant: null } : null
+    if (explicit && !model) logger.log(`ignoring --model ${input.model} of a prompt to coordinator ${thread.id}`)
     if (model) {
       const switched = await switchModel(bot, { sessionId, model })
       if (switched instanceof Error) return switched

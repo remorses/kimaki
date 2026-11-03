@@ -275,10 +275,11 @@ async function handleMessage(bot: Bot, message: Message) {
 
   // Coordinator: the channel is the conversation of one long session.
   if (coordinator && channel.type === ChannelType.GuildText) {
-    const result = bot.store.getState().roots[channel.id]
-      ? await dispatch(bot, { conversation: channel, route, author, messageId: message.id, files })
-      : route.kind === 'new-session'
-        ? await startSession(bot, { channelId, directory: project.directory, route: { kind: 'steer', text: route.text, ...(route.agent && { agent: route.agent }) }, author, messageId: message.id, startMessageId: null, files })
+    // A spoken agent is for a new thread: the coordinator keeps its own agent and model.
+    const result = route.kind === 'new-session' || (route.kind === 'steer' && route.agent)
+      ? await startSession(bot, { channelId, directory: project.directory, route: { kind: 'steer', text: route.text, ...(route.agent && { agent: route.agent }) }, author, messageId: message.id, startMessageId: null, files })
+      : bot.store.getState().roots[channel.id]
+        ? await dispatch(bot, { conversation: channel, route, author, messageId: message.id, files })
         : await startCoordinator(bot, {
             channel,
             // Queue and btw need a session to wait for or fork from: the first input is a plain prompt.

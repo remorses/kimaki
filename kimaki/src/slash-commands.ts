@@ -322,7 +322,9 @@ async function sendInput(
   const target = await resolveTarget(bot, interaction.channelId)
   if (target instanceof Error) return replyError(interaction, target)
   const author = authorOf(interaction)
-  if (target.conversation && target.sessionId) {
+  // In a coordinator channel an agent pick starts a new thread: the coordinator keeps its own agent and model.
+  const newThread = route.kind === 'steer' && Boolean(route.agent) && target.conversation !== null && !target.conversation.isThread()
+  if (target.conversation && target.sessionId && !newThread) {
     const reply = await replyWithEcho(interaction, { author, text: echo })
     if (reply instanceof Error) return replyError(interaction, reply)
     if (model && !(route.kind === 'steer' && route.agent)) {
@@ -333,14 +335,14 @@ async function sendInput(
     if (result instanceof Error) return replyError(interaction, result)
     return
   }
-  if (target.conversation) {
+  if (target.conversation && !newThread) {
     await interaction.reply({ content: 'Use this command in a thread with a Kimaki session', flags: MessageFlags.Ephemeral })
     return
   }
   await interaction.deferReply()
   const started = await startSession(bot, {
     channelId: target.channelId,
-    directory: target.directory,
+    directory: target.projectDirectory,
     route,
     author,
     messageId: interaction.id,
