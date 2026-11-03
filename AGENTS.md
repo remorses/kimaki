@@ -210,8 +210,10 @@ full event schema, DAU/WAU/MAU, funnels, retention, completion rate, and copy-pa
 
 `kimaki/src/plugin/` runs inside the **OpenCode server process**, not the bot. on start the bot writes a shim per plugin into `<opencode config dir>/plugins/<name>/index.js` that re-exports `dist/plugin/` of the running Kimaki install (`installPluginShim` in `opencode-server.ts`), also when the bot runs from `src`: OpenCode watches plugin files and reloads on change, so a `src` target would load half-edited code on every save. run `pnpm build` to ship plugin changes. no opencode.json edit. writing the shim only when its content changes matters: any change in that folder reloads every location and cancels pending forms.
 
-- `plugin/index.ts` (`kimaki`): git branch reminder, `<discord-user>` turn context rendered from `metadata.discord` into the model request only (stored prompt text stays clean for the TUI), extra `description` / `hasSideEffect` tool inputs, shell env, file edit log.
+- `plugin/index.ts` (`kimaki`): git branch reminder, `<discord-user>` turn context rendered from `metadata.discord` and the time since the last assistant message (`sinceAssistantMs`, stamped on the prompt metadata by the prompt hook) into the model request only (stored prompt text stays clean for the TUI), extra `description` / `hasSideEffect` tool inputs, shell env, file edit log.
 - `plugin/anthropic/index.ts` (`kimaki-anthropic`): Claude Pro/Max OAuth for every session, TUI included.
+
+**never add a new injected plugin** (a new shim or a new opencode.json `plugins` entry). new hooks go into the existing `kimaki` plugin (`plugin/index.ts`, helpers in separate files like `plugin/coordinator.ts`). we keep just one injected plugin.
 
 each plugin is a directory loaded through its `index` module. OpenCode only accepts directories in opencode.json `plugins`, so plain OpenCode users can list `<kimaki>/src/plugin/anthropic` there. OpenCode keeps one plugin per ID and reports a second one as failed (`Duplicate plugin ID`), so `installPluginShim` removes a shim when the global `opencode.json`/`opencode.jsonc` already lists the same plugin directory of any Kimaki install. the `anthropic` directory must import nothing from Kimaki outside itself except npm packages.
 

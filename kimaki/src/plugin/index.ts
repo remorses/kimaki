@@ -16,6 +16,20 @@ const exec = promisify(execFile)
 const decodeSkill = Schema.decodeUnknownSync(Skill.Info)
 
 const BRANCH_PREFIX = '[current git branch is '
+// Prompt metadata key: ms between the latest assistant message and the prompt.
+const GAP_KEY = 'sinceAssistantMs'
+
+// `3d 4h`, `2h 5m`, `12m 5s`, `40s`: enough to tell a quick follow-up from a return after a break.
+function formatGap(ms: number): string {
+  const seconds = Math.floor(ms / 1_000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+  if (days > 0) return `${days}d ${hours % 24}h`
+  if (hours > 0) return `${hours}h ${minutes % 60}m`
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`
+  return `${seconds}s`
+}
 
 export default Plugin.define({
   id: 'kimaki',
@@ -44,18 +58,24 @@ export default Plugin.define({
       if (parentMarker && typeof parentMarker === 'object' && !Array.isArray(parentMarker) && parentMarker['threadId'] === current.get('threadId')) return marker(session.parentID)
       return current
     }
-    // The git branch reaches the model as a synthetic message saved right before
-    // the user prompt, only when it changed. Text in event.system would change the
-    // cached prompt prefix on every branch switch. The prompt hook runs before
-    // OpenCode admits the prompt, so the synthetic message is admitted first.
+    // The prompt hook runs before OpenCode admits the prompt, so changes to its
+    // metadata are stored with it and a synthetic message saved here comes first.
     await ctx.session.hook('prompt', async (event) => {
       if (!(await marker(event.sessionID))) return
-      const branch = await exec('git', ['branch', '--show-current'], { cwd: ctx.location.directory, timeout: 5000 }).catch(() => null)
+      const [history, branch] = await Promise.all([
+        ctx.session.context({ sessionID: event.sessionID }).catch(() => null),
+        exec('git', ['branch', '--show-current'], { cwd: ctx.location.directory, timeout: 5000 }).catch(() => null),
+      ])
+      if (!history) return
+      // The time since the latest reply is stored on the prompt and rendered by
+      // shapeRequest: a value computed per request would change the cached prefix.
+      const reply = history.findLast((message) => message.type === 'assistant')
+      if (reply?.type === 'assistant') event.metadata = { ...event.metadata, [GAP_KEY]: Math.max(0, Date.now() - (reply.time.completed ?? reply.time.created)) }
+      // The git branch is a synthetic message, only when it changed. Text in
+      // event.system would change the cached prompt prefix on every branch switch.
       const name = branch?.stdout.trim()
       if (!name) return
       const text = `${BRANCH_PREFIX}${name}]`
-      const history = await ctx.session.context({ sessionID: event.sessionID }).catch(() => null)
-      if (!history) return
       const last = history.findLast((message) => message.type === 'synthetic' && message.text.startsWith(BRANCH_PREFIX))
       if (last?.type === 'synthetic' && last.text === text) return
       await ctx.session.synthetic({ sessionID: event.sessionID, text, delivery: event.delivery, resume: false }).catch(() => undefined)
@@ -68,14 +88,18 @@ export default Plugin.define({
       // changes in a session, so the cached prompt prefix stays stable.
       event.system.push({ type: 'text', text: `OpenCode session ID: ${event.sessionID}` })
       if (!(await marker(event.sessionID))) return
-      // The <discord-user> context of each prompt, built from its metadata, so the
-      // stored text stays clean for the TUI and other clients. Same metadata, same
-      // text on every request: the cached prompt prefix stays stable.
+      // The time since the previous reply and the <discord-user> context of each
+      // prompt, built from its metadata, so the stored text stays clean for the TUI
+      // and other clients. Same metadata, same text on every request: the cached
+      // prompt prefix stays stable.
       for (const message of event.messages) {
-        const context = message.role === 'user' ? turnContext(message.metadata) : null
-        // TODO: build a new Message once plugins can import OpenCode's Message class;
-        // a copy from another module instance may fail its instanceof checks.
-        if (context) Array.prototype.push.call(message.content, { type: 'text', text: context })
+        if (message.role !== 'user') continue
+        const gap = message.metadata?.[GAP_KEY]
+        for (const text of [typeof gap === 'number' ? `[${formatGap(gap)} since your last message]` : null, turnContext(message.metadata)]) {
+          // TODO: build a new Message once plugins can import OpenCode's Message class;
+          // a copy from another module instance may fail its instanceof checks.
+          if (text) Array.prototype.push.call(message.content, { type: 'text', text })
+        }
       }
       // Extra inputs only for the Discord tool line. OpenCode decodes the real
       // inputs with Schema.Struct, which ignores unknown keys.

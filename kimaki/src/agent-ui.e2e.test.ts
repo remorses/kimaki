@@ -117,6 +117,9 @@ test('git context is added only to marked Discord sessions', async () => {
   const sessionId = bot.store.getState().roots[threadId]!
   await client.session.prompt({ sessionID: sessionId, text: 'git-marker again' })
   await client.session.wait({ sessionID: sessionId })
+  // Only a prompt after a reply carries the time since that reply.
+  const gaps = server.model.requests.filter((request) => request.latestUserText.includes('git-marker')).map((request) => /\[\d+s since your last message\]/.test(request.latestUserText))
+  expect([gaps[0], gaps.at(-1)]).toEqual([false, true])
   const history = await client.session.context({ sessionID: sessionId })
   expect(history.flatMap((message) => message.type === 'synthetic' || message.type === 'user' ? [`${message.type}: ${message.text.split('\n')[0]}`] : [])).toMatchInlineSnapshot(`
     [
