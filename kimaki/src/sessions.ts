@@ -262,6 +262,7 @@ export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
     if (endpoint && active.get(endpoint)?.has(directory)) return
     const location = { directory }
     const deadline = Date.now() + 10_000
+    let loadError: string | undefined
     while (Date.now() < deadline) {
       const endpoint = bot.opencode.endpoint
       if (!endpoint) return new OpenCodeUnavailableError({ reason: 'not connected' })
@@ -277,7 +278,17 @@ export function createPluginWait(bot: Pick<Bot, 'opencode'>): PluginWait {
         active.set(endpoint, (active.get(endpoint) ?? new Set()).add(directory))
         return
       }
+      // A plugin that fails to load has no ID: find the shim directory by its path.
+      const failed = plugins.data.find((plugin) => plugin.source.type === 'local' && path.basename(plugin.source.path) === 'kimaki')
+      loadError = failed?.state.status === 'failed' ? (failed.state.ref ?? failed.state.error) : undefined
       await sleep(200)
+    }
+    if (loadError) {
+      // TODO: remove the restart hint once OpenCode's Bun evicts failed ESM loads; Bun 1.4.4 keeps
+      // them forever, so a reload during `pnpm build` stays broken after the build ends.
+      return new ConfigError({
+        reason: `Kimaki plugin failed to load in OpenCode (${loadError}); the OpenCode log has the cause. If it names code that no longer exists, OpenCode kept a stale failed load: run \`opencode service restart\``,
+      })
     }
     return new ConfigError({
       reason: `Kimaki plugin is not active in OpenCode for ${directory}. Kimaki writes it to <OpenCode config dir>/plugins/kimaki/ on start; check \`opencode plugin list\` and the OpenCode logs`,
