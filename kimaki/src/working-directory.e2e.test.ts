@@ -64,7 +64,7 @@ test('session cwd changes preserve the session and use the new location after re
     -# » **CLI:** Start cwd session
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
-    -# *main ⋅ Ns ⋅ deterministic-v2*
+    -# *Ns ⋅ deterministic-v2*
     -# Working directory changed to PROJECT/sub
     --- from: user (tommy)
     write-cwd-marker
@@ -72,7 +72,7 @@ test('session cwd changes preserve the session and use the new location after re
     -# ┣ shell _Write to the current directory_
 
     Wrote cwd.txt.
-    -# *sub ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *sub ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect((await client.session.get({ sessionID: sent.sessionId })).location.directory).toBe(path.join(server.projectDirectory, 'sub'))
   expect(fs.readFileSync(path.join(server.projectDirectory, 'sub', 'cwd.txt'), 'utf8')).toBe('isolated')
@@ -87,7 +87,7 @@ test('session cwd changes preserve the session and use the new location after re
     Reusing context from <#THREAD> to answer prompt...
     Side question
     ok
-    -# *sub ⋅ main ⋅ Ns ⋅ deterministic-v2*"
+    -# *sub ⋅ Ns ⋅ deterministic-v2*"
   `)
   expect((await client.session.get({ sessionID: fork.sessionId })).location.directory).toBe(path.join(server.projectDirectory, 'sub'))
 })
@@ -109,7 +109,7 @@ test('native moves of a busy session update the live footer without aborting its
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     Finished without interruption.
     -# Working directory changed to PROJECT/sub
-    -# *sub ⋅ main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    -# *sub ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     Working directory: \`PROJECT/sub\`"
   `)
   expect((await client.session.get({ sessionID: sent.sessionId })).location.directory).toBe(path.join(server.projectDirectory, 'sub'))

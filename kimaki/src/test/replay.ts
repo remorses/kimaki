@@ -88,7 +88,7 @@ export function effectLines(effects: Effect[]): string[] {
     }
     // Tests have no git checkout: the branch is always main. The channel runs build in /project.
     if (effect.type === 'footer') {
-      const footer = formatFooter({ ...effect, branch: 'main', projectDirectory: REPLAY_PROJECT, defaultAgent: 'build' })
+      const footer = formatFooter({ ...effect, branch: 'main', defaultBranch: null, projectDirectory: REPLAY_PROJECT, defaultAgent: 'build' })
       return effect.notify ? footer : `[silent] ${footer}`
     }
     return effect.text.replace(/^\n/, '\\n')

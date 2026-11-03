@@ -142,12 +142,13 @@ export function formatAgentSwitched({ agent, previous }: { agent: string; previo
   return asSubtext(`Switched agent ${previous ? `from ${agentLabel(previous)} ` : ''}to ${agentLabel(agent)}`)
 }
 
-// The folder and agent only show when they differ from the channel's defaults.
-// `projectDirectory` / `defaultAgent`: null when unknown, then both show.
+// The folder, branch and agent only show when they differ from the defaults.
+// `projectDirectory` / `defaultBranch` / `defaultAgent`: null when unknown, then they show.
 export function formatFooter({
   directory,
   projectDirectory,
   branch,
+  defaultBranch,
   durationMs,
   contextPercent,
   model,
@@ -157,6 +158,7 @@ export function formatFooter({
   directory: string
   projectDirectory: string | null
   branch: string | null
+  defaultBranch: string | null
   durationMs: number
   contextPercent: number | null
   model: ModelRef | null
@@ -166,7 +168,7 @@ export function formatFooter({
   const inProject = projectDirectory !== null && path.resolve(directory) === path.resolve(projectDirectory)
   const parts = [
     inProject ? null : path.basename(directory),
-    branch,
+    branch === defaultBranch ? null : branch,
     formatDuration(durationMs),
     contextPercent === null ? null : `${contextPercent}%`,
     model?.id ?? null,

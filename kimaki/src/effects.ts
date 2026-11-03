@@ -43,18 +43,39 @@ async function gitBranch(directory: string): Promise<string | null> {
   return result?.stdout.trim() || null
 }
 
+async function readDefaultBranch(directory: string): Promise<string | null> {
+  const git = (args: string[]) => execFileAsync('git', args, { cwd: directory, timeout: 5_000 }).then((r) => r.stdout.trim(), () => '')
+  const remoteHead = await git(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])
+  if (remoteHead) return remoteHead.replace(/^origin\//, '')
+  // No origin/HEAD (repo never cloned, or no remote): fall back to a local main or master.
+  const local = await git(['for-each-ref', '--format=%(refname:short)', 'refs/heads/main', 'refs/heads/master'])
+  return local.split('\n')[0] || null
+}
+
+// Directory -> default branch, read once per process: it almost never changes.
+const defaultBranches = new Map<string, Promise<string | null>>()
+
+function defaultBranch(directory: string): Promise<string | null> {
+  const cached = defaultBranches.get(directory)
+  if (cached) return cached
+  const lookup = readDefaultBranch(directory)
+  defaultBranches.set(directory, lookup)
+  return lookup
+}
+
 // Project folder and default agent of a channel, read when a footer is posted. null: not a project channel.
 export type FooterDefaults = (channelId: string) => Promise<Error | null | { projectDirectory: string; defaultAgent: string | null }>
 
 async function footerText({ effect, footerDefaults }: { effect: Extract<Effect, { type: 'footer' }>; footerDefaults: FooterDefaults }): Promise<string> {
   const { channelId, directory, durationMs, contextPercent, model, agent } = effect
-  const [branch, defaults] = await Promise.all([gitBranch(directory), footerDefaults(channelId)])
+  const [branch, mainBranch, defaults] = await Promise.all([gitBranch(directory), defaultBranch(directory), footerDefaults(channelId)])
   if (defaults instanceof Error) logger.warn(`footer defaults of channel ${channelId} failed`, defaults)
   const known = defaults instanceof Error ? null : defaults
   return formatFooter({
     directory,
     projectDirectory: known?.projectDirectory ?? null,
     branch,
+    defaultBranch: mainBranch,
     durationMs,
     contextPercent,
     model,
