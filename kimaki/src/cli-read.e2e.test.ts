@@ -54,6 +54,7 @@ test('session read, list, sync, wait, url and events read real session history',
   expect(fs.readFileSync(path.join(dataDir, 'transcripts', `${first.sessionId}.md`), 'utf8')).toContain('## user')
   expect(fs.readFileSync(path.join(dataDir, 'transcripts', `${first.sessionId}.md`), 'utf8')).toContain('Reader content marker')
   expect(read.stdout).toContain('Reader content marker')
+  expect(read.stdout).toMatch(/\ncontext: \d+k? tokens, last run took \S+( \S+)?, last active \S+( \S+)? ago \(\d{4}-/)
   expect(wait.stdout).toContain('Reader content marker')
   expect(url.stdout).toContain(first.threadId)
   expect(events.stdout).toContain('session.execution.succeeded')

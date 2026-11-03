@@ -15,7 +15,7 @@ import type { RunEnded } from './event-loop.ts'
 import { createLogger } from './logger.ts'
 import { IDLE_REPLY } from './plugin/coordinator.ts'
 import type { Sender } from './prompt.ts'
-import { finalAnswer, type Message } from './session-events.ts'
+import { finalAnswer, formatDuration, formatTokens, sessionUsage, type Message } from './session-events.ts'
 import { escapeAttribute } from './system-prompt.ts'
 
 const logger = createLogger('COORDINATOR')
@@ -126,8 +126,11 @@ async function noteRunEnded(bot: Bot, run: RunEnded): Promise<void> {
   const state = run.error ? 'error' : 'completed'
   const title = info.title || 'Untitled'
   const routine = marker?.task ? ` routine="#${marker.task.id}"` : ''
+  // Context size and run length, so the coordinator knows when a follow-up would rewrite a big cache.
+  const usage = sessionUsage(messages)
+  const stats = usage ? ` context="${formatTokens(usage.contextTokens)} tokens"${usage.runMs === null ? '' : ` duration="${formatDuration(usage.runMs)}"`}` : ''
   const text = [
-    `<session-finished sessionID="${run.sessionId}" threadID="${run.threadId}" state="${state}" title="${escapeAttribute(title)}"${routine} wake="${wake}">`,
+    `<session-finished sessionID="${run.sessionId}" threadID="${run.threadId}" state="${state}" title="${escapeAttribute(title)}"${routine}${stats} wake="${wake}">`,
     // The user steered this thread directly: the coordinator must know what they asked.
     ...(user ? [`<user-prompt username="${escapeAttribute(user.username)}">\n${cut(user.text, USER_PROMPT_CHARS)}\n</user-prompt>`] : []),
     cut(answer, wake ? WAKE_ANSWER_CHARS : NOTE_ANSWER_CHARS),

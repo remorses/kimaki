@@ -16,6 +16,7 @@ import {
 import { z } from 'zod'
 
 import type { Verbosity } from './db.ts'
+import { formatDuration, formatTokens } from './session-events.ts'
 
 // Bot messages hide link previews (session output: see embedFlags). Only messages that need the user
 // (errors, prompts, the end of a turn) skip SuppressNotifications.
@@ -119,15 +120,6 @@ export function selectedPage(value: string): number | null {
   return Number(value.slice(PAGE_PREFIX.length)) || 0
 }
 
-export function formatDuration(ms: number): string {
-  if (ms < 1_000) return '<1s'
-  const seconds = Math.floor(ms / 1_000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-}
-
 export type ModelRef = { providerID: string; id: string }
 
 const COORDINATOR_NOTICE = 'Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with `--coordinator false`.'
@@ -197,18 +189,14 @@ export function formatRetry({ attempt, delayMs, message }: { attempt: number; de
   return asSubtext(`retrying in ${seconds}s (attempt ${attempt}): ${inline(message, 200)}`)
 }
 
-function k(tokens: number): string {
-  return tokens < 1_000 ? String(tokens) : `${Math.round(tokens / 1_000)}k`
-}
-
 // `tokens`: prompt size of the first step after the compaction, null when no step ran yet (`/compact`).
 export function formatCompacted({ tokens, percent }: { tokens: number | null; percent: number | null }): string {
   if (tokens === null) return asSubtext('context compacted')
-  return asSubtext(`context compacted to ${k(tokens)} tokens${percent === null ? '' : ` (${percent}%)`}`)
+  return asSubtext(`context compacted to ${formatTokens(tokens)} tokens${percent === null ? '' : ` (${percent}%)`}`)
 }
 
 export function formatCacheMiss({ read, expected, idleMs }: { read: number; expected: number; idleMs: number }): string {
-  return asSubtext(`prompt cache miss: ${k(read)} of ${k(expected)} tokens cached, ${formatDuration(idleMs)} after the last request`)
+  return asSubtext(`prompt cache miss: ${formatTokens(read)} of ${formatTokens(expected)} tokens cached, ${formatDuration(idleMs)} after the last request`)
 }
 
 // One line, no markdown control characters, so `_x_` and `*x*` stay intact.

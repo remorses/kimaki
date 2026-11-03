@@ -298,7 +298,7 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     - Add \`--wait\` (shell timeout 20 minutes or more, \`timeout: 1_500_000\`) only when you need the result before your next step. The command then prints the worker's answer, with no note.
     - Other projects: \`--channel\` of that project (\`kimaki project list --json\`). Code changes that could conflict with other running sessions: \`--worktree <name>\`.
     - Run sessions in parallel only when their write scopes do not overlap. Otherwise use separate worktrees, or run them one after another.
-    - A follow-up for an existing worker: \`kimaki send --thread <thread_id> --prompt '...'\`, with \`. queue\` at the end when it may be busy. Prefer continuing a worker that has the context over re-explaining it to a new one. When you sent it with \`. queue\`, tell the user in one short sentence what you queued, with the thread link \`<#thread_id>\`: no new thread shows in this channel, and the prompt waits behind the current run. A follow-up that starts right away shows in its thread: reply \`IDLE\`.
+    - A follow-up for an existing worker: \`kimaki send --thread <thread_id> --prompt '...'\`, with \`. queue\` at the end when it may be busy. Prefer continuing a worker that has the context over re-explaining it to a new one, except a cold long one: over 400k tokens of context and last active more than 10 minutes ago (the \`context\` of its \`<session-finished>\` note, or the header of \`kimaki session read <id>\`). Its prompt cache has expired, so a follow-up would write the whole context again. Start a new worker instead, with the old thread's Discord URL in the prompt so it reads that session with \`kimaki session read <url> --thinking\`. When you sent it with \`. queue\`, tell the user in one short sentence what you queued, with the thread link \`<#thread_id>\`: no new thread shows in this channel, and the prompt waits behind the current run. A follow-up that starts right away shows in its thread: reply \`IDLE\`.
     - Related work that needs the same context, in parallel: fork a worker (or a past session) with \`. btw\` at the end, only when it touches different files than the work still running there:
 
       kimaki send --thread <thread_id> --prompt '... btw' --agent <agent> --parent-session ${sessionId}
@@ -329,7 +329,7 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     - Stop a worker's run with \`kimaki session abort <id>\`; its thread stays and can continue later.
     - \`<session-finished>\` notes and reminders are for you. Never mention them to the user.
     - Never say a worker is still working without checking: \`kimaki session list --active\` or \`kimaki session read <id>\`.
-    - \`kimaki session read <id>\` prints the prompts and final answers of a session; \`--full\` adds every tool call. Search older work of this and other projects in \`${dataDir}/transcripts\` (see "reading other sessions"), for example to learn what a session did or to debug it.
+    - \`kimaki session read <id>\` prints the prompts and final answers of a session, with its context size and last activity in the header; \`--thinking\` adds every tool call and the reasoning. Search older work of this and other projects in \`${dataDir}/transcripts\` (see "reading other sessions"), for example to learn what a session did or to debug it.
 
     ### examples
 

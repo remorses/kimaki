@@ -103,6 +103,11 @@ async function roleTexts(sessionID: string): Promise<string[]> {
   return [...messages.data].reverse().flatMap((message) => (message.type === 'synthetic' && message.text.includes('<kimaki-coordinator>') ? [message.text] : []))
 }
 
+// Token counts and run times differ between runs.
+function usageless(note: string): string {
+  return note.replace(/ context="[^"]+"/, ' context="N tokens"').replace(/ duration="[^"]+"/, ' duration="Ns"')
+}
+
 afterAll(async () => {
   await bot?.stop()
   await twin?.stop()
@@ -240,8 +245,8 @@ test('session read lists the Discord URL of a file a worker uploaded; its note d
   const client = await server.client()
   const messages = await client.message.list({ sessionID: root, order: 'desc', limit: 10 })
   const note = messages.data.find((message) => message.type === 'synthetic' && message.text.includes('Screenshot task'))
-  expect(note?.type === 'synthetic' && note.text.replaceAll(started.sessionId!, 'ses_worker').replaceAll(started.threadId, 'worker-thread')).toMatchInlineSnapshot(`
-    "<session-finished sessionID="ses_worker" threadID="worker-thread" state="completed" title="Screenshot task" wake="true">
+  expect(note?.type === 'synthetic' && usageless(note.text.replaceAll(started.sessionId!, 'ses_worker').replaceAll(started.threadId, 'worker-thread'))).toMatchInlineSnapshot(`
+    "<session-finished sessionID="ses_worker" threadID="worker-thread" state="completed" title="Screenshot task" context="N tokens" duration="Ns" wake="true">
     Took the screenshot.
     More: kimaki session read ses_worker
     The user sees nothing else about this. When it is work they asked for, a failure or a decision they must make, tell them the outcome in a few plain sentences, with the thread link <#worker-thread> once. Otherwise reply exactly IDLE.
@@ -284,8 +289,8 @@ test('a run the user prompts in a worker thread is a silent note; a follow-up th
       return item?.type === 'synthetic' ? item.payload.text : null
     },
   })
-  expect(note.replaceAll(worker.id, 'worker-thread').replace(/ses_\w+/g, 'ses_worker')).toMatchInlineSnapshot(`
-    "<session-finished sessionID="ses_worker" threadID="worker-thread" state="completed" title="Worker task" wake="false">
+  expect(usageless(note.replaceAll(worker.id, 'worker-thread').replace(/ses_\w+/g, 'ses_worker'))).toMatchInlineSnapshot(`
+    "<session-finished sessionID="ses_worker" threadID="worker-thread" state="completed" title="Worker task" context="N tokens" duration="Ns" wake="false">
     <user-prompt username="tommy">
     Also check the logs user-steer-marker
     </user-prompt>

@@ -137,6 +137,43 @@ function renderMessage(message: Message, options: { thinking?: boolean; verbose?
   return `${header}\n\n${parts.join('\n\n')}${finish}`
 }
 
+export function formatDuration(ms: number): string {
+  if (ms < 1_000) return '<1s'
+  const seconds = Math.floor(ms / 1_000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
+export function formatTokens(tokens: number): string {
+  return tokens < 1_000 ? String(tokens) : `${Math.round(tokens / 1_000)}k`
+}
+
+export type SessionUsage = { contextTokens: number; runMs: number | null; endedAt: number }
+
+// Context size of the latest step, length of the latest run and when it ended. Oldest-first input.
+// Agents use it to judge if a follow-up would rewrite a big, expired prompt cache.
+export function sessionUsage(messages: readonly Message[]): SessionUsage | null {
+  const lastIndex = messages.findLastIndex((message) => message.type === 'assistant')
+  const last = messages[lastIndex]
+  if (last?.type !== 'assistant') return null
+  const step = messages.findLast((message) => message.type === 'assistant' && !!message.tokens)
+  const tokens = step?.type === 'assistant' ? step.tokens : undefined
+  const contextTokens = tokens ? tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write : 0
+  // A run starts at a user prompt. Synthetic items also arrive mid-run (subagent results), so they count only without one.
+  const before = messages.slice(0, lastIndex)
+  const start = before.findLast((message) => message.type === 'user') ?? before.findLast((message) => message.type === 'synthetic')
+  const endedAt = last.time.completed ?? last.time.created
+  return { contextTokens, runMs: start ? endedAt - start.time.created : null, endedAt }
+}
+
+function usageLine(usage: SessionUsage | null, now: number): string {
+  if (!usage) return ''
+  const run = usage.runMs === null ? '' : `, last run took ${formatDuration(usage.runMs)}`
+  return `\n\ncontext: ${formatTokens(usage.contextTokens)} tokens${run}, last active ${formatDuration(now - usage.endedAt)} ago (${new Date(usage.endedAt).toISOString()})`
+}
+
 // The text of the last assistant message that has text, like OpenCode's
 // subagent completion (session/subagent-completion.ts). Oldest-first input.
 export function finalAnswer(messages: readonly Message[]): string | null {
@@ -172,8 +209,8 @@ function mediaBlock(urls: readonly string[]): string {
 }
 
 // Inputs and the final answer of each turn, no tool calls: what agents read most often.
-function renderAnswers({ session, messages }: { session: Pick<Session, 'id' | 'title' | 'location'>; messages: Message[] }): string {
-  const title = `# ${session.title} (${session.id})\n\ndirectory: ${session.location.directory}`
+function renderAnswers({ session, messages, usage = '' }: { session: Pick<Session, 'id' | 'title' | 'location'>; messages: Message[]; usage?: string }): string {
+  const title = `# ${session.title} (${session.id})\n\ndirectory: ${session.location.directory}${usage}`
   const blocks: string[] = []
   let turn: Message[] = []
   const flush = () => {
@@ -195,7 +232,7 @@ function renderAnswers({ session, messages }: { session: Pick<Session, 'id' | 't
   // A turn without an answer yet (running, or waiting on a question): show its tool calls.
   if (turn.length > 0 && !finalAnswer(turn)) blocks.push(...turn.map((message) => renderMessage(message, {})))
   else flush()
-  const more = `Only prompts and final answers are shown. Every tool call: kimaki session read ${session.id} --full`
+  const more = `Only prompts and final answers are shown. Every tool call and the reasoning: kimaki session read ${session.id} --thinking`
   return [title, ...blocks, more].join('\n\n')
 }
 
@@ -220,12 +257,14 @@ export async function readSessionMarkdown({
   ])
   if (session instanceof Error) return session
   if (messages instanceof Error) return messages
-  if (!full && !thinking && !verbose) return renderAnswers({ session, messages })
-  return renderSession({ session, messages, thinking, verbose })
+  const usage = usageLine(sessionUsage(messages), Date.now())
+  if (!full && !thinking && !verbose) return renderAnswers({ session, messages, usage })
+  return renderSession({ session, messages, thinking, verbose, usage })
 }
 
-function renderSession({ session, messages, thinking, verbose }: { session: Pick<Session, 'id' | 'title' | 'location'>; messages: Message[]; thinking?: boolean; verbose?: boolean }): string {
-  const title = `# ${session.title} (${session.id})\n\ndirectory: ${session.location.directory}`
+// Transcripts pass no usage: their "ago" would be stale on disk.
+function renderSession({ session, messages, thinking, verbose, usage = '' }: { session: Pick<Session, 'id' | 'title' | 'location'>; messages: Message[]; thinking?: boolean; verbose?: boolean; usage?: string }): string {
+  const title = `# ${session.title} (${session.id})\n\ndirectory: ${session.location.directory}${usage}`
   return [title, ...messages.map((message) => renderMessage(message, { thinking, verbose }))].join('\n\n')
 }
 

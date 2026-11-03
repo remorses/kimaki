@@ -305,6 +305,8 @@ export function baseInstructions({
 
       Every command that takes a session (\`--session\`, \`--thread\`, or a positional ID) accepts a session ID, a Discord thread ID, or a Discord thread URL. Prefer thread IDs: \`kimaki send --thread\` works from every computer, while a session ID only exists on the computer that created it.
 
+      **Cold long sessions:** the provider prompt cache expires a few minutes after a session's last request, so the next prompt writes its whole context to the cache again. When a session has more than 400k tokens of context and was last active more than 10 minutes ago, do not send it a follow-up. Start a new session instead and put the old thread's Discord URL in the prompt, so the new agent reads what it needs with \`kimaki session read <url> --thinking\` or from its transcript. \`kimaki session read\` and \`<session-finished>\` notes show the context size, the last run's duration and when it was last active.
+
       To continue a thread from another computer, find its Discord channel, list its threads, then send with \`--thread\`:
 
       \`\`\`bash
@@ -437,18 +439,20 @@ export function baseInstructions({
       To read a session as markdown, pipe to a file. Logs go to stderr:
 
       \`\`\`bash
-      kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null          # prompts and final answers only
-      kimaki session read <sessionId> --full > ./tmp/session.md 2>/dev/null   # every tool call too
+      kimaki session read <sessionId> > ./tmp/session.md 2>/dev/null              # prompts and final answers only
+      kimaki session read <sessionId> --full > ./tmp/session.md 2>/dev/null       # every tool call too
+      kimaki session read <sessionId> --thinking > ./tmp/session.md 2>/dev/null   # tool calls and reasoning, like the transcripts
+      kimaki session read <sessionId> --verbose > ./tmp/session.md 2>/dev/null    # also tool outputs
       \`\`\`
 
-      Start with the default output. Use \`--full\` when you need to see how the session got there (tool calls, errors), and \`--thinking\` / \`--verbose\` only for the full dump with reasoning and tool outputs. If a file is under 100 KB, read the whole file. Do not grep first.
+      The header shows the context size, how long the last run took and when the session was last active. The default output is enough to check a result. To understand or continue a session's work, read it with \`--thinking\`: every tool call input and the reasoning, the same content as its transcript. Use \`--verbose\` only when you need tool outputs. If a file is under 100 KB, read the whole file. Do not grep first.
 
       ### discord links to sessions
 
-      A Discord link the user shares like \`https://discord.com/channels/<guild_id>/<thread_id>\` usually points to a Kimaki session thread. \`session read\` also accepts the thread ID (last path segment):
+      A Discord link the user shares like \`https://discord.com/channels/<guild_id>/<thread_id>\` usually points to a Kimaki session thread. \`session read\` also accepts the link or the thread ID (last path segment). Read it with \`--thinking\`, so you see the tool calls and reasoning, not only the prompts and final answers:
 
       \`\`\`bash
-      kimaki session read <thread_id> > ./tmp/session.md 2>/dev/null
+      kimaki session read <thread_id> --thinking > ./tmp/session.md 2>/dev/null
       \`\`\`
 
       When the user asks you to find a session, always show the Discord thread as a clickable link, not just the raw session ID or thread ID: \`https://discord.com/channels/<guild_id>/<thread_id>\`. Use the current guild ID unless the search result is from a different guild. \`kimaki session url <id>\` prints the link.
