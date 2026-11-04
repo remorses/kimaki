@@ -28,6 +28,7 @@ const DESKTOP_METHOD_ID: Integration.MethodID = Integration.MethodID.make('grok-
 const DESKTOP_ACCOUNT = 'desktop'
 const STORAGE_KEY = 'inventory'
 const ALIASES_KEY = 'aliases'
+const CURSOR_PREFIX = 'seen/'
 const LIST_TIMEOUT_MS = 150_000
 // Bots have no token limit OpenCode can see; a large window keeps it from compacting.
 const CONTEXT_TOKENS = 1_000_000
@@ -132,6 +133,15 @@ export default Plugin.define({
       return next
     }
 
+    // Where each session stopped reading each bot's transcript, so the next turn shows what came later.
+    const cursor = {
+      get: async (key: string) => {
+        const value = await ctx.storage.get(`${CURSOR_PREFIX}${key}`).catch(() => undefined)
+        return typeof value === 'number' ? value : null
+      },
+      set: (key: string, seq: number) => ctx.storage.set(`${CURSOR_PREFIX}${key}`, seq),
+    }
+
     // Two turns on a new slug must create one bot, not two.
     const creating = new Map<string, Promise<string | Error>>()
     const resolveBot = async ({ account, client, slug, signal }: { account: string; client: GrokBotClient; slug: string; signal: AbortSignal }) => {
@@ -231,7 +241,9 @@ export default Plugin.define({
         // OpenCode passes the active account's OAuth access token as `apiKey`; the desktop method passes none.
         const apiKey = typeof event.options.apiKey === 'string' && event.options.apiKey ? event.options.apiKey : undefined
         const { account, client } = clientFor(apiKey)
-        event.sdk = { languageModel: (modelID: string) => new GrokBotLanguageModel(modelID, client, ({ slug, signal }) => resolveBot({ account, client, slug, signal })) }
+        event.sdk = {
+          languageModel: (modelID: string) => new GrokBotLanguageModel(modelID, client, ({ slug, signal }) => resolveBot({ account, client, slug, signal }), cursor),
+        }
       },
       { providerID: PROVIDER_ID },
     )

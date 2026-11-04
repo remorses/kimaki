@@ -19,4 +19,5 @@ Add `@kimaki/plugin-grok-bot`, an OpenCode V2 plugin that makes Grok Bot a provi
 - **Login**: in `/connect`, pick **Grok Bot account (browser sign-in)** and approve with the Cursor account of your Grok Bot. Connect several accounts and switch between them; the models follow the active account. **Grok Bot desktop app** reuses the macOS app login instead (asks for Keychain access once).
 - **Replies** stream as text, and the bot's tool activity ("is running shell commands", screenshots) shows as finished tool calls.
 - **Cards** become readable text: questions list their options, approvals show the command, plus files, app connections, forms, secret requests and drafts. Reply with an option number, or `approve` / `always` / `deny`, to answer them from OpenCode.
+- **Late messages**: anything the bot wrote after the last turn (a background task, a routine, a reply from another device) shows at the start of the next turn, under "Sent by the bot since the last message".
 - Titles and compaction are answered locally, because the bot keeps its own history. Attachments are not sent yet.

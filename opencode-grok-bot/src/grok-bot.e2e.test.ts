@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { OpenCode, type OpenCodeClient } from '@opencode/client'
 import { afterAll, beforeAll, expect, onTestFailed, test } from 'vitest'
-import { ACCOUNT_METHOD_ID } from './index.ts'
+import { ACCOUNT_METHOD_ID, type Entry } from './index.ts'
 import { createGrokBotClient, jwtClaims, listAgents, pollLogin, refreshLogin, startLogin } from './grok-bot.ts'
 
 const BOT_NAME = 'OpenCode E2E'
@@ -192,9 +192,38 @@ test(
     expect(tools.map((part) => part.type === 'tool' && { executed: part.executed, status: part.state.status })).toContainEqual({ executed: true, status: 'completed' })
     const secondText = second.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
     expect(secondText).toContain('grok-e2e-42')
+
+    // A message the bot answers outside OpenCode (another device, a routine) shows up on the next turn.
+    const outside = await grok.call({
+      method: 'sendPrompt',
+      body: { agentId: botId, prompt: 'Reply with exactly the word LATER and nothing else.', clientNonce: crypto.randomUUID(), source: 'desktop', sendSource: 'chat', initiator: 'user' },
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (outside instanceof Error) throw outside
+    // Wait for the bot's reply and for the bot to go idle, so the OpenCode turn starts after it.
+    const waitUntil = Date.now() + 120_000
+    while (!(await answeredOutside())) {
+      if (Date.now() > waitUntil) throw new Error('the bot never answered the outside prompt')
+      await sleep(1_000)
+    }
+    const third = await turn(session.id, 'Reply with exactly the word AGAIN and nothing else.')
+    const thirdText = third.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
+    expect(thirdText).toContain('Sent by the bot since the last message')
+    expect(thirdText).toContain('LATER')
+    expect(thirdText).toContain('AGAIN')
   },
   TURN_TIMEOUT_MS,
 )
+
+async function answeredOutside() {
+  const signal = AbortSignal.timeout(30_000)
+  const [tail, agents] = await Promise.all([grok.call<{ entries?: Entry[] }>({ method: 'getAgentTranscriptTail', body: { id: botId, limit: 20 }, signal }), listAgents({ client: grok, signal })])
+  if (tail instanceof Error) throw tail
+  if (agents instanceof Error) throw agents
+  const agent = agents.find((candidate) => candidate.id === botId)
+  const replied = (tail?.entries ?? []).some((entry) => entry.kind === 'send-message' && JSON.stringify(entry.message).includes('LATER'))
+  return replied && !agent?.isRunning && !agent?.isRunningTurn
+}
 
 test(
   'a model only listed in opencode.json creates its bot on the first turn',
