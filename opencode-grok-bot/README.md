@@ -7,8 +7,6 @@ Use your **Grok Bot** bots as OpenCode V2 models. Every bot and group of your ac
 {
   "plugins": [{ "package": "@kimaki/plugin-grok-bot" }],
   "model": "grok-bot/ghosthand-x-marketing",
-  // a model only listed here becomes a new bot on its first turn
-  "providers": { "grok-bot": { "models": { "researcher": { "name": "Market Researcher" } } } },
 }
 ```
 
@@ -24,6 +22,7 @@ OpenCode UI   ◀── text, reasoning, tool activity, cards as text ◀── 
 ```
 
 - **Model IDs** are bot names in kebab case (`grok-bot/qa-engineer`). Two bots with the same name: the newer one gets the first 4 ID characters (`backlinks-5ad0`). A renamed bot keeps its old ID as an alias.
+- **New bots**: create them in the Grok Bot app. They show up as models when the plugin lists the bots again: on OpenCode start, on a login change, or after the plugin creates a bot. A model ID that matches no bot, for example one only listed under `providers."grok-bot".models` in `opencode.json`, creates a bot with that name on its first turn.
 - **Cards** (questions, approvals, app access) render as text. Reply with an option number, or `approve` / `always` / `deny`, to answer them.
 
 ## Limitations
