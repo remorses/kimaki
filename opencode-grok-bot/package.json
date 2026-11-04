@@ -1,0 +1,71 @@
+{
+  "name": "@kimaki/plugin-grok-bot",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "OpenCode V2 plugin that adds Grok Bot as a provider: every bot is a model, replies, tool calls and cards stream into the session. Uses the Grok Bot desktop app login.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./src": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "rimraf dist \"*.tsbuildinfo\" && pnpm build",
+    "test": "vitest",
+    "typecheck": "tsc"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "provider",
+    "grok",
+    "grok-bot",
+    "xai",
+    "cursor",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remorses/kimaki",
+    "directory": "opencode-grok-bot"
+  },
+  "homepage": "https://github.com/remorses/kimaki",
+  "bugs": "https://github.com/remorses/kimaki/issues",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "errore": "workspace:^"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "^3.0.8",
+    "@opencode/cli": "2.2.5",
+    "@opencode/client": "2.2.5",
+    "@opencode/plugin": "2.2.5",
+    "@types/node": "^24.3.0",
+    "rimraf": "^6.0.1"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.2.5"
+  }
+}
