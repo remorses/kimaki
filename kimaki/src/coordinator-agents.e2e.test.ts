@@ -1,5 +1,5 @@
-// Agent picks in a coordinator channel: `/<agent>-agent prompt:` and a spoken
-// agent start a new thread with that agent, and `kimaki send --agent --model`
+// Agent picks in a coordinator channel: `/<agent>-agent` (with or without a prompt)
+// and a spoken agent start a new thread with that agent, and `kimaki send --agent --model`
 // to the coordinator (workers pass --agent <current_agent>) keeps its agent and model.
 
 import fs from 'node:fs'
@@ -36,6 +36,7 @@ const matchers: DeterministicMatcher[] = [
   reply('hello-marker', 'hello'),
   reply('slash-agent-marker', 'slash agent ok'),
   reply('voice-agent-marker', 'voice agent ok'),
+  reply('empty-agent-marker', 'empty agent ok'),
   reply('worker-note-marker', 'IDLE'),
 ]
 
@@ -102,6 +103,28 @@ test('/<agent>-agent with a prompt starts a thread with that agent; the coordina
     -# » **tommy:** Think slash-agent-marker
     -# *using deterministic-provider/deterministic-thinker ⋅ thinker*
     slash agent ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-thinker ⋅ thinker*"
+  `)
+  expect(await coordinator()).toEqual(initial)
+})
+
+test('/<agent>-agent without a prompt starts an idle thread with that agent; the coordinator keeps its agent and model', async () => {
+  const { discord, channelId } = twin
+  const before = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
+  await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'thinker-agent' })
+  const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (candidate) => !before.has(candidate.id) })
+  await waitForBotMessageContaining({ discord, threadId: thread.id, text: 'Send a message to start working.' })
+  expect(await coordinator()).toEqual(initial)
+  await discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'Think empty-agent-marker' })
+  await waitForFooter({ discord, threadId: thread.id })
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: assistant (TestBot)
+    Send a message to start working.
+    --- from: user (tommy)
+    Think empty-agent-marker
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-thinker ⋅ thinker*
+    empty agent ok
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-thinker ⋅ thinker*"
   `)
   expect(await coordinator()).toEqual(initial)

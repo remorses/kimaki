@@ -49,7 +49,7 @@ import {
 } from 'discord.js'
 
 import { agentUiRoutes } from './agent-ui.ts'
-import { oc, projectOf, type Bot, type ModelChoice } from './bot.ts'
+import { isCoordinatorChannel, oc, projectOf, routeText, type Bot, type ModelChoice } from './bot.ts'
 import { createLoginRoutes } from './commands/login-commands.ts'
 import { applyAgent, createPreferenceRoutes, switchModel, variantChoices, variantModel } from './commands/preference-commands.ts'
 import { sessionRoutes } from './commands/session-commands.ts'
@@ -348,6 +348,8 @@ async function sendInput(
     messageId: interaction.id,
     startMessageId: null,
     ...(model && { model }),
+    // An agent pick without a prompt: the session waits in the thread for its first message.
+    run: Boolean(routeText(route)),
   })
   if (started instanceof Error) return replyError(interaction, started)
   await interaction.editReply({ content: `Started a new session in <#${started.threadId}>` })
@@ -361,7 +363,9 @@ async function handleDynamic(bot: Bot, { interaction, target }: { interaction: C
     if (where instanceof Error) return replyError(interaction, where)
     const model = variant ? await variantModel(bot, { target: where, variant, agent: target.name }) : null
     if (model instanceof Error) return replyError(interaction, model)
-    if (!text) return applyAgent(bot, { interaction, target: where, agent: target.name, model })
+    // In a coordinator channel the pick starts a new thread, with or without a prompt (sendInput).
+    const coordinatorChannel = !where.conversation?.isThread() && isCoordinatorChannel(bot, where.channelId)
+    if (!text && !coordinatorChannel) return applyAgent(bot, { interaction, target: where, agent: target.name, model })
     const label = model ? `${target.name}, ${model.variant}` : target.name
     return sendInput(bot, { interaction, route: { kind: 'steer', text, agent: target.name }, echo: `(${label}) ${text}`, model })
   }
