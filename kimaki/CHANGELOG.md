@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.6.0
+
+1. **`KIMAKI_WHISPER_TIMEOUT` for slow local Whisper servers.** The 2 minute transcription limit is too short for long voice messages on CPU-only hardware. Raise it in seconds; it applies only when `KIMAKI_WHISPER_URL` is set and the default is unchanged:
+
+   ```bash
+   KIMAKI_WHISPER_URL=http://127.0.0.1:8000/v1 KIMAKI_WHISPER_TIMEOUT=600 kimaki
+   ```
+
+2. **`/<agent>-agent` without a prompt starts a new thread in a coordinator channel.** Before, it switched the coordinator session to that agent, so the next channel message ran the coordinator on the wrong agent. Now the thread waits for your first message and the coordinator keeps its own agent and model:
+
+   ```
+   /thinker-agent              ─▶ new thread "Send a message to start working." (thinker agent)
+   /thinker-agent prompt:...   ─▶ new thread that runs the prompt (thinker agent)
+   ```
+
+   Inside a thread, and in channels with coordinator mode off, the command works as before.
+
+3. **Renaming a thread in Discord no longer prompts the agent.** Discord posts a system message with only the new name, and Kimaki sent it to the agent as user text. Now system messages (renames, pins, member joins, boosts) never become prompts, and a rename sets the OpenCode session title:
+
+   ```
+   rename thread in Discord ─▶ CHANNEL_NAME_CHANGE message ─▶ session.update({ title })   (no prompt)
+   ```
+
 ## 1.5.0
 
 1. **Coordinator channels, on by default.** A project channel is now a chat with one long coordinator session: you write in the channel, it answers in the channel, and it starts a worker thread for each piece of work.
