@@ -51,6 +51,13 @@ const RETRY_DELAY_MS = 500
 // Later messages of the conversation wait for the transcription (ingress.ts): cap all providers and retries.
 const TRANSCRIPTION_TIMEOUT_MS = 2 * 60_000
 
+// KIMAKI_WHISPER_TIMEOUT (seconds) raises the cap for a slow local Whisper server (CPU only).
+function transcriptionTimeoutMs(entries: Transcriber[]) {
+  const seconds = Number(process.env['KIMAKI_WHISPER_TIMEOUT'])
+  if (!entries.some((entry) => entry.kind === 'local-whisper') || !(seconds > 0)) return TRANSCRIPTION_TIMEOUT_MS
+  return seconds * 1000
+}
+
 export class TranscriptionError extends errore.createTaggedError({
   name: 'TranscriptionError',
   message: 'Transcription failed: $reason',
@@ -699,7 +706,8 @@ export async function transcribe({
   const prompt = list.some((entry) => entry.kind === 'openai' || entry.kind === 'gemini')
     ? transcriptionPrompt({ fileTree: await projectFileTree(directory), agents })
     : ''
-  const signal = AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)
+  const timeoutMs = transcriptionTimeoutMs(list)
+  const signal = AbortSignal.timeout(timeoutMs)
   const run = (entry: Transcriber) => {
     if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry, signal })
     if (entry.kind === 'local-whisper') return withRetries({ signal, attempt: () => transcribeViaLocalWhisper({ whisper: entry.whisper, audio, mediaType, signal }) })
@@ -712,7 +720,7 @@ export async function transcribe({
   }
   let last: TranscriptionFailure | NoTranscriptionKeyError = new NoTranscriptionKeyError()
   for (const entry of list) {
-    if (signal.aborted) return new TranscriptionError({ reason: `no answer within ${TRANSCRIPTION_TIMEOUT_MS / 60_000} minutes` })
+    if (signal.aborted) return new TranscriptionError({ reason: `no answer within ${timeoutMs / 60_000} minutes` })
     const result = await run(entry)
     if (!(result instanceof Error) || result instanceof EmptyTranscriptionError) return result
     logger.warn(`${entry.kind} transcription failed${entry === list.at(-1) ? '' : ', trying the next provider'}`, result)

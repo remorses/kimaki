@@ -95,7 +95,7 @@ To keep audio on your machine, point Kimaki at your own **Whisper** server. Any 
 KIMAKI_WHISPER_URL=http://127.0.0.1:8000/v1 kimaki
 ```
 
-When `KIMAKI_WHISPER_URL` is set it is the **only** transcriber. If the server fails, you see the error and the audio never goes to a cloud provider. Optional: `KIMAKI_WHISPER_MODEL` (default `whisper-1`) and `KIMAKI_WHISPER_API_KEY`. Like ChatGPT, Whisper only transcribes: queue, chat, and agent instructions are ignored.
+When `KIMAKI_WHISPER_URL` is set it is the **only** transcriber. If the server fails, you see the error and the audio never goes to a cloud provider. Optional: `KIMAKI_WHISPER_MODEL` (default `whisper-1`), `KIMAKI_WHISPER_API_KEY`, and `KIMAKI_WHISPER_TIMEOUT` (seconds, default 120) for slow CPU-only servers. Like ChatGPT, Whisper only transcribes: queue, chat, and agent instructions are ignored.
 
 ### Gateway mode without a key
 
