@@ -3,8 +3,8 @@
 // archive them, and manage thread members through the DigitalDiscord server.
 
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
-import { Client, GatewayIntentBits, ChannelType } from 'discord.js'
-import type { TextChannel, ThreadChannel } from 'discord.js'
+import { Client, GatewayIntentBits, ChannelType, MessageType } from 'discord.js'
+import type { Message, TextChannel, ThreadChannel } from 'discord.js'
 import { DigitalDiscord } from '../src/index.js'
 
 describe('threads and channels', () => {
@@ -156,6 +156,29 @@ describe('threads and channels', () => {
     expect(members.some((m) => m.userId === discord.botUserId)).toBe(true)
   })
 
+  test('user renames thread: THREAD_UPDATE and a CHANNEL_NAME_CHANGE message', async () => {
+    const updated = new Promise<ThreadChannel>((resolve) => {
+      client.once('threadUpdate', (_old, thread) => resolve(thread as ThreadChannel))
+    })
+    const created = new Promise<Message>((resolve) => {
+      client.once('messageCreate', resolve)
+    })
+    await discord.thread(createdThreadId).user(testUserId).renameThread({ name: 'renamed-thread' })
+
+    expect((await updated).name).toBe('renamed-thread')
+    const message = await created
+    expect(message.type).toBe(MessageType.ChannelNameChange)
+    expect(message.system).toBe(true)
+    expect(message.content).toBe('renamed-thread')
+    expect(await discord.thread(createdThreadId).text()).toMatchInlineSnapshot(`
+      "--- from: assistant (TestBot)
+      Thread starter message
+      Message in thread
+      --- from: user (TestUser)
+      [renamed thread to: renamed-thread]"
+    `)
+  })
+
   test('create standalone thread via channel.threads.create()', async () => {
     const guild = client.guilds.cache.first()!
     const channel = guild.channels.cache.find(
@@ -184,7 +207,7 @@ describe('threads and channels', () => {
     const threads = await discord.channel(channelId).getThreads()
     expect(threads.length).toBeGreaterThanOrEqual(2)
     const names = threads.map((t) => t.name)
-    expect(names).toContain('test-thread')
+    expect(names).toContain('renamed-thread')
     expect(names).toContain('standalone-thread')
   })
 })

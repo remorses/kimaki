@@ -1,6 +1,7 @@
 // Discord ingress (spec 4): gates every messageCreate, parses it into a Route
 // and calls actions. Gates, in order: webhooks and our own messages (except
-// remote send envelopes), channel ownership (only channels mapped in this
+// remote send envelopes), system messages (a thread rename only sets the
+// session title), channel ownership (only channels mapped in this
 // machine's SQLite), permission (other bots need the Kimaki role).
 // Messages of one channel are handled in arrival order, after OpenCode is ready.
 //
@@ -21,6 +22,7 @@ import {
   Events,
   GuildMember,
   MessageFlags,
+  MessageType,
   PermissionFlagsBits,
   type Attachment,
   type Guild,
@@ -28,7 +30,7 @@ import {
 } from 'discord.js'
 import * as errore from 'errore'
 
-import { isCoordinatorChannel, projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts'
+import { isCoordinatorChannel, oc, projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts'
 import { formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { parseInput, sendInput } from './lock-routes.ts'
@@ -320,6 +322,18 @@ async function handleMessage(bot: Bot, message: Message) {
   await message.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
 }
 
+// A rename in the Discord UI posts a CHANNEL_NAME_CHANGE message with the new
+// name as content (issue #258): the session title follows it, nothing is prompted.
+async function handleThreadRename(bot: Bot, message: Message) {
+  if (!message.inGuild() || !message.channel.isThread()) return
+  const sessionId = bot.store.getState().roots[message.channel.id]
+  if (!sessionId || !(await authorCanUseKimaki(bot, message))) return
+  const title = message.content
+  const renamed = await oc(bot, 'session.update', (client) => client.session.update({ sessionID: sessionId, title }))
+  if (renamed instanceof Error) return logger.warn(`title of ${sessionId} from thread rename`, renamed)
+  logger.log(`session ${sessionId} renamed to "${title}" by ${message.author.username}`)
+}
+
 // Registers the message listeners. Messages of one channel are handled in arrival order:
 // a text sent while a voice message is transcribed waits for it (voice-attachments.e2e.test.ts).
 export function registerIngress(bot: Bot) {
@@ -341,6 +355,9 @@ export function registerIngress(bot: Bot) {
     // Webhooks have no member to check. Own messages only matter as remote send envelopes.
     if (message.webhookId) return
     if (message.author.id === bot.discord.user?.id && !message.embeds[0]?.footer?.text.startsWith(REMOTE_SEND_PREFIX)) return
+    if (message.type === MessageType.ChannelNameChange) return serialize(message.channelId, () => handleThreadRename(bot, message))
+    // Pins, joins, boosts and other system messages are never prompts.
+    if (message.type !== MessageType.Default && message.type !== MessageType.Reply) return
     serialize(message.channelId, () => handleMessage(bot, message))
   })
   // Deleting a queued Discord message removes it from the queue.
