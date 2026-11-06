@@ -14,6 +14,7 @@ import { Plugin, Rpc } from '@opencode/plugin'
 import {
   blockKey,
   classify,
+  DEFAULT_BLOCK_MS,
   DEFAULT_MODELS,
   ENV_ACCOUNT,
   formatModel,
@@ -21,6 +22,7 @@ import {
   pick,
   isBlock,
   type Block,
+  type Choice,
   type ModelRef,
 } from './fallback.ts'
 
@@ -65,6 +67,13 @@ export default Plugin.define({
       const integration = await ctx.integration.get({ integrationID: await integrationOf(providerID) }).catch(() => undefined)
       const ids = (integration?.data.connections ?? []).flatMap((item) => (item.type === 'credential' ? [item.id] : []))
       return ids.length === 0 ? [ENV_ACCOUNT] : ids
+    }
+
+    // Resolving refreshes an expiring OAuth token now, so a dead refresh token fails here, not in the retried step.
+    async function usable({ model, credentialID }: Choice) {
+      const integration = await ctx.integration.get({ integrationID: await integrationOf(model.providerID) }).catch(() => undefined)
+      const connection = integration?.data.connections.find((item) => item.type === 'credential' && item.id === credentialID)
+      return !connection || ctx.integration.connection.resolve(connection).then(() => true, () => false)
     }
 
     async function readBlocks(now: number) {
@@ -143,7 +152,16 @@ export default Plugin.define({
       const accounts = Object.fromEntries(
         await Promise.all(providers.map(async (providerID) => [providerID, await accountsOf(providerID)] as const)),
       )
-      const choice = pick({ ranking: candidates, accounts, blocks: await readBlocks(now), now })
+      const blocks = await readBlocks(now)
+      let choice = pick({ ranking: candidates, accounts, blocks, now })
+      // Each failed check blocks the chosen account, so the loop ends. A waiting choice
+      // is not checked: its token may be refreshed before the wait ends.
+      while (choice && choice.waitUntil === undefined && !(await usable(choice))) {
+        const auth: Block = { providerID: choice.model.providerID, credentialID: choice.credentialID, modelID: '*', until: now + DEFAULT_BLOCK_MS.auth, reason: 'auth' }
+        await saveBlock(auth)
+        blocks.push(auth)
+        choice = pick({ ranking: candidates, accounts, blocks, now })
+      }
       if (!choice) return
 
       if (choice.credentialID !== ENV_ACCOUNT && (await activeCredential(choice.model.providerID)) !== choice.credentialID) {

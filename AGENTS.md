@@ -61,6 +61,7 @@ OpenCode events ──▶ opencode-server.ts ──▶ event-loop.ts ──▶ t
 - `gateway-proxy/`: multi-tenant Discord Gateway + REST proxy. one shared bot for all users.
 - `website/`: https://kimaki.dev, OAuth callback and onboarding status routes.
 - `db/`: shared Postgres schema (`db/schema.prisma`) for website and gateway. kimaki does not use it.
+- `opencode-fallback/`: an independent OpenCode plugin. The retry hook blocks failed accounts in plugin storage, activates another credential globally, and switches models per session. Before activating an account it calls `integration.connection.resolve`, so an OAuth login with a dead refresh token is blocked instead of chosen. A refresh failure of the already active account happens before any plugin hook in OpenCode 2.2.5 (fix: anomalyco/opencode#61757).
 
 full gateway diagram, auth flow and onboarding flow: `docs/gateway-architecture.md`.
 

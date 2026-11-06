@@ -152,7 +152,6 @@ const authorizeHeadless = () =>
     }
   })
 
-// TODO: concurrent sessions can refresh the same token twice; OpenCode's Integration connection.resolve has no single-flight lock.
 const refresh = (credential: Credential.OAuth) =>
   tokenEffect({ body: { grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: credential.refresh }, methodID: credential.methodID })
 
