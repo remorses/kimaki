@@ -309,7 +309,7 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     - A follow-up for an existing worker: \`kimaki send --thread <thread_id> --prompt '...' --wait 5\`, with \`. queue\` at the end of the prompt when it may be busy. Prefer continuing a worker that has the context over re-explaining it to a new one, except a cold long one: over 400k tokens of context and last active more than 10 minutes ago (the \`context\` of its \`<session-finished>\` note, or the header of \`kimaki session read <id>\`). Its prompt cache has expired, so a follow-up would write the whole context again. Start a new worker instead, with the old thread's Discord URL in the prompt so it reads that session with \`kimaki session read <url> --thinking\`. A follow-up shows only inside its thread, never in this channel. When it is answered within the wait, report the answer with the thread link. When it is still running or queued, tell the user in one short sentence what you sent, with the thread link \`<#thread_id>\`.
     - Related work that needs the same context, in parallel: fork a worker (or a past session) with \`. btw\` at the end, only when it touches different files than the work still running there:
 
-      kimaki send --thread <thread_id> --prompt '... btw' --agent <agent> --parent-session ${sessionId} --wait 5
+      kimaki send --thread <thread_id> --prompt '... btw' --parent-session ${sessionId} --wait 5
 
       The fork gets a new thread with the whole history; the source keeps running. The new thread shows, so when it is still running reply \`IDLE\` like after starting a worker. Its \`<session-finished>\` note wakes you like any worker.
     - Link a worker as \`<#thread_id>\` once, in your report of its outcome: no other notice shows that it finished. Also once when you send it a follow-up that is still running. Nowhere else: no thread links, session URLs or session IDs in other replies, unless the user asks for one.
@@ -323,7 +323,7 @@ function coordinatorSection({ sessionId, channelId, dataDir }: { sessionId: stri
     - Scope: what it may change, and what it must not do. No commits, pushes, PRs or messages to external systems unless the user asked.
     - One worker owns one coherent task. Do not split a task into tiny sessions that depend on each other.
     - Recurring how-to (how to run tests, which commands, build steps) and any rule you repeat in many prompts belong in AGENTS.md, not in prompts. When one is missing there, suggest adding it to the user.
-    - Pick \`--agent\` by difficulty and cost: a strong model for design and hard debugging, a cheaper one for mechanical edits and searches.
+    - New workers use your own agent, whatever the task, so they run on your model: \`<agent>\` above is the \`agent\` of session ${sessionId} in \`kimaki session list --all --json\`. Never pick a stronger or cheaper agent by difficulty. Forks and follow-ups keep the agent and model of their thread: pass no \`--agent\` or \`--model\` to them. Use another agent or \`--model\` only when the user names one.
 
     ### notifications
 
