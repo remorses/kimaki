@@ -1,22 +1,24 @@
 // Grok Bot transcript entries and bot activity to AI SDK stream parts, and OpenCode replies
 // to card answers.
 //
-// What the gateway shows of a turn (verified on the "temporal" harness, desktop app 0.78):
-// - transcript entries (`getAgentTranscriptTail`, `transcript` events) with the turn's
-//   `requestId`: the chat messages and cards the user sees;
-// - the bot's `currentActivity` in the roster (`agent-upserted` events): `{ kind: "tool",
-//   tool, detail }` while a tool runs, `{ kind: "thinking" }` otherwise. That is the only
-//   trace of tool calls; their arguments and output stay on the bot's computer.
+// What the backend shows of a turn (verified on the "temporal" harness, desktop app 0.78):
+// - transcript entries (`ListGrokBotTranscriptEntries`) with the turn's `requestId`: the
+//   chat messages and cards the user sees;
+// - the bot's live `activity` (`ListGrokBotAgentStatuses`): `{ kind: "tool", tool, detail }`
+//   while a tool runs, `{ kind: "thinking" }` otherwise. That is the only trace of tool
+//   calls; their arguments and output stay on the bot's computer.
 //
 //   send-message text                ──▶ text
 //   send-message cards               ──▶ text that says what the card asks and how to answer it
+//   attachments and images           ──▶ text with the local path the file is saved to (`saved`)
 //   message (assistant, streams)     ──▶ text that grows
 //   thinking / reasoning entries     ──▶ reasoning
 //   notice, event                    ──▶ text in italics
-//   currentActivity tool ▶ next one  ──▶ provider-executed tool-call, then tool-result
+//   activity tool ▶ next one         ──▶ provider-executed tool-call, then tool-result
 //
 // Grok Bot runs every tool on its own computer, so OpenCode only shows them (providerExecuted).
 
+import path from 'node:path'
 import type { LanguageModelV3StreamPart } from '@ai-sdk/provider'
 
 export type Entry = {
@@ -37,6 +39,7 @@ export type Entry = {
   toAgent?: { id?: string; name?: string }
   author?: { id?: string; name?: string; kind?: string }
   message?: SendMessage
+  images?: Array<{ url?: string; alt?: string }>
   respondedValue?: string | null
   widgetDismissed?: boolean
   widgetSkipped?: boolean
@@ -77,6 +80,8 @@ export type SendMessage = {
   url?: string
   name?: string
   file_name?: string
+  // Where the file was on the bot's computer when it sent it.
+  source_path?: string
   images?: Array<{ url?: string; alt?: string }>
   widget?: Widget
   formRequest?: { title?: string; instruction?: string; reason?: string; fields?: Array<{ id?: string; label?: string; type?: string; required?: boolean }> }
@@ -155,13 +160,35 @@ function speaker(entry: Entry) {
   return entry.fromAgent?.name ?? entry.author?.name
 }
 
+export type BotFile = { url: string; name: string }
+// Local path of a file the bot sent, or null when it is not saved on this computer.
+export type SavedPath = (file: BotFile) => string | null
+
+const notSaved: SavedPath = () => null
+
+function fileLine({ label, file, saved }: { label: string; file: BotFile; saved: SavedPath }) {
+  const local = saved(file)
+  return local ? `**${label}:** saved to \`${local}\`` : `**${label}:** ${file.name}`
+}
+
+function imageLines({ images, saved }: { images: SendMessage['images']; saved: SavedPath }) {
+  return (images ?? []).flatMap((image) => {
+    if (!image.url) return []
+    const local = saved({ url: image.url, name: path.posix.basename(image.url) })
+    return [local ? `**Image:** saved to \`${local}\`` : `![${image.alt ?? 'image'}](${image.url})`]
+  })
+}
+
 // Markdown for a send-message entry: the bot's chat messages and its interactive cards.
-export function renderSendMessage(entry: Entry): string {
+export function renderSendMessage(entry: Entry, saved: SavedPath = notSaved): string {
   const message = entry.message
   if (!message) return ''
   const type = message.type ?? 'message'
-  if (type === 'text') return firstText(message.content, message.text)
-  if (type === 'attachment') return `**File:** ${firstText(message.file_name, message.name, message.url)}`
+  if (type === 'text') return [firstText(message.content, message.text), ...imageLines({ images: message.images, saved })].filter(Boolean).join('\n')
+  if (type === 'attachment') {
+    const name = firstText(message.file_name, message.name, message.url)
+    return message.url ? fileLine({ label: 'File', file: { url: message.url, name }, saved }) : `**File:** ${name}`
+  }
   if (type === 'connector') {
     const connector = message as SendMessage & { connector?: string }
     return `**Connect app:** ${connector.connector ?? 'an app'}. Connect it in the Grok Bot app.`
@@ -202,9 +229,8 @@ export function renderSendMessage(entry: Entry): string {
     ]
     return lines.filter(Boolean).join('\n')
   }
-  const images = (message.images ?? []).map((image) => `![${image.alt ?? 'image'}](${image.url})`)
   const text = firstText(message.content, message.text, message.body, message.title)
-  return [text ? `**${type}:** ${text}` : `**${type}**`, ...images].join('\n')
+  return [text ? `**${type}:** ${text}` : `**${type}**`, ...imageLines({ images: message.images, saved })].join('\n')
 }
 
 function renderWidget(entry: Entry, widget: Widget) {
@@ -218,14 +244,14 @@ function renderWidget(entry: Entry, widget: Widget) {
 }
 
 // Text a non-tool entry shows in OpenCode, or null for entries with nothing to show.
-export function entryText(entry: Entry): string | null {
+export function entryText(entry: Entry, saved: SavedPath = notSaved): string | null {
   if (entry.kind === 'message') {
-    const text = contentText(entry.content) || (entry.text ?? '')
+    const text = [contentText(entry.content) || (entry.text ?? ''), ...imageLines({ images: entry.images, saved })].filter(Boolean).join('\n')
     const from = entry.role === 'assistant' ? undefined : speaker(entry)
     return from ? `**${from}:** ${text}` : text
   }
   if (entry.kind === 'send-message') {
-    const text = renderSendMessage(entry)
+    const text = renderSendMessage(entry, saved)
     const from = speaker(entry)
     return from && text ? `**${from}:** ${text}` : text
   }
@@ -242,7 +268,7 @@ type Open = { id: string; type: 'text' | 'reasoning'; text: string }
 
 // Stateful per turn. Items arrive again on every poll and grow while the bot writes them;
 // each part is emitted once. The newest text item stays open until another item arrives.
-export function createTurnConverter() {
+export function createTurnConverter({ saved = notSaved }: { saved?: SavedPath } = {}) {
   const done = new Set<string>()
   const called = new Set<string>()
   let open: Open | null = null
@@ -273,7 +299,7 @@ export function createTurnConverter() {
     // Cards change after an answer; only their final text is worth showing.
     if (isPending(entry) && entry.kind === 'send-message') return []
     const type = entry.kind === 'thinking' || entry.kind === 'reasoning' ? 'reasoning' : 'text'
-    const text = type === 'reasoning' ? firstText(entry.text, contentText(entry.content)) : (entryText(entry) ?? '')
+    const text = type === 'reasoning' ? firstText(entry.text, contentText(entry.content)) : (entryText(entry, saved) ?? '')
     if (!text) return []
     const parts = open && open.id !== entry.id ? close() : []
     if (!open) {
@@ -295,7 +321,7 @@ export function createTurnConverter() {
 
 export type Activity = { kind?: string; tool?: string; detail?: string } | null | undefined
 
-// One tool call per distinct `currentActivity` tool; it ends when the activity changes.
+// One tool call per distinct `activity` tool; it ends when the activity changes.
 export function createActivityTracker({ prefix }: { prefix: string }) {
   let open: { id: string; name: string; key: string } | null = null
   let count = 0
@@ -322,12 +348,13 @@ export function createActivityTracker({ prefix }: { prefix: string }) {
   return { update, end: settle }
 }
 
-// A reply to a pending card answers the card instead of sending a new prompt.
+// A reply to a pending card answers the card instead of sending a new prompt: one
+// GrokBotService call, like clicking the card in the app.
 export type CardAnswer =
-  | { method: 'respondToWidget'; body: { agentId: string; entryId: string; value: string } }
-  | { method: 'resolveAutoReviewApproval'; body: { agentId: string; entryId: string; requestId: string; resolution: 'approved' | 'always' | 'denied'; approvalPlatform: 'desktop' } }
-  | { method: 'resolveLocalToolPermission'; body: { agentId: string; entryId: string; requestId: string; resolution: 'allow-once' | 'always' | 'deny' } }
-  | { method: 'resolveConnectorGrant'; body: { agentId: string; entryId: string; requestId: string; resolution: 'allowed' | 'always_this_bot' | 'skipped' } }
+  | { method: 'RespondGrokBotWidget'; body: { agentId: string; entryId: string; value: string } }
+  | { method: 'ResolveGrokBotAutoReviewApproval'; body: { agentId: string; requestId: string; resolution: string; approvalPlatform: 'desktop' } }
+  | { method: 'ResolveGrokBotLocalToolPermission'; body: { agentId: string; entryId: string; requestId: string; resolution: string } }
+  | { method: 'ResolveGrokBotConnectorGrant'; body: { agentId: string; entryId: string; requestId: string; resolution: string } }
 
 export function pendingCard(entry: Entry) {
   const message = entry.message
@@ -345,19 +372,19 @@ export function cardAnswer({ entry, agentId, reply }: { entry: Entry; agentId: s
   if (!message || !text) return null
   const card = message.approval ?? message.ask
   if (message.type === 'auto-review-approval' && card?.requestId) {
-    const resolution = ({ approve: 'approved', yes: 'approved', always: 'always', deny: 'denied', no: 'denied' } as const)[word]
+    const resolution = ({ approve: 'APPROVED', yes: 'APPROVED', always: 'ALWAYS', deny: 'DENIED', no: 'DENIED' } as const)[word]
     if (!resolution) return null
-    return { method: 'resolveAutoReviewApproval', body: { agentId, entryId: entry.id, requestId: card.requestId, resolution, approvalPlatform: 'desktop' } }
+    return { method: 'ResolveGrokBotAutoReviewApproval', body: { agentId, requestId: card.requestId, resolution: `GROK_BOT_AUTO_REVIEW_APPROVAL_RESOLUTION_${resolution}`, approvalPlatform: 'desktop' } }
   }
   if (message.type === 'local-tool-permission' && card?.requestId) {
-    const resolution = ({ approve: 'allow-once', yes: 'allow-once', always: 'always', deny: 'deny', no: 'deny' } as const)[word]
+    const resolution = ({ approve: 'ALLOW_ONCE', yes: 'ALLOW_ONCE', always: 'ALWAYS', deny: 'DENY', no: 'DENY' } as const)[word]
     if (!resolution) return null
-    return { method: 'resolveLocalToolPermission', body: { agentId, entryId: entry.id, requestId: card.requestId, resolution } }
+    return { method: 'ResolveGrokBotLocalToolPermission', body: { agentId, entryId: entry.id, requestId: card.requestId, resolution: `GROK_BOT_LOCAL_TOOL_PERMISSION_CARD_RESOLUTION_${resolution}` } }
   }
   if (message.type === 'connector-grant' && card?.requestId) {
-    const resolution = ({ allow: 'allowed', 'allow always': 'always_this_bot', skip: 'skipped' } as const)[word]
+    const resolution = ({ allow: 'ALLOWED', 'allow always': 'ALWAYS_THIS_BOT', skip: 'SKIPPED' } as const)[word]
     if (!resolution) return null
-    return { method: 'resolveConnectorGrant', body: { agentId, entryId: entry.id, requestId: card.requestId, resolution } }
+    return { method: 'ResolveGrokBotConnectorGrant', body: { agentId, entryId: entry.id, requestId: card.requestId, resolution: `GROK_BOT_CONNECTOR_GRANT_RESOLUTION_${resolution}` } }
   }
   if (message.type !== 'widget' || !message.widget) return null
   const options = message.widget.options ?? []
@@ -370,5 +397,5 @@ export function cardAnswer({ entry, agentId, reply }: { entry: Entry; agentId: s
   // Anything that is not an option goes to the bot as a normal message, like typing in the app.
   if (!answers.every((answer) => answer !== null)) return null
   if (answers.length > 1 && !message.widget.multiSelect) return null
-  return { method: 'respondToWidget', body: { agentId, entryId: entry.id, value: answers.join('\n') } }
+  return { method: 'RespondGrokBotWidget', body: { agentId, entryId: entry.id, value: answers.join('\n') } }
 }

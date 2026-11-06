@@ -17,13 +17,19 @@ Then run `/connect`, pick **Grok Bot**, then **Grok Bot account (browser sign-in
 Grok Bot is a **remote agent**, not a plain model. It runs on its own cloud computer with its own tools, skills, memory and chat history. Each OpenCode turn sends only the new user text and streams back the bot's reply.
 
 ```
-OpenCode turn ──▶ new user text only ──▶ sendPrompt ──▶ Grok Bot (cloud computer, own tools)
-OpenCode UI   ◀── text, reasoning, tool activity, cards as text ◀── transcript + roster polling
+OpenCode turn ──▶ new user text only ──▶ SendGrokBotUserMessage ──▶ Grok Bot (server, own tools)
+OpenCode UI   ◀── text, reasoning, tool activity, cards as text ◀── transcript + live state polling
+~/Downloads   ◀── files the bot sends ◀── ReadGrokBotAgentAttachmentChunk (works while the box sleeps)
 ```
 
 - **Model IDs** are bot names in kebab case (`grok-bot/qa-engineer`). Two bots with the same name: the newer one gets the first 4 ID characters (`backlinks-5ad0`). A renamed bot keeps its old ID as an alias.
 - **New bots**: create them in the Grok Bot app. They show up as models when the plugin lists the bots again: on OpenCode start, on a login change, or after the plugin creates a bot. A model ID that matches no bot, for example one only listed under `providers."grok-bot".models` in `opencode.json`, creates a bot with that name on its first turn.
 - **Cards** (questions, approvals, app access) render as text. Reply with an option number, or `approve` / `always` / `deny`, to answer them.
+- **Files** the bot attaches, and images in its messages, are downloaded to `~/Downloads/grok-bot/<hash>/<name>` (set `GROK_BOT_DOWNLOAD_DIR` to change it). The reply shows the local path, and the turn ends after the downloads:
+
+  ```
+  **File:** saved to `/Users/you/Downloads/grok-bot/80526548/followers.csv`
+  ```
 
 ## Limitations
 
@@ -40,7 +46,9 @@ Checked with real turns against a Grok Bot account on OpenCode 2.2.5. Rows marke
 | History | **Bot's own** | One bot is one chat, shared by every OpenCode session on that model: a new session sees what earlier sessions said. Revert, fork and edits in OpenCode do not change the bot's history _(code)_. Switching a session to a `grok-bot` model mid-conversation does not send the earlier messages _(code)_. |
 | Synthetic messages | **Yes** | Synthetic notes added before a prompt are sent with it as plain text. |
 | Compaction | **Local** | No request reaches the bot and the summary is a fixed line. The first turn after a compaction sends OpenCode's `<conversation-checkpoint>` recap of the last turn to the bot. Automatic compaction does not happen: the context window is 1M and usage is 0. |
-| Attachments | **Text files only** | Text files are inlined into the message with their name. Images are replaced by OpenCode with "this model does not support image input". Other binary files are not sent _(code)_. |
+| Attachments you send | **Text files only** | Text files are inlined into the message with their name. Images are replaced by OpenCode with "this model does not support image input". Other binary files are not sent _(code)_. |
+| Files the bot sends | **Yes** | Saved on this computer, see **Files** above. A path on the bot's computer (`/workspace/x.csv`) is not downloaded: ask the bot to send the file as an attachment. Images in bot messages use the same path _(code)_. |
+| Background work | **Next turn** | The bot can end its turn with "I'll send it when done" and post the result in a later bot turn. That result shows at the start of the next OpenCode turn. Ask the bot to do the work inside the turn to get it in the same reply. |
 | Cancel | **Yes** | Interrupting the session stops the bot's run; the bot was idle about 1s later. |
 | Retry | **No** | Failed turns are never retried, so a prompt is never sent twice. |
 | Title | **Local** | The first line of the first user message. |
@@ -49,7 +57,8 @@ Checked with real turns against a Grok Bot account on OpenCode 2.2.5. Rows marke
 
 Other limits:
 
-- **No official API.** The plugin uses the private gateway of the Grok Bot desktop app. A Grok Bot update can break it.
+- **No official API.** The plugin calls the private `GrokBotService` API of the Grok Bot desktop app on `api2.cursor.sh`. A Grok Bot update can break it, like the November 2026 change that made the cloud box gateway refuse prompts (`A Sand box session is not permitted on this endpoint`).
 - **Desktop app login** (the second `/connect` method) is macOS only and was not tested end to end.
-- **Slow first turn** _(code)_: a sleeping cloud computer is woken first, which can take up to 2 minutes.
+- **Polled output**: text and tool activity update once per second, not token by token.
+- **Plugin updates need an OpenCode restart.** OpenCode reloads the plugin when its files change, but keeps the language model it created from the old code (`languages` cache in `packages/core/src/aisdk.ts`), so turns keep running the old code until the server restarts.
 - **Silent bots** _(code)_: when the bot is idle but never reports the end of its turn, the turn ends 2 minutes after it started.

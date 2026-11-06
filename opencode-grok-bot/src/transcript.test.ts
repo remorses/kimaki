@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest'
+import { downloadPath } from './grok-bot.ts'
 import { cardAnswer, createActivityTracker, createTurnConverter, type Activity, type Entry } from './transcript.ts'
 
 test('renders the transcript entries of one turn as parts, across repeated polls', () => {
@@ -122,9 +123,46 @@ test('renders the transcript entries of one turn as parts, across repeated polls
   `)
 })
 
+test('files the bot sends show the local path they are saved to', () => {
+  process.env.GROK_BOT_DOWNLOAD_DIR = '/downloads'
+  const asked: string[] = []
+  const convert = createTurnConverter({
+    saved: (file) => {
+      asked.push(file.url)
+      return downloadPath(file)
+    },
+  })
+  const asset = 'file:///home/box/agent-data/agents/25730021-d14b-4280-8e7f-3a2fcc03ae8b/assets/9a39182b57f959d9d6923d2cfe9308a0fbc2400c782f16d2ad77eff325303a3d.csv'
+  const image = 'file:///home/box/sand-data/agents/25730021-d14b-4280-8e7f-3a2fcc03ae8b/images/0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0.png'
+  // Shapes from a real transcript; the name comes from the bot, so path parts are dropped.
+  const entries: Entry[] = [
+    { kind: 'send-message', id: 's1', message: { type: 'attachment', url: asset, file_name: '../exports/morse_followers.csv', source_path: '/workspace/morse_followers.csv' } },
+    { kind: 'send-message', id: 's2', message: { type: 'text', content: 'Here is the chart.', images: [{ url: image, alt: 'Follower chart' }, { url: 'https://example.com/a.png' }] } },
+    { kind: 'send-message', id: 's3', message: { type: 'attachment', url: 'file:///workspace/notes.txt', file_name: 'notes.txt' } },
+  ]
+  const text = [...entries.flatMap(convert.push), ...convert.end()].flatMap((part) => (part.type === 'text-delta' ? [part.delta] : []))
+  expect({ text, asked }).toMatchInlineSnapshot(`
+    {
+      "asked": [
+        "file:///home/box/agent-data/agents/25730021-d14b-4280-8e7f-3a2fcc03ae8b/assets/9a39182b57f959d9d6923d2cfe9308a0fbc2400c782f16d2ad77eff325303a3d.csv",
+        "file:///home/box/sand-data/agents/25730021-d14b-4280-8e7f-3a2fcc03ae8b/images/0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0.png",
+        "https://example.com/a.png",
+        "file:///workspace/notes.txt",
+      ],
+      "text": [
+        "**File:** saved to \`/downloads/9a39182b/morse_followers.csv\`",
+        "Here is the chart.
+    **Image:** saved to \`/downloads/0f1e2d3c/0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0.png\`
+    ![image](https://example.com/a.png)",
+        "**File:** notes.txt",
+      ],
+    }
+  `)
+})
+
 test('bot activity becomes one tool call per distinct tool', () => {
   const activity = createActivityTracker({ prefix: 'activity' })
-  // currentActivity values from real agent-upserted events, repeated as the roster updates.
+  // Live activity values from real turns, repeated across polls.
   const updates: Activity[] = [
     null,
     { kind: 'thinking' },
@@ -185,11 +223,10 @@ test('a reply to a pending card answers it only when it is a valid answer', () =
         "body": {
           "agentId": "bot",
           "approvalPlatform": "desktop",
-          "entryId": "a1",
           "requestId": "r1",
-          "resolution": "approved",
+          "resolution": "GROK_BOT_AUTO_REVIEW_APPROVAL_RESOLUTION_APPROVED",
         },
-        "method": "resolveAutoReviewApproval",
+        "method": "ResolveGrokBotAutoReviewApproval",
       },
       "label": {
         "body": {
@@ -197,7 +234,7 @@ test('a reply to a pending card answers it only when it is a valid answer', () =
           "entryId": "w1",
           "value": "two",
         },
-        "method": "respondToWidget",
+        "method": "RespondGrokBotWidget",
       },
       "numbers": {
         "body": {
@@ -206,7 +243,7 @@ test('a reply to a pending card answers it only when it is a valid answer', () =
           "value": "One
     two",
         },
-        "method": "respondToWidget",
+        "method": "RespondGrokBotWidget",
       },
       "other": null,
       "unrelated": null,

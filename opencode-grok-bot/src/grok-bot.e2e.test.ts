@@ -13,15 +13,15 @@ import { pathToFileURL } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { OpenCode, type OpenCodeClient } from '@opencode/client'
 import { afterAll, beforeAll, expect, onTestFailed, test } from 'vitest'
-import { ACCOUNT_METHOD_ID, type Entry } from './index.ts'
-import { createGrokBotClient, jwtClaims, listAgents, pollLogin, refreshLogin, startLogin } from './grok-bot.ts'
+import { ACCOUNT_METHOD_ID } from './index.ts'
+import { agentState, createAgent, createGrokBotClient, jwtClaims, listAgents, pollLogin, refreshLogin, sendMessage, startLogin, transcriptTail } from './grok-bot.ts'
 
 const BOT_NAME = 'OpenCode E2E'
 const BOT_SLUG = 'opencode-e2e'
 // Only listed in the config, so the plugin creates it on the first turn.
 const NEW_BOT_SLUG = 'opencode-e2e-created'
 const NEW_BOT_NAME = 'OpenCode E2E Created'
-const TURN_TIMEOUT_MS = 240_000
+const TURN_TIMEOUT_MS = 360_000
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -65,19 +65,14 @@ let client: OpenCodeClient
 beforeAll(async () => {
   tokens = await testLogin()
   const signal = AbortSignal.timeout(150_000)
-  const created = await grok.call<{ agent?: { id?: string }; id?: string; agentId?: string }>({
-    method: 'createAgent',
-    body: {
-      name: BOT_NAME,
-      description: 'Test bot for the OpenCode Grok Bot provider. Answer in one short sentence. When asked to run a shell command, run it.',
-      origin: 'user',
-      isIntroductionSuppressed: true,
-    },
+  const created = await createAgent({
+    client: grok,
+    name: BOT_NAME,
+    description: 'Test bot for the OpenCode Grok Bot provider. Answer in one short sentence. When asked to run a shell command, run it.',
     signal,
   })
   if (created instanceof Error) throw created
-  botId = created?.agent?.id ?? created?.agentId ?? created?.id ?? ''
-  if (!botId) throw new Error(`createAgent returned no id: ${JSON.stringify(created)}`)
+  botId = created
 
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-grok-bot-')))
   const project = path.join(root, 'project')
@@ -91,6 +86,7 @@ beforeAll(async () => {
     ...inherited,
     ...Object.fromEntries(Object.entries(dirs).map(([key, dir]) => [key, path.join(root, dir)])),
     GROK_BOT_APP_DATA_DIR: path.join(os.homedir(), 'Library/Application Support/Grok Bot'),
+    GROK_BOT_DOWNLOAD_DIR: path.join(root, 'downloads'),
     OPENCODE_PASSWORD: 'e2e',
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
     OPENCODE_DISABLE_MODELS_FETCH: '1',
@@ -140,7 +136,7 @@ afterAll(async () => {
   const agents = await listAgents({ client: grok, signal: AbortSignal.timeout(30_000) })
   const created = agents instanceof Error ? [] : agents.filter((agent) => agent.name === NEW_BOT_NAME).map((agent) => agent.id)
   const ids = [botId, ...created].filter(Boolean)
-  if (ids.length) await grok.call({ method: 'deleteAgents', body: { ids }, signal: AbortSignal.timeout(30_000) })
+  for (const id of ids) await grok.call({ method: 'DeleteGrokBotAgent', body: { id }, signal: AbortSignal.timeout(30_000) })
   if (root && !process.env.KEEP_E2E_ROOT) fs.rmSync(root, { recursive: true, force: true })
 }, 60_000)
 
@@ -193,12 +189,16 @@ test(
     const secondText = second.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
     expect(secondText).toContain('grok-e2e-42')
 
+    // A file the bot sends is downloaded from the bot storage and shown with its local path.
+    const file = await turn(session.id, 'Use your shell tool to write the text grok-e2e-file-42 into a file named e2e.txt, then send me that file as an attachment.')
+    expect(file.outcome).toBe('succeeded')
+    const fileText = file.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n')
+    const saved = /\*\*File:\*\* saved to `([^`]+)`/.exec(fileText)?.[1] ?? ''
+    expect(path.relative(path.join(root, 'downloads'), saved).startsWith('..')).toBe(false)
+    expect(fs.readFileSync(saved, 'utf8')).toContain('grok-e2e-file-42')
+
     // A message the bot answers outside OpenCode (another device, a routine) shows up on the next turn.
-    const outside = await grok.call({
-      method: 'sendPrompt',
-      body: { agentId: botId, prompt: 'Reply with exactly the word LATER and nothing else.', clientNonce: crypto.randomUUID(), source: 'desktop', sendSource: 'chat', initiator: 'user' },
-      signal: AbortSignal.timeout(30_000),
-    })
+    const outside = await sendMessage({ client: grok, agentId: botId, text: 'Reply with exactly the word LATER and nothing else.', messageId: crypto.randomUUID(), signal: AbortSignal.timeout(30_000) })
     if (outside instanceof Error) throw outside
     // Wait for the bot's reply and for the bot to go idle, so the OpenCode turn starts after it.
     const waitUntil = Date.now() + 120_000
@@ -217,12 +217,11 @@ test(
 
 async function answeredOutside() {
   const signal = AbortSignal.timeout(30_000)
-  const [tail, agents] = await Promise.all([grok.call<{ entries?: Entry[] }>({ method: 'getAgentTranscriptTail', body: { id: botId, limit: 20 }, signal }), listAgents({ client: grok, signal })])
+  const [tail, state] = await Promise.all([transcriptTail({ client: grok, agentId: botId, limit: 20, signal }), agentState({ client: grok, agentId: botId, signal })])
   if (tail instanceof Error) throw tail
-  if (agents instanceof Error) throw agents
-  const agent = agents.find((candidate) => candidate.id === botId)
-  const replied = (tail?.entries ?? []).some((entry) => entry.kind === 'send-message' && JSON.stringify(entry.message).includes('LATER'))
-  return replied && !agent?.isRunning && !agent?.isRunningTurn
+  if (state instanceof Error) throw state
+  const replied = tail.some((entry) => entry.kind === 'send-message' && JSON.stringify(entry.message).includes('LATER'))
+  return replied && !state.isRunning
 }
 
 test(

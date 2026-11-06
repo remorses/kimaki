@@ -1,16 +1,21 @@
-// Grok Bot client: logins, the cloud box gateway and its event stream.
+// Grok Bot client: logins and the GrokBotService API of the Cursor backend.
 //
-// Grok Bot has no public API. The protocol comes from the desktop app (Electron) and
-// from github.com/ScriptedAlchemy/grok-bot-cli, github.com/JiminLee-way/GrokBotCLI and
-// github.com/Readtt/grokport. A Grok Bot account is a Cursor account:
+// Grok Bot has no public API. The protocol comes from the desktop app (Electron, the
+// GrokBotService client in dist/electron-main/main-app.cjs and proto.cjs) and from
+// github.com/ScriptedAlchemy/grok-bot-cli and github.com/JiminLee-way/GrokBotCLI.
+// A Grok Bot account is a Cursor account:
 //
 //   account login: cursor.com/loginDeepControl (PKCE) ──▶ poll api2.cursor.sh/auth/poll ──▶ tokens
 //   desktop login: sand-secrets.json ──(Keychain "Grok Bot Safe Storage")──▶ access token
-//   POST api2.cursor.sh/aiserver.v1.GrokBotService/EnsureSandBox ──▶ gateway URL + tokens
-//   POST {gateway}/api/<method>   JSON calls (listAgents, sendPrompt, getAgentTranscriptTail, ...)
-//   GET  {gateway}/events         SSE, `data: {channel, payload}`
+//   POST api2.cursor.sh/aiserver.v1.GrokBotService/<Method>   Connect JSON calls
 //
-// The desktop app refreshes its access token itself, so every connect reads the file again.
+// Bots run on the server ("temporal" harness), so every call goes to the backend. The cloud
+// box gateway (EnsureSandBox ──▶ {gateway}/api/sendPrompt) refuses user actions since Nov 2026
+// with HTTP 502 "A Sand box session is not permitted on this endpoint", and its transcript no
+// longer shows new turns. Desktop app 0.78.4 sends prompts with SendGrokBotUserMessage too.
+//
+// Enums use their full proto names in JSON. Unknown fields make the backend reject a request.
+// The desktop app refreshes its access token itself, so every call reads the file again.
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -19,6 +24,8 @@ import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as errore from 'errore'
+import type { Bot } from './bots.ts'
+import type { CardAnswer, Entry } from './transcript.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -28,7 +35,12 @@ const WEBSITE_URL = 'https://cursor.com'
 const CLIENT_ID = 'KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB'
 const LOGIN_POLL_MAX_MS = 5_000
 const LOGIN_TIMEOUT_MS = 12 * 60_000
-const ENSURE_SANDBOX_PATH = '/aiserver.v1.GrokBotService/EnsureSandBox'
+const GROK_BOT_SERVICE_PATH = '/aiserver.v1.GrokBotService'
+const DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+const DOWNLOAD_HASH_CHARS = 8
+// Files a bot sends are content-addressed copies in its data folder, e.g.
+// file:///home/box/agent-data/agents/<agent>/assets/<sha256-like hex>.csv (see T9e in the app's main-app.cjs).
+const BOT_FILE_URL = /^file:\/\/\/home\/box\/(?:agent-data|sand-data)\/agents\/[^/]+\/[^/]+\/([0-9a-f]{64})\.[0-9a-z]{1,16}$/
 const KEYCHAIN_SERVICE = 'Grok Bot Safe Storage'
 // macOS shows an "allow access" dialog the first time; give the user time to answer it.
 const KEYCHAIN_TIMEOUT_MS = 120_000
@@ -38,22 +50,23 @@ const SAFE_STORAGE_PREFIX = 'v10'
 const SAFE_STORAGE_ROUNDS = 1003
 const SAFE_STORAGE_KEY_BYTES = 16
 const HTTP_UNAUTHORIZED = 401
-const HTTP_FORBIDDEN = 403
-// The box answers 417 while it hibernates; EnsureSandBox with `wake` starts it again.
-const HTTP_BOX_ASLEEP = 417
-const HTTP_BAD_GATEWAY = 502
-const WAKE_ATTEMPTS = 40
-const WAKE_RETRY_MS = 3_000
 const APP_NAME = 'Grok Bot'
+// The backend refuses client versions it considers outdated; used when the app is not installed.
+const FALLBACK_CLIENT_VERSION = '0.78.4'
 
 export class GrokBotAuthError extends errore.createTaggedError({
   name: 'GrokBotAuthError',
   message: 'Grok Bot login unavailable: $reason. Connect a Grok Bot account again with /connect.',
 }) {}
 
-export class GrokBotGatewayError extends errore.createTaggedError({
-  name: 'GrokBotGatewayError',
+export class GrokBotRequestError extends errore.createTaggedError({
+  name: 'GrokBotRequestError',
   message: 'Grok Bot $method failed: $reason',
+}) {}
+
+export class GrokBotDownloadError extends errore.createTaggedError({
+  name: 'GrokBotDownloadError',
+  message: 'Could not save $file: $reason',
 }) {}
 
 export class GrokBotAbortError extends errore.createTaggedError({
@@ -62,27 +75,14 @@ export class GrokBotAbortError extends errore.createTaggedError({
   extends: errore.AbortError,
 }) {}
 
-export type Connection = {
-  gatewayUrl: string
-  gatewayToken: string
-  networkToken?: string
-}
-
-export type GatewayEvent = { channel: string; payload: unknown }
-
-export type Agent = {
-  id: string
-  name: string
-  title?: string
-  description?: string
-  isGroup?: boolean
-  isRunning?: boolean
-  isRunningTurn?: boolean
-  createdAt?: number
-  awaitingUserResponse?: unknown
-  currentActivity?: { kind?: string; tool?: string; detail?: string } | null
-  // The turn that settled last; `clientNonce` is the turn's requestId.
-  lastTurnSettlement?: { clientNonce?: string; outcome?: string; settledAtMs?: number } | null
+// What a bot is doing now (GrokBotAgentLiveState).
+export type LiveState = {
+  isRunning: boolean
+  activity?: { kind?: string; tool?: string; detail?: string } | null
+  // Set while the bot waits for the user, e.g. on a card.
+  awaiting?: unknown
+  // The turn that settled last; `turnId` is the `requestId` of the turn's entries.
+  lastTurnSettlement?: { turnId?: string; outcome?: string; settledAtMs?: number } | null
 }
 
 function appDataDir() {
@@ -205,41 +205,11 @@ export async function readDesktopLogin({ signal }: { signal: AbortSignal }) {
   return { accessToken: accessToken.trim(), teamId }
 }
 
-function isAllowedGateway(url: string) {
-  const parsed = errore.try(() => new URL(url))
-  if (parsed instanceof Error) return false
-  if (process.env.GROK_BOT_ALLOW_ANY_GATEWAY === '1') return true
-  return parsed.protocol === 'https:' && ['.cursor.sh', '.cursor.com', '.cursorvm.com'].some((suffix) => parsed.hostname.endsWith(suffix))
-}
-
-async function ensureSandbox({ token, wake, signal }: { token: TokenSource; wake: boolean; signal: AbortSignal }) {
-  const login = await token({ signal })
-  if (login instanceof Error) return login
-  const response = await fetch(BACKEND_URL + ENSURE_SANDBOX_PATH, {
-    method: 'POST',
-    redirect: 'error',
-    signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
-    headers: {
-      'content-type': 'application/json',
-      'connect-protocol-version': '1',
-      authorization: `Bearer ${login.accessToken}`,
-      'x-cursor-client-type': 'sand',
-      // EnsureSandBox refuses client versions it considers outdated, so report the installed app.
-      'x-cursor-client-version': appVersion() ?? '0.78.0',
-      'x-sand-box-namespace': 'prod',
-      ...(login.teamId ? { 'x-cursor-team-id': login.teamId } : {}),
-    },
-    body: JSON.stringify({ wake, supportsAsleepBox: true }),
-  }).catch((cause) => new GrokBotGatewayError({ method: 'EnsureSandBox', reason: 'request failed', cause }))
-  if (response instanceof Error) return response
-  const text = await response.text().catch(() => '')
-  if (response.status === HTTP_UNAUTHORIZED) return new GrokBotAuthError({ reason: 'the desktop login expired' })
-  if (!response.ok) return new GrokBotGatewayError({ method: 'EnsureSandBox', reason: `HTTP ${response.status} ${text.slice(0, 300)}` })
-  const body = errore.try(() => JSON.parse(text) as { gatewayUrl?: string; gatewayToken?: string; networkToken?: string; runState?: string })
-  if (body instanceof Error) return new GrokBotGatewayError({ method: 'EnsureSandBox', reason: 'response is not JSON', cause: body })
-  if (!body.gatewayUrl || !body.gatewayToken) return null
-  if (!isAllowedGateway(body.gatewayUrl)) return new GrokBotGatewayError({ method: 'EnsureSandBox', reason: `unexpected gateway host ${body.gatewayUrl}` })
-  return { gatewayUrl: body.gatewayUrl.replace(/\/$/, ''), gatewayToken: body.gatewayToken, networkToken: body.networkToken } satisfies Connection
+// Connect errors answer `{ code, message }`.
+function errorReason({ status, text }: { status: number; text: string }) {
+  const body = errore.try(() => JSON.parse(text) as { code?: string; message?: string })
+  const detail = body instanceof Error ? text.slice(0, 300) : [body.code, body.message].filter(Boolean).join(': ')
+  return `HTTP ${status} ${detail}`.trim()
 }
 
 function sleep({ ms, signal }: { ms: number; signal: AbortSignal }) {
@@ -257,143 +227,196 @@ function sleep({ ms, signal }: { ms: number; signal: AbortSignal }) {
   })
 }
 
-export function headers(connection: Connection) {
-  return {
-    authorization: `Bearer ${connection.gatewayToken}`,
-    ...(connection.networkToken ? { 'x-anyrun-network-token': connection.networkToken } : {}),
-    'x-sand-slim-avatars': '1',
-  }
-}
-
-// One client per account: it keeps the gateway route until the box rejects it.
-type ConnectResult = Connection | GrokBotAuthError | GrokBotGatewayError | GrokBotAbortError
-
 export function createGrokBotClient({ token }: { token: TokenSource }) {
-  let current: Promise<ConnectResult> | undefined
-
-  async function wakeUp({ signal }: { signal: AbortSignal }): Promise<ConnectResult> {
-    for (let attempt = 0; attempt < WAKE_ATTEMPTS; attempt++) {
-      const connection = await ensureSandbox({ token, wake: true, signal })
-      if (connection instanceof Error) return connection
-      if (connection) return connection
-      const slept = await sleep({ ms: WAKE_RETRY_MS, signal })
-      if (slept instanceof Error) return slept
-    }
-    return new GrokBotGatewayError({ method: 'EnsureSandBox', reason: 'the cloud computer did not wake up. Open the Grok Bot app and try again' })
-  }
-
-  function connect({ signal, stale }: { signal: AbortSignal; stale?: Connection }): Promise<ConnectResult> {
-    // Reuse the shared route unless the caller saw it fail.
-    const reuse = current
-    if (reuse) {
-      return reuse.then((connection) => {
-        if (connection instanceof Error || connection === stale) {
-          if (current === reuse) current = undefined
-          return connect({ signal })
-        }
-        return connection
-      })
-    }
-    const next = wakeUp({ signal })
-    current = next
-    return next
-  }
-
-  async function call<T>({ method, body, signal }: { method: string; body: object; signal: AbortSignal }): Promise<T | GrokBotAuthError | GrokBotGatewayError | GrokBotAbortError> {
-    // sendPrompt is not idempotent: only retry it when the box refused it before reading it.
-    let stale: Connection | undefined
-    for (let attempt = 0; ; attempt++) {
-      const connection = await connect({ signal, stale })
-      if (connection instanceof Error) return connection
-      const response = await fetch(`${connection.gatewayUrl}/api/${method}`, {
-        method: 'POST',
-        redirect: 'error',
-        signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
-        headers: { 'content-type': 'application/json', ...headers(connection) },
-        body: JSON.stringify(body),
-      }).catch((cause) => new GrokBotGatewayError({ method, reason: 'request failed', cause }))
-      if (signal.aborted) return new GrokBotAbortError({ cause: signal.reason })
-      if (response instanceof Error) return response
-      const text = await response.text().catch(() => '')
-      const rejected = response.status === HTTP_UNAUTHORIZED || response.status === HTTP_FORBIDDEN || response.status === HTTP_BOX_ASLEEP
-      if (rejected && attempt < 2) {
-        stale = connection
-        continue
-      }
-      // The box proxy answers 502 while the host on the box restarts; nothing read the request.
-      const starting = response.status === HTTP_BAD_GATEWAY && text.includes('nothing is listening')
-      if (starting && attempt < WAKE_ATTEMPTS) {
-        const slept = await sleep({ ms: WAKE_RETRY_MS, signal })
-        if (slept instanceof Error) return slept
-        continue
-      }
-      if (!response.ok) return new GrokBotGatewayError({ method, reason: `HTTP ${response.status} ${text.slice(0, 300)}` })
-      if (!text.trim()) return null as T
-      const parsed = errore.try(() => JSON.parse(text) as T)
-      if (parsed instanceof Error) return new GrokBotGatewayError({ method, reason: 'response is not JSON', cause: parsed })
-      return parsed
-    }
-  }
-
-  // Yields gateway events until the signal aborts or the stream ends (the caller reconnects).
-  async function* events({ signal }: { signal: AbortSignal }): AsyncGenerator<GatewayEvent, GrokBotAuthError | GrokBotGatewayError | GrokBotAbortError | null> {
-    const connection = await connect({ signal })
-    if (connection instanceof Error) return connection
-    const response = await fetch(`${connection.gatewayUrl}/events`, {
+  // One Connect JSON call to GrokBotService.
+  async function call<T>({ method, body, signal }: { method: string; body: object; signal: AbortSignal }): Promise<T | GrokBotAuthError | GrokBotRequestError | GrokBotAbortError> {
+    const login = await token({ signal })
+    if (login instanceof Error) return login
+    const response = await fetch(`${BACKEND_URL}${GROK_BOT_SERVICE_PATH}/${method}`, {
+      method: 'POST',
       redirect: 'error',
-      signal,
-      headers: { accept: 'text/event-stream', ...headers(connection) },
-    }).catch((cause) => new GrokBotGatewayError({ method: 'events', reason: 'request failed', cause }))
+      signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+      headers: {
+        'content-type': 'application/json',
+        'connect-protocol-version': '1',
+        authorization: `Bearer ${login.accessToken}`,
+        'x-cursor-client-type': 'sand',
+        'x-cursor-client-version': appVersion() ?? FALLBACK_CLIENT_VERSION,
+        'x-sand-box-namespace': 'prod',
+        // The app sends the device time zone with prompts.
+        'x-cursor-timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
+        ...(login.teamId ? { 'x-cursor-team-id': login.teamId } : {}),
+      },
+      body: JSON.stringify(body),
+    }).catch((cause) => new GrokBotRequestError({ method, reason: 'request failed', cause }))
     if (signal.aborted) return new GrokBotAbortError({ cause: signal.reason })
     if (response instanceof Error) return response
-    if (!response.ok || !response.body) return new GrokBotGatewayError({ method: 'events', reason: `HTTP ${response.status}` })
-    const decoder = new TextDecoder()
-    const reader = response.body.getReader()
-    let buffer = ''
-    let data: string[] = []
-    while (true) {
-      const chunk = await reader.read().catch((cause) => new GrokBotGatewayError({ method: 'events', reason: 'stream failed', cause }))
-      if (signal.aborted) return new GrokBotAbortError({ cause: signal.reason })
-      if (chunk instanceof Error) return chunk
-      if (chunk.done) return null
-      buffer += decoder.decode(chunk.value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-      for (const raw of lines) {
-        const line = raw.replace(/\r$/, '')
-        if (line.startsWith('data:')) {
-          data.push(line.slice('data:'.length).replace(/^ /, ''))
-          continue
-        }
-        if (line !== '' || data.length === 0) continue
-        const event = errore.try(() => JSON.parse(data.join('\n')) as GatewayEvent)
-        data = []
-        if (event instanceof Error || typeof event?.channel !== 'string') continue
-        yield event
-      }
-    }
+    const text = await response.text().catch(() => '')
+    if (response.status === HTTP_UNAUTHORIZED) return new GrokBotAuthError({ reason: 'the login expired' })
+    if (!response.ok) return new GrokBotRequestError({ method, reason: errorReason({ status: response.status, text }) })
+    const parsed = errore.try(() => JSON.parse(text) as T)
+    if (parsed instanceof Error) return new GrokBotRequestError({ method, reason: 'response is not JSON', cause: parsed })
+    return parsed
   }
 
-  return { call, events }
+  // Reads a bot file from the account storage, so it works while the box sleeps. An existing
+  // `file` is kept: the folder name comes from the content hash.
+  async function download({ url, file, signal }: { url: string; file: string; signal: AbortSignal }) {
+    if (fs.existsSync(file)) return null
+    const part = `${file}.${crypto.randomUUID()}.part`
+    const opened = await fs.promises
+      .mkdir(path.dirname(file), { recursive: true })
+      .then(() => fs.promises.open(part, 'w'))
+      .catch((cause) => new GrokBotDownloadError({ file, reason: 'cannot write it', cause }))
+    if (opened instanceof Error) return opened
+    const copied = await (async () => {
+      for (let offset = 0; ; ) {
+        const chunk = await call<{ data?: string; totalSize?: string }>({
+          method: 'ReadGrokBotAgentAttachmentChunk',
+          body: { path: url, offset: String(offset), length: DOWNLOAD_CHUNK_BYTES },
+          signal,
+        })
+        if (chunk instanceof Error) return chunk
+        const bytes = Buffer.from(chunk.data ?? '', 'base64')
+        const written = await opened.write(bytes).catch((cause) => new GrokBotDownloadError({ file, reason: 'cannot write it', cause }))
+        if (written instanceof Error) return written
+        offset += bytes.length
+        const total = Number(chunk.totalSize ?? 0)
+        if (offset >= total) return null
+        if (bytes.length === 0) return new GrokBotDownloadError({ file, reason: `the bot storage returned ${offset} of ${total} bytes` })
+      }
+    })()
+    await opened.close().catch(() => undefined)
+    const done = copied ?? (await fs.promises.rename(part, file).catch((cause) => new GrokBotDownloadError({ file, reason: 'cannot write it', cause })))
+    if (done instanceof Error) await fs.promises.rm(part, { force: true }).catch(() => undefined)
+    return done ?? null
+  }
+
+  return { call, download }
+}
+
+// Where a file the bot sent is saved on this computer, or null for URLs that are not bot files.
+export function downloadPath({ url, name }: { url: string; name: string }) {
+  const hash = BOT_FILE_URL.exec(url)?.[1]
+  if (!hash) return null
+  const dir = process.env.GROK_BOT_DOWNLOAD_DIR || path.join(os.homedir(), 'Downloads', 'grok-bot')
+  const base = path.basename(name.replaceAll('\\', '/')).replaceAll('\0', '')
+  const file = base && base !== '.' && base !== '..' ? base : path.basename(new URL(url).pathname)
+  return path.join(dir, hash.slice(0, DOWNLOAD_HASH_CHARS), file)
 }
 
 export type GrokBotClient = ReturnType<typeof createGrokBotClient>
 
+// Bot IDs are the UUID `agentId`, not the numeric `id` of GrokBotAgent.
+type ServerAgent = { agentId?: string; name?: string; kind?: string; createdAtMs?: string }
+const AGENT_KIND_ROOM = 'GROK_BOT_AGENT_KIND_ROOM'
+
+export async function listAgents({ client, signal }: { client: GrokBotClient; signal: AbortSignal }) {
+  const result = await client.call<{ agents?: ServerAgent[] }>({ method: 'ListGrokBotAgents', body: {}, signal })
+  if (result instanceof Error) return result
+  return (result.agents ?? []).flatMap((agent): Bot[] => {
+    if (!agent.agentId || !agent.name) return []
+    return [{ id: agent.agentId, name: agent.name, isGroup: agent.kind === AGENT_KIND_ROOM, createdAt: agent.createdAtMs ? Number(agent.createdAtMs) : undefined }]
+  })
+}
+
 // Creates a bot without the first-run greeting, so it only speaks when prompted.
-export async function createAgent({ client, name, signal }: { client: GrokBotClient; name: string; signal: AbortSignal }) {
-  const created = await client.call<{ agent?: { id?: string }; agentId?: string; id?: string } | null>({
-    method: 'createAgent',
-    body: { name, description: '', origin: 'user', isIntroductionSuppressed: true },
+export async function createAgent({ client, name, description = '', signal }: { client: GrokBotClient; name: string; description?: string; signal: AbortSignal }) {
+  const method = 'CreateGrokBotTemporalAgent'
+  const agentId = crypto.randomUUID()
+  const created = await client.call<{ agent?: ServerAgent }>({
+    method,
+    body: { agentId, name, description, title: '', avatarShape: '', avatarColor: '', harness: 'GROK_BOT_AGENT_HARNESS_KIND_TEMPORAL', introductionSuppressed: true },
     signal,
   })
   if (created instanceof Error) return created
-  const id = created?.agent?.id ?? created?.agentId ?? created?.id
-  if (!id) return new GrokBotGatewayError({ method: 'createAgent', reason: 'the response has no bot ID' })
-  return id
+  if (created.agent?.agentId !== agentId) return new GrokBotRequestError({ method, reason: 'the server did not confirm the new bot' })
+  return agentId
 }
 
-export async function listAgents({ client, signal }: { client: GrokBotClient; signal: AbortSignal }) {
-  const result = await client.call<Agent[] | { agents?: Agent[] }>({ method: 'listAgents', body: {}, signal })
+type Refusal = { failureCode?: string; message?: string }
+
+function refused({ method, refusal }: { method: string; refusal: Refusal }) {
+  return new GrokBotRequestError({ method, reason: refusal.message || refusal.failureCode || 'the bot refused it' })
+}
+
+const DELIVERED = new Set(['GROK_BOT_USER_MESSAGE_DELIVERY_ACCEPTED_BOX', 'GROK_BOT_USER_MESSAGE_DELIVERY_ACCEPTED_TEMPORAL', 'GROK_BOT_USER_MESSAGE_DELIVERY_DUPLICATE'])
+
+// `messageId` becomes the `clientNonce` of the prompt entry. Sending the same ID again is a
+// duplicate, never a second prompt.
+export async function sendMessage({ client, agentId, text, messageId, signal }: { client: GrokBotClient; agentId: string; text: string; messageId: string; signal: AbortSignal }) {
+  const method = 'SendGrokBotUserMessage'
+  const now = String(Date.now())
+  const sent = await client.call<{ delivery?: string; refusal?: Refusal }>({
+    method,
+    body: {
+      agentId,
+      messageId,
+      text,
+      sentAtMs: now,
+      composedAtMs: now,
+      source: 'GROK_BOT_CLIENT_SURFACE_DESKTOP',
+      initiator: 'GROK_BOT_USER_MESSAGE_INITIATOR_USER',
+      sendSource: 'GROK_BOT_SEND_SOURCE_CHAT',
+    },
+    signal,
+  })
+  if (sent instanceof Error) return sent
+  if (sent.delivery && DELIVERED.has(sent.delivery)) return null
+  return refused({ method, refusal: sent.refusal ?? { message: `the message was not delivered (${sent.delivery ?? 'no delivery status'})` } })
+}
+
+// A reply to a card (see cardAnswer in transcript.ts).
+export async function answerCard({ client, answer, signal }: { client: GrokBotClient; answer: CardAnswer; signal: AbortSignal }) {
+  const result = await client.call<{ refusal?: Refusal }>({ method: answer.method, body: answer.body, signal })
   if (result instanceof Error) return result
-  return Array.isArray(result) ? result : (result?.agents ?? [])
+  return result.refusal ? refused({ method: answer.method, refusal: result.refusal }) : null
+}
+
+export async function interruptRun({ client, agentId, signal }: { client: GrokBotClient; agentId: string; signal: AbortSignal }) {
+  const result = await client.call({ method: 'InterruptGrokBotAgentRun', body: { agentId, reason: 'user_interrupt' }, signal })
+  return result instanceof Error ? result : null
+}
+
+// Each row's body is the entry JSON the app renders; `seq` is the row's place in the chat.
+type TranscriptRow = { seq?: string; body?: string; bodyOmitted?: boolean }
+
+// The newest transcript entries, oldest first.
+export async function transcriptTail({ client, agentId, limit, signal }: { client: GrokBotClient; agentId: string; limit: number; signal: AbortSignal }) {
+  const page = await client.call<{ entries?: TranscriptRow[] }>({ method: 'ListGrokBotTranscriptEntries', body: { agentId, limit }, signal })
+  if (page instanceof Error) return page
+  const entries = (page.entries ?? []).flatMap((row): Entry[] => {
+    // TODO: rows with `bodyOmitted` only carry a blob hash; read the blob once its RPC is known.
+    if (!row.body) return []
+    const entry = errore.try(() => JSON.parse(Buffer.from(row.body ?? '', 'base64').toString('utf8')) as Entry)
+    if (entry instanceof Error || typeof entry?.id !== 'string') return []
+    return [{ ...entry, seq: Number(row.seq) }]
+  })
+  return entries.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+}
+
+type ServerLiveState = {
+  isRunning?: boolean
+  isComposingMessage?: boolean
+  activity?: LiveState['activity']
+  awaiting?: unknown
+  lastTurnSettlement?: { turnId?: string; outcome?: string; settledAtMs?: string }
+}
+
+export async function agentState({ client, agentId, signal }: { client: GrokBotClient; agentId: string; signal: AbortSignal }) {
+  const result = await client.call<{ statuses?: Array<{ agentId?: string; isRunning?: boolean; live?: ServerLiveState }> }>({
+    method: 'ListGrokBotAgentStatuses',
+    body: { agentIds: [agentId] },
+    signal,
+  })
+  if (result instanceof Error) return result
+  const status = result.statuses?.find((candidate) => candidate.agentId === agentId)
+  const live = status?.live
+  const settlement = live?.lastTurnSettlement
+  return {
+    isRunning: status?.isRunning === true || live?.isRunning === true || live?.isComposingMessage === true,
+    activity: live?.activity ?? null,
+    awaiting: live?.awaiting,
+    lastTurnSettlement: settlement ? { turnId: settlement.turnId, outcome: settlement.outcome, settledAtMs: Number(settlement.settledAtMs ?? 0) } : null,
+  } satisfies LiveState
 }

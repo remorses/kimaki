@@ -14,7 +14,7 @@
 import { Credential, Integration, Model, Plugin, type Provider } from '@opencode/plugin'
 import type { ConnectionInfo } from '@opencode/client'
 import { assignSlugs, resolveSlug, updateAliases, type Aliases, type Bot } from './bots.ts'
-import { createAgent, createGrokBotClient, GrokBotGatewayError, jwtClaims, listAgents, pollLogin, readDesktopLogin, refreshLogin, startLogin, type Agent, type GrokBotClient } from './grok-bot.ts'
+import { createAgent, createGrokBotClient, jwtClaims, listAgents, pollLogin, readDesktopLogin, refreshLogin, startLogin, type GrokBotClient } from './grok-bot.ts'
 import { GrokBotLanguageModel, KIND_HEADER, PROVIDER_ID } from './language-model.ts'
 
 export * from './bots.ts'
@@ -48,10 +48,6 @@ function savedInventory(value: unknown): Inventory | null {
     return [{ id: bot.id, name: bot.name, isGroup: bot.isGroup === true, createdAt: typeof bot.createdAt === 'number' ? bot.createdAt : undefined }]
   })
   return { connection: inventory.connection, bots }
-}
-
-function toBots(agents: Agent[]): Bot[] {
-  return agents.filter((agent) => agent.id && agent.name).map((agent) => ({ id: agent.id, name: agent.name, isGroup: agent.isGroup === true, createdAt: typeof agent.createdAt === 'number' ? agent.createdAt : undefined }))
 }
 
 function toModel({ slug, bot }: { slug: string; bot: Bot }): Model.Info {
@@ -104,7 +100,7 @@ function credentialOrThrow(tokens: { accessToken: string; refreshToken: string }
 export default Plugin.define({
   id: 'grok-bot',
   async setup(ctx) {
-    // One client per account, keyed by the token's user; each keeps its own gateway route.
+    // One client per account, keyed by the token's user.
     const tokens = new Map<string, string>()
     const clients = new Map<string, GrokBotClient>()
     const clientFor = (accessToken: string | undefined) => {
@@ -145,9 +141,8 @@ export default Plugin.define({
     // Two turns on a new slug must create one bot, not two.
     const creating = new Map<string, Promise<string | Error>>()
     const resolveBot = async ({ account, client, slug, signal }: { account: string; client: GrokBotClient; slug: string; signal: AbortSignal }) => {
-      const agents = await listAgents({ client, signal })
-      if (agents instanceof Error) return agents
-      const bots = toBots(agents)
+      const bots = await listAgents({ client, signal })
+      if (bots instanceof Error) return bots
       // A model only listed in opencode.json creates its bot under the configured name.
       const models = await ctx.model.list().catch(() => null)
       const name = models?.data.find((model) => model.providerID === PROVIDER_ID && model.id === slug)?.name
@@ -208,15 +203,15 @@ export default Plugin.define({
       if (!connection) return
       const credential = await ctx.integration.connection.resolve(connection).catch(() => undefined)
       const { account, client } = clientFor(credential?.type === 'oauth' ? credential.access : undefined)
-      const agents = await listAgents({ client, signal: AbortSignal.timeout(LIST_TIMEOUT_MS) })
+      const bots = await listAgents({ client, signal: AbortSignal.timeout(LIST_TIMEOUT_MS) })
       // Another account may have become active while this one listed its bots.
       const active = await ctx.integration.connection.active(PROVIDER_ID).catch(() => undefined)
       if (JSON.stringify(active) !== JSON.stringify(connection)) return
-      if (agents instanceof Error) {
-        await ctx.integration.connection.status({ integrationID: PROVIDER_ID, connection, status: { status: 'needs_auth', message: agents.message } }).catch(() => undefined)
+      if (bots instanceof Error) {
+        await ctx.integration.connection.status({ integrationID: PROVIDER_ID, connection, status: { status: 'needs_auth', message: bots.message } }).catch(() => undefined)
         return
       }
-      const next: Inventory = { connection, bots: toBots(agents) }
+      const next: Inventory = { connection, bots }
       await saveAliases({ account, bots: next.bots })
       if (JSON.stringify(next) === JSON.stringify(inventory)) return
       inventory = next
