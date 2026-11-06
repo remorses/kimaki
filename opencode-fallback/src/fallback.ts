@@ -233,6 +233,45 @@ export function blockedUntil({
   return matching.length > 0 ? Math.max(...matching) : undefined
 }
 
+// Kept in session metadata (`fallback` key). `from` is the model the session ran
+// on before its first fallback, so a chain X → Y → Z still names X.
+export type ModelSwitch = { from: string; to: string; reason: BlockReason }
+
+const REASON_TEXT: Record<BlockReason, string> = {
+  'rate-limit': 'it hit a rate limit',
+  quota: 'its account ran out of quota',
+  overloaded: 'the provider was overloaded',
+  auth: 'its login failed (expired or invalid credentials)',
+}
+
+function modelName(model: ModelRef): string {
+  return `${model.providerID}/${model.id}`
+}
+
+export function isModelSwitch(value: unknown): value is ModelSwitch {
+  if (!value || typeof value !== 'object') return false
+  const record: Record<string, unknown> = { ...value }
+  return typeof record.from === 'string' && typeof record.to === 'string' && typeof record.reason === 'string' && REASONS.includes(record.reason)
+}
+
+export function nextSwitch({ previous, failed, to, reason }: { previous?: ModelSwitch; failed: ModelRef; to: ModelRef; reason: BlockReason }): ModelSwitch {
+  const from = previous?.to === modelName(failed) ? previous.from : modelName(failed)
+  return { from, to: modelName(to), reason }
+}
+
+// System text for a session that runs on a fallback model. Undefined when the
+// session is back on its first model or someone switched it to another one.
+export function switchNote({ value, model }: { value?: ModelSwitch; model: ModelRef }): string | undefined {
+  if (!value || value.to !== modelName(model) || value.from === value.to) return undefined
+  return [
+    '<model-fallback>',
+    `This session ran on ${value.from}. The fallback plugin moved it to ${value.to}, the model you are now, because a request to the previous model failed: ${REASON_TEXT[value.reason]}.`,
+    `Tools, input types (audio, video, images) and other abilities that ${value.from} had may be missing on this model. Earlier messages may assume them.`,
+    'If the task needs an ability you do not have, tell the user plainly. Never claim you used a tool, heard audio or saw content that you cannot access.',
+    '</model-fallback>',
+  ].join('\n')
+}
+
 export type Choice = { model: ModelRef; credentialID: string; waitUntil?: number }
 
 // Best (model, account) pair that is not blocked. Ranking order wins over

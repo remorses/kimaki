@@ -16,7 +16,9 @@ import { afterAll, beforeAll, expect, onTestFailed, test } from 'vitest'
 import { formatModel, isBlock } from './fallback.ts'
 import { FallbackRpc } from './index.ts'
 
-const served: Array<{ model: string; key: string; status: number }> = []
+// `note`: the request carried the model switch note in its system prompt.
+const served: Array<{ model: string; key: string; status: number; note: boolean }> = []
+let lastNote = ''
 // Fake provider rules: which (model, key) pairs answer 429, and with which headers.
 const limited = new Map<string, Record<string, string>>([
   ['alpha-big key-1', { 'retry-after': '3600' }],
@@ -55,7 +57,10 @@ const provider = http.createServer((request, response) => {
     const followUp = JSON.stringify(messages.at(-1) ?? {}).includes('"role":"tool"')
     const key = (request.headers.authorization ?? '').replace(/^Bearer /, '')
     const headers = limited.get(`${model} ${key}`)
-    served.push({ model, key, status: headers ? 429 : 200 })
+    const system = messages.flatMap((message) => (message?.role === 'system' && typeof message.content === 'string' ? [message.content] : []))
+    const note = /<model-fallback>[\s\S]*<\/model-fallback>/.exec(system.join('\n'))
+    if (note) lastNote = note[0]
+    served.push({ model, key, status: headers ? 429 : 200, note: Boolean(note) })
     if (headers) {
       response.writeHead(429, { 'content-type': 'application/json', ...headers })
       response.end(JSON.stringify({ error: { type: 'rate_limit_exceeded', message: 'Rate limit reached' } }))
@@ -220,24 +225,44 @@ test('expired refresh and 429 rotate accounts, then fall back and continue the s
         {
           "key": "key-1",
           "model": "alpha-big",
+          "note": false,
           "status": 429,
         },
         {
           "key": "key-2",
           "model": "alpha-big",
+          "note": false,
           "status": 429,
         },
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
       ],
+    }
+  `)
+
+  // The retried step on beta already carries the note, and the session metadata keeps it.
+  expect(lastNote).toMatchInlineSnapshot(`
+    "<model-fallback>
+    This session ran on alpha/alpha-big. The fallback plugin moved it to beta/beta-small, the model you are now, because a request to the previous model failed: it hit a rate limit.
+    Tools, input types (audio, video, images) and other abilities that alpha/alpha-big had may be missing on this model. Earlier messages may assume them.
+    If the task needs an ability you do not have, tell the user plainly. Never claim you used a tool, heard audio or saw content that you cannot access.
+    </model-fallback>"
+  `)
+  expect((await client.session.get({ sessionID: session.id })).metadata?.fallback).toMatchInlineSnapshot(`
+    {
+      "from": "alpha/alpha-big",
+      "reason": "rate-limit",
+      "to": "beta/beta-small",
     }
   `)
 
@@ -293,11 +318,13 @@ test('expired refresh and 429 rotate accounts, then fall back and continue the s
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
         {
           "key": "key-b",
           "model": "beta-small",
+          "note": true,
           "status": 200,
         },
       ],

@@ -7,6 +7,9 @@
 // - Account changes are global per integration (credential.activate): a
 //   blocked account is blocked for every session.
 // - Accounts come from normal OpenCode logins (`opencode auth login`, /connect).
+// - After a model switch, session metadata `fallback` records it and every
+//   request of that session gets a system note, so the new model knows its
+//   abilities may differ from the old one.
 // - Retry hook errors carry no headers, so http.response keeps the headers of
 //   the last failed response per session for exact reset times.
 
@@ -21,6 +24,9 @@ import {
   parseModel,
   pick,
   isBlock,
+  isModelSwitch,
+  nextSwitch,
+  switchNote,
   type Block,
   type Choice,
   type ModelRef,
@@ -168,6 +174,12 @@ export default Plugin.define({
         await ctx.credential.activate({ credentialID: choice.credentialID })
       }
       await ctx.session.switchModel({ sessionID: event.sessionID, model: choice.model })
+      if (choice.model.providerID !== event.model.providerID || choice.model.id !== event.model.id) {
+        const session = await ctx.session.get({ sessionID: event.sessionID }).catch(() => undefined)
+        const previous = session?.metadata?.fallback
+        const fallback = nextSwitch({ previous: isModelSwitch(previous) ? previous : undefined, failed: event.model, to: choice.model, reason: block.reason })
+        if (session) await ctx.session.update({ sessionID: event.sessionID, metadata: { ...session.metadata, fallback } }).catch(() => undefined)
+      }
       event.decision = { retry: true, delay: choice.waitUntil === undefined ? 0 : Math.max(0, choice.waitUntil - now) }
 
       await rpc.events.emit('switched', {
@@ -181,5 +193,18 @@ export default Plugin.define({
         ...(choice.waitUntil === undefined ? {} : { waitUntil: choice.waitUntil }),
       })
     })
+
+    // The retried step builds its request again, so the note is there before the new
+    // model answers. It only changes at a switch, which loses the prompt cache anyway.
+    async function addSwitchNote(event: { sessionID: string; model: ModelRef; system: Array<{ type: 'text'; text: string }> }) {
+      const session = await ctx.session.get({ sessionID: event.sessionID }).catch(() => undefined)
+      const value = session?.metadata?.fallback
+      const note = switchNote({ value: isModelSwitch(value) ? value : undefined, model: event.model })
+      if (note) event.system.push({ type: 'text', text: note })
+    }
+    // All three, so warmup and compaction requests keep the same cached prefix.
+    await ctx.session.hook('context', addSwitchNote)
+    await ctx.session.hook('compaction', addSwitchNote)
+    await ctx.session.hook('generate', addSwitchNote)
   },
 })
