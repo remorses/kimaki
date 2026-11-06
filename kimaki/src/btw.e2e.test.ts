@@ -104,7 +104,7 @@ test('. btw forks into a side thread while the source run continues', async () =
   expect(info.metadata?.['kimaki']).toMatchObject({ threadId: fork.id, dataDir, lockPort: expect.any(Number) })
 })
 
-test('/btw forks from a thread with an idle session', async () => {
+test('/btw forks from a thread with an idle session, with the picked agent', async () => {
   const { discord, channelId } = twin
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Short task' })
   const source = await discord.channel(channelId).waitForThread({
@@ -113,18 +113,38 @@ test('/btw forks from a thread with an idle session', async () => {
   })
   await waitForFooter({ discord, threadId: source.id })
   const existing = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
+  const user = discord.thread(source.id).user(TEST_USER_ID)
 
-  await discord.thread(source.id).user(TEST_USER_ID).runSlashCommand({
+  const choices = await user.autocomplete({
     name: 'btw',
-    options: [{ name: 'prompt', type: 3, value: 'Side slash-marker' }],
+    options: [{ name: 'prompt', type: 3, value: 'x' }, { name: 'agent', type: 3, value: 'pla' }],
+    focused: 'agent',
+  })
+  expect(choices.map((choice) => choice.value)).toEqual(['plan'])
+
+  // An unknown agent fails before any thread is created.
+  await user.runSlashCommand({
+    name: 'btw',
+    options: [{ name: 'prompt', type: 3, value: 'Side slash-marker' }, { name: 'agent', type: 3, value: 'nope' }],
+  })
+  await waitForBotMessageContaining({ discord, threadId: source.id, text: 'Agent `nope` is not available' })
+
+  await user.runSlashCommand({
+    name: 'btw',
+    options: [{ name: 'prompt', type: 3, value: 'Side slash-marker' }, { name: 'agent', type: 3, value: 'plan' }],
   })
   const fork = await waitForBtwThread(existing)
   await waitForFooter({ discord, threadId: fork.id })
+  expect((await discord.channel(channelId).getThreads()).filter((thread) => !existing.has(thread.id)).length).toBe(1)
   expect(hideIds(await discord.thread(fork.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
     Reusing context from <#THREAD> to answer prompt...
     Side slash-marker
+    -# Switched agent to Plan
     slash answer
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"
   `)
+  const row = await bot.db.query.thread_sessions.findFirst({ where: { thread_id: fork.id } })
+  const info = await (await server.client()).session.get({ sessionID: row!.session_id })
+  expect(info.agent).toBe('plan')
 })

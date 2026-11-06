@@ -880,7 +880,7 @@ export async function forkBtw(
     author: Author
     messageId: string
     files?: readonly PromptFile[]
-    // A voice message asked for this agent.
+    // Another agent for the fork (/btw agent option, voice message); default keeps the source agent.
     agent?: string
     // Explicit `kimaki send --parent-session`, recorded in the fork's marker.
     parentSessionId?: string
@@ -891,6 +891,11 @@ export async function forkBtw(
   if (sourceSessionId instanceof Error) return sourceSessionId
   const project = await conversationProject(bot, source)
   if (project instanceof Error) return project
+  // Check the agent before creating anything, so an unknown name leaves no half set up thread.
+  if (agent) {
+    const selected = await agentSelection(bot, { directory: project.directory, agent })
+    if (selected instanceof Error) return selected
+  }
   const channel = await textChannel(bot, project.channelId)
   if (channel instanceof Error) return channel
 

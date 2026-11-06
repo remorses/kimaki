@@ -32,7 +32,7 @@ import { shellQuote } from '../lock-server.ts'
 import { abort, clearQueue, dispatch, redo, undo } from '../prompt.ts'
 import type { Route } from '../routes.ts'
 import { formatDuration, type Message } from '../session-events.ts'
-import { endCoordinator, forkBtw } from '../sessions.ts'
+import { endCoordinator, forkBtw, primaryAgents } from '../sessions.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -165,10 +165,25 @@ async function clearQueueCommand(bot: Bot, interaction: ChatInputCommandInteract
 
 async function btwCommand(bot: Bot, interaction: ChatInputCommandInteraction, { conversation }: SessionTarget) {
   const text = interaction.options.getString('prompt', true).trim()
+  const agent = interaction.options.getString('agent')?.trim() || undefined
   await interaction.deferReply()
-  const result = await forkBtw(bot, { source: conversation, text, author: authorOf(interaction), messageId: interaction.id })
+  const result = await forkBtw(bot, { source: conversation, text, author: authorOf(interaction), messageId: interaction.id, agent })
   if (result instanceof Error) return replyError(interaction, result)
   await interaction.editReply({ content: `Session forked! Continue in <#${result.threadId}>` })
+}
+
+async function btwAgentChoices(bot: Bot, interaction: AutocompleteInteraction) {
+  const target = await resolveTarget(bot, interaction.channelId)
+  if (target instanceof Error) return respondChoices(interaction, target)
+  const agents = await primaryAgents(bot, target.directory)
+  if (agents instanceof Error) return respondChoices(interaction, agents)
+  const query = interaction.options.getFocused().toLowerCase()
+  return respondChoices(
+    interaction,
+    agents
+      .filter((agent) => agent.id.toLowerCase().includes(query) || agent.name.toLowerCase().includes(query))
+      .map((agent) => ({ name: agent.description ? `${agent.name} - ${agent.description}` : agent.name, value: agent.id })),
+  )
 }
 
 // --- History
@@ -326,8 +341,12 @@ export const threadRoutes: InteractionRoutes = {
         .setDescription('Ask something without polluting or blocking the current session')
         .addStringOption((option) =>
           option.setName('prompt').setDescription('The message to send in the forked session').setRequired(true),
+        )
+        .addStringOption((option) =>
+          option.setName('agent').setDescription('Agent for the forked session (default: the current one)').setAutocomplete(true),
         ),
       run: inThread(btwCommand),
+      autocomplete: btwAgentChoices,
     },
     abort: {
       definition: new SlashCommandBuilder().setName('abort').setDescription('Stop the current run and clear the queue'),
