@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.7.0
+
+1. **`/btw` takes an optional `agent` option** with autocomplete of the project's agents. The forked session answers with that agent; without it the fork keeps the source session's agent. An unknown agent fails before the `btw:` thread is created.
+
+2. **The footer shows the model variant (thinking level)** as `modelid#variant`. Sessions without a variant keep the plain model ID:
+
+   ```
+   -# *fix-login ⋅ 2m 30s ⋅ 71% ⋅ claude-opus-4-6#high*
+   ```
+
+3. **Coordinator workers use the coordinator's own agent**, so they run on the same model as the coordinator. It no longer picks a stronger or cheaper agent by task difficulty. Forks (`. btw`) and follow-ups keep the agent and model of their thread. A different agent or model is used only when you name one.
+
+4. **Multi-paragraph quotes render as one quote block.** Discord shows an empty `>` line as a literal `>` that breaks the quote, so Kimaki now drops blank lines inside quotes. This applies to model output and to prompts Kimaki posts in a thread (`kimaki send`, routines, TUI prompts):
+
+   ```md
+   > first paragraph
+   >
+   > second paragraph
+   ```
+
+   now posts as:
+
+   ```md
+   > first paragraph
+   > second paragraph
+   ```
+
+5. **Voice calls and ChatGPT transcription skip "ChatGPT token sharing" logins.** OpenAI rejects them with `401 rejected_by_access_enforcement` on GPT-Live and dictation, so Kimaki uses only a Codex login of OpenCode (`chatgpt-browser` or `chatgpt-headless`). An expired Codex login no longer hides a valid one, and the voice call error says which login to add:
+
+   ```bash
+   kimaki login openai --method chatgpt-browser
+   ```
+
 ## 1.6.0
 
 1. **`KIMAKI_WHISPER_TIMEOUT` for slow local Whisper servers.** The 2 minute transcription limit is too short for long voice messages on CPU-only hardware. Raise it in seconds; it applies only when `KIMAKI_WHISPER_URL` is set and the default is unchanged:
