@@ -33,13 +33,15 @@ test('echo puts block markdown on the line below the prefix', () => {
 })
 
 test('echo is subtext, code blocks stay as they are', () => {
-  const text = '## Plan\n\n- read `queue.ts`\n- run tests\n\n```ts\nconst a = 1\n\nconst b = 2\n```\n-# already small\nlast line'
+  const text = '## Plan\n\n- read `queue.ts`\n- run tests\n\n> quoted\n>\n> second\n\n```ts\nconst a = 1\n\nconst b = 2\n```\n-# already small\nlast line'
   expect('\n' + formatEcho({ username: 'CLI', text })).toMatchInlineSnapshot(`
     "
     -# » **CLI:**
     -# **Plan**
     -# - read \`queue.ts\`
     -# - run tests
+    -# > quoted
+    -# > second
     \`\`\`ts
     const a = 1
 

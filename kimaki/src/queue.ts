@@ -24,7 +24,7 @@ import type { Bot } from './bot.ts'
 import { asSubtext, textOnly } from './format-parts.ts'
 import { stripTurnContext } from './system-prompt.ts'
 import { markdownPayloads, type DiscordPayload } from './markdown/components.ts'
-import { DISCORD_TEXT_LIMIT } from './markdown/render-markdown.ts'
+import { BLANK_QUOTE_LINE, DISCORD_TEXT_LIMIT } from './markdown/render-markdown.ts'
 import type { Emit, ThreadView } from './thread-reducer.ts'
 
 // A root inbox user item not delivered yet, in inbox order.
@@ -117,7 +117,7 @@ function subtext(text: string): string {
     .split('\n')
     .flatMap((line) => {
       if (CODE_FENCE.test(line)) fenced = !fenced
-      else if (!fenced && line.trim() === '') return []
+      else if (!fenced && (line.trim() === '' || BLANK_QUOTE_LINE.test(line))) return []
       else if (!fenced && !line.startsWith('-# ')) return [asSubtext(line.replace(HEADING, '**$1**'))]
       return [line]
     })

@@ -5,7 +5,7 @@
 //        ├─ table                ──▶ table segment (Components V2 later)
 //        ├─ heading depth > 3    ──▶ clamped to ###
 //        ├─ list with code items ──▶ code lifted after its item
-//        ├─ blockquote           ──▶ bare ">" lines become "> "
+//        ├─ blockquote           ──▶ blank ">" lines removed
 //        └─ other nodes          ──▶ original source slices, packed into ≤ limit
 //
 // Text is sliced from the original source by node offsets, never
@@ -211,6 +211,17 @@ function unnestList(source: string, list: List, limit: number): string[] {
   })
 }
 
+// Discord shows a blank ">" line (even "> ") as a literal ">" that breaks the
+// quote, so paragraphs of one quote are joined with single line breaks.
+export const BLANK_QUOTE_LINE = /^\s*>[>\s]*$/
+
+function dropBlankQuoteLines(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !BLANK_QUOTE_LINE.test(line))
+    .join('\n')
+}
+
 function nodePieces(source: string, node: RootContent, limit: number): string[] {
   if (node.type === 'heading' && node.depth > 3) {
     return splitText(slice(source, node).replace(/^\s*#{4,6}/, '###'), limit)
@@ -219,8 +230,7 @@ function nodePieces(source: string, node: RootContent, limit: number): string[] 
     return unnestList(source, node, limit).flatMap((piece) => (piece.length <= limit ? [piece] : splitText(piece, limit)))
   }
   if (node.type === 'code') return codePieces(source, node, limit)
-  // Discord quotes need "> " plus a space; a bare ">" line shows as a literal ">".
-  const text = node.type === 'blockquote' ? slice(source, node).replace(/^( *>)$/gm, '$1 ') : slice(source, node)
+  const text = node.type === 'blockquote' ? dropBlankQuoteLines(slice(source, node)) : slice(source, node)
   if (text.length <= limit) return [text]
   if (node.type === 'list') {
     const items = node.children.map((item) => slice(source, item))
