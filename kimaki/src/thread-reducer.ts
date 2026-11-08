@@ -352,7 +352,7 @@ function emitFooter({ draft, prefs, emit, turn, at, notify }: Context & { turn: 
     directory: draft.directory,
     durationMs: at - turn.startedAt,
     contextPercent: contextPercent({ tokens: turn.tokens, model: turn.model, prefs }),
-    model: { providerID: turn.model.providerID, id: turn.model.id },
+    model: { ...turn.model },
     agent: turn.agent,
     notify,
   })
@@ -426,9 +426,9 @@ function applyRoot(context: Context & { event: V2Event }) {
       return
     }
     case 'session.step.started': {
-      const model = { providerID: event.data.model.providerID, id: event.data.model.id }
+      const { providerID, id, variant } = event.data.model
       draft.turn ??= newTurn(event.created)
-      draft.turn.model = model
+      draft.turn.model = { providerID, id, ...(variant && { variant }) }
       draft.turn.agent = event.data.agent
       if (draft.bannerPending) emit({ type: 'send', text: formatBanner({ model: event.data.model, agent: event.data.agent, coordinator: draft.coordinator }) })
       draft.bannerPending = false

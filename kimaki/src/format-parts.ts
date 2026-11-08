@@ -120,20 +120,25 @@ export function selectedPage(value: string): number | null {
   return Number(value.slice(PAGE_PREFIX.length)) || 0
 }
 
-export type ModelRef = { providerID: string; id: string }
+export type ModelRef = { providerID: string; id: string; variant?: string }
+
+// OpenCode reports `default` when no variant is selected.
+function selectedVariant(variant: string | undefined): string | null {
+  return variant && variant !== 'default' ? variant : null
+}
 
 const COORDINATOR_NOTICE = 'Coordinator mode is on: this channel is one session that starts and manages project threads for you. Use /new-session for a thread without it. Turn it off with /toggle-coordinator or start kimaki with `--coordinator false`.'
 
-export function formatBanner({ model, agent, coordinator = false }: { model: ModelRef & { variant?: string }; agent: string; coordinator?: boolean }): string {
-  // OpenCode reports `default` when no variant is selected.
-  const variant = model.variant && model.variant !== 'default' ? ` ${model.variant}` : ''
-  const banner = asSubtext(`*using ${model.providerID}/${model.id}${variant} ⋅ ${agent}*`)
+export function formatBanner({ model, agent, coordinator = false }: { model: ModelRef; agent: string; coordinator?: boolean }): string {
+  const variant = selectedVariant(model.variant)
+  const banner = asSubtext(`*using ${model.providerID}/${model.id}${variant ? ` ${variant}` : ''} ⋅ ${agent}*`)
   return coordinator ? `${banner}\n${asSubtext(COORDINATOR_NOTICE)}` : banner
 }
 
 // "Switched model to Claude Opus 5.5 (high)", for a root session switch after its banner.
 export function formatModelSwitched({ name, variant }: { name: string; variant?: string }): string {
-  return asSubtext(`Switched model to ${name}${variant && variant !== 'default' ? ` (${variant})` : ''}`)
+  const selected = selectedVariant(variant)
+  return asSubtext(`Switched model to ${name}${selected ? ` (${selected})` : ''}`)
 }
 
 const agentLabel = (agent: string) => agent.charAt(0).toUpperCase() + agent.slice(1)
@@ -166,12 +171,13 @@ export function formatFooter({
   defaultAgent: string | null
 }): string {
   const inProject = projectDirectory !== null && path.resolve(directory) === path.resolve(projectDirectory)
+  const variant = selectedVariant(model?.variant)
   const parts = [
     inProject ? null : path.basename(directory),
     branch === defaultBranch ? null : branch,
     formatDuration(durationMs),
     contextPercent === null ? null : `${contextPercent}%`,
-    model?.id ?? null,
+    model ? `${model.id}${variant ? `#${variant}` : ''}` : null,
     agent && agent.toLowerCase() !== defaultAgent?.toLowerCase() ? agent : null,
   ].filter((part): part is string => Boolean(part))
   return asSubtext(`*${parts.join(' ⋅ ')}*`)

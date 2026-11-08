@@ -44,6 +44,7 @@ test('text-only turn: banner, text, typing, footer with context percent', () => 
         "model": {
           "id": "gpt-6-luna",
           "providerID": "openai",
+          "variant": "low",
         },
         "notify": true,
         "type": "footer",
@@ -239,6 +240,7 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
         "model": {
           "id": "gpt-6-luna",
           "providerID": "openai",
+          "variant": "low",
         },
         "notify": true,
         "type": "footer",
@@ -465,16 +467,16 @@ test('coordinator: a prompt reply goes to its Discord message, a queued one gets
       "[show queue:msg_0f20347e1001nsJ7W4hOvhBpQb reply to 102] -# Queued at position 1. Delete the original message to remove it, or use /clear-queue position:1",
       "[show queue:msg_0f20347e500196F4o0voD7LGMV reply to 103] -# Queued at position 2. Delete the original message to remove it, or use /clear-queue position:2",
       "[reply to 101] Done.",
-      "[silent] -# *main ⋅ 10s ⋅ 6% ⋅ gpt-6-luna*",
+      "[silent] -# *main ⋅ 10s ⋅ 6% ⋅ gpt-6-luna#low*",
       "[edit queue:msg_0f20347e1001nsJ7W4hOvhBpQb] -# Queued",
       "[reply to 102] -# Queued message sent",
       "apple",
-      "[silent] -# *main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
+      "[silent] -# *main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna#low*",
       "[edit queue:msg_0f20347e500196F4o0voD7LGMV] -# Queued",
       "[reply to 103] -# Queued message sent",
       "cherry",
       "[typing off]",
-      "-# *main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna*",
+      "-# *main ⋅ 2s ⋅ 6% ⋅ gpt-6-luna#low*",
     ]
   `)
   // A coordinator that starts a worker answers IDLE: the queued prompt still shows that it started.
