@@ -514,7 +514,12 @@ function chatGPTAccountId(accessToken: string): string | null {
   return isRecord(auth) && typeof auth['chatgpt_account_id'] === 'string' ? auth['chatgpt_account_id'] : null
 }
 
-// The active (else newest) OpenAI OAuth credential, if not expired. null when OpenCode has none.
+// Codex logins only. OpenCode's "ChatGPT token sharing" login (chatgpt-token-sharing) gets
+// 401 rejected_by_access_enforcement on everything but api.openai.com/v1/responses and /models:
+// no dictation, no GPT-Live, no Codex backend.
+const CODEX_METHODS = new Set(['chatgpt-browser', 'chatgpt-headless'])
+
+// The active (else newest) unexpired Codex OAuth credential. null when OpenCode has none.
 export async function chatGPTCredential({ dbFile, now = Date.now() }: { dbFile: string; now?: number }): Promise<TranscriptionError | ChatGPTCredential | null> {
   if (!fs.existsSync(dbFile)) return null
   const client = createClient({ url: ':memory:' })
@@ -530,9 +535,10 @@ export async function chatGPTCredential({ dbFile, now = Date.now() }: { dbFile: 
     const raw = row['value']
     const value = typeof raw === 'string' ? errore.try(() => JSON.parse(raw) as unknown, () => null) : null
     if (!isRecord(value) || value['type'] !== 'oauth' || typeof value['access'] !== 'string') continue
+    if (typeof value['methodID'] !== 'string' || !CODEX_METHODS.has(value['methodID'])) continue
     if (typeof value['expires'] === 'number' && value['expires'] <= now + 60_000) {
-      logger.log('OpenCode ChatGPT token expired, skipping it until OpenCode refreshes it')
-      return null
+      logger.log('OpenCode Codex token expired, skipping it until OpenCode refreshes it')
+      continue
     }
     return { accessToken: value['access'], accountId: chatGPTAccountId(value['access']) }
   }

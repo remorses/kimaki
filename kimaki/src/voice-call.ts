@@ -84,7 +84,7 @@ export class VoiceCallError extends errore.createTaggedError({
 
 export class NoChatGPTError extends errore.createTaggedError({
   name: 'NoChatGPTError',
-  message: 'Voice calls need a ChatGPT subscription signed in to OpenCode. Run kimaki login openai, then join the voice channel again',
+  message: 'Voice calls need a ChatGPT subscription signed in to OpenCode with a Codex login (ChatGPT token sharing cannot start calls). Run kimaki login openai --method chatgpt-browser, then join the voice channel again',
 }) {}
 
 // Endpoints of the call; tests point them at local fakes.

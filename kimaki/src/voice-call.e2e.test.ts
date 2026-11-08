@@ -287,7 +287,7 @@ test('a saved voice is used when gpt-live knows it; no ChatGPT sign-in means no 
       "null: cove",
       "JUNIPER: juniper",
       "marin: cove (saved voice marin is unknown, using cove. Run kimaki --voice <name> to change it)",
-      "Voice calls need a ChatGPT subscription signed in to OpenCode. Run kimaki login openai, then join the voice channel again",
+      "Voice calls need a ChatGPT subscription signed in to OpenCode with a Codex login (ChatGPT token sharing cannot start calls). Run kimaki login openai --method chatgpt-browser, then join the voice channel again",
     ]
   `)
 })
