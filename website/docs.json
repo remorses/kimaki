@@ -85,6 +85,7 @@
               "docs/configuration/permissions",
               "docs/configuration/verbosity",
               "docs/configuration/mcp",
+              "docs/configuration/custom-instructions",
               "docs/configuration/projects"
             ]
           },

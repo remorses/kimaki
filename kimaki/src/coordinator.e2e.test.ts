@@ -115,11 +115,11 @@ beforeAll(async () => {
   bot = await startTestBot({ dataDir, twin, server, coordinator: true })
 }, 60_000)
 
-// Role texts the kimaki plugin stored in a session (plugin/coordinator.ts), oldest first.
-async function roleTexts(sessionID: string): Promise<string[]> {
+// Reminders the kimaki plugin stored in a session (plugin/coordinator.ts), oldest first.
+async function roleTexts(sessionID: string, tag = 'kimaki-coordinator'): Promise<string[]> {
   const client = await server.client()
   const messages = await client.message.list({ sessionID, order: 'desc', limit: 100 })
-  return [...messages.data].reverse().flatMap((message) => (message.type === 'synthetic' && message.text.includes('<kimaki-coordinator>') ? [message.text] : []))
+  return [...messages.data].reverse().flatMap((message) => (message.type === 'synthetic' && message.text.includes(`<${tag}>`) ? [message.text] : []))
 }
 
 // Token counts and run times differ between runs.
@@ -476,6 +476,94 @@ test('the coordinator shows typing while a worker runs in the background', async
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(workerAtTyping).not.toContain('-# *main')
+})
+
+test('KIMAKI.md reaches every Kimaki session, KIMAKI_COORDINATOR.md only the coordinator; edits reach running sessions', async () => {
+  const { discord, channelId } = twin
+  const root = bot.store.getState().roots[channelId]!
+  const userFile = path.join(dataDir, 'KIMAKI.md')
+  const coordinatorFile = path.join(dataDir, 'KIMAKI_COORDINATOR.md')
+  const say = async (content: string) => {
+    const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
+    await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content })
+    await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
+    return server.model.requests.findLast((item) => item.latestUserText.includes(content))?.raw ?? ''
+  }
+  fs.writeFileSync(userFile, 'Answer like a pirate. user-file-v1\n')
+  fs.writeFileSync(coordinatorFile, 'Plan before you delegate. coordinator-file\n')
+  try {
+    const first = await say('Custom one hello-marker')
+    const thread = await send(bot, { channelId, prompt: 'side-marker custom-thread-marker' })
+    if (thread instanceof Error) throw thread
+    await waitForFooter({ discord, threadId: thread.threadId })
+    fs.writeFileSync(userFile, 'Answer like a pirate. user-file-v2\n')
+    fs.rmSync(coordinatorFile)
+    const edited = await say('Custom two hello-marker')
+    fs.rmSync(userFile)
+    await say('Custom three hello-marker')
+
+    const text = await discord.channel(channelId).text()
+    expect(text.slice(text.lastIndexOf('--- from: user (tommy)\nCustom one'))).toMatchInlineSnapshot(`
+      "--- from: user (tommy)
+      Custom one hello-marker
+      --- from: assistant (TestBot)
+      Hello from the coordinator.
+      -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+      --- from: user (tommy)
+      Custom two hello-marker
+      --- from: assistant (TestBot)
+      Hello from the coordinator.
+      -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+      --- from: user (tommy)
+      Custom three hello-marker
+      --- from: assistant (TestBot)
+      Hello from the coordinator.
+      -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+    `)
+    // Once per request, also when the plugin checks the request.
+    expect(first.split('user-file-v1').length).toBe(2)
+    expect(first).toContain('coordinator-file')
+    const threadRequest = server.model.requests.findLast((item) => item.latestUserText.includes('custom-thread-marker'))?.raw ?? ''
+    expect(threadRequest).toContain('user-file-v1')
+    expect(threadRequest).not.toContain('coordinator-file')
+    expect(edited.slice(edited.lastIndexOf('<kimaki-user-instructions>'))).toContain('user-file-v2')
+    expect(edited.slice(edited.lastIndexOf('<kimaki-user-instructions>'))).not.toContain('coordinator-file')
+    const stored = (await roleTexts(root, 'kimaki-user-instructions')).map((reminder) => reminder.replaceAll(dataDir, '<dataDir>'))
+    expect(stored).toMatchInlineSnapshot(`
+      [
+        "<system-reminder>
+      <kimaki-user-instructions>
+      The user's own instructions for Kimaki sessions, from these files. They replace any earlier user instructions. When they conflict with Kimaki's default instructions, follow these.
+
+      <file path="<dataDir>/KIMAKI.md">
+      Answer like a pirate. user-file-v1
+      </file>
+
+      <file path="<dataDir>/KIMAKI_COORDINATOR.md">
+      Plan before you delegate. coordinator-file
+      </file>
+      </kimaki-user-instructions>
+      </system-reminder>",
+        "<system-reminder>
+      <kimaki-user-instructions>
+      The user's own instructions for Kimaki sessions, from these files. They replace any earlier user instructions. When they conflict with Kimaki's default instructions, follow these.
+
+      <file path="<dataDir>/KIMAKI.md">
+      Answer like a pirate. user-file-v2
+      </file>
+      </kimaki-user-instructions>
+      </system-reminder>",
+        "<system-reminder>
+      <kimaki-user-instructions>
+      The user removed their Kimaki instruction files: earlier user instructions no longer apply.
+      </kimaki-user-instructions>
+      </system-reminder>",
+      ]
+    `)
+  } finally {
+    fs.rmSync(userFile, { force: true })
+    fs.rmSync(coordinatorFile, { force: true })
+  }
 })
 
 test('/toggle-coordinator turns coordinator mode off and on per channel; the choice survives a restart', async () => {

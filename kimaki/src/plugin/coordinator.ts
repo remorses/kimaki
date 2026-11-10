@@ -1,5 +1,5 @@
-// Coordinator sessions in the OpenCode process: their role instructions (below)
-// and the prompt cache warmup of Kimaki sessions.
+// Coordinator sessions in the OpenCode process: their role instructions and the
+// user's KIMAKI.md files (below), and the prompt cache warmup of Kimaki sessions.
 //
 // Warmup works like OpenCode's `warming` (core/src/plugin/warming.ts): a
 // `session.generate` keep-alive reads the cached prompt prefix, which keeps the
@@ -194,30 +194,66 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
   }
 }
 
-// Role instructions of coordinator sessions, derived from markers only:
+// Reminders of root Kimaki sessions: role instructions derived from markers, and
+// the user's own instruction files in the Kimaki data dir:
 //
 //   root Kimaki session ─▶ marker threadId === channelId?                 ─▶ coordinator
 //                      └─▶ parent chain (marker parentSessionId, fork
 //                          source) reaches a coordinator?                  ─▶ worker
+//   <dataDir>/KIMAKI.md             ─▶ every root Kimaki session
+//   <dataDir>/KIMAKI_COORDINATOR.md ─▶ coordinators only
 //
 // Here, not in the instructions entry the bot writes at session.create: that
-// entry is frozen, while OpenCode reloads this plugin when its code changes.
-// OpenCode has no instruction source for plugins, so the text is a synthetic
-// message, reconciled like its plan plugin (core/src/plugin/plan.ts):
+// entry is frozen, while OpenCode reloads this plugin when its code changes and
+// the user edits the files at any time. OpenCode has no instruction source for
+// plugins, so each reminder is a synthetic message, reconciled like its plan
+// plugin (core/src/plugin/plan.ts):
 //
-//   user prompt ─▶ latest role text in the history missing (new session,
-//                  compaction) or stale (new plugin code)? ─▶ append it before the prompt
+//   user prompt ─▶ latest reminder of a kind in the history missing (new session,
+//                  compaction) or stale (new plugin code, edited file)? ─▶ append it before the prompt
 //
 // It lands at the tail: the cached prompt prefix stays warm. A turn with no user
 // prompt (a <session-finished> wake after compaction) gets the text on its last
 // user message for that request only, until the next prompt stores it.
 
 const ROLE_HEAD = '<system-reminder>\n<kimaki-coordinator>'
+const USER_HEAD = '<system-reminder>\n<kimaki-user-instructions>'
+const USER_FILE = 'KIMAKI.md'
+const COORDINATOR_FILE = 'KIMAKI_COORDINATOR.md'
 // Workers of workers, forks of forks: bounded against cycles.
 const MAX_PARENT_DEPTH = 10
 
+// optional: only stored to replace an earlier reminder of the same head (a deleted file).
+type Reminder = { head: string; text: string; optional: boolean }
+
 function roleText(body: string): string {
   return [ROLE_HEAD, 'These instructions replace any earlier Kimaki role instructions.', '', body, '</kimaki-coordinator>', '</system-reminder>'].join('\n')
+}
+
+function userText(body: string): string {
+  return [USER_HEAD, body, '</kimaki-user-instructions>', '</system-reminder>'].join('\n')
+}
+
+const USER_REMOVED = userText('The user removed their Kimaki instruction files: earlier user instructions no longer apply.')
+
+// Read on every request: an edit reaches running sessions at their next prompt.
+async function userInstructions({ dataDir, coordinator }: { dataDir: string; coordinator: boolean }): Promise<string | null> {
+  const names = coordinator ? [USER_FILE, COORDINATOR_FILE] : [USER_FILE]
+  const files = await Promise.all(names.map(async (name) => {
+    const file = path.join(dataDir, name)
+    const text = await fs.promises.readFile(file, 'utf8').then((value) => value.trim(), () => '')
+    return text ? `<file path="${file}">\n${text}\n</file>` : null
+  }))
+  const found = files.filter((file) => file !== null)
+  if (found.length === 0) return null
+  const intro = "The user's own instructions for Kimaki sessions, from these files. They replace any earlier user instructions. When they conflict with Kimaki's default instructions, follow these."
+  return userText([intro, ...found].join('\n\n'))
+}
+
+// Missing or stale in the history. An optional reminder only replaces an earlier one.
+function needed(reminder: Reminder, texts: readonly string[]): boolean {
+  const latest = texts.findLast((text) => text.startsWith(reminder.head))
+  return latest === undefined ? !reminder.optional : latest !== reminder.text
 }
 
 type RoleSession = Awaited<ReturnType<Plugin.Context['session']['get']>>
@@ -237,14 +273,9 @@ function parentOf(session: RoleSession): string | undefined {
   return markerString(session, 'parentSessionId') ?? session.fork?.sessionID
 }
 
-export async function registerCoordinatorRoles(ctx: Plugin.Context): Promise<void> {
-  // The role text this session must have, or null: TUI sessions, subagents, plain threads.
-  async function expected(sessionID: string): Promise<string | null> {
-    const session = await ctx.session.get({ sessionID }).catch(() => null)
-    if (!session || session.parentID || !markerString(session, 'threadId')) return null
-    const channelId = coordinatorChannel(session)
-    const dataDir = markerString(session, 'dataDir')
-    if (channelId) return dataDir ? roleText(coordinatorSection({ sessionId: sessionID, channelId, dataDir })) : null
+export async function registerReminders(ctx: Plugin.Context): Promise<void> {
+  // The worker role of a thread whose parent chain reaches a coordinator.
+  async function workerRole(session: RoleSession): Promise<string | null> {
     let parent = parentOf(session)
     for (let depth = 0; parent && depth < MAX_PARENT_DEPTH; depth++) {
       const info = await ctx.session.get({ sessionID: parent }).catch(() => null)
@@ -256,27 +287,47 @@ export async function registerCoordinatorRoles(ctx: Plugin.Context): Promise<voi
     return null
   }
 
+  // The reminders this session must have, role first. None for TUI sessions and subagents.
+  async function expected(sessionID: string): Promise<Reminder[]> {
+    const session = await ctx.session.get({ sessionID }).catch(() => null)
+    if (!session || session.parentID || !markerString(session, 'threadId')) return []
+    const channelId = coordinatorChannel(session)
+    const dataDir = markerString(session, 'dataDir')
+    if (!dataDir) return []
+    const [role, user] = await Promise.all([
+      channelId ? roleText(coordinatorSection({ sessionId: sessionID, channelId, dataDir })) : workerRole(session),
+      userInstructions({ dataDir, coordinator: !!channelId }),
+    ])
+    return [
+      ...(role ? [{ head: ROLE_HEAD, text: role, optional: false }] : []),
+      { head: USER_HEAD, text: user ?? USER_REMOVED, optional: !user },
+    ]
+  }
+
   await ctx.session.hook('prompt', async (event) => {
-    const text = await expected(event.sessionID)
-    if (!text) return
+    const reminders = await expected(event.sessionID)
+    if (reminders.length === 0) return
     const history = await ctx.session.context({ sessionID: event.sessionID }).catch(() => null)
     if (!history) return
-    const latest = history.findLast((message) => message.type === 'synthetic' && message.text.startsWith(ROLE_HEAD))
-    if (latest?.type === 'synthetic' && latest.text === text) return
-    // Plugins stay silent: a failed append is retried at the next prompt.
-    await ctx.session.synthetic({ sessionID: event.sessionID, text, delivery: event.delivery, resume: false }).catch(() => undefined)
+    const texts = history.flatMap((message) => (message.type === 'synthetic' ? [message.text] : []))
+    for (const reminder of reminders) {
+      if (!needed(reminder, texts)) continue
+      // Plugins stay silent: a failed append is retried at the next prompt.
+      await ctx.session.synthetic({ sessionID: event.sessionID, text: reminder.text, delivery: event.delivery, resume: false }).catch(() => undefined)
+    }
   })
 
   // Every request kind gets the same messages, or the prompt cache misses (plugin/index.ts).
   const shapeRequest = async (event: SessionContext) => {
-    const text = await expected(event.sessionID)
-    if (!text) return
-    const texts = event.messages.flatMap((message) => (message.role === 'user' ? message.content : []))
-      .flatMap((part) => (part.type === 'text' && part.text.startsWith(ROLE_HEAD) ? [part.text] : []))
-    if (texts.at(-1) === text) return
+    const reminders = await expected(event.sessionID)
     const last = event.messages.findLast((message) => message.role === 'user')
-    // TODO: insert a new Message like core/src/plugin/plan.ts once plugins can import OpenCode's Message class.
-    if (last) Array.prototype.push.call(last.content, { type: 'text', text })
+    if (reminders.length === 0 || !last) return
+    const texts = event.messages.flatMap((message) => (message.role === 'user' ? message.content : []))
+      .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+    for (const reminder of reminders) {
+      // TODO: insert a new Message like core/src/plugin/plan.ts once plugins can import OpenCode's Message class.
+      if (needed(reminder, texts)) Array.prototype.push.call(last.content, { type: 'text', text: reminder.text })
+    }
   }
   await ctx.session.hook('context', shapeRequest)
   await ctx.session.hook('compaction', shapeRequest)

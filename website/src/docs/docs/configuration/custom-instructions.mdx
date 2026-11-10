@@ -1,0 +1,40 @@
+---
+title: Custom instructions
+description: Add your own instructions to every Kimaki session with KIMAKI.md, and to coordinators only with KIMAKI_COORDINATOR.md.
+icon: lucide:file-pen
+---
+
+Put your own **instructions** for Kimaki sessions in two markdown files in the Kimaki data dir (`~/.kimaki` by default):
+
+```bash
+echo 'Always reply in Italian.' > ~/.kimaki/KIMAKI.md
+echo 'Start every worker in a worktree.' > ~/.kimaki/KIMAKI_COORDINATOR.md
+```
+
+| File | Reaches |
+| --- | --- |
+| `KIMAKI.md` | every Kimaki session: coordinators, worker threads, plain threads |
+| `KIMAKI_COORDINATOR.md` | only [coordinator](/docs/features/coordinator) sessions |
+
+Use them for rules about how the agent works **in Discord**: reply style, when to start threads, how the coordinator delegates. Rules about a codebase belong in that project's `AGENTS.md`.
+
+## How it works
+
+```diagram
+  your message ──▶ kimaki plugin reads ~/.kimaki/KIMAKI.md (+ KIMAKI_COORDINATOR.md for coordinators)
+                         │ changed since the last copy in the session?
+                         ▼
+                 adds the new text before your message ──▶ model
+```
+
+- Kimaki reads the files on every message. An **edit** reaches running sessions at their next message, also a coordinator that runs for weeks.
+- The text is added after the cached history, so the prompt cache stays warm. Kimaki adds it again only when a file changed or after a compaction.
+- **Delete** both files and the next message tells the session that your earlier instructions no longer apply.
+- When your instructions conflict with Kimaki's default ones, the agent follows yours.
+- Sessions you open in the OpenCode TUI and subagents never get them.
+
+With `--data-dir`, the files live in that directory instead:
+
+```bash
+kimaki --data-dir ~/.kimaki-work   # reads ~/.kimaki-work/KIMAKI.md
+```

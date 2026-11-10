@@ -39,6 +39,7 @@ kimaki --coordinator false
 - Other threads of the channel and routines leave a **silent note**. The coordinator reads it at your next message, so it always knows what happened.
 - Write in a worker thread to steer that worker directly, like any Kimaki thread.
 - The coordinator keeps project memory in `MEMORY.md` (tracked in git, one section per topic). Workers read it and the coordinator session for context.
+- Customize how the coordinator works with `~/.kimaki/KIMAKI_COORDINATOR.md`. See [custom instructions](/docs/configuration/custom-instructions).
 
 ## Commands
 
