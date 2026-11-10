@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.1
+
+1. **New worktrees start much faster.** Kimaki no longer installs dependencies when it creates a worktree (`/new-worktree`, `kimaki send --worktree`, automatic worktrees), so a slow or failed install no longer blocks the session. Submodules are still initialized. Sessions that run in a worktree get a short instruction to install dependencies and build what is needed before they run scripts, builds or tests.
+
+2. **`/<agent>-agent` without a prompt switches the coordinator's agent** in a coordinator channel, instead of starting a new empty thread. With a prompt it still starts a new thread with that agent, and the coordinator keeps its own agent and model:
+
+   ```
+   /thinker-agent                      switches the coordinator to thinker
+   /thinker-agent prompt:fix the bug   starts a new thread with thinker
+   ```
+
 ## 1.7.0
 
 1. **`/btw` takes an optional `agent` option** with autocomplete of the project's agents. The forked session answers with that agent; without it the fork keeps the source session's agent. An unknown agent fails before the `btw:` thread is created.
