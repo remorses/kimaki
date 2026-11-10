@@ -1,6 +1,7 @@
-// Agent picks in a coordinator channel: `/<agent>-agent` (with or without a prompt)
-// and a spoken agent start a new thread with that agent, and `kimaki send --agent --model`
-// to the coordinator (workers pass --agent <current_agent>) keeps its agent and model.
+// Agent picks in a coordinator channel: `/<agent>-agent` with a prompt and a spoken agent
+// start a new thread with that agent, `kimaki send --agent --model` to the coordinator
+// (workers pass --agent <current_agent>) keeps its agent and model, and `/<agent>-agent`
+// without a prompt switches the coordinator itself (last test: it changes the coordinator).
 
 import fs from 'node:fs'
 import type { DeterministicMatcher } from 'opencode-deterministic-provider'
@@ -108,28 +109,6 @@ test('/<agent>-agent with a prompt starts a thread with that agent; the coordina
   expect(await coordinator()).toEqual(initial)
 })
 
-test('/<agent>-agent without a prompt starts an idle thread with that agent; the coordinator keeps its agent and model', async () => {
-  const { discord, channelId } = twin
-  const before = new Set((await discord.channel(channelId).getThreads()).map((thread) => thread.id))
-  await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'thinker-agent' })
-  const thread = await discord.channel(channelId).waitForThread({ timeout: 8_000, predicate: (candidate) => !before.has(candidate.id) })
-  await waitForBotMessageContaining({ discord, threadId: thread.id, text: 'Send a message to start working.' })
-  expect(await coordinator()).toEqual(initial)
-  await discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'Think empty-agent-marker' })
-  await waitForFooter({ discord, threadId: thread.id })
-  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
-    "--- from: assistant (TestBot)
-    Send a message to start working.
-    --- from: user (tommy)
-    Think empty-agent-marker
-    --- from: assistant (TestBot)
-    -# *using deterministic-provider/deterministic-thinker ⋅ thinker*
-    empty agent ok
-    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-thinker ⋅ thinker*"
-  `)
-  expect(await coordinator()).toEqual(initial)
-})
-
 test('a spoken agent starts a thread with that agent; the coordinator keeps its agent and model', async () => {
   const thread = await newThread(() =>
     twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendVoiceMessage({ url: voiceUrl({ transcription: 'Think voice-agent-marker', route: 'steer', agent: 'thinker' }) }),
@@ -165,4 +144,28 @@ test('kimaki send --agent --model to the coordinator keeps its agent and model',
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(await coordinator()).toEqual(initial)
+})
+
+test('/<agent>-agent without a prompt switches the coordinator agent and starts no thread', async () => {
+  const { discord, channelId } = twin
+  const threads = (await discord.channel(channelId).getThreads()).length
+  const footers = (await discord.channel(channelId).getMessages()).filter(isFooter).length
+  await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'thinker-agent' })
+  await waitForBotMessageContaining({ discord, threadId: channelId, text: 'Switched to **thinker** agent for this session' })
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Think empty-agent-marker' })
+  await waitForFooter({ discord, threadId: channelId, count: footers + 1 })
+  const text = await discord.channel(channelId).text()
+  expect(text.slice(text.indexOf('Switched to **thinker**'))).toMatchInlineSnapshot(`
+    "Switched to **thinker** agent for this session
+    Model: \`deterministic-provider/deterministic-thinker\`
+    The agent changes from the next step.
+    -# Switched agent to Thinker
+    --- from: user (tommy)
+    Think empty-agent-marker
+    --- from: assistant (TestBot)
+    empty agent ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-thinker ⋅ thinker*"
+  `)
+  expect((await discord.channel(channelId).getThreads()).length).toBe(threads)
+  expect(await coordinator()).toEqual({ agent: 'thinker', model: 'deterministic-thinker' })
 })
