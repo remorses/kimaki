@@ -37,7 +37,7 @@ import type { Route } from './routes.ts'
 import * as schema from './schema.ts'
 import { disabledSkillRules } from './builtin-skills.ts'
 import { baseInstructions, INSTRUCTION_KEY, type ScheduledRun } from './system-prompt.ts'
-import { createWorktree, resolveWorkingDirectory } from './worktrees.ts'
+import { createWorktree, isLinkedWorktree, resolveWorkingDirectory } from './worktrees.ts'
 
 const logger = createLogger('SESSIONS')
 
@@ -223,7 +223,7 @@ async function putInstructions(
   },
 ): Promise<OpenCodeUnavailableError | OpenCodeError | void> {
   // The agent list is optional prompt context: a failure must not strand the conversation.
-  const found = await primaryAgents(bot, directory)
+  const [found, worktree] = await Promise.all([primaryAgents(bot, directory), isLinkedWorktree(directory)])
   if (found instanceof Error) logger.warn(`agent list for instructions failed`, found)
   // The ID is what switchAgent and session.create take.
   const agents = found instanceof Error ? [] : found.map((agent) => ({ name: agent.id, description: agent.description ?? '' }))
@@ -240,6 +240,7 @@ async function putInstructions(
     scheduledTask,
     // Derived from where the session lives, never from bindings that can be stale.
     coordinator: conversation.id === channel.id,
+    worktree,
     disabled: bot.disabledPrompt,
   })
   const put = await oc(bot, 'instructions.entry.put', (client) =>

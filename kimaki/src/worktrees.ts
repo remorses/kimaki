@@ -108,26 +108,21 @@ export async function createWorktree({ projectDirectory, dataDir, name, baseBran
   if (head instanceof Error) return head
   if (identity instanceof Error) return identity
   if (head !== base || identity !== common) return new ConfigError({ reason: `Worktree identity mismatch at ${directory}. No session was started; inspect this checkout.` })
-  const setup = await setupWorktree(directory)
-  if (setup instanceof Error) return new ConfigError({ reason: `Worktree created at ${directory}, but setup failed: ${setup.message}. Fix setup there, then use send --cwd with this directory.`, cause: setup })
+  // Dependencies are not installed here: the session sets the checkout up when it needs to (system-prompt.ts).
+  if (fs.existsSync(path.join(directory, '.gitmodules'))) {
+    logger.log(`initializing submodules in ${directory}`)
+    const submodules = await git({ directory, args: ['submodule', 'update', '--init', '--recursive'], timeout: 20 * 60_000 })
+    if (submodules instanceof Error) return new ConfigError({ reason: `Worktree created at ${directory}, but submodule setup failed: ${submodules.message}. Fix it there, then use send --cwd with this directory.`, cause: submodules })
+  }
   return { directory: await canonicalPath(directory), branch }
 }
 
-async function setupWorktree(directory: string) {
-  if (fs.existsSync(path.join(directory, '.gitmodules'))) {
-    logger.log(`initializing submodules in ${directory}`)
-    const result = await git({ directory, args: ['submodule', 'update', '--init', '--recursive'], timeout: 20 * 60_000 })
-    if (result instanceof Error) return result
-  }
-  const lockfiles: Array<[string, string]> = [['pnpm-lock.yaml', 'pnpm'], ['bun.lock', 'bun'], ['bun.lockb', 'bun'], ['yarn.lock', 'yarn'], ['package-lock.json', 'npm']]
-  const manager = lockfiles.find(([file]) => fs.existsSync(path.join(directory, file)))?.[1]
-  if (!manager) return
-  const args = manager === 'npm' ? ['ci'] : ['install', '--frozen-lockfile']
-  logger.log(`running ${manager} ${args.join(' ')} in ${directory}`)
-  const result = await execAsync(manager, args, { cwd: directory, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 })
-    .catch((cause) => new ConfigError({ reason: `${manager} install failed`, cause }))
-  if (result instanceof Error) return result
-  logger.log(`setup complete in ${directory}`)
+// A linked worktree has its own git dir; the main checkout's git dir is the common dir.
+export async function isLinkedWorktree(directory: string) {
+  const output = await git({ directory, args: ['rev-parse', '--git-dir', '--git-common-dir'] })
+  if (output instanceof Error) return false
+  const [gitDir, common] = output.split('\n').map((dir) => path.resolve(directory, dir))
+  return gitDir !== common
 }
 
 async function linkedWorktree({ projectDirectory, directory }: { projectDirectory: string; directory: string }) {

@@ -40,10 +40,9 @@ Where you run it changes what happens:
 
 ### Setup in the new folder
 
-After `git worktree add`, Kimaki prepares the folder:
+After `git worktree add`, Kimaki runs `git submodule update --init --recursive` if the project has `.gitmodules`.
 
-- If the project has `.gitmodules`, it runs `git submodule update --init --recursive`.
-- If it finds a lockfile, it installs dependencies: `pnpm install --frozen-lockfile`, `bun install --frozen-lockfile`, `yarn install --frozen-lockfile`, or `npm ci`.
+Kimaki does **not install dependencies**. Sessions in a worktree get a tip in their instructions: before running scripts, builds or tests, install dependencies and build what is needed.
 
 ## Why isolate work in a worktree
 

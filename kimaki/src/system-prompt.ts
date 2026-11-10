@@ -32,6 +32,7 @@ export function baseInstructions({
   parentSessionId,
   scheduledTask = null,
   coordinator: isCoordinator = false,
+  worktree = false,
   disabled = [],
 }: {
   sessionId: string
@@ -49,6 +50,8 @@ export function baseInstructions({
   // The coordinator of a coordinator channel. Its role instructions come from the
   // plugin (plugin/coordinator.ts), so they update in existing sessions.
   coordinator?: boolean
+  // The session starts in a linked Git worktree.
+  worktree?: boolean
   // `kimaki --disable-prompt`: tagged static parts to leave out.
   disabled?: readonly PromptSection[]
 }): string {
@@ -204,6 +207,11 @@ export function baseInstructions({
       **When you are blocked on the user, sleep instead of ending the turn.** If you need the user to do something outside the chat (accept a sudo or permission dialog, log in, plug in a device, approve something), ask for it, assume they will do it, and run \`kimaki sleep --duration 5m --reason '...'\`. On wake, check if you are unblocked and continue on your own. If not, sleep again. The user can still send a message while you sleep, so this costs nothing when they reply, and the work continues when they only did the action and forgot to write.
     `],
     [null, scheduledTask ? scheduledTaskSection(scheduledTask) : ''],
+    [null, worktree ? dedent`
+      ## worktree setup
+
+      This session runs in a Git worktree. Kimaki does not install dependencies or build anything in new worktrees. Before you run scripts, builds or tests, set the checkout up if it is not done yet: install dependencies with the package manager of the lockfile and run any build step that other packages depend on.
+    ` : ''],
     [null, isCoordinator ? '' : dedent`
       ## archiving the current thread
 
