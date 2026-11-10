@@ -51,6 +51,7 @@ import {
 import { agentUiRoutes } from './agent-ui.ts'
 import { oc, projectOf, type Bot, type ModelChoice } from './bot.ts'
 import { createLoginRoutes } from './commands/login-commands.ts'
+import { mcpRoutes } from './commands/mcp-commands.ts'
 import { applyAgent, createPreferenceRoutes, switchModel, variantChoices, variantModel } from './commands/preference-commands.ts'
 import { sessionRoutes } from './commands/session-commands.ts'
 import { SKIPPED_COMMANDS, threadRoutes } from './commands/thread-commands.ts'
@@ -142,6 +143,7 @@ export function createInteractionRegistry(): InteractionRegistry {
     sessionRoutes,
     threadRoutes,
     createPreferenceRoutes(),
+    mcpRoutes,
     taskRoutes,
     agentUiRoutes,
     permissionRoutes,

@@ -1,6 +1,6 @@
 ---
 title: MCP Servers
-description: MCP servers come from your OpenCode config. Manage them with the opencode CLI; run their prompts from Discord.
+description: MCP servers come from your OpenCode config. Turn them on and off with /mcp; run their prompts from Discord.
 icon: lucide:plug-2
 ---
 
@@ -14,11 +14,22 @@ opencode mcp auth     # log in to a server that uses OAuth
 
 Kimaki and the OpenCode CLI use the same OpenCode service, so a change shows up in Discord without a Kimaki restart.
 
-<Aside>
-<Note>
-Kimaki V2 has no `/mcp` slash command. Use the `opencode mcp` commands above, or edit the `mcp` section of your `opencode.json`.
-</Note>
-</Aside>
+## Toggle servers from Discord
+
+Run **`/mcp`** in a project channel or a session thread. It shows a table of the servers with their status and one button per row:
+
+| Status           | Button     |
+| ---------------- | ---------- |
+| Connected        | Disconnect |
+| Disabled         | Connect    |
+| Failed           | Retry      |
+| Sign in required | Retry      |
+
+The reply is only visible to you. It works from the Discord phone app, so you can turn a server on for one task and off again later.
+
+The toggle applies to the folder the session runs in: the project folder, or the worktree of a worktree thread. It does **not** edit `opencode.json`. When OpenCode reloads that folder, for example after a restart, every server starts from its config again. To turn a server off for good, set `"disabled": true` in its config.
+
+A server that needs OAuth sign-in shows its error in the table. Sign in once with `opencode mcp auth`, then press **Retry**.
 
 ## MCP tools in a thread
 

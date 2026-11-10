@@ -87,6 +87,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
       "/hello-cmd: Say hello",
       "/later-cmd: Runs later",
       "/login: Connect an OpenCode provider",
+      "/mcp: List MCP servers and connect or disconnect them",
       "/merge-worktree: Merge this worktree into a local branch",
       "/model: Set the model for this session, channel or all channels",
       "/model-variant: Change the thinking level of the current model",

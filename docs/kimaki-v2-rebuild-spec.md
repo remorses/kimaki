@@ -1600,7 +1600,7 @@ command; they run as `/server:prompt args` messages or from `/queue-command`.
 ### Other
 
 `/last-sessions`, `/tasks`, `/login` (provider auth → V2 `integration.*`),
-`/transcription-key`, `/mcp` (V2 `mcp.list`, transform to toggle),
+`/transcription-key`, `/mcp` (V2 `mcp.list`, `mcp.connect` / `mcp.disconnect` per location),
 `/screenshare`, `/vscode`, `/restart-opencode-server`. (`/upgrade-and-restart` removed.)
 
 ### Component custom IDs
