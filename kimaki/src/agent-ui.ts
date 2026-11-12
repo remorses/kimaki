@@ -112,7 +112,11 @@ export function createAgentUi(bot: Pick<Bot, 'store' | 'eventLoop' | 'opencode'>
     if (!threadId) return new ConfigError({ reason: 'This session has no local Discord thread' })
     const prompt: AgentPrompt = { id: crypto.randomBytes(8).toString('hex'), sessionId, ...content }
     if (fromShell) {
-      if (!toolCall) return new ConfigError({ reason: 'The Kimaki plugin must provide KIMAKI_TOOL_CALL for agent UI commands' })
+      if (!toolCall) {
+        return new ConfigError({
+          reason: 'The Kimaki plugin did not run for this shell command (no KIMAKI_TOOL_CALL). If `opencode plugin list` shows the kimaki plugin as failed, the user must run `opencode service restart`',
+        })
+      }
       const waited = await waitForShellCall(bot, { toolCall, signal })
       if (waited instanceof Error) return waited
     }
