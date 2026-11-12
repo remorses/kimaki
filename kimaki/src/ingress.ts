@@ -31,7 +31,7 @@ import {
 import * as errore from 'errore'
 
 import { isCoordinatorChannel, oc, projectOf, sessionDirectory, type Bot, type PromptFile } from './bot.ts'
-import { formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
+import { asSubtext, formatError, NOTIFY_MESSAGE_FLAGS, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import { parseInput, sendInput } from './lock-routes.ts'
 import { cancelQueuedPrompt, dispatch, requeueEdited, send } from './prompt.ts'
@@ -201,7 +201,7 @@ async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: 
   const answer = JSON.stringify(result instanceof Error ? { error: result.message } : result)
   await message
     .reply({
-      content: result instanceof Error ? result.message : `Delivered to <#${result.threadId}>`,
+      content: result instanceof Error ? formatError(result.message) : asSubtext(`Delivered to <#${result.threadId}>`),
       embeds: [{ footer: { text: `${REMOTE_RESULT_PREFIX}${value.requestId}:${answer}` } }],
       allowedMentions: { parse: [] },
       // The data is in the embed: SuppressEmbeds would hide it.
@@ -293,7 +293,7 @@ async function handleMessage(bot: Bot, message: Message) {
     if (result instanceof Error) return reportError(result)
     if (!result || result.threadId === channel.id) return
     const note = route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-    await message.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
+    await message.reply({ content: asSubtext(note), allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
     return
   }
 
@@ -319,7 +319,7 @@ async function handleMessage(bot: Bot, message: Message) {
   if (!result) return
   const note =
     route.kind === 'btw' ? `Session forked! Continue in <#${result.threadId}>` : `Started a new session in <#${result.threadId}>`
-  await message.reply({ content: note, allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
+  await message.reply({ content: asSubtext(note), allowedMentions: { repliedUser: false }, flags: SILENT_MESSAGE_FLAGS }).catch(() => undefined)
 }
 
 // A rename in the Discord UI posts a CHANNEL_NAME_CHANGE message with the new

@@ -43,7 +43,7 @@ From the CLI, use `kimaki send --thread <id> --prompt 'why this approach? btw'` 
 
 1. Kimaki **forks the whole session** with OpenCode. The fork keeps the history, agent, model and instructions.
 2. It creates a thread named `btw: <your question>` and adds you to it.
-3. The first message in the new thread is `Reusing context from #original-thread to answer prompt...` followed by your question.
+3. The first message in the new thread is a small subtext note, `Reusing context from #original-thread`, followed by your question as `» your-name: question`.
 4. It **sends your question at once**, so the fork starts to answer.
 5. Where you asked, Kimaki replies `Session forked! Continue in #btw-thread`.
 

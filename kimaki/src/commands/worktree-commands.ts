@@ -12,6 +12,7 @@ import { ButtonStyle, ComponentType, SlashCommandBuilder, type ButtonInteraction
 import { oc, projectOf, rootSession, sessionDirectory, type Author, type Bot, type Conversation } from '../bot.ts'
 import { ConfigError, DbError } from '../errors.ts'
 import { canonicalPath } from '../file-edit-log.ts'
+import { asSubtext } from '../format-parts.ts'
 import * as schema from '../schema.ts'
 import { authorOf, replyError, resolveTarget, type InteractionRoutes } from '../interaction-context.ts'
 import { fork, sessionCwd, startSession } from '../sessions.ts'
@@ -194,7 +195,7 @@ async function newWorktreeCommand(bot: Bot, interaction: ChatInputCommandInterac
     author: authorOf(interaction),
   })
   if (result instanceof Error) return replyError(interaction, result)
-  return interaction.editReply({ content: `Worktree session ready in <#${result.threadId}>` })
+  return interaction.editReply({ content: asSubtext(`Worktree session ready in <#${result.threadId}>`) })
 }
 
 async function mergeWorktreeCommand(bot: Bot, interaction: ChatInputCommandInteraction) {

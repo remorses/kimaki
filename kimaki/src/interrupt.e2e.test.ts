@@ -122,7 +122,7 @@ test('/abort stops the run and clears the queue', async () => {
     --- from: assistant (TestBot)
     [reply to tommy: Never runs queued-one. queue]
     -# Removed from queue
-    Request **aborted**, cleared 1 queued message"
+    -# Request **aborted**, cleared 1 queued message"
   `)
 })
 

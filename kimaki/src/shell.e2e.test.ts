@@ -132,7 +132,7 @@ test('!cmd in a thread runs there; /abort kills a running command', async () => 
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'killed' })
   await waitForBotMessageContaining({ discord: twin.discord, threadId: thread.id, text: 'Request **aborted**' })
   // The /abort reply and the killed shell's output race; the reply is checked above.
-  const text = (await twin.discord.thread(thread.id).text()).replace('\nRequest **aborted**', '')
+  const text = (await twin.discord.thread(thread.id).text()).replace('\n-# Request **aborted**', '')
   expect(text).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     !echo first

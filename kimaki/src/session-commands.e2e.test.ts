@@ -134,7 +134,7 @@ test('/new-session starts a thread with attached files and an agent', async () =
   await waitForFooter({ discord, threadId: thread.id })
   expect(hide(await discord.channel(channelId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Created new session in <#THREAD>"
+    -# Created new session in <#THREAD>"
   `)
   expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
@@ -163,7 +163,7 @@ test('/new-session without a prompt waits for the first thread message', async (
   await waitForFooter({ discord, threadId: thread.id })
   expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Send a message to start working.
+    -# Send a message to start working.
     --- from: user (tommy)
     Go empty-marker
     --- from: assistant (TestBot)
@@ -199,10 +199,9 @@ test('/resume binds an existing session to a new thread and moves the binding', 
   await waitForFooter({ discord, threadId: resumed.id, count: 2 })
   expect(hide(await discord.thread(resumed.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    **Resumed session:** TUI work
-    **Created:** <t:TIME:f>
+    -# Resumed session **TUI work**, created <t:TIME:f>
     tui answer
-    **Session resumed!** You can now continue the conversation by sending messages in this thread.
+    -# Session resumed. You can now continue the conversation by sending messages in this thread.
     --- from: user (tommy)
     Go on resumed-marker
     --- from: assistant (TestBot)
@@ -247,11 +246,9 @@ test('/fork forks before a user message into a new thread', async () => {
   expect(fork.name).toBe('Start first-marker (fork #1)')
   expect(hide(await discord.thread(fork.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    **Forked session created!**
-    From: <#THREAD> (\`ses_ID\`)
-    New session: \`ses_ID\`
+    -# Forked session \`ses_ID\` from <#THREAD> (\`ses_ID\`)
     first answer
-    You can now continue the conversation from this point.
+    -# You can now continue the conversation from this point.
     --- from: user (tommy)
     Check fork-check
     --- from: assistant (TestBot)
@@ -312,13 +309,10 @@ test('/fork-subagent forks a subagent session into a new thread', async () => {
   expect(fork.name).toMatchInlineSnapshot(`"Count files (fork #1)"`)
   expect(hide(await discord.thread(fork.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    **Forked subagent session created!**
-    Agent: \`general\`
-    Task: Count files
-    From: \`ses_ID\`
-    New session: \`ses_ID\`
+    -# Forked subagent session \`ses_ID\` from \`ses_ID\`
+    -# Agent: \`general\` ⋅ Task: Count files
     child says three
-    You can now continue the conversation from this point.
+    -# You can now continue the conversation from this point.
     --- from: user (tommy)
     More child-followup
     --- from: assistant (TestBot)
@@ -341,9 +335,8 @@ test('/resume of a session waiting on a question shows the question in the new t
   await waitForFooter({ discord, threadId: thread.id })
   expect(hide(await discord.thread(thread.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    **Resumed session:** Asks a question
-    **Created:** <t:TIME:f>
-    **Session resumed!** You can now continue the conversation by sending messages in this thread.
+    -# Resumed session **Asks a question**, created <t:TIME:f>
+    -# Session resumed. You can now continue the conversation by sending messages in this thread.
     **Color**
     Which color?
     ✓ _Red_

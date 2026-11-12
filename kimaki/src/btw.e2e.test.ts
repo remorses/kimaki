@@ -85,14 +85,14 @@ test('. btw forks into a side thread while the source run continues', async () =
     --- from: user (tommy)
     What is 2+2 side-marker. btw
     --- from: assistant (TestBot)
-    Session forked! Continue in <#THREAD>
+    -# Session forked! Continue in <#THREAD>
     slow-done
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   expect(hideIds(await discord.thread(fork.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Reusing context from <#THREAD> to answer prompt...
-    What is 2+2 side-marker
+    -# Reusing context from <#THREAD>
+    -# » **tommy:** What is 2+2 side-marker
     side answer
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
@@ -138,8 +138,8 @@ test('/btw forks from a thread with an idle session, with the picked agent', asy
   expect((await discord.channel(channelId).getThreads()).filter((thread) => !existing.has(thread.id)).length).toBe(1)
   expect(hideIds(await discord.thread(fork.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Reusing context from <#THREAD> to answer prompt...
-    Side slash-marker
+    -# Reusing context from <#THREAD>
+    -# » **tommy:** Side slash-marker
     -# Switched agent to Plan
     slash answer
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2 ⋅ plan*"

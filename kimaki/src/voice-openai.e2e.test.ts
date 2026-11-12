@@ -226,6 +226,6 @@ test('KIMAKI_WHISPER_URL is the only transcriber: no cloud request, and its fail
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendVoiceMessage({ url: `data:audio/ogg;base64,${ogg.toString('base64')}` })
   const reply = await twin.discord.channel(twin.channelId).waitForMessage({ timeout: 8_000, predicate: (message) => message.content.includes('Transcription API returned 400') })
   whisper.status = 200
-  expect(reply.content).toMatchInlineSnapshot(`"✗ Transcription API returned 400: {"detail":"unauthorized"}"`)
+  expect(reply.content).toMatchInlineSnapshot(`"-# ✗ Transcription API returned 400: {"detail":"unauthorized"}"`)
   expect(openai.requests.length + chatgpt.requests.length).toBe(cloudRequests)
 })

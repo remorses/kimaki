@@ -304,14 +304,14 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     [reply to tommy: ]
     -# » **tommy:** Side voice-btw
     [reply to tommy: ]
-    Session forked! Continue in <#THREAD>
+    -# Session forked! Continue in <#THREAD>
     --- from: user (tommy)
     [attachment: voice-message.ogg]
     --- from: assistant (TestBot)
     [reply to tommy: ]
     -# » **tommy:** Fresh start voice-new
     [reply to tommy: ]
-    Started a new session in <#THREAD>
+    -# Started a new session in <#THREAD>
     slow-done
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
     [reply to tommy: ]
@@ -327,8 +327,8 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
   `)
   expect(hide(await twin.discord.thread(btw.id).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Reusing context from <#THREAD> to answer prompt...
-    Side voice-btw
+    -# Reusing context from <#THREAD>
+    -# » **tommy:** Side voice-btw
     voice btw ok
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)

@@ -485,7 +485,7 @@ test('CLI registry shares thread actions, preferences, title and archive', async
     -# » **CLI:** Registry queued
     ok
     -# *main ⋅ Ns ⋅ deterministic-v2 ⋅ build*
-    ✗ compaction failed: Compaction summary did not match the required template"
+    -# ✗ compaction failed: Compaction summary did not match the required template"
   `)
   expect((await twin.discord.channel(twin.channelId).getThreads()).find((thread) => thread.id === started.threadId)?.name).toBe('CLI renamed')
 })

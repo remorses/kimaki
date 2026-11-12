@@ -21,7 +21,7 @@ import {
 
 import { oc, type Bot, type PromptFile } from '../bot.ts'
 import { ConfigError } from '../errors.ts'
-import { selectRow, truncate } from '../format-parts.ts'
+import { asSubtext, selectRow, truncate } from '../format-parts.ts'
 import { authorOf, replyError, resolveTarget, respondChoices, type InteractionRoutes } from '../interaction-context.ts'
 import { fork, resume, startSession } from '../sessions.ts'
 import { stripTurnContext } from '../system-prompt.ts'
@@ -79,7 +79,7 @@ async function newSession(bot: Bot, interaction: ChatInputCommandInteraction) {
     run: Boolean(text),
   })
   if (started instanceof Error) return replyError(interaction, started)
-  await interaction.editReply({ content: `Created new session in <#${started.threadId}>` })
+  await interaction.editReply({ content: asSubtext(`Created new session in <#${started.threadId}>`) })
 }
 
 async function resumeCommand(bot: Bot, interaction: ChatInputCommandInteraction) {
@@ -95,7 +95,7 @@ async function resumeCommand(bot: Bot, interaction: ChatInputCommandInteraction)
     author: authorOf(interaction),
   })
   if (result instanceof Error) return replyError(interaction, result)
-  await interaction.editReply({ content: `Resumed session "${result.title}" in <#${result.threadId}>` })
+  await interaction.editReply({ content: asSubtext(`Resumed session "${result.title}" in <#${result.threadId}>`) })
 }
 
 // The thread's session for /fork and /fork-subagent; null after an error reply.

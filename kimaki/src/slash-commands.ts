@@ -57,6 +57,7 @@ import { sessionRoutes } from './commands/session-commands.ts'
 import { SKIPPED_COMMANDS, threadRoutes } from './commands/thread-commands.ts'
 import { worktreeRoutes } from './commands/worktree-commands.ts'
 import { ConfigError, DiscordError } from './errors.ts'
+import { asSubtext } from './format-parts.ts'
 import { canUseKimaki } from './ingress.ts'
 import {
   authorOf,
@@ -352,7 +353,7 @@ async function sendInput(
     ...(model && { model }),
   })
   if (started instanceof Error) return replyError(interaction, started)
-  await interaction.editReply({ content: `Started a new session in <#${started.threadId}>` })
+  await interaction.editReply({ content: asSubtext(`Started a new session in <#${started.threadId}>`) })
 }
 
 async function handleDynamic(bot: Bot, { interaction, target }: { interaction: ChatInputCommandInteraction; target: DynamicCommand }) {

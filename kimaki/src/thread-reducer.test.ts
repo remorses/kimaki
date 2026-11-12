@@ -178,7 +178,7 @@ test('execution failure shows the error and no footer, interrupt shows nothing',
       },
       {
         "notify": true,
-        "text": "✗ rate limited by provider",
+        "text": "-# ✗ rate limited by provider",
         "type": "send",
       },
       {

@@ -45,7 +45,7 @@ test('CLI remote envelope runs only on the owning bot and returns its IDs', asyn
     -# *main ⋅ Ns ⋅ deterministic-v2*
     Remote queued. queue
     [embed]
-    Delivered to <#THREAD>
+    -# Delivered to <#THREAD>
     [embed]
     ok
     -# *main ⋅ Ns ⋅ deterministic-v2*"

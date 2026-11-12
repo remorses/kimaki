@@ -160,7 +160,7 @@ test('/compact summarizes the history without a footer', async () => {
     -# *using deterministic-provider/deterministic-v2 ⋅ build*
     ok
     -# *main ⋅ Ns ⋅ deterministic-v2*
-    Compacting the session context"
+    -# Compacting the session context"
   `)
 })
 
@@ -214,8 +214,8 @@ test('/undo hides the last turn but keeps its files, /redo restores the turn', a
 
     wrote undo.txt
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
-    Undone - removed the last turn from the session. File changes were kept
-    Restored - session fully back to its previous state
-    Nothing to redo - no previous undo found"
+    -# Undone - removed the last turn from the session. File changes were kept
+    -# Restored - session fully back to its previous state
+    -# Nothing to redo - no previous undo found"
   `)
 })

@@ -84,8 +84,8 @@ test('session cwd changes preserve the session and use the new location after re
   await waitForFooter({ discord: twin.discord, threadId: fork.threadId })
   expect(hide(await twin.discord.thread(fork.threadId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Reusing context from <#THREAD> to answer prompt...
-    Side question
+    -# Reusing context from <#THREAD>
+    -# » **tommy:** Side question
     ok
     -# *sub ⋅ Ns ⋅ deterministic-v2*"
   `)
@@ -126,11 +126,9 @@ test('new-worktree forks context, and CLI creation and worktree toggle use the s
   await waitForBotMessageContaining({ discord: twin.discord, threadId: fork.id, text: 'continue the conversation' })
   expect(hide(await twin.discord.thread(fork.id).text()).replace(/ses_\w+/g, 'ses_ID')).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    **Forked session created!**
-    From: <#THREAD> (\`ses_ID\`)
-    New session: \`ses_ID\`
+    -# Forked session \`ses_ID\` from <#THREAD> (\`ses_ID\`)
     ok
-    You can now continue the conversation from this point."
+    -# You can now continue the conversation from this point."
   `)
   const forkInfo = await client.session.get({ sessionID: bot.store.getState().roots[fork.id]! })
   expect(forkInfo.location.directory).toContain('forked-checkout')
@@ -213,9 +211,9 @@ test('worktree delete buttons recheck dirty state instead of trusting the displa
   await waitForBotMessageContaining({ discord: twin.discord, threadId: created.threadId, text: 'Uncommitted changes' })
   expect(hide(await twin.discord.thread(created.threadId).text())).toMatchInlineSnapshot(`
     "--- from: assistant (TestBot)
-    Worktree ready: \`DATA/worktrees/HASH/aaa-delete\`
-    Branch: \`opencode/kimaki-aaa-delete\`
-    Send a message to start working.
+    -# Worktree ready: \`DATA/worktrees/HASH/aaa-delete\`
+    -# Branch: \`opencode/kimaki-aaa-delete\`
+    -# Send a message to start working.
     Uncommitted changes in DATA/worktrees/HASH/aaa-delete. Commit or discard them first."
   `)
   expect(fs.readFileSync(path.join(directory, 'unsaved.txt'), 'utf8')).toBe('Do not delete\n')

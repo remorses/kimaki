@@ -176,7 +176,7 @@ test('/<agent>-agent sets the channel agent, or starts a session with a prompt',
     --- from: user (tommy)
     Plan this plan-marker
     --- from: assistant (TestBot)
-    Started a new session in <#THREAD>"
+    -# Started a new session in <#THREAD>"
   `)
   expect(await discord.thread(planned.id).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)

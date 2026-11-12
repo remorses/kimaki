@@ -187,8 +187,9 @@ export function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
+// One subtext line: Discord only renders `-# ` up to the first line break.
 export function formatError(message: string): string {
-  return `✗ ${truncate(message.trim() || 'unknown error', 400)}`
+  return asSubtext(`✗ ${truncate(message.replace(/\s+/g, ' ').trim() || 'unknown error', 400)}`)
 }
 
 // The provider error is the whole point: "retrying" alone says nothing.
