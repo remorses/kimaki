@@ -189,4 +189,23 @@ describe('guild management routes', () => {
     expect(activeThreads.threads.has(thread.id)).toBe(true)
     expect(activeThreads.threads.get(thread.id)?.name).toBe('phase5-active-thread')
   })
+
+  test('channel positions route reorders channels and updates the client cache', async () => {
+    const guild = await client.guilds.fetch(discord.guildId)
+    const category = await guild.channels.create({ name: 'sorted', type: ChannelType.GuildCategory })
+    const names = ['first', 'second', 'third']
+    const created = []
+    for (const name of names) {
+      created.push(await guild.channels.create({ name, type: ChannelType.GuildText, parent: category.id }))
+    }
+    const updates = new Promise<string>((resolve) => client.once('channelUpdate', (_old, channel) => resolve(channel.id)))
+    await guild.channels.setPositions([...created].reverse().map((channel, position) => ({ channel: channel.id, position })))
+    expect(await updates).toBeTruthy()
+
+    const order = (await guild.channels.fetch())
+      .filter((channel) => channel?.parentId === category.id)
+      .sort((a, b) => a!.rawPosition - b!.rawPosition)
+      .map((channel) => channel!.name)
+    expect([...order.values()]).toEqual(['third', 'second', 'first'])
+  })
 })

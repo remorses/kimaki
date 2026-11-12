@@ -550,6 +550,7 @@ export async function startTestBot({
   schedulerIntervalMs,
   coordinator,
   warmupTimers,
+  sortChannelsDelayMs,
 }: {
   dataDir: string
   twin: TestTwin
@@ -573,6 +574,8 @@ export async function startTestBot({
   // Default off (`--coordinator false`) so most tests get threads; coordinator tests pass true.
   coordinator?: boolean
   warmupTimers?: WarmupTimers
+  // Turns on `--sort-channels` with this delay.
+  sortChannelsDelayMs?: number
 }): Promise<BotHandle> {
   // What credential resolution saves in production; `kimaki project add` reads it.
   const credentials: Credentials = twin.discord.botToken.includes(':')
@@ -604,6 +607,7 @@ export async function startTestBot({
     ...(realtimeBaseUrls && { realtimeBaseUrls }),
     coordinator: coordinator ?? false,
     ...(warmupTimers && { warmupTimers }),
+    ...(sortChannelsDelayMs !== undefined && { sortChannels: true, sortChannelsDelayMs }),
     transcriptionBaseUrls: {
       ...(geminiBaseUrl && { gemini: geminiBaseUrl }),
       ...(openaiBaseUrl && { openai: openaiBaseUrl }),

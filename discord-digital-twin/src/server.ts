@@ -31,6 +31,7 @@ import type {
   RESTPostAPIChannelMessageJSONBody,
   RESTPatchAPIChannelMessageJSONBody,
   RESTPatchAPIChannelJSONBody,
+  RESTPatchAPIGuildChannelPositionsJSONBody,
   RESTPostAPIChannelThreadsJSONBody,
   RESTPostAPIChannelMessagesThreadsJSONBody,
   RESTPostAPIGuildChannelJSONBody,
@@ -1225,9 +1226,35 @@ export function createServer({
             guildId: params.guild_id,
             type: { notIn: THREAD_CHANNEL_TYPES },
           },
-          orderBy: { position: 'asc' },
+          // Discord breaks position ties by ID.
+          orderBy: [{ position: 'asc' }, { id: 'asc' }],
         })
         return channels.map(channelToAPI)
+      },
+    })
+    .route({
+      // Modify Guild Channel Positions: one CHANNEL_UPDATE per changed channel.
+      method: 'PATCH',
+      path: '/guilds/:guild_id/channels',
+      async handler({ params, request }): Promise<Response> {
+        const body = (await request.json()) as RESTPatchAPIGuildChannelPositionsJSONBody
+        const updated: APIChannel[] = []
+        for (const entry of body) {
+          const channel = await prisma.channel.findUnique({ where: { id: entry.id } })
+          if (!channel || channel.guildId !== params.guild_id) {
+            throw new Response(
+              JSON.stringify({ code: 10003, message: 'Unknown Channel', errors: {} }),
+              { status: 404, headers: { 'Content-Type': 'application/json' } },
+            )
+          }
+          const position = entry.position ?? channel.position
+          const parentId = entry.parent_id === undefined ? channel.parentId : entry.parent_id
+          if (position === channel.position && parentId === channel.parentId) continue
+          const saved = await prisma.channel.update({ where: { id: entry.id }, data: { position, parentId } })
+          updated.push(channelToAPI(saved))
+        }
+        for (const channel of updated) gateway.broadcast(GatewayDispatchEvents.ChannelUpdate, channel)
+        return new Response(null, { status: 204 })
       },
     })
     .route({

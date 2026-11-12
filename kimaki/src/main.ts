@@ -10,6 +10,7 @@ import { createAgentUi } from './agent-ui.ts'
 import type { Analytics } from './analytics.ts'
 import { oc, type Bot, type WarmupTimers } from './bot.ts'
 import type { PromptSection } from './builtin-skills.ts'
+import { registerChannelSort, SORT_CHANNELS_DELAY_MS } from './channel-sort.ts'
 import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
@@ -77,6 +78,10 @@ export type StartBotOptions = {
   coordinator?: boolean
   // Default: the plugin's prompt cache warmup windows (plugin/coordinator.ts). Tests pass short ones.
   warmupTimers?: WarmupTimers
+  // `--sort-channels`: latest used channels first in this machine's category (channel-sort.ts). Default: off.
+  sortChannels?: boolean
+  // Default SORT_CHANNELS_DELAY_MS. Tests pass a short one.
+  sortChannelsDelayMs?: number
 }
 
 export type BotHandle = Bot & {
@@ -216,6 +221,10 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   registerIngress(bot)
   voiceCalls.register(bot)
   coordinatorNotes.register(bot)
+  if (options.sortChannels) {
+    const stopSort = registerChannelSort(bot, { delayMs: options.sortChannelsDelayMs ?? SORT_CHANNELS_DELAY_MS })
+    cleanup.defer(stopSort)
+  }
   // Before discord.destroy() (registered earlier, so disposed later): leaving voice needs the gateway.
   cleanup.defer(() => voiceCalls.stop(bot))
 

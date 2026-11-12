@@ -96,6 +96,7 @@ export function registerStartCommand(cli: Goke) {
     .option('--disable-prompt <section>', wrapJsonSchema<string[]>({ type: 'array', items: { type: 'string' }, description: `System prompt section to remove from new sessions (repeatable): ${PROMPT_SECTIONS.join(', ')}` }))
     .option('--no-analytics', 'Disable anonymous usage analytics (same as KIMAKI_STRADA_ENABLED=0)')
     .option('--coordinator [enabled]', wrapJsonSchema<boolean>({ type: 'boolean', default: true, description: 'Channel messages go to one long coordinator session that starts threads for the work. "false" turns it off (/toggle-coordinator sets one channel)' }))
+    .option('--sort-channels', 'Sort the channels of this machine\'s category by the last user message or interaction, latest first')
     .option('--no-autostart', 'Do not open a terminal with the bot when OpenCode starts (for bots run by launchd, systemd or pm2)')
     .option('--if-not-running', 'Start only if no bot runs; never stop the running one (used by autostart)')
     .action(async (options) => {
@@ -227,6 +228,7 @@ export function registerStartCommand(cli: Goke) {
         disabledSkills,
         disabledPrompt,
         coordinator: options.coordinator,
+        sortChannels: Boolean(options.sortChannels),
       })
       if (bot instanceof Error) failStartup(bot)
       // exit() keeps process.exitCode: the restart route sets RESTART_EXIT_CODE before its SIGTERM.
@@ -263,6 +265,7 @@ export function registerStartCommand(cli: Goke) {
           ...disabledPrompt.flatMap((section) => ['--disable-prompt', section]),
           ...(options.noAnalytics ? ['--no-analytics'] : []),
           ...(options.coordinator ? [] : ['--coordinator', 'false']),
+          ...(options.sortChannels ? ['--sort-channels'] : []),
           ...(options.machineName ? ['--machine-name', options.machineName] : []),
         ] })
         if (autostart instanceof Error) logger.warn('cannot write the autostart script', autostart)

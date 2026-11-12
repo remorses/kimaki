@@ -378,6 +378,18 @@ export class DigitalDiscord {
     return firstUser.id
   }
 
+  // Non-thread channels of a guild in Discord's order: position, then ID.
+  async getGuildChannels({ guildId = this.guildId }: { guildId?: string } = {}): Promise<APIChannel[]> {
+    const channels = await this.prisma.channel.findMany({
+      where: {
+        guildId,
+        type: { notIn: [ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread] },
+      },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    })
+    return channels.map(channelToAPI)
+  }
+
   getTypingEvents({
     channelId,
   }: {
