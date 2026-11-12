@@ -32,7 +32,32 @@ import { handleTranscriptionKeyModal, TRANSCRIPTION_KEY_MODAL, transcriptionKeyM
 type LoginWizard = { userId: string; directory: string; provider: IntegrationInfo | null; expires: number; attempt?: string }
 
 const TTL = 10 * 60_000
-const POPULAR = ['openai', 'anthropic', 'google', 'opencode']
+// Fills the whole first page of the provider select (SELECT_PAGE_SIZE), most popular first.
+const POPULAR = [
+  'anthropic',
+  'openai',
+  'google',
+  'xai',
+  'github-copilot',
+  'openrouter',
+  'opencode',
+  'opencode-go',
+  'deepseek',
+  'mistral',
+  'groq',
+  'moonshotai',
+  'kimi-code-plan-global',
+  'zai',
+  'zai-coding-plan',
+  'minimax',
+  'alibaba',
+  'vercel',
+  'amazon-bedrock',
+  'google-vertex',
+  'azure',
+  'cerebras',
+  'ollama-cloud',
+]
 
 function textModal({ customId, title, inputId, label }: { customId: string; title: string; inputId: string; label: string }) {
   const input = new TextInputBuilder().setCustomId(inputId).setLabel(label).setStyle(TextInputStyle.Short).setRequired(true)

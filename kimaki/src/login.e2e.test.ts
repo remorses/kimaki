@@ -28,6 +28,34 @@ test('/login API key stores an OpenCode credential and makes its provider availa
   const user = discord.channel(channelId).user(TEST_USER_ID)
   await user.runSlashCommand({ name: 'login' })
   const provider = await waitForSelectMenu({ discord, channelId, prefix: 'login_provider:' })
+  expect(provider.select.options.map((option) => option.label)).toMatchInlineSnapshot(`
+    [
+      "Anthropic",
+      "OpenAI",
+      "Google",
+      "xAI",
+      "GitHub Copilot",
+      "OpenRouter",
+      "OpenCode Console",
+      "OpenCode Go",
+      "DeepSeek",
+      "Mistral",
+      "Groq",
+      "Moonshot AI",
+      "Kimi For Coding (kimi.ai)",
+      "Z.AI",
+      "Z.AI Coding Plan",
+      "MiniMax (minimax.io)",
+      "Alibaba",
+      "Vercel AI Gateway",
+      "Amazon Bedrock",
+      "Vertex",
+      "Azure",
+      "Cerebras",
+      "Ollama Cloud",
+      "Next page → (2/10)",
+    ]
+  `)
   await user.selectMenu({ messageId: provider.message.id, customId: provider.select.custom_id, values: ['openai'] })
   const method = await waitForSelectMenu({ discord, channelId, prefix: provider.select.custom_id.replace('login_provider:', 'login_method:') })
   await user.selectMenu({ messageId: method.message.id, customId: method.select.custom_id, values: ['key'] })
