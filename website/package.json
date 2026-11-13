@@ -13,7 +13,7 @@
     "verify:slack-bridge": "tsx scripts/verify-slack-bridge.ts"
   },
   "dependencies": {
-    "@holocron.so/vite": "0.38.0",
+    "@holocron.so/vite": "0.39.2",
     "@slack/web-api": "^7.14.1",
     "@strada.sh/sdk": "^0.10.0",
     "better-auth": "^1.5.4",
@@ -21,9 +21,9 @@
     "discord-api-types": "^0.38.40",
     "discord-slack-bridge": "workspace:^",
     "lucide-react": "^1.16.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "spiceflow": "1.26.0-rsc.18",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "spiceflow": "1.26.0-rsc.22",
     "zod": "^4.4.3"
   },
   "devDependencies": {
