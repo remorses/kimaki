@@ -4,9 +4,11 @@
 
 export type ModelRef = { providerID: string; id: string; variant?: string }
 
-export type BlockReason = 'rate-limit' | 'quota' | 'overloaded' | 'auth'
+// Only failures of the account itself. A provider outage (5xx, overloaded) is not a
+// block: OpenCode retries it on the same model, so the session keeps its model.
+export type BlockReason = 'rate-limit' | 'quota' | 'auth'
 
-// `*` widens the scope: credentialID `*` = every account, modelID `*` = every model.
+// modelID `*` covers every model of the account.
 // `env` is the account of a provider that has no saved credential.
 export type Block = {
   providerID: string
@@ -33,7 +35,6 @@ const HOUR = 60 * MINUTE
 export const DEFAULT_BLOCK_MS: Record<BlockReason, number> = {
   'rate-limit': MINUTE,
   quota: 30 * MINUTE,
-  overloaded: 30 * SECOND,
   auth: 24 * HOUR,
 }
 
@@ -65,7 +66,7 @@ export function formatModel(model: ModelRef): string {
   return `${model.providerID}/${model.id}${model.variant ? `#${model.variant}` : ''}`
 }
 
-const REASONS: readonly string[] = ['rate-limit', 'quota', 'overloaded', 'auth'] satisfies BlockReason[]
+const REASONS: readonly string[] = ['rate-limit', 'quota', 'auth'] satisfies BlockReason[]
 
 export function isBlock(value: unknown): value is Block {
   if (!value || typeof value !== 'object') return false
@@ -178,7 +179,6 @@ export function resetAt({
 }
 
 const QUOTA_TEXT = /usage_limit_reached|usage[-_\s]limit|insufficient[-_\s]quota|quota[-_\s]exceeded|credit balance|spending[-_\s]limit/i
-const OVERLOAD_TEXT = /overloaded|at capacity|temporarily unavailable|service[-_\s]unavailable/i
 
 // The block a failed request implies, or undefined when it is not a fallback error.
 export function classify({ failed, now }: { failed: FailedRequest; now: number }): Block | undefined {
@@ -193,18 +193,14 @@ export function classify({ failed, now }: { failed: FailedRequest; now: number }
       if (QUOTA_TEXT.test(text) || headers['anthropic-ratelimit-unified-status'] === 'rejected') return 'quota'
       return 'rate-limit'
     }
-    if (error.type === 'provider.internal' || error.type === 'provider.unknown') {
-      if (QUOTA_TEXT.test(text)) return 'quota'
-      if (error.status === 529 || error.status === 503 || OVERLOAD_TEXT.test(text)) return 'overloaded'
-    }
+    if ((error.type === 'provider.internal' || error.type === 'provider.unknown') && QUOTA_TEXT.test(text)) return 'quota'
     return undefined
   })()
   if (!reason) return undefined
   const reset = reason === 'auth' ? undefined : resetAt({ headers, body: error.response?.body, now })
   return {
     providerID: model.providerID,
-    // Overload is provider capacity: every account sees it.
-    credentialID: reason === 'overloaded' ? '*' : credentialID,
+    credentialID,
     // Quota and auth belong to the account, not to one model.
     modelID: reason === 'quota' || reason === 'auth' ? '*' : model.id,
     until: reset !== undefined && reset > now ? reset : now + DEFAULT_BLOCK_MS[reason],
@@ -227,7 +223,7 @@ export function blockedUntil({
 }): number | undefined {
   const matching = blocks
     .filter((block) => block.until > now && block.providerID === providerID)
-    .filter((block) => block.credentialID === '*' || block.credentialID === credentialID)
+    .filter((block) => block.credentialID === credentialID)
     .filter((block) => block.modelID === '*' || block.modelID === modelID)
     .map((block) => block.until)
   return matching.length > 0 ? Math.max(...matching) : undefined
@@ -240,7 +236,6 @@ export type ModelSwitch = { from: string; to: string; reason: BlockReason }
 const REASON_TEXT: Record<BlockReason, string> = {
   'rate-limit': 'it hit a rate limit',
   quota: 'its account ran out of quota',
-  overloaded: 'the provider was overloaded',
   auth: 'its login failed (expired or invalid credentials)',
 }
 

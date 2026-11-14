@@ -56,10 +56,14 @@ describe('classify', () => {
         error: { type: 'provider.rate-limit', status: 429, message: 'Rate limit reached' },
         headers: { 'x-ratelimit-remaining-tokens': '0', 'x-ratelimit-reset-tokens': '6m0s' },
       }),
+      // Provider outages are retried by OpenCode on the same model, never switched.
+      // bare503 is the real error that moved a Kimaki session from opus to gpt.
       overloaded: block({
         error: { type: 'provider.internal', status: 529, message: 'Overloaded' },
         headers: { 'retry-after-ms': '1500' },
       }),
+      bare503: block({ error: { type: 'provider.internal', status: 503, message: 'Provider request failed with HTTP 503', response: { body: '' } } }),
+      quotaIn500: block({ error: { type: 'provider.internal', status: 500, message: 'You have reached your spending limit' } }),
       auth: block({ error: { type: 'provider.auth', status: 401, message: 'invalid x-api-key' } }),
       plain500: block({ error: { type: 'provider.internal', status: 500, message: 'Internal server error' } }),
       invalidRequest: block({ error: { type: 'provider.invalid-request', status: 400, message: 'bad' } }),
@@ -86,6 +90,7 @@ describe('classify', () => {
           "reason": "auth",
           "until": "2026-10-03T12:00:00.000Z",
         },
+        "bare503": undefined,
         "codexHeaders": {
           "credentialID": "cred_a",
           "modelID": "*",
@@ -108,14 +113,15 @@ describe('classify', () => {
           "reason": "rate-limit",
           "until": "2026-10-02T12:06:00.000Z",
         },
-        "overloaded": {
-          "credentialID": "*",
-          "modelID": "claude-opus-5-5",
-          "providerID": "anthropic",
-          "reason": "overloaded",
-          "until": "2026-10-02T12:00:01.500Z",
-        },
+        "overloaded": undefined,
         "plain500": undefined,
+        "quotaIn500": {
+          "credentialID": "cred_a",
+          "modelID": "*",
+          "providerID": "anthropic",
+          "reason": "quota",
+          "until": "2026-10-02T12:30:00.000Z",
+        },
       }
     `)
   })
@@ -142,15 +148,17 @@ describe('pick', () => {
         blocked({ providerID: 'anthropic', credentialID: 'cred_a', modelID: '*' }, 5),
         blocked({ providerID: 'anthropic', credentialID: 'cred_b', modelID: 'claude-opus-5-5' }, 5),
       ]),
-      overloadedEverywhere: choose([
-        blocked({ providerID: 'anthropic', credentialID: '*', modelID: 'claude-opus-5-5' }, 1),
+      twoProvidersLimited: choose([
+        blocked({ providerID: 'anthropic', credentialID: 'cred_a', modelID: '*' }, 1),
+        blocked({ providerID: 'anthropic', credentialID: 'cred_b', modelID: '*' }, 1),
         blocked({ providerID: 'openai', credentialID: 'cred_o', modelID: '*' }, 60),
       ]),
       expiredBlockIgnored: choose([blocked({ providerID: 'anthropic', credentialID: 'cred_a', modelID: '*' }, -1)]),
       allBlocked: choose([
-        blocked({ providerID: 'anthropic', credentialID: '*', modelID: '*' }, 30),
-        blocked({ providerID: 'openai', credentialID: '*', modelID: '*' }, 10),
-        blocked({ providerID: 'xai', credentialID: '*', modelID: '*' }, 20),
+        blocked({ providerID: 'anthropic', credentialID: 'cred_a', modelID: '*' }, 30),
+        blocked({ providerID: 'anthropic', credentialID: 'cred_b', modelID: '*' }, 30),
+        blocked({ providerID: 'openai', credentialID: 'cred_o', modelID: '*' }, 10),
+        blocked({ providerID: 'xai', credentialID: 'env', modelID: '*' }, 20),
       ]),
     }).toMatchInlineSnapshot(`
       {
@@ -196,7 +204,7 @@ describe('pick', () => {
           },
           "waitUntil": undefined,
         },
-        "overloadedEverywhere": {
+        "twoProvidersLimited": {
           "credentialID": "env",
           "model": {
             "id": "grok-4.6",

@@ -1,7 +1,9 @@
-// OpenCode V2 plugin: on rate limit, quota, overload or auth errors, record a
+// OpenCode V2 plugin: on rate limit, quota or auth errors, record a
 // block in plugin storage, then move the failing session to the best
 // (model, account) pair that is not blocked, and retry the same step.
 //
+// - Provider outages (503, 529 overloaded) are left to OpenCode's own retry on
+//   the same model: they are temporary, but a model switch lasts for the session.
 // - Model changes are per session (session.switchModel). The plugin never
 //   moves a session back up by itself, so prompt caches survive.
 // - Account changes are global per integration (credential.activate): a
