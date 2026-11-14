@@ -20,13 +20,16 @@ gh repo list remorses --limit 1000 --json nameWithOwner,pushedAt --jq ".[] | sel
 
 For each repo, update a bare mirror (all branches) and list its commits:
 
+Use a new folder per day, so an old or broken mirror from a previous run never gets reused. Clone every repo fresh; do not check whether the folder exists.
+
 ```bash
-D=/private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/opencode/commit-audit
+D=/private/var/folders/8w/wvmrpgms5hngywvs8s99xnmm0000gn/T/opencode/commit-audit/$(date -u +%Y-%m-%d)
 mkdir -p $D && cd $D
-[ -d <name> ] || git clone -q --filter=blob:none --bare https://github.com/<owner>/<name> <name>
-git -C <name> fetch -q --prune origin '+refs/heads/*:refs/heads/*'
+git clone -q --filter=blob:none --bare https://github.com/<owner>/<name> <name>
 git -C <name> log --all --since='24 hours ago' --format='%h %an <%ae> | %cn <%ce> | %ad | %s'
 ```
+
+If a clone fails because the folder already exists, the day folder already has the repo from an earlier run in this same day. Use a suffix like `<name>-2` instead of deleting anything.
 
 Read the diffs, skipping lock and generated files:
 
