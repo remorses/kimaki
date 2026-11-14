@@ -223,16 +223,40 @@ test('KIMAKI_WHISPER_URL is the only transcriber: no cloud request, and its fail
 
   // 400 is not retried; a 5xx would be retried twice first.
   whisper.status = 400
-  await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendVoiceMessage({ url: `data:audio/ogg;base64,${ogg.toString('base64')}` })
-  const reply = await twin.discord.channel(twin.channelId).waitForMessage({ timeout: 8_000, predicate: (message) => message.content.includes('Transcription API returned 400') })
+  const channel = twin.discord.channel(twin.channelId)
+  const user = channel.user(TEST_USER_ID)
+  const failed = await user.sendVoiceMessage({ url: `data:audio/ogg;base64,${ogg.toString('base64')}` })
+  const reply = await channel.waitForMessage({ timeout: 8_000, predicate: (message) => message.content.includes('Transcription API returned 400') })
   whisper.status = 200
   expect(reply.content).toMatchInlineSnapshot(`"-# ✗ Transcription API returned 400: {"detail":"unauthorized"}"`)
+  expect(JSON.stringify(reply.components).replace(failed.id, '<voice>')).toMatchInlineSnapshot(`"[{"type":1,"components":[{"type":2,"custom_id":"voice_retry:<voice>","label":"Retry","style":2}]}]"`)
   expect(openai.requests.length + chatgpt.requests.length).toBe(cloudRequests)
 
-  // An outage longer than the 3 quick attempts: the next round, 2s later, transcribes it (issue #263).
+  // Retry handles the same voice message again; the error reply goes away.
+  const threads = new Set((await channel.getThreads()).map((thread) => thread.id))
+  await user.clickButton({ messageId: reply.id, customId: `voice_retry:${failed.id}` })
+  const retried = await channel.waitForThread({ timeout: 8_000, predicate: (thread) => !threads.has(thread.id) })
+  await waitForFooter({ discord: twin.discord, threadId: retried.id })
+  expect(await twin.discord.thread(retried.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    [attachment: voice-message.ogg]
+    --- from: assistant (TestBot)
+    -# » **tommy:** Hello from Whisper voice-openai
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    openai voice ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  expect((await channel.getMessages()).some((message) => message.id === reply.id)).toBe(false)
+
+  // An outage longer than the 3 quick attempts: a subtext status shows the wait,
+  // the next round, 2s later, transcribes it and the status goes away (issue #263).
   whisper.statuses = [503, 503, 503]
   const whisperRequests = whisper.requests.length
-  const afterOutage = await sendVoice()
+  const outage = sendVoice()
+  const status = await channel.waitForMessage({ timeout: 8_000, predicate: (message) => message.content.includes('retrying in') })
+  expect(status.content).toMatchInlineSnapshot(`"-# transcription failed, retrying in 2s (attempt 2)"`)
+  const afterOutage = await outage
+  expect((await channel.getMessages()).some((message) => message.id === status.id)).toBe(false)
   expect(await twin.discord.thread(afterOutage).text()).toMatchInlineSnapshot(`
     "--- from: user (tommy)
     [attachment: voice-message.ogg]

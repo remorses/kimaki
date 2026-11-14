@@ -16,6 +16,7 @@ import type { KimakiDb } from './db.ts'
 import type { EffectsRunner } from './effects.ts'
 import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableError } from './errors.ts'
 import type { EventLoop } from './event-loop.ts'
+import type { Ingress } from './ingress.ts'
 import type { OpenCodeClient, OpencodeConnection } from './opencode-server.ts'
 import type { Route } from './routes.ts'
 import type { Clock } from './scheduler.ts'
@@ -44,6 +45,7 @@ export type BotFeatures = {
   waitForPlugin: PluginWait
   agentUi: AgentUi
   voiceCalls: VoiceCalls
+  ingress: Ingress
 }
 
 export type Bot = {

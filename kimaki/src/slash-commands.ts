@@ -58,7 +58,7 @@ import { SKIPPED_COMMANDS, threadRoutes } from './commands/thread-commands.ts'
 import { worktreeRoutes } from './commands/worktree-commands.ts'
 import { ConfigError, DiscordError } from './errors.ts'
 import { asSubtext } from './format-parts.ts'
-import { canUseKimaki } from './ingress.ts'
+import { canUseKimaki, voiceRetryRoutes } from './ingress.ts'
 import {
   authorOf,
   replyError,
@@ -149,6 +149,7 @@ export function createInteractionRegistry(): InteractionRegistry {
     agentUiRoutes,
     permissionRoutes,
     createQuestionHandlers(),
+    voiceRetryRoutes,
     catalogRoutes(),
   ])
 }

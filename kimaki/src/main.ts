@@ -15,7 +15,7 @@ import { openDb } from './db.ts'
 import { createEffectsRunner } from './effects.ts'
 import { DiscordError } from './errors.ts'
 import { createEventLoop, type RunEnded } from './event-loop.ts'
-import { registerIngress } from './ingress.ts'
+import { createIngress } from './ingress.ts'
 import { runLockRoute } from './lock-routes.ts'
 import { installShim, type LockServer } from './lock-server.ts'
 import { createLogger } from './logger.ts'
@@ -185,6 +185,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The features that non-interaction code reaches through bot.features.
   const agentUi = createAgentUi({ store, eventLoop, opencode })
   cleanup.defer(() => agentUi.stop())
+  const ingress = createIngress()
   const bot: Bot = {
     discord,
     db,
@@ -208,7 +209,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
     disabledPrompt: options.disabledPrompt ?? [],
     coordinatorDefault: options.coordinator ?? true,
     warmupTimers: options.warmupTimers ?? null,
-    features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls },
+    features: { withSleepLock: createSleepLock(), waitForPlugin: createPluginWait({ opencode }), agentUi, voiceCalls, ingress },
   }
   const scheduler = createScheduler({
     bot,
@@ -218,7 +219,7 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   // The lock server only passes /kimaki/* paths.
   lock.handle((route, input, signal) => runLockRoute(bot, { route: route.slice('/kimaki/'.length), input, signal }))
   // Before login: gateway-proxy replays missed messages right after READY.
-  registerIngress(bot)
+  ingress.register(bot)
   voiceCalls.register(bot)
   coordinatorNotes.register(bot)
   if (options.sortChannels) {

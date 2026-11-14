@@ -696,6 +696,7 @@ export async function transcribe({
   directory,
   agents,
   inSession,
+  onRetry,
 }: {
   db: KimakiDb
   // The running bot's token: selects its bot_tokens row and API keys.
@@ -709,6 +710,8 @@ export async function transcribe({
   directory: string
   agents: ReadonlyArray<{ name: string; description: string }>
   inSession: boolean
+  // Before each wait between rounds; `attempt` is the number of the coming round.
+  onRetry?: (retry: { delayMs: number; attempt: number }) => void
 }): Promise<DbError | NoTranscriptionKeyError | TranscriptionFailure | TranscriptionResult> {
   const list = await transcribers({ db, token, opencodeDbFile })
   if (list instanceof Error) return list
@@ -743,6 +746,7 @@ export async function transcribe({
     if (!transient) return last
     const delay = Math.min(ROUND_DELAY_MS * 2 ** round, MAX_ROUND_DELAY_MS)
     logger.warn(`every transcriber failed, trying them again in ${delay / 1000}s`)
+    onRetry?.({ delayMs: delay, attempt: round + 2 })
     await sleep(delay, undefined, { signal }).catch(() => undefined)
   }
 }
