@@ -271,7 +271,9 @@ export type Choice = { model: ModelRef; credentialID: string; waitUntil?: number
 
 // Best (model, account) pair that is not blocked. Ranking order wins over
 // accounts; for one model the accounts are tried in the given order (active first).
-// When everything is blocked, returns the pair that recovers first with `waitUntil`.
+// When everything is blocked, returns the pair that recovers first with `waitUntil`,
+// never an account whose login failed: waiting does not fix it, and activating it
+// would fail every session.
 export function pick({
   ranking,
   accounts,
@@ -292,7 +294,12 @@ export function pick({
   )
   const free = candidates.find((candidate) => candidate.until === undefined)
   if (free) return { model: free.model, credentialID: free.credentialID }
-  const first = candidates.reduce<(typeof candidates)[number] | undefined>(
+  const dead = (candidate: (typeof candidates)[number]) =>
+    blocks.some(
+      (block) =>
+        block.reason === 'auth' && block.until > now && block.providerID === candidate.model.providerID && block.credentialID === candidate.credentialID,
+    )
+  const first = candidates.filter((candidate) => !dead(candidate)).reduce<(typeof candidates)[number] | undefined>(
     (best, candidate) => (!best || (candidate.until ?? 0) < (best.until ?? 0) ? candidate : best),
     undefined,
   )

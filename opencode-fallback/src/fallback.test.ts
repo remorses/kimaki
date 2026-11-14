@@ -215,4 +215,28 @@ describe('pick', () => {
       }
     `)
   })
+
+  test('never waits on an account whose login failed', () => {
+    // Issue #262: cred_a at its weekly limit, idle cred_b with a dead refresh token.
+    // Waiting on cred_b would activate it for every session.
+    const anthropicOnly = { anthropic: ['cred_a', 'cred_b'] }
+    const weekly = blocked({ providerID: 'anthropic', credentialID: 'cred_a', modelID: '*' }, 7 * 24 * 60)
+    const dead: Block = { providerID: 'anthropic', credentialID: 'cred_b', modelID: '*', until: now + 24 * 60 * 60_000, reason: 'auth' }
+    expect({
+      limitedAndDead: pick({ ranking, accounts: anthropicOnly, blocks: [weekly, dead], now }),
+      onlyDead: pick({ ranking, accounts: { anthropic: ['cred_b'] }, blocks: [dead], now }),
+    }).toMatchInlineSnapshot(`
+      {
+        "limitedAndDead": {
+          "credentialID": "cred_a",
+          "model": {
+            "id": "claude-opus-5-5",
+            "providerID": "anthropic",
+          },
+          "waitUntil": 1791547200000,
+        },
+        "onlyDead": undefined,
+      }
+    `)
+  })
 })
