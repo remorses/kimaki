@@ -228,4 +228,19 @@ test('KIMAKI_WHISPER_URL is the only transcriber: no cloud request, and its fail
   whisper.status = 200
   expect(reply.content).toMatchInlineSnapshot(`"-# ✗ Transcription API returned 400: {"detail":"unauthorized"}"`)
   expect(openai.requests.length + chatgpt.requests.length).toBe(cloudRequests)
+
+  // An outage longer than the 3 quick attempts: the next round, 2s later, transcribes it (issue #263).
+  whisper.statuses = [503, 503, 503]
+  const whisperRequests = whisper.requests.length
+  const afterOutage = await sendVoice()
+  expect(await twin.discord.thread(afterOutage).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    [attachment: voice-message.ogg]
+    --- from: assistant (TestBot)
+    -# » **tommy:** Hello from Whisper voice-openai
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    openai voice ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+  expect(whisper.requests.length - whisperRequests).toBe(4)
 })

@@ -794,13 +794,15 @@ export type FakeChatGPT = {
   requests: Array<{ path: string; authorization: string | null; accountId: string | null; model: string | null; filename: string; type: string; audio: Buffer }>
   // Reply status; tests set 401 to check the API key fallback.
   status: number
+  // Replied first, one per request, before `status`: an outage that ends.
+  statuses: number[]
   stop: () => Promise<void>
 }
 
 // chatgpt.com/backend-api/transcribe: multipart `file` in, `{ text }` out.
 // Also a local Whisper server (/audio/transcriptions), which takes the same shape plus `model`.
 export async function startFakeChatGPT({ text }: { text: string }): Promise<FakeChatGPT> {
-  const fake: Omit<FakeChatGPT, 'baseUrl' | 'stop'> = { requests: [], status: 200 }
+  const fake: Omit<FakeChatGPT, 'baseUrl' | 'stop'> = { requests: [], status: 200, statuses: [] }
   const server = http.createServer((request, response) => {
     const chunks: Buffer[] = []
     request.on('data', (chunk: Buffer) => chunks.push(chunk))
@@ -819,9 +821,10 @@ export async function startFakeChatGPT({ text }: { text: string }): Promise<Fake
         type: file.type,
         audio: Buffer.from(await file.arrayBuffer()),
       })
-      response.statusCode = fake.status
+      const status = fake.statuses.shift() ?? fake.status
+      response.statusCode = status
       response.setHeader('content-type', 'application/json')
-      response.end(JSON.stringify(fake.status === 200 ? { text } : { detail: 'unauthorized' }))
+      response.end(JSON.stringify(status === 200 ? { text } : { detail: 'unauthorized' }))
     })
   })
   const port = await freePort()

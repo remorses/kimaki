@@ -16,6 +16,7 @@ import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { Readable } from 'node:stream'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { createClient } from '@libsql/client'
 import * as errore from 'errore'
@@ -48,6 +49,9 @@ const GEMINI_MODEL = 'gemini-flash-latest'
 const TOOL_NAME = 'transcriptionResult'
 const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 500
+// When every provider failed transiently, the whole chain runs again after 2s, 4s, 8s... up to 30s.
+const ROUND_DELAY_MS = 2_000
+const MAX_ROUND_DELAY_MS = 30_000
 // Later messages of the conversation wait for the transcription (ingress.ts): cap all providers and retries.
 const TRANSCRIPTION_TIMEOUT_MS = 2 * 60_000
 
@@ -466,7 +470,7 @@ async function withRetries({ signal, attempt }: { signal: AbortSignal; attempt: 
     const retry = number < MAX_ATTEMPTS && !signal.aborted && isRetryable(result)
     logger.warn(`transcription attempt ${number}/${MAX_ATTEMPTS} failed${retry ? ', retrying' : ''}`, result)
     if (!retry) return result
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * number))
+    await sleep(RETRY_DELAY_MS * number, undefined, { signal }).catch(() => undefined)
   }
 }
 
@@ -715,7 +719,7 @@ export async function transcribe({
   const timeoutMs = transcriptionTimeoutMs(list)
   const signal = AbortSignal.timeout(timeoutMs)
   const run = (entry: Transcriber) => {
-    if (entry.kind === 'gateway') return transcribeViaGateway({ audio, mediaType, ...entry, signal })
+    if (entry.kind === 'gateway') return withRetries({ signal, attempt: () => transcribeViaGateway({ audio, mediaType, ...entry, signal }) })
     if (entry.kind === 'local-whisper') return withRetries({ signal, attempt: () => transcribeViaLocalWhisper({ whisper: entry.whisper, audio, mediaType, signal }) })
     if (entry.kind === 'chatgpt') {
       return withRetries({ signal, attempt: () => transcribeViaChatGPT({ credential: entry.credential, baseUrl: baseUrls.chatgpt ?? CHATGPT_BASE_URL, audio, mediaType, signal }) })
@@ -725,14 +729,22 @@ export async function transcribe({
     return withRetries({ signal, attempt: () => requestGemini({ ...request, baseUrl: baseUrls.gemini ?? GEMINI_BASE_URL }) })
   }
   let last: TranscriptionFailure | NoTranscriptionKeyError = new NoTranscriptionKeyError()
-  for (const entry of list) {
-    if (signal.aborted) return new TranscriptionError({ reason: `no answer within ${timeoutMs / 60_000} minutes` })
-    const result = await run(entry)
-    if (!(result instanceof Error) || result instanceof EmptyTranscriptionError) return result
-    logger.warn(`${entry.kind} transcription failed${entry === list.at(-1) ? '' : ', trying the next provider'}`, result)
-    last = result
+  // Rounds: an outage or network drop longer than the quick retries is retried until the timeout.
+  for (let round = 0; ; round++) {
+    let transient = false
+    for (const entry of list) {
+      if (signal.aborted) return new TranscriptionError({ reason: `no answer within ${timeoutMs / 60_000} minutes (${last.message})` })
+      const result = await run(entry)
+      if (!(result instanceof Error) || result instanceof EmptyTranscriptionError) return result
+      logger.warn(`${entry.kind} transcription failed${entry === list.at(-1) ? '' : ', trying the next provider'}`, result)
+      transient ||= isRetryable(result)
+      last = result
+    }
+    if (!transient) return last
+    const delay = Math.min(ROUND_DELAY_MS * 2 ** round, MAX_ROUND_DELAY_MS)
+    logger.warn(`every transcriber failed, trying them again in ${delay / 1000}s`)
+    await sleep(delay, undefined, { signal }).catch(() => undefined)
   }
-  return last
 }
 
 // --- text to speech (`kimaki tts`)
