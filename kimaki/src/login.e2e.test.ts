@@ -87,6 +87,27 @@ test('CLI login uses integration key login and credential activation without exp
   expect(info.data.connections.length).toBeGreaterThan(0)
 })
 
+test('/accounts shows OAuth logins with email, active account and expired tokens, never the token', async () => {
+  const { discord, channelId } = twin
+  const jwt = (claims: object) => `header.${Buffer.from(JSON.stringify({ iss: 'https://auth.x.ai', sub: 'user-1', ...claims })).toString('base64url')}.signature`
+  const client = await server.client()
+  const work = { type: 'oauth' as const, methodID: 'device', refresh: 'refresh-1', access: jwt({ email: 'work@example.com' }), expires: Date.parse('2100-01-01T00:00:00Z') }
+  await client.credential.create({ integrationID: 'xai', label: 'Old', value: { ...work, access: jwt({}), expires: Date.parse('2023-11-14T22:13:20Z') } })
+  await client.credential.create({ integrationID: 'xai', label: 'Work', value: work, activate: true })
+  const before = (await discord.channel(channelId).getMessages()).length
+  await discord.channel(channelId).user(TEST_USER_ID).runSlashCommand({ name: 'accounts' })
+  await waitFor({ label: 'accounts reply', check: async () => (await discord.channel(channelId).getMessages()).slice(before).some((message) => message.content.includes('**xAI**')) })
+  const reply = (await discord.channel(channelId).getMessages()).slice(before).map((message) => message.content).join('\n')
+  expect(reply).toMatchInlineSnapshot(`
+    "**xAI**
+    - Work ⋅ work@example.com ⋅ **active**
+    - Old ⋅ email unknown, same user as Work ⋅ token expired <t:1700000000:R>
+    -# Expired tokens refresh on next use unless the login was revoked.
+    -# Fallback blocks unknown: the fallback plugin is not loaded."
+  `)
+  expect(reply).not.toContain('refresh-1')
+})
+
 test('/login OAuth code uses native attempts and can activate a stored credential', async () => {
   const { discord, channelId } = twin
   const user = discord.channel(channelId).user(TEST_USER_ID)
@@ -105,6 +126,11 @@ test('/login OAuth code uses native attempts and can activate a stored credentia
     **Set Model Preference**
     **Current (OpenCode default):** \`deterministic-provider/deterministic-v2\`
     Select a provider:
+    **xAI**
+    - Work ⋅ work@example.com ⋅ **active**
+    - Old ⋅ email unknown, same user as Work ⋅ token expired <t:1700000000:R>
+    -# Expired tokens refresh on next use unless the login was revoked.
+    -# Fallback blocks unknown: the fallback plugin is not loaded.
     http://127.0.0.1/authorize
     Enter the test authorization code.
     OpenAI OAuth connected. Use /model to select a model."

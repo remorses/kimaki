@@ -60,6 +60,20 @@ When the bot starts and sees this entry, it removes its own `plugins/kimaki-anth
 
 OpenCode can keep **several saved logins** for one provider. Run `/login` again to add another one. To switch, run `/login`, pick the provider, and choose **Activate &lt;label&gt;**.
 
+Run `/accounts` to see every saved OAuth login, which one is active, and its state. The reply is only visible to you:
+
+```
+**OpenAI**
+- OpenAI 2 ⋅ you@example.com ⋅ plus ⋅ **active**
+- OpenAI ⋅ email unknown, same user as OpenAI 3 ⋅ usage limit until 20:15
+- OpenAI 3 ⋅ email unknown, same user as OpenAI
+**Anthropic**
+- Anthropic 4 ⋅ you@example.com ⋅ claude_max ⋅ **active**
+- Anthropic 2 ⋅ email unknown ⋅ token expired 3 days ago
+```
+
+"Sign in with ChatGPT" tokens carry no email, so Kimaki shows which logins belong to the same user instead. Blocks come from `@kimaki/plugin-fallback` when it is loaded.
+
 Kimaki does **not** rotate accounts by itself when one hits a rate limit. For automatic rotation across accounts and models, add the `@kimaki/plugin-fallback` OpenCode plugin:
 
 ```jsonc

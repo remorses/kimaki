@@ -73,6 +73,7 @@ test('the bot registers exactly the static and catalog commands in the guild', a
   expect(commands.map((command) => `/${command.name}: ${command.description}`)).toMatchInlineSnapshot(`
     [
       "/abort: Stop the current run and clear the queue",
+      "/accounts: Show saved OAuth logins: email, active account, fallback blocks, expired tokens",
       "/agent: Set the agent for this session or channel",
       "/btw: Ask something without polluting or blocking the current session",
       "/build-agent: The default agent. Executes tools based on configured permissions.",

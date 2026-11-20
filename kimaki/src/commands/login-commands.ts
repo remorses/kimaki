@@ -10,6 +10,7 @@
 
 import crypto from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
+import * as errore from 'errore'
 import {
   ActionRowBuilder,
   ModalBuilder,
@@ -172,6 +173,135 @@ export async function loginCli(
     connections: info.data.connections,
     instructions: 'Use --key, or --method <oauth method ID>. Complete with --attempt <id> --code <code>; when the attempt has paste: true, --code also takes the redirect URL the browser ended on. Check or cancel with --attempt <id> [--cancel].',
   }
+}
+
+// --- /accounts: every saved OAuth login, its email, and whether it can serve requests.
+//
+//   credential.list ─┬▶ email: metadata.email, JWT claims, else the provider profile API
+//   fallback RPC ────┘   state: active, blocked by @kimaki/plugin-fallback, token expired
+//
+// credential.list returns token values: they are read here and never shown.
+
+const PROFILE_TIMEOUT_MS = 5_000
+const MESSAGE_LIMIT = 1_900
+
+type OAuthEntry = { id: string; integrationID: string; label: string; active: boolean; access: string; expires: number; metadata: Record<string, unknown> }
+type FallbackBlock = { credentialID: string; modelID: string; until: number; reason: string }
+type Profile = { email?: string; plan?: string; user?: string }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function text(value: unknown) {
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function jwtClaims(token: string) {
+  const claims = errore.try(() => JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as unknown, () => null)
+  return isRecord(claims) ? claims : undefined
+}
+
+// What the token itself says. `user` (issuer + subject) matches two logins of the same user
+// when the token has no email, like "Sign in with ChatGPT".
+function tokenProfile(entry: OAuthEntry): Profile {
+  const claims = jwtClaims(entry.access)
+  const openaiProfile = isRecord(claims?.['https://api.openai.com/profile']) ? claims['https://api.openai.com/profile'] : {}
+  const openaiAuth = isRecord(claims?.['https://api.openai.com/auth']) ? claims['https://api.openai.com/auth'] : {}
+  const subject = text(claims?.sub)
+  return {
+    email: text(entry.metadata.email) ?? text(claims?.email) ?? text(openaiProfile.email),
+    plan: text(openaiAuth.chatgpt_plan_type),
+    user: subject && `${text(claims?.iss) ?? ''} ${subject}`,
+  }
+}
+
+// Claude tokens are opaque: the email comes from the profile API Claude Code uses.
+async function claudeProfile(access: string): Promise<Profile> {
+  const response = await fetch('https://api.anthropic.com/api/oauth/profile', {
+    headers: { authorization: `Bearer ${access}`, 'anthropic-beta': 'oauth-2025-04-20' },
+    signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
+  }).catch(() => undefined)
+  const body: unknown = response?.ok ? await response.json().catch(() => undefined) : undefined
+  const account = isRecord(body) && isRecord(body.account) ? body.account : {}
+  const organization = isRecord(body) && isRecord(body.organization) ? body.organization : {}
+  return { email: text(account.email), plan: text(organization.organization_type) }
+}
+
+async function profileOf({ entry, now }: { entry: OAuthEntry; now: number }) {
+  const profile = tokenProfile(entry)
+  if (profile.email || entry.integrationID !== 'anthropic' || entry.expires <= now) return profile
+  return { ...profile, ...(await claudeProfile(entry.access)) }
+}
+
+function fallbackBlocks(output: unknown): FallbackBlock[] {
+  const blocks = isRecord(output) && Array.isArray(output.blocks) ? output.blocks : []
+  return blocks.flatMap((block) => {
+    if (!isRecord(block) || typeof block.credentialID !== 'string' || typeof block.until !== 'number') return []
+    return [{ credentialID: block.credentialID, modelID: String(block.modelID ?? '*'), until: block.until, reason: String(block.reason ?? '') }]
+  })
+}
+
+const BLOCK_REASON: Record<string, string> = { quota: 'usage limit', 'rate-limit': 'rate limit', auth: 'login failed' }
+
+function renderAccounts({
+  entries,
+  profiles,
+  blocks,
+  names,
+  now,
+}: {
+  entries: OAuthEntry[]
+  profiles: Map<string, Profile>
+  blocks: FallbackBlock[] | null
+  names: Map<string, string>
+  now: number
+}) {
+  if (entries.length === 0) return 'No OAuth logins are saved in OpenCode. Use /login to add one.'
+  const integrations = [...new Set(entries.map((entry) => entry.integrationID))]
+  const lines = integrations.flatMap((integrationID) => {
+    const group = entries.filter((entry) => entry.integrationID === integrationID).sort((a, b) => Number(b.active) - Number(a.active))
+    return [`**${names.get(integrationID) ?? integrationID}**`, ...group.map((entry) => {
+      const profile = profiles.get(entry.id) ?? {}
+      const twin = !profile.email && profile.user
+        ? group.find((other) => other.id !== entry.id && profiles.get(other.id)?.user === profile.user)
+        : undefined
+      const who = profile.email ?? (twin ? `email unknown, same user as ${twin.label}` : 'email unknown')
+      const states = [
+        ...(entry.active ? ['**active**'] : []),
+        ...(blocks ?? [])
+          .filter((block) => block.credentialID === entry.id && block.until > now)
+          .map((block) => `${BLOCK_REASON[block.reason] ?? block.reason}${block.modelID === '*' ? '' : ` on ${block.modelID}`} until <t:${Math.floor(block.until / 1000)}:f>`),
+        ...(entry.expires > 0 && entry.expires <= now ? [`token expired <t:${Math.floor(entry.expires / 1000)}:R>`] : []),
+      ]
+      return `- ${entry.label} ⋅ ${who}${profile.plan ? ` ⋅ ${profile.plan}` : ''}${states.length ? ` ⋅ ${states.join(', ')}` : ''}`
+    })]
+  })
+  const notes = [
+    '-# Expired tokens refresh on next use unless the login was revoked.',
+    ...(blocks === null ? ['-# Fallback blocks unknown: the fallback plugin is not loaded.'] : []),
+  ]
+  const message = [...lines, ...notes].join('\n')
+  return message.length <= MESSAGE_LIMIT ? message : `${message.slice(0, message.lastIndexOf('\n', MESSAGE_LIMIT))}\n…`
+}
+
+async function accounts(bot: Bot, directory: string) {
+  const location = { directory }
+  const [credentials, integrations, rpc] = await Promise.all([
+    oc(bot, 'credential.list', (client) => client.credential.list()),
+    oc(bot, 'integration.list', (client) => client.integration.list({ location })),
+    oc(bot, 'rpc.fallback.blocks', (client) => client.rpc.call({ rpcID: 'fallback', method: 'blocks', input: {}, location })),
+  ])
+  if (credentials instanceof Error) return credentials
+  const entries = credentials.flatMap((entry): OAuthEntry[] => {
+    if (entry.value.type !== 'oauth') return []
+    const { access, expires, metadata } = entry.value
+    return [{ id: entry.id, integrationID: entry.integrationID, label: entry.label, active: entry.active, access, expires, metadata: metadata ?? {} }]
+  })
+  const now = Date.now()
+  const profiles = new Map(await Promise.all(entries.map(async (entry) => [entry.id, await profileOf({ entry, now })] as const)))
+  const names = new Map(integrations instanceof Error ? [] : integrations.data.map((integration) => [integration.id, integration.name]))
+  return renderAccounts({ entries, profiles, blocks: rpc instanceof Error ? null : fallbackBlocks(rpc.output), names, now })
 }
 
 // --- /login
@@ -397,6 +527,17 @@ export function createLoginRoutes(): InteractionRoutes {
     admin: true,
     commands: {
       login: { definition: new SlashCommandBuilder().setName('login').setDescription('Connect an OpenCode provider'), run: loginCommand },
+      accounts: {
+        definition: new SlashCommandBuilder().setName('accounts').setDescription('Show saved OAuth logins: email, active account, fallback blocks, expired tokens'),
+        run: async (bot, interaction) => {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+          const target = await resolveTarget(bot, interaction.channelId)
+          if (target instanceof Error) return replyError(interaction, target)
+          const content = await accounts(bot, target.directory)
+          if (content instanceof Error) return replyError(interaction, content)
+          await interaction.editReply({ content })
+        },
+      },
       'transcription-key': {
         definition: new SlashCommandBuilder().setName('transcription-key').setDescription('Set the OpenAI or Gemini API key for voice transcription and speech'),
         run: (_bot, interaction) => interaction.showModal(transcriptionKeyModal()),

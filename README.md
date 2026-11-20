@@ -108,6 +108,7 @@ Kimaki ships a full set of slash commands and a CLI. The most common slash comma
 | `/model` | Change the AI model for this channel or session |
 | `/agent` | Change the agent for this channel or session |
 | `/login` | Authenticate a provider (OAuth subscription or API key) |
+| `/accounts` | Show saved OAuth logins: email, active account, fallback blocks, expired tokens |
 | `/queue <message>` | Queue a message to send after the current response finishes |
 | `/btw <prompt>` | Fork context into a new thread to ask a side question |
 | `/new-worktree <name>` | Start a session in an isolated git worktree |
