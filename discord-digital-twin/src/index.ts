@@ -355,6 +355,14 @@ export class DigitalDiscord {
     this.gatewayClients.delete(token)
   }
 
+  // gateway-proxy replays a message the client never confirmed with a
+  // heartbeat, so a client can get the same MESSAGE_CREATE twice.
+  async redeliverMessage({ message }: { message: APIMessage }): Promise<void> {
+    if (!this.server) throw new Error('Server not started')
+    const channel = await this.prisma.channel.findUniqueOrThrow({ where: { id: message.channel_id } })
+    this.server.gateway.broadcastMessageCreate(message, channel.guildId ?? '')
+  }
+
   // --- Scoped accessors ---
 
   channel(channelId: string): ChannelScope {

@@ -87,6 +87,42 @@ test('messages sent while the bot is offline are handled after it reconnects', a
   `)
 })
 
+// gateway-proxy replays messages a dead socket never confirmed, so a message the
+// bot already handled can arrive again after a reconnect. The discord.js message
+// cache drops it; this breaks if the cache is ever turned off to save memory.
+test('a replayed message the bot already handled starts no second prompt', async () => {
+  const { discord, channelId } = twin
+  bot ??= await startTestBot({ dataDir, twin, server })
+  await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'message delivered twice' })
+  const thread = await discord.channel(channelId).waitForThread({
+    timeout: 8_000,
+    predicate: (candidate) => candidate.name === 'message delivered twice',
+  })
+  await waitForFooter({ discord, threadId: thread.id })
+  const reply = await discord.thread(thread.id).user(TEST_USER_ID).sendMessage({ content: 'thread message delivered twice' })
+  await waitForFooter({ discord, threadId: thread.id, count: 2 })
+
+  const before = (await discord.thread(thread.id).getMessages()).length
+  await discord.redeliverMessage({ message: reply })
+  for (let i = 0; i < 10; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect((await discord.thread(thread.id).getMessages()).length).toBe(before)
+  }
+  expect(await discord.thread(thread.id).text()).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    message delivered twice
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    ok
+    -# *main ⋅ Ns ⋅ deterministic-v2*
+    --- from: user (tommy)
+    thread message delivered twice
+    --- from: assistant (TestBot)
+    ok
+    -# *main ⋅ Ns ⋅ deterministic-v2*"
+  `)
+})
+
 // @discordjs/rest clears its token on any 401. A gateway-proxy restart with an
 // empty client registry answered 401 for a minute and every later request failed
 // with "Expected token to be set" until the bot restarted.

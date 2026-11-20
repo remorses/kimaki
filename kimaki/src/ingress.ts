@@ -417,6 +417,8 @@ export function createIngress() {
   }
 
   function register(bot: Bot) {
+    // gateway-proxy may replay a message this process already got. discord.js
+    // emits no event for a message already in the channel's message cache.
     bot.discord.on(Events.MessageCreate, (message) => {
       // Webhooks have no member to check. Own messages only matter as remote send envelopes.
       if (message.webhookId) return
