@@ -1,6 +1,7 @@
-// Slash commands and component interactions (spec 14). Registered per guild
-// with one bulk overwrite (guild-scoped route: gateway-proxy rejects global
-// application command routes). Every interaction passes the same permission
+// Slash commands and component interactions (spec 14). Registered per guild by
+// diffing with the live commands and sending only the creates, edits and deletes
+// (guild-scoped routes: gateway-proxy rejects global application command routes;
+// no bulk overwrite, Discord limits creates to 200 per day per guild). Every interaction passes the same permission
 // gate as messages, then goes to its handler with one lookup:
 //
 //   feature files ─▶ InteractionRoutes ─▶ createInteractionRegistry (this file)
@@ -22,7 +23,7 @@
 // when agent/command/skill.updated arrive, and after every reconnect (events
 // sent while disconnected are lost):
 //
-//   agent|command|skill.updated ─▶ read catalog ─▶ buildCommands ─▶ PUT guild commands (if changed)
+//   agent|command|skill.updated ─▶ read catalog ─▶ buildCommands ─▶ diffCommands ─▶ POST/PATCH/DELETE (only changes)
 //   server.connected            ─┘
 //
 // Commands with a colon get no slash command. OpenCode names MCP prompts
@@ -34,9 +35,12 @@
 
 import { isBuiltinSkill } from './builtin-skills.ts'
 import {
+  ApplicationCommand,
+  ApplicationCommandType,
   Events,
   MessageFlags,
   PermissionFlagsBits,
+  RateLimitError,
   SlashCommandBuilder,
   type AutocompleteInteraction,
   type ButtonInteraction,
@@ -82,6 +86,9 @@ const logger = createLogger('COMMANDS')
 
 const MAX_COMMANDS = 100
 const NAME_LIMIT = 32
+// A rate limited registration waits at least this long: the daily create limit
+// answers like a short bucket limit (Retry-After of about 40s) for hours.
+const RATE_LIMIT_RETRY_MS = 10 * 60_000
 const CATALOG_EVENTS: ReadonlySet<string> = new Set(['server.connected', 'agent.updated', 'command.updated', 'skill.updated'])
 
 // --- The registry: every feature's tables, combined once per bot.
@@ -307,6 +314,40 @@ export function buildCommands({ fixed, catalog }: { fixed: readonly RESTPostAPIC
   return { commands: commands.slice(0, MAX_COMMANDS), dynamic, dropped: Math.max(0, commands.length - MAX_COMMANDS) }
 }
 
+type CommandBody = RESTPostAPIChatInputApplicationCommandsJSONBody
+
+// Only the fields Kimaki sets. Discord fills dm_permission, contexts and the like on its own for guild commands.
+function sameCommand(live: ApplicationCommand, wanted: CommandBody): boolean {
+  const permissions = wanted.default_member_permissions ? BigInt(wanted.default_member_permissions) : null
+  return (
+    live.description === wanted.description &&
+    (live.defaultMemberPermissions?.bitfield ?? null) === permissions &&
+    ApplicationCommand.optionsEqual(live.options, wanted.options ?? [], true)
+  )
+}
+
+// Pure: the Discord writes that turn the live guild commands into the wanted ones.
+// Unchanged commands get no request; changed ones are edited in place, which keeps
+// them out of Discord's daily create limit.
+export function diffCommands({ live, wanted }: { live: readonly ApplicationCommand[]; wanted: readonly CommandBody[] }): {
+  remove: ApplicationCommand[]
+  edit: Array<{ id: string; body: CommandBody }>
+  create: CommandBody[]
+} {
+  const key = (name: string, type: number) => `${type}:${name}`
+  const byKey = new Map(live.map((command) => [key(command.name, command.type), command]))
+  const edit: Array<{ id: string; body: CommandBody }> = []
+  const create: CommandBody[] = []
+  for (const body of wanted) {
+    const wantedKey = key(body.name, body.type ?? ApplicationCommandType.ChatInput)
+    const current = byKey.get(wantedKey)
+    byKey.delete(wantedKey)
+    if (!current) create.push(body)
+    else if (!sameCommand(current, body)) edit.push({ id: current.id, body })
+  }
+  return { remove: [...byKey.values()], edit, create }
+}
+
 // An input from a command: a prompt in the thread, or a new session in a channel.
 async function sendInput(
   bot: Bot,
@@ -401,32 +442,51 @@ export function registerSlashCommands(
   // Guild -> Discord name -> OpenCode agent, command or skill, from the last registration.
   const dynamic = new Map<string, ReadonlyMap<string, DynamicCommand>>()
 
-  // Last commands set per guild: an unchanged list is not sent again (Discord
-  // limits command creates to 200 per day per guild).
-  const registered = new Map<string, string>()
-
+  // Compares with the live guild commands and writes only the differences.
   async function registerGuild(guild: Guild, built: ReturnType<typeof buildCommands>): Promise<void> {
-    const signature = JSON.stringify(built.commands)
-    if (registered.get(guild.id) === signature) {
-      // Another Kimaki on the same app can overwrite the list, so compare with Discord.
-      const live = await discord.application?.commands.fetch({ guildId: guild.id }).catch(() => null)
-      const same = !live || (live.size === built.commands.length && built.commands.every((command) => live.some((entry) => entry.name === command.name)))
-      if (same) {
-        dynamic.set(guild.id, built.dynamic)
-        return
-      }
-      logger.warn(`commands in guild ${guild.id} changed outside this bot, registering again`)
+    const commands = discord.application?.commands
+    if (!commands) return
+    const live = await commands
+      .fetch({ guildId: guild.id })
+      .catch((e) => new DiscordError({ operation: `list commands in ${guild.id}`, cause: e }))
+    if (live instanceof Error) {
+      logger.warn(live)
+      return
     }
-    const result = await discord.application?.commands
-      .set(built.commands, guild.id)
-      .catch((e) => new DiscordError({ operation: `register commands in ${guild.id}`, cause: e }))
+    const plan = diffCommands({ live: [...live.values()], wanted: built.commands })
+    dynamic.set(guild.id, built.dynamic)
+    if (plan.remove.length + plan.edit.length + plan.create.length === 0) return
+    let created = 0
+    const result = await (async () => {
+      // Deletes first: a create past 100 commands fails.
+      for (const command of plan.remove) {
+        const done = await commands.delete(command.id, guild.id).catch((e) => new DiscordError({ operation: `delete /${command.name} in ${guild.id}`, cause: e }))
+        if (done instanceof Error) return done
+      }
+      for (const { id, body } of plan.edit) {
+        const done = await commands.edit(id, body, guild.id).catch((e) => new DiscordError({ operation: `edit /${body.name} in ${guild.id}`, cause: e }))
+        if (done instanceof Error) return done
+      }
+      for (const body of plan.create) {
+        const done = await commands.create(body, guild.id).catch((e) => new DiscordError({ operation: `create /${body.name} in ${guild.id}`, cause: e }))
+        if (done instanceof Error) return done
+        created++
+      }
+      return null
+    })()
+    if (result instanceof Error && result.cause instanceof RateLimitError) {
+      // Only creates reject on a rate limit (main.ts). After a create went through it is the
+      // short route bucket; before any, usually the daily limit of 200 creates per guild.
+      const delay = created > 0 ? result.cause.timeToReset : Math.max(result.cause.timeToReset, RATE_LIMIT_RETRY_MS)
+      logger.warn(`Discord rate limited command creates in guild ${guild.id}, retrying in ${Math.ceil(delay / 1000)}s`)
+      retryLater(delay)
+      return
+    }
     if (result instanceof Error) {
       logger.warn(result)
       return
     }
-    registered.set(guild.id, signature)
-    dynamic.set(guild.id, built.dynamic)
-    logger.info(`registered ${built.commands.length} commands in guild ${guild.id}`)
+    logger.info(`commands in guild ${guild.id}: ${plan.create.length} created, ${plan.edit.length} edited, ${plan.remove.length} deleted`)
   }
 
   function dynamicCommand(interaction: { guildId: string | null; commandName: string }) {
@@ -496,6 +556,15 @@ export function registerSlashCommands(
   // One registration pass at a time; a request made during a pass runs one more
   // pass, so an older catalog read never overwrites a newer one.
   const passes: { active: Promise<void> | null; dirty: boolean; closed: boolean } = { active: null, dirty: false, closed: false }
+  // One pending retry after a rate limited registration.
+  const retry: { timer: ReturnType<typeof setTimeout> | null } = { timer: null }
+  function retryLater(delay: number) {
+    if (retry.timer || passes.closed) return
+    retry.timer = setTimeout(() => {
+      retry.timer = null
+      void registerAll()
+    }, delay)
+  }
 
   // Brings every guild's commands in line with the current OpenCode catalog.
   function registerAll(): Promise<void> {
@@ -542,6 +611,7 @@ export function registerSlashCommands(
     async stop(): Promise<void> {
       unsubscribe()
       passes.closed = true
+      if (retry.timer) clearTimeout(retry.timer)
       await passes.active
     },
   }

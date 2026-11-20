@@ -28,6 +28,8 @@ import type {
   RESTGetAPIGatewayBotResult,
   RESTPutAPIApplicationCommandsJSONBody,
   RESTPutAPIApplicationCommandsResult,
+  RESTPostAPIChatInputApplicationCommandsJSONBody,
+  RESTPostAPIApplicationCommandsJSONBody,
   RESTPostAPIChannelMessageJSONBody,
   RESTPatchAPIChannelMessageJSONBody,
   RESTPatchAPIChannelJSONBody,
@@ -43,7 +45,7 @@ import type {
 import { DiscordGateway } from './gateway.js'
 import type { GatewayAuthorize, GatewayOfflineClients, GatewayState } from './gateway.js'
 import type { DiscordVoiceServer } from './voice.js'
-import type { PrismaClient } from './generated/client.js'
+import type { ApplicationCommand as ApplicationCommandRow, PrismaClient } from './generated/client.js'
 import {
   userToAPI,
   messageToAPI,
@@ -54,6 +56,56 @@ import {
   memberToAPI,
 } from './serializers.js'
 import { generateSnowflake } from './snowflake.js'
+
+function commandFromRow(row: ApplicationCommandRow): APIApplicationCommand {
+  return {
+    id: row.id,
+    application_id: row.applicationId,
+    guild_id: row.guildId ?? undefined,
+    name: row.name,
+    description: row.description,
+    type: row.type as ApplicationCommandType,
+    options: JSON.parse(row.options),
+    default_member_permissions: row.defaultMemberPermissions ?? null,
+    dm_permission: row.dmPermission,
+    nsfw: row.nsfw,
+    version: row.version,
+  }
+}
+
+async function createGuildCommand(
+  prisma: PrismaClient,
+  { applicationId, guildId, body }: { applicationId: string; guildId: string; body: RESTPostAPIApplicationCommandsJSONBody },
+): Promise<APIApplicationCommand> {
+  const row = await prisma.applicationCommand.create({
+    data: {
+      id: generateSnowflake(),
+      applicationId,
+      guildId,
+      name: body.name,
+      description: 'description' in body ? (body.description ?? '') : '',
+      type: body.type ?? ApplicationCommandType.ChatInput,
+      options: JSON.stringify('options' in body ? (body.options ?? []) : []),
+      defaultMemberPermissions: body.default_member_permissions ?? null,
+      dmPermission: body.dm_permission ?? true,
+      nsfw: body.nsfw ?? false,
+      version: generateSnowflake(),
+    },
+  })
+  return commandFromRow(row)
+}
+
+async function findGuildCommand(
+  prisma: PrismaClient,
+  { applicationId, guildId, commandId }: { applicationId: string; guildId: string; commandId: string },
+): Promise<ApplicationCommandRow> {
+  const row = await prisma.applicationCommand.findFirst({ where: { id: commandId, applicationId, guildId } })
+  if (row) return row
+  throw new Response(JSON.stringify({ code: 10063, message: 'Unknown application command', errors: {} }), {
+    status: 404,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
 
 // discord.js (via undici) URL-encodes @original to %40original.
 // Decode so route handlers can check for the canonical form.
@@ -383,82 +435,67 @@ export function createServer({
             guildId: params.guild_id,
           },
         })
-
         const results: APIApplicationCommand[] = []
         for (const cmd of commands) {
-          const id = generateSnowflake()
-          const version = generateSnowflake()
-          const description =
-            'description' in cmd ? (cmd.description ?? '') : ''
-          const options = 'options' in cmd ? (cmd.options ?? []) : []
-          const type = cmd.type ?? ApplicationCommandType.ChatInput
-          await prisma.applicationCommand.create({
-            data: {
-              id,
-              applicationId: params.application_id,
-              guildId: params.guild_id,
-              name: cmd.name,
-              description,
-              type,
-              options: JSON.stringify(options),
-              defaultMemberPermissions: cmd.default_member_permissions ?? null,
-              dmPermission: cmd.dm_permission ?? true,
-              nsfw: cmd.nsfw ?? false,
-              version,
-            },
-          })
-          results.push({
-            id,
-            application_id: params.application_id,
-            guild_id: params.guild_id,
-            name: cmd.name,
-            description,
-            type,
-            options,
-            default_member_permissions: cmd.default_member_permissions ?? null,
-            dm_permission: cmd.dm_permission ?? true,
-            nsfw: cmd.nsfw ?? false,
-            version,
-          })
+          results.push(await createGuildCommand(prisma, { applicationId: params.application_id, guildId: params.guild_id, body: cmd }))
         }
-
         return results
+      },
+    })
+    .route({
+      method: 'GET',
+      path: '/applications/:application_id/guilds/:guild_id/commands',
+      async handler({ params }): Promise<APIApplicationCommand[]> {
+        const rows = await prisma.applicationCommand.findMany({
+          where: { applicationId: params.application_id, guildId: params.guild_id },
+        })
+        return rows.map(commandFromRow)
+      },
+    })
+    .route({
+      method: 'POST',
+      path: '/applications/:application_id/guilds/:guild_id/commands',
+      async handler({ params, request }): Promise<APIApplicationCommand> {
+        const body = (await request.json()) as RESTPostAPIApplicationCommandsJSONBody
+        return createGuildCommand(prisma, { applicationId: params.application_id, guildId: params.guild_id, body })
       },
     })
     .route({
       method: 'GET',
       path: '/applications/:application_id/guilds/:guild_id/commands/:command_id',
       async handler({ params }): Promise<APIApplicationCommand> {
-        const cmd = await prisma.applicationCommand.findFirst({
-          where: {
-            id: params.command_id,
-            applicationId: params.application_id,
-            guildId: params.guild_id,
+        const row = await findGuildCommand(prisma, { applicationId: params.application_id, guildId: params.guild_id, commandId: params.command_id })
+        return commandFromRow(row)
+      },
+    })
+    .route({
+      method: 'PATCH',
+      path: '/applications/:application_id/guilds/:guild_id/commands/:command_id',
+      async handler({ params, request }): Promise<APIApplicationCommand> {
+        const row = await findGuildCommand(prisma, { applicationId: params.application_id, guildId: params.guild_id, commandId: params.command_id })
+        const body = (await request.json()) as Partial<RESTPostAPIChatInputApplicationCommandsJSONBody>
+        const updated = await prisma.applicationCommand.update({
+          where: { id: row.id },
+          data: {
+            ...(body.name !== undefined && { name: body.name }),
+            ...(body.description !== undefined && { description: body.description }),
+            ...(body.options !== undefined && { options: JSON.stringify(body.options) }),
+            ...(body.default_member_permissions !== undefined && { defaultMemberPermissions: body.default_member_permissions }),
+            ...(body.dm_permission != null && { dmPermission: body.dm_permission }),
+            ...(body.nsfw !== undefined && { nsfw: body.nsfw }),
+            version: generateSnowflake(),
           },
         })
-        if (!cmd) {
-          throw new Response(
-            JSON.stringify({
-              code: 10063,
-              message: 'Unknown application command',
-              errors: {},
-            }),
-            { status: 404, headers: { 'Content-Type': 'application/json' } },
-          )
-        }
-        return {
-          id: cmd.id,
-          application_id: cmd.applicationId,
-          guild_id: cmd.guildId ?? undefined,
-          name: cmd.name,
-          description: cmd.description,
-          type: cmd.type as ApplicationCommandType,
-          options: JSON.parse(cmd.options),
-          default_member_permissions: cmd.defaultMemberPermissions ?? null,
-          dm_permission: cmd.dmPermission,
-          nsfw: cmd.nsfw,
-          version: cmd.version,
-        }
+        return commandFromRow(updated)
+      },
+    })
+    .route({
+      method: 'DELETE',
+      path: '/applications/:application_id/guilds/:guild_id/commands/:command_id',
+      async handler({ params }) {
+        const row = await findGuildCommand(prisma, { applicationId: params.application_id, guildId: params.guild_id, commandId: params.command_id })
+        await prisma.applicationCommand.delete({ where: { id: row.id } })
+        return new Response(null, { status: 204 })
       },
     })
 

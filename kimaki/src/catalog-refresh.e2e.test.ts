@@ -75,38 +75,47 @@ test('agents loaded after startup get their slash commands', async () => {
   `)
 })
 
-test('a skill change adds its command; catalog events with the same catalog write nothing to Discord', async () => {
+test('skill changes write only the changed command; the same catalog writes nothing', async () => {
   const skillFile = path.join(server.skillsDirectory, 'demo', 'SKILL.md')
-  const skillText = '---\nname: demo\ndescription: Demo skill\n---\nDemo.\n'
-  const nextCatalogEvent = () =>
-    new Promise<void>((resolve) => {
-      const stop = bot.opencode.subscribe((event) => {
-        if (event.type !== 'skill.updated') return
-        stop()
-        resolve()
-      })
-    })
-  const waitForCommand = async () => {
+  const skillText = (description: string) => `---\nname: demo\ndescription: ${description}\n---\nDemo.\n`
+  const commandsRoute = Routes.applicationGuildCommands(bot.discord.user!.id, twin.discord.guildId)
+  const writes: string[] = []
+  bot.discord.rest.on('response', (request) => {
+    if (request.method !== 'GET' && request.path.startsWith(commandsRoute)) writes.push(request.method)
+  })
+  const until = async (done: () => Promise<boolean>) => {
     const deadline = Date.now() + 8_000
-    while (Date.now() < deadline && !(await registeredNames()).includes('demo-skill')) {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-    }
+    while (Date.now() < deadline && !(await done())) await new Promise((resolve) => setTimeout(resolve, 100))
   }
+  const demo = async () => (await twin.discord.getRegisteredCommands()).find((command) => command.name === 'demo-skill')
+
   fs.mkdirSync(path.dirname(skillFile), { recursive: true })
-  fs.writeFileSync(skillFile, skillText)
-  await waitForCommand()
-  expect(await registeredNames()).toContain('demo-skill')
+  fs.writeFileSync(skillFile, skillText('Demo skill'))
+  await until(async () => Boolean(await demo()))
+  expect(writes).toEqual(['POST'])
+  const id = (await demo())?.id
 
   // Same file content again: OpenCode rescans and publishes skill.updated, the commands stay the same.
-  const bulkWrites: string[] = []
-  const commandsRoute = Routes.applicationGuildCommands(bot.discord.user!.id, twin.discord.guildId)
-  bot.discord.rest.on('response', (request) => {
-    if (request.method === 'PUT' && request.path === commandsRoute) bulkWrites.push(request.path)
+  const event = new Promise<void>((resolve) => {
+    const stop = bot.opencode.subscribe((event) => {
+      if (event.type !== 'skill.updated') return
+      stop()
+      resolve()
+    })
   })
-  const event = nextCatalogEvent()
-  fs.writeFileSync(skillFile, skillText)
+  fs.writeFileSync(skillFile, skillText('Demo skill'))
   await event
   // Let the pass that the event started finish.
   await new Promise((resolve) => setTimeout(resolve, 300))
-  expect(bulkWrites).toEqual([])
+  expect(writes).toEqual(['POST'])
+
+  // A new description edits the command in place: same ID, no create.
+  fs.writeFileSync(skillFile, skillText('Changed demo skill'))
+  await until(async () => (await demo())?.description === 'Changed demo skill')
+  expect(writes).toEqual(['POST', 'PATCH'])
+  expect((await demo())?.id).toBe(id)
+
+  fs.rmSync(path.dirname(skillFile), { recursive: true })
+  await until(async () => !(await demo()))
+  expect(writes).toEqual(['POST', 'PATCH', 'DELETE'])
 })

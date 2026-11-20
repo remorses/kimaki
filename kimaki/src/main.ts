@@ -114,7 +114,12 @@ export async function startBot(options: StartBotOptions): Promise<Error | BotHan
   const discord = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates],
     partials: [Partials.Channel, Partials.Message, Partials.User, Partials.ThreadMember],
-    ...(options.discordRestUrl && { rest: { api: options.discordRestUrl, version: '10' } }),
+    rest: {
+      // discord.js retries a 429 until it passes. Command creates fail fast instead
+      // (slash-commands.ts retries later): a full daily create budget would block them for hours.
+      rejectOnRateLimit: (data) => data.method.toUpperCase() === 'POST' && data.route.endsWith('/commands'),
+      ...(options.discordRestUrl && { api: options.discordRestUrl, version: '10' }),
+    },
   })
   // TODO: drop this once @discordjs/rest can keep its token on 401. handleErrors()
   // calls setToken(null) on any 401, and every later request fails with "Expected
