@@ -36,7 +36,7 @@ export type { OpenCodeClient, V2Event }
 
 const logger = createLogger('OPENCODE')
 
-export const MIN_OPENCODE_VERSION = '2.0.19'
+export const MIN_OPENCODE_VERSION = '2.0.29'
 
 function parseVersion(version: string): number[] {
   return version

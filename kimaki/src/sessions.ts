@@ -122,11 +122,13 @@ async function bindThread(
   logger.log(`session ${sessionId} bound to thread ${threadId}`)
 }
 
-// A cold (or evicted) location loads plugin and markdown agents a moment after
-// it answers. integration.list waits for that activation.
+// A cold (or evicted) location answers agent/command/skill.list with an empty
+// catalog until its plugins activate. model.default waits for that activation
+// (server/src/handlers/model.ts awaitPlugins, OpenCode 2.0.29+); integration.list
+// stopped waiting in 2.2.7.
 // TODO: drop this once agent/command/skill.list wait too. https://github.com/anomalyco/opencode/issues/51282
 export async function catalogReady(bot: Pick<Bot, 'opencode'>, directory: string) {
-  const ready = await oc(bot, 'integration.list', (client) => client.integration.list({ location: { directory } }))
+  const ready = await oc(bot, 'model.default', (client) => client.model.default({ location: { directory } }))
   if (ready instanceof Error) return ready
 }
 
