@@ -11,11 +11,15 @@
 //   model request ─▶ intervalMs later: sleeping, or coordinator ─▶ keep-alive, again intervalMs later
 //                                      channel busy (at most maxMs
 //                                      after the last real request)?
+//                                     └─▶ OpenCode's own `warming` still on ─▶ wait for its end
 //                                     └─▶ no ─▶ end
-//   end of a coordinator ─▶ compact while the cache still holds, when the context is big
+//   end, session idle, big context ─▶ compact while the cache still holds
 //
-// Only the bot knows the threads of a channel and the sleeps: it answers
-// `session.warmup` on its lock port. The warmup is also in plugin storage, so a
+// Big: 100k tokens for a coordinator, 500k for any other session. The next prompt
+// then writes a summary to the cache instead of the whole history.
+//
+// Only the bot knows the threads of a channel, the sleeps, run state and the
+// OpenCode config: it answers `session.warmup` on its lock port. The warmup is also in plugin storage, so a
 // plugin reload (every Kimaki build or upgrade) continues it. Root Kimaki
 // sessions only, never subagents or TUI sessions.
 // TODO: let the coordinator compact worker sessions too (they keep their full history now).
@@ -37,9 +41,13 @@ const WARM_PROMPT = 'This is a keep-alive request. Do not perform any work or us
 const WARM_MAX_MS = 90 * 60_000
 // A small history is cheap to keep: compacting it only loses detail. Tokens, not a
 // share of the window: a coordinator at 190k never reached 20% of a 1M window.
-const MIN_COMPACT_TOKENS = 100_000
+// A coordinator lives for weeks, so it compacts earlier.
+const COMPACT_TOKENS = 500_000
+const COORDINATOR_COMPACT_TOKENS = 100_000
 // Missed while no plugin ran (OpenCode was down): the cache may be cold.
 const STALE_MS = 60_000
+// How often a running session is checked again after its warmup is due.
+const RUNNING_RECHECK_MS = 30_000
 const BUSY_TIMEOUT_MS = 5_000
 const STORAGE_PREFIX = 'warm/'
 
@@ -73,24 +81,33 @@ function readWarmup(value: unknown): Warmup | null {
 }
 
 // busy: a coordinator or a thread of its channel runs. sleeping: a sleep of at most
-// 45 minutes waits for its wake. From the bot (lock-routes.ts); no answer (bot stopped) ends the warmup.
-async function warmupState(session: RoleSession): Promise<{ busy: boolean; sleeping: boolean }> {
-  const idle = { busy: false, sleeping: false }
+// 45 minutes waits for its wake. running: the session's own run. warmingMs: how long
+// OpenCode's own `warming` keeps it warm after a real request, null when off.
+// From the bot (lock-routes.ts); null when it does not answer (bot stopped): that ends the warmup.
+type WarmupState = { busy: boolean; sleeping: boolean; running: boolean; warmingMs: number | null }
+
+async function warmupState({ session, directory }: { session: RoleSession; directory: string }): Promise<WarmupState | null> {
   const dataDir = markerString(session, 'dataDir')
   const lockPort = markerValue(session, 'lockPort')
-  if (!dataDir || typeof lockPort !== 'number') return idle
+  if (!dataDir || typeof lockPort !== 'number') return null
   const token = await fs.promises.readFile(path.join(dataDir, 'lock-token'), 'utf8').catch(() => null)
-  if (token === null) return idle
+  if (token === null) return null
   const response = await fetch(`http://127.0.0.1:${lockPort}/kimaki/session.warmup`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId: session.id }),
+    body: JSON.stringify({ sessionId: session.id, directory }),
     signal: AbortSignal.timeout(BUSY_TIMEOUT_MS),
   }).catch(() => null)
-  if (!response?.ok) return idle
+  if (!response?.ok) return null
   const body: unknown = await response.json().catch(() => null)
-  if (!body || typeof body !== 'object') return idle
-  return { busy: Reflect.get(body, 'busy') === true, sleeping: Reflect.get(body, 'sleeping') === true }
+  if (!body || typeof body !== 'object') return null
+  const warmingMs: unknown = Reflect.get(body, 'warmingMs')
+  return {
+    busy: Reflect.get(body, 'busy') === true,
+    sleeping: Reflect.get(body, 'sleeping') === true,
+    running: Reflect.get(body, 'running') === true,
+    warmingMs: typeof warmingMs === 'number' && warmingMs > 0 ? warmingMs : null,
+  }
 }
 
 export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
@@ -111,11 +128,11 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
     return found
   }
 
-  async function worthCompacting(sessionID: string): Promise<boolean> {
+  async function worthCompacting({ sessionID, coordinator }: { sessionID: string; coordinator: boolean }): Promise<boolean> {
     const messages = await ctx.session.context({ sessionID })
     const last = messages.findLast((message) => message.type === 'assistant' && message.tokens)
     const tokens = last?.type === 'assistant' && last.tokens ? last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write : 0
-    return tokens >= MIN_COMPACT_TOKENS
+    return tokens >= (coordinator ? COORDINATOR_COMPACT_TOKENS : COMPACT_TOKENS)
   }
 
   function save(sessionID: string, warmup: Warmup) {
@@ -123,7 +140,8 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
     void ctx.storage.set(STORAGE_PREFIX + sessionID, warmup).catch(() => undefined)
   }
 
-  function arm(sessionID: string, found: Windows) {
+  // Next check: intervalMs after the latest request, while the cache still holds.
+  function arm({ sessionID, found, at }: { sessionID: string; found: Windows; at?: number }) {
     const warmup = warmups.get(sessionID)
     if (!warmup) return
     clearTimeout(timers.get(sessionID))
@@ -131,14 +149,14 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
       timers.delete(sessionID)
       // Plugins stay silent: a failed keep-alive or compaction only loses that one.
       void tick(sessionID, warmup, found).catch(() => undefined)
-    }, Math.max(0, warmup.last + found.intervalMs - Date.now()))
+    }, Math.max(0, (at ?? warmup.last + found.intervalMs) - Date.now()))
     timer.unref?.()
     timers.set(sessionID, timer)
   }
 
   async function tick(sessionID: string, warmup: Warmup, found: Windows) {
     const session = await ctx.session.get({ sessionID }).catch(() => null)
-    const state = session ? await warmupState(session) : null
+    const state = session ? await warmupState({ session, directory: warmup.directory }) : null
     // The bot bounds sleeps (45 minutes); the plugin bounds busy channels, against stuck workers.
     const warm = !!state && (state.sleeping || (state.busy && Date.now() < warmup.active + found.maxMs))
     // A model request during the checks moved the warmup.
@@ -146,13 +164,27 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
     if (warm) {
       // Before the request, so a failing keep-alive waits a whole interval.
       save(sessionID, { ...warmup, last: Date.now() })
-      arm(sessionID, found)
+      arm({ sessionID, found })
       await ctx.session.generate({ sessionID, prompt: WARM_PROMPT })
+      return
+    }
+    // A running session (a long tool call or answer, a question) is not idle: check again soon,
+    // so a run that ends without another request still compacts.
+    if (state?.running && Date.now() < warmup.last + found.maxMs) {
+      arm({ sessionID, found, at: Date.now() + Math.min(found.intervalMs, RUNNING_RECHECK_MS) })
+      return
+    }
+    // OpenCode's own warming keeps the cache until then. Its keep-alives move `last` and the check.
+    const warmingEnd = state?.warmingMs ? warmup.active + state.warmingMs : 0
+    if (Date.now() < warmingEnd) {
+      arm({ sessionID, found, at: warmingEnd })
       return
     }
     warmups.delete(sessionID)
     await ctx.storage.remove(STORAGE_PREFIX + sessionID).catch(() => undefined)
-    if (found.coordinator && (await worthCompacting(sessionID))) await ctx.session.compact({ sessionID, delivery: 'queue' })
+    // Unknown state (bot stopped) or a run past the cap: never compact blindly.
+    if (!state || state.running) return
+    if (await worthCompacting({ sessionID, coordinator: found.coordinator })) await ctx.session.compact({ sessionID, delivery: 'queue' })
   }
 
   async function touch(sessionID: string, real: boolean) {
@@ -163,7 +195,7 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
     if (!real && !current) return
     const now = Date.now()
     save(sessionID, { directory: ctx.location.directory, last: now, active: real || !current ? now : current.active })
-    arm(sessionID, found)
+    arm({ sessionID, found })
   }
 
   // Warmups of the plugin before a reload. Storage is shared by all locations: each takes its own.
@@ -178,7 +210,7 @@ export async function registerWarmup(ctx: Plugin.Context): Promise<() => void> {
       return
     }
     warmups.set(sessionID, warmup)
-    arm(sessionID, found)
+    arm({ sessionID, found })
   }))
 
   // Turns of the session start or move the warmup; compaction requests do not.

@@ -10,6 +10,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import v8 from 'node:v8'
 import * as errore from 'errore'
 import * as orm from 'drizzle-orm'
+import { Duration, Option, Schema } from 'effect'
 import { z } from 'zod'
 
 import { parseButton } from './agent-ui.ts'
@@ -24,7 +25,7 @@ import { createTask, deleteTask, editTask, runTaskNow } from './scheduler.ts'
 import * as schema from './schema.ts'
 import { channelForDirectory, channelForSession, fork, resume, sessionCwd } from './sessions.ts'
 import { createSleep, sleepsWarm } from './sleeps.ts'
-import { conversationTyping, workersTyping } from './thread-reducer.ts'
+import { conversationTyping, isBusy, workersTyping } from './thread-reducer.ts'
 import { worktreeName } from './worktrees.ts'
 
 type LockRoute<S extends z.ZodType, R> = {
@@ -283,6 +284,41 @@ function coordinatorBusy(bot: Bot, sessionId: string): boolean {
   return view.coordinator && conversationTyping({ threads, threadId: channelId })
 }
 
+// The session's own run, also while it waits for the user: a compaction would queue behind it.
+function sessionRunning(bot: Bot, sessionId: string): boolean {
+  const { sessionThreads, roots, threads } = bot.store.getState()
+  const threadId = sessionThreads[sessionId]
+  const view = threadId && roots[threadId] === sessionId ? threads[threadId] : undefined
+  return !!view && isBusy(view)
+}
+
+// OpenCode's own `warming` defaults (core/src/plugin/warming.ts).
+const OPENCODE_WARMING_INTERVAL_MS = 4 * 60_000
+const OPENCODE_WARMING_DURATION_MS = 30 * 60_000
+// The schema of OpenCode's config: "30 minutes", "90 seconds".
+const decodeDuration = Schema.decodeUnknownOption(Schema.DurationFromString)
+
+// How long OpenCode's own `warming` keeps a session of this directory warm after its last
+// real request. null when the user's config turns it off.
+async function openCodeWarmingMs(bot: Bot, directory: string): Promise<number | null> {
+  const entries = await oc(bot, 'config.get', (client) => client.config.get({ location: { directory } }))
+  if (entries instanceof Error) return null
+  // The latest document wins, like Config.latest in OpenCode.
+  const warming = entries.flatMap((entry) => (entry.type === 'document' && entry.info.warming !== undefined ? [entry.info.warming] : [])).at(-1)
+  if (!warming) return null
+  const settings = warming === true ? {} : warming
+  const millis = (value: string | undefined, fallback: number) => {
+    if (value === undefined) return fallback
+    const duration = decodeDuration(value)
+    return Option.isSome(duration) ? Duration.toMillis(duration.value) : Number.NaN
+  }
+  const interval = millis(settings.interval, OPENCODE_WARMING_INTERVAL_MS)
+  const duration = millis(settings.duration, OPENCODE_WARMING_DURATION_MS)
+  // OpenCode turns warming off for these.
+  const valid = (value: number) => Number.isFinite(value) && value > 0
+  return valid(interval) && valid(duration) ? duration : null
+}
+
 const loginField = z.string({ error: 'Login fields must be non-empty strings' }).min(1, { error: 'Login fields must be non-empty strings' }).optional()
 
 export const lockRoutes = {
@@ -318,11 +354,12 @@ export const lockRoutes = {
   // The plugin keeps a session's prompt cache warm while its coordinator channel is busy
   // or it sleeps (plugin/coordinator.ts).
   'session.warmup': route({
-    input: z.object({ sessionId: text('sessionId') }),
-    run: async (bot, { sessionId }) => {
-      const sleeping = await sleepsWarm(bot, sessionId)
+    // directory: the plugin's location, whose config OpenCode's own warming reads.
+    input: z.object({ sessionId: text('sessionId'), directory: z.string().optional() }),
+    run: async (bot, { sessionId, directory }) => {
+      const [sleeping, warmingMs] = await Promise.all([sleepsWarm(bot, sessionId), directory ? openCodeWarmingMs(bot, directory) : null])
       if (sleeping instanceof Error) return sleeping
-      return { busy: coordinatorBusy(bot, sessionId), sleeping }
+      return { busy: coordinatorBusy(bot, sessionId), sleeping, running: sessionRunning(bot, sessionId), warmingMs }
     },
   }),
   restart: route({

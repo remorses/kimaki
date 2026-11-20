@@ -130,6 +130,7 @@ export async function startOpencodeTestServer({
   agents = {},
   mcp,
   plugins = [],
+  warming,
 }: {
   matchers?: DeterministicMatcher[]
   // OpenCode commands (`/name args` in Discord), e.g. { review: { template: 'Review: $ARGUMENTS' } }.
@@ -143,6 +144,8 @@ export async function startOpencodeTestServer({
   // MCP servers (config `mcp.servers`).
   mcp?: { servers: Record<string, { type: 'local'; command: string[] }> }
   plugins?: string[]
+  // OpenCode's own keep-alives (config `warming`), e.g. { interval: '500 millis', duration: '2 seconds' }.
+  warming?: { interval?: string; duration?: string }
 } = {}): Promise<OpencodeTestServer> {
   // realpath: macOS tmpdir is /var/... but OpenCode resolves /private/var/...
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kimaki-e2e-')))
@@ -183,6 +186,7 @@ export async function startOpencodeTestServer({
       // configDir on start, the same path as production.
       plugins: plugins.map((plugin) => pathToFileURL(plugin).href),
       ...(mcp && { mcp }),
+      ...(warming && { warming }),
     }),
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
     OPENCODE_DISABLE_MODELS_FETCH: '1',

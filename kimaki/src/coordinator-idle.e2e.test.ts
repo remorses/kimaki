@@ -26,7 +26,7 @@ let server: OpencodeTestServer
 let twin: TestTwin
 let bot: BotHandle
 const dataDir = tempDataDir()
-// A large context, so the compaction is worth it (plugin/coordinator.ts MIN_COMPACT_TOKENS),
+// A large context, so the compaction is worth it (plugin/coordinator.ts COORDINATOR_COMPACT_TOKENS),
 // in a 1M window like Claude Opus: only 12% of it, far below automatic compaction.
 const bigUsage = { inputTokens: 120_000, outputTokens: 1, totalTokens: 120_001 }
 

@@ -60,6 +60,8 @@ While the coordinator or one of its threads runs, Kimaki keeps the coordinator's
 
 When the channel goes idle, a coordinator with more than 100k tokens of context is compacted while its cache is still warm, so the next message starts from a short summary.
 
+Any other Kimaki session, a worker thread included, gets the same treatment once it passes **500k tokens**: about 4 minutes after its last request, just before Anthropic's 5-minute cache expires. When you turn on OpenCode's `warming` config, Kimaki waits until that warming ends instead (its `duration`, 30 minutes by default). A session that still runs, for example inside a long tool call, is never compacted.
+
 ## Reading what a session did
 
 `kimaki session read <id>` prints the prompts and final answers of a session. Add `--full` to see every tool call.

@@ -28,7 +28,7 @@ let server: OpencodeTestServer
 let twin: TestTwin
 let bot: BotHandle
 const dataDir = tempDataDir()
-// Big enough to be worth compacting (plugin/coordinator.ts MIN_COMPACT_TOKENS).
+// Big enough to be worth compacting (plugin/coordinator.ts COORDINATOR_COMPACT_TOKENS).
 const bigUsage = { inputTokens: 120_000, outputTokens: 1, totalTokens: 120_001 }
 const WARM_INTERVAL_MS = 400
 const WARM_MAX_MS = 1_500
