@@ -38,7 +38,7 @@ Only the **server owner** or an **Administrator** can run `/login`. Logins are s
 | Provider | OAuth method | Notes |
 |---|---|---|
 | Anthropic | **Claude Pro/Max (browser)** or **(headless)** | Added by the `kimaki-anthropic` plugin that Kimaki installs into OpenCode. Works in the TUI too. Browser finishes by itself through the `localhost:53692` callback. Headless is for a browser on another machine: paste the URL of the last page. Use headless from Discord when the bot runs on another computer. |
-| OpenAI | **ChatGPT Pro/Plus** | Built into OpenCode. |
+| OpenAI | **Sign in with ChatGPT** | Built into OpenCode. The browser returns to a `127.0.0.1` page on the OpenCode computer. On another device that page fails to load: copy its URL and click **Paste redirect URL**. The **Codex (legacy)** methods still work. |
 
 After the login, pick the model with [`/model`](../getting-started/model-switching).
 

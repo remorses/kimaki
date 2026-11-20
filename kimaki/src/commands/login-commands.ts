@@ -9,6 +9,7 @@
 // secrets of the whole bot, so only the server owner or an administrator may use them.
 
 import crypto from 'node:crypto'
+import { setTimeout as sleep } from 'node:timers/promises'
 import {
   ActionRowBuilder,
   ModalBuilder,
@@ -93,6 +94,28 @@ async function connectKey(bot: Bot, { provider, key, directory }: { provider: st
   return { message: `Connected ${provider}` }
 }
 
+const COMPLETE_POLL_MS = 500
+const COMPLETE_POLLS = 40
+
+// Completes an attempt and waits for its result: a pasted redirect settles in the background.
+async function finishOAuth(bot: Bot, { request, code }: { request: { integrationID: string; attemptID: string; location: { directory: string } }; code: string }) {
+  const done = await oc(bot, 'integration.oauth.complete', (client) => client.integration.oauth.complete({ ...request, code }))
+  if (done instanceof Error) return done
+  for (let poll = 0; poll < COMPLETE_POLLS; poll++) {
+    const result = await oc(bot, 'integration.oauth.status', (client) => client.integration.oauth.status(request))
+    if (result instanceof Error) return result
+    if (result.data.status !== 'pending') return result.data
+    await sleep(COMPLETE_POLL_MS)
+  }
+  return new ConfigError({ reason: 'Login still pending. Check it again in a moment.' })
+}
+
+function statusText({ provider, status }: { provider: string; status: { status: string; message?: string } }) {
+  if (status.status === 'complete') return `${provider} OAuth connected. Use /model to select a model.`
+  if (status.status === 'failed') return status.message ?? 'Login failed'
+  return 'Login expired. Run /login again.'
+}
+
 // `kimaki login credential`: activate, remove or relabel a saved credential.
 export async function credential(bot: Bot, input: { id: string; operation: 'activate' | 'remove' | 'label'; label?: string }) {
   const result = await oc(bot, `credential.${input.operation}`, (client) =>
@@ -127,11 +150,9 @@ export async function loginCli(
     }
     const code = input.code
     if (code) {
-      const result = await oc(bot, 'integration.oauth.complete', (client) =>
-        client.integration.oauth.complete({ integrationID, attemptID, code, location }),
-      )
+      const result = await finishOAuth(bot, { request: { integrationID, attemptID, location }, code })
       if (result instanceof Error) return result
-      return { connected: true }
+      return result.status === 'complete' ? { connected: true } : result
     }
     const result = await oc(bot, 'integration.oauth.status', (client) => client.integration.oauth.status({ integrationID, attemptID, location }))
     if (result instanceof Error) return result
@@ -149,7 +170,7 @@ export async function loginCli(
     provider: info.data.name,
     methods: info.data.methods,
     connections: info.data.connections,
-    instructions: 'Use --key, or --method <oauth method ID>. Complete with --attempt <id> --code <code>; check or cancel with --attempt <id> [--cancel].',
+    instructions: 'Use --key, or --method <oauth method ID>. Complete with --attempt <id> --code <code>; when the attempt has paste: true, --code also takes the redirect URL the browser ended on. Check or cancel with --attempt <id> [--cancel].',
   }
 }
 
@@ -257,11 +278,17 @@ export function createLoginRoutes(): InteractionRoutes {
       if (result instanceof Error) return replyError(interaction, result)
       wizards.set(id, { ...wizard, attempt: result.data.attemptID })
       const code = result.data.mode === 'code'
+      // Browser-callback methods (Sign in with ChatGPT) also take the redirect URL as code, for a
+      // browser on another device (OpenCode 2.3+).
+      // TODO: read `result.data.paste` directly once @opencode/client is past 2.0.29, whose types lack it.
+      const paste = !code && 'paste' in result.data && result.data.paste === true
+      const pasteHint = '-# If the browser is on another device, its last page fails to load. Copy that page URL and press Paste redirect URL.'
       return interaction.editReply({
-        content: `${result.data.url}\n${result.data.instructions}`,
+        content: [result.data.url, result.data.instructions, ...(paste ? [pasteHint] : [])].join('\n'),
         components: [
           buttonRow([
             button({ customId: `login_${code ? 'code' : 'check'}:${id}`, label: code ? 'Enter code' : 'Check login' }),
+            ...(paste ? [button({ customId: `login_paste:${id}`, label: 'Paste redirect URL' })] : []),
             button({ customId: `login_cancel:${id}`, label: 'Cancel' }),
           ]),
         ],
@@ -306,12 +333,11 @@ export function createLoginRoutes(): InteractionRoutes {
     const attemptID = wizard.attempt
     if (!attemptID) return replyError(interaction, new ConfigError({ reason: 'No pending login attempt' }))
     const code = interaction.fields.getTextInputValue('code')
-    const result = await oc(bot, 'integration.oauth.complete', (client) =>
-      client.integration.oauth.complete({ integrationID: provider.id, attemptID, code, location: { directory: wizard.directory } }),
-    )
+    const request = { integrationID: provider.id, attemptID, location: { directory: wizard.directory } }
+    const result = await finishOAuth(bot, { request, code })
     if (result instanceof Error) return replyError(interaction, result)
     wizards.delete(id)
-    return interaction.editReply({ content: `${provider.name} OAuth connected. Use /model to select a model.` })
+    return interaction.editReply({ content: statusText({ provider: provider.name, status: result }) })
   }
 
   // The OAuth attempt of a button, or null after an error reply.
@@ -336,6 +362,13 @@ export function createLoginRoutes(): InteractionRoutes {
     return interaction.showModal(textModal({ customId: `login_code:${found.id}`, title: 'Authorization code', inputId: 'code', label: 'Code' }))
   }
 
+  // The pasted redirect URL goes through the same modal: OpenCode completes it like a code.
+  async function pasteClick(_bot: Bot, interaction: ButtonInteraction) {
+    const found = await attemptOf(interaction)
+    if (!found) return
+    return interaction.showModal(textModal({ customId: `login_code:${found.id}`, title: 'Redirect URL', inputId: 'code', label: 'URL of the page that failed to load' }))
+  }
+
   async function cancelClick(bot: Bot, interaction: ButtonInteraction) {
     const found = await attemptOf(interaction)
     if (!found) return
@@ -357,12 +390,7 @@ export function createLoginRoutes(): InteractionRoutes {
       return interaction.followUp({ content: 'Login still pending. Finish authorization, then check again.', flags: MessageFlags.Ephemeral })
     }
     wizards.delete(found.id)
-    const content = status.status === 'complete'
-      ? `${found.provider.name} OAuth connected`
-      : status.status === 'failed'
-        ? status.message
-        : 'Login expired. Run /login again.'
-    return interaction.editReply({ content, components: [] })
+    return interaction.editReply({ content: statusText({ provider: found.provider.name, status }), components: [] })
   }
 
   return {
@@ -375,7 +403,7 @@ export function createLoginRoutes(): InteractionRoutes {
       },
     },
     selects: { 'login_provider:': providerSelect, 'login_method:': methodSelect },
-    buttons: { 'login_code:': codeClick, 'login_check:': checkClick, 'login_cancel:': cancelClick },
+    buttons: { 'login_code:': codeClick, 'login_paste:': pasteClick, 'login_check:': checkClick, 'login_cancel:': cancelClick },
     modals: {
       'login_key:': keyModal,
       'login_code:': codeModal,
