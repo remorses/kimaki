@@ -9,6 +9,7 @@
 // - Account changes are global per integration (credential.activate): a
 //   blocked account is blocked for every session.
 // - Accounts come from normal OpenCode logins (`opencode auth login`, /connect).
+//   A block covers every saved OAuth login of the same user (same JWT `sub`).
 // - After a model switch, session metadata `fallback` records it and every
 //   request of that session gets a system note, so the new model knows its
 //   abilities may differ from the old one.
@@ -27,6 +28,7 @@ import {
   pick,
   isBlock,
   isModelSwitch,
+  loginKey,
   nextSwitch,
   switchNote,
   type Block,
@@ -82,6 +84,17 @@ export default Plugin.define({
       const integration = await ctx.integration.get({ integrationID: await integrationOf(model.providerID) }).catch(() => undefined)
       const connection = integration?.data.connections.find((item) => item.type === 'credential' && item.id === credentialID)
       return !connection || ctx.integration.connection.resolve(connection).then(() => true, () => false)
+    }
+
+    // Other saved accounts signed in as the same user: they share its limits.
+    async function sameLogin({ providerID, credentialID }: Pick<Block, 'providerID' | 'credentialID'>) {
+      const integration = await ctx.integration.get({ integrationID: await integrationOf(providerID) }).catch(() => undefined)
+      const credentials = (integration?.data.connections ?? []).filter((item) => item.type === 'credential')
+      const keys = await Promise.all(
+        credentials.map(async (connection) => ({ id: connection.id, key: loginKey(await ctx.integration.connection.resolve(connection).catch(() => undefined)) })),
+      )
+      const own = keys.find((item) => item.id === credentialID)?.key
+      return own ? keys.filter((item) => item.id !== credentialID && item.key === own).map((item) => item.id) : []
     }
 
     async function readBlocks(now: number) {
@@ -153,7 +166,8 @@ export default Plugin.define({
         now,
       })
       if (!block) return
-      await saveBlock(block)
+      const siblings = block.credentialID === ENV_ACCOUNT ? [] : await sameLogin(block)
+      for (const credentialID of [block.credentialID, ...siblings]) await saveBlock({ ...block, credentialID })
 
       const candidates = await rankingFor(event.model)
       const providers = [...new Set(candidates.map((model) => model.providerID))]

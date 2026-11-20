@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { classify, parseModel, pick, type Block, type FailedRequest } from './fallback.ts'
+import { classify, loginKey, parseModel, pick, type Block, type FailedRequest } from './fallback.ts'
 
 const now = Date.parse('2026-10-02T12:00:00Z')
 const iso = (time: number | undefined) => (time === undefined ? undefined : new Date(time).toISOString())
@@ -51,6 +51,43 @@ describe('classify', () => {
           'x-codex-secondary-reset-at': String(now / 1000 + 86400),
         },
       }),
+      // Real stream error of "Sign in with ChatGPT" (OpenCode 2.3): HTTP 200, no reset info.
+      chatgptSignInLimit: block({
+        model: { providerID: 'openai', id: 'gpt-6.2-astra' },
+        error: {
+          type: 'provider.chatgpt-limit',
+          status: 200,
+          message: 'ChatGPT usage limit reached. Check ChatGPT Settings → Usage for details.',
+          response: {
+            body: JSON.stringify({
+              type: 'error',
+              sequence_number: 3,
+              error: { message: 'The ChatGPT user has reached their Subscription Sharing usage limit.', type: 'invalid_request_error', param: null, code: 'subscription_sharing_usage_limit_exceeded' },
+            }),
+          },
+        },
+      }),
+      chatgptWorkspaceLimit: block({
+        model: { providerID: 'openai', id: 'gpt-6.2-astra' },
+        error: {
+          type: 'provider.invalid-request',
+          status: 200,
+          message: 'workspace limit',
+          response: { body: JSON.stringify({ error: { code: 'subscription_sharing_workplace_individual_usage_limit_exceeded' } }) },
+        },
+      }),
+      chatgptInvalidUser: block({
+        model: { providerID: 'openai', id: 'gpt-6.2-astra' },
+        error: { type: 'provider.invalid-request', status: 403, message: 'This ChatGPT connection is no longer valid.', response: { body: '{"error":{"code":"subscription_sharing_invalid_user"}}' } },
+      }),
+      goLimitRetryAfter: block({
+        model: { providerID: 'opencode-go', id: 'kimi-k3' },
+        error: { type: 'provider.go-limit', status: 429, message: 'OpenCode Go weekly usage limit reached.', retryAfterMs: 2 * 3600_000 },
+      }),
+      modelBudgetLimit: block({
+        model: { providerID: 'opencode', id: 'claude-opus-5-5' },
+        error: { type: 'provider.model-budget-limit', status: 402, message: "You've reached the spend limit for this model." },
+      }),
       openaiDuration: block({
         model: { providerID: 'openai', id: 'gpt-5.5' },
         error: { type: 'provider.rate-limit', status: 429, message: 'Rate limit reached' },
@@ -91,6 +128,27 @@ describe('classify', () => {
           "until": "2026-10-03T12:00:00.000Z",
         },
         "bare503": undefined,
+        "chatgptInvalidUser": {
+          "credentialID": "cred_a",
+          "modelID": "*",
+          "providerID": "openai",
+          "reason": "auth",
+          "until": "2026-10-03T12:00:00.000Z",
+        },
+        "chatgptSignInLimit": {
+          "credentialID": "cred_a",
+          "modelID": "*",
+          "providerID": "openai",
+          "reason": "quota",
+          "until": "2026-10-02T12:30:00.000Z",
+        },
+        "chatgptWorkspaceLimit": {
+          "credentialID": "cred_a",
+          "modelID": "*",
+          "providerID": "openai",
+          "reason": "quota",
+          "until": "2026-10-02T12:30:00.000Z",
+        },
         "codexHeaders": {
           "credentialID": "cred_a",
           "modelID": "*",
@@ -105,7 +163,21 @@ describe('classify', () => {
           "reason": "quota",
           "until": "2026-10-02T13:30:00.000Z",
         },
+        "goLimitRetryAfter": {
+          "credentialID": "cred_a",
+          "modelID": "*",
+          "providerID": "opencode-go",
+          "reason": "quota",
+          "until": "2026-10-02T14:00:00.000Z",
+        },
         "invalidRequest": undefined,
+        "modelBudgetLimit": {
+          "credentialID": "cred_a",
+          "modelID": "claude-opus-5-5",
+          "providerID": "opencode",
+          "reason": "quota",
+          "until": "2026-10-02T12:30:00.000Z",
+        },
         "openaiDuration": {
           "credentialID": "cred_a",
           "modelID": "gpt-5.5",
@@ -125,6 +197,26 @@ describe('classify', () => {
       }
     `)
   })
+})
+
+test('loginKey matches two saved logins of the same user', () => {
+  const jwt = (payload: object) => `h.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.s`
+  const user = { iss: 'https://auth.openai.com', sub: 'user-1' }
+  expect({
+    first: loginKey({ type: 'oauth', access: jwt({ ...user, jti: 'a' }) }),
+    second: loginKey({ type: 'oauth', access: jwt({ ...user, jti: 'b' }) }),
+    other: loginKey({ type: 'oauth', access: jwt({ ...user, sub: 'user-2' }) }),
+    opaque: loginKey({ type: 'oauth', access: 'not-a-jwt' }),
+    apiKey: loginKey({ type: 'key' }),
+  }).toMatchInlineSnapshot(`
+    {
+      "apiKey": undefined,
+      "first": "https://auth.openai.com user-1",
+      "opaque": undefined,
+      "other": "https://auth.openai.com user-2",
+      "second": "https://auth.openai.com user-1",
+    }
+  `)
 })
 
 describe('pick', () => {

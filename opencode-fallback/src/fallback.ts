@@ -21,7 +21,7 @@ export type Block = {
 export type FailedRequest = {
   model: ModelRef
   credentialID: string
-  error: { type: string; message: string; status?: number; response?: { body: string } }
+  error: { type: string; message: string; status?: number; response?: { body: string }; retryAfterMs?: number }
   headers?: Record<string, string>
 }
 
@@ -123,10 +123,12 @@ export function parseDuration(value: string): number | undefined {
 export function resetAt({
   headers: rawHeaders,
   body,
+  retryAfterMs: errorRetryAfterMs,
   now,
 }: {
   headers?: Record<string, string>
   body?: string
+  retryAfterMs?: number
   now: number
 }): number | undefined {
   const headers = lowerHeaders(rawHeaders)
@@ -175,19 +177,30 @@ export function resetAt({
     return []
   })
   if (exhausted.length > 0) return Math.max(...exhausted)
+  // OpenCode's own copy of retry-after; the retry hook error keeps it when headers are missing.
+  if (errorRetryAfterMs !== undefined && errorRetryAfterMs >= 0) return now + errorRetryAfterMs
   return undefined
 }
 
 const QUOTA_TEXT = /usage_limit_reached|usage[-_\s]limit|insufficient[-_\s]quota|quota[-_\s]exceeded|credit balance|spending[-_\s]limit/i
 
+// Account limits OpenCode types itself (2.3+): ChatGPT sign-in, OpenCode Go, free tier, Console budget.
+const QUOTA_TYPES = ['provider.quota', 'provider.chatgpt-limit', 'provider.go-limit', 'provider.free-limit', 'provider.budget-limit']
+
+// ChatGPT sign-in (token sharing) codes. They arrive as stream errors of a 200 response with any
+// error type, so the code decides. Source: core/src/plugin/provider/chatgpt.ts in anomalyco/opencode.
+const CHATGPT_LIMIT = /subscription_sharing_\w*usage_limit_exceeded/
+const CHATGPT_DEAD_LOGIN = /subscription_sharing_(?:invalid_user|user_not_eligible)|chatpass_v2_(?:scope_not_authorized|invalid_authorization_context)/
+
 // The block a failed request implies, or undefined when it is not a fallback error.
 export function classify({ failed, now }: { failed: FailedRequest; now: number }): Block | undefined {
   const { error, model, credentialID } = failed
   const headers = lowerHeaders(failed.headers)
-  const text = `${error.message} ${error.response?.body ?? ''}`
+  const body = error.response?.body ?? ''
+  const text = `${error.message} ${body}`
   const reason = ((): BlockReason | undefined => {
-    if (error.type === 'provider.auth') return 'auth'
-    if (error.type === 'provider.quota') return 'quota'
+    if (error.type === 'provider.auth' || CHATGPT_DEAD_LOGIN.test(body)) return 'auth'
+    if (QUOTA_TYPES.includes(error.type) || error.type === 'provider.model-budget-limit' || CHATGPT_LIMIT.test(body)) return 'quota'
     if (error.type === 'provider.rate-limit') {
       // Subscription windows (Claude Pro/Max, Codex) cover every model of the account.
       if (QUOTA_TEXT.test(text) || headers['anthropic-ratelimit-unified-status'] === 'rejected') return 'quota'
@@ -197,15 +210,26 @@ export function classify({ failed, now }: { failed: FailedRequest; now: number }
     return undefined
   })()
   if (!reason) return undefined
-  const reset = reason === 'auth' ? undefined : resetAt({ headers, body: error.response?.body, now })
+  const reset = reason === 'auth' ? undefined : resetAt({ headers, body, retryAfterMs: error.retryAfterMs, now })
+  // Quota and auth belong to the account, except a Console spend limit set on one model.
+  const account = reason === 'auth' || (reason === 'quota' && error.type !== 'provider.model-budget-limit')
   return {
     providerID: model.providerID,
     credentialID,
-    // Quota and auth belong to the account, not to one model.
-    modelID: reason === 'quota' || reason === 'auth' ? '*' : model.id,
+    modelID: account ? '*' : model.id,
     until: reset !== undefined && reset > now ? reset : now + DEFAULT_BLOCK_MS[reason],
     reason,
   }
+}
+
+// The user an OAuth credential signs in as: issuer and subject of its JWT access token.
+// Two saved logins of the same user (ChatGPT sign-in twice) share one usage limit.
+export function loginKey(credential: { type: string; access?: string } | undefined): string | undefined {
+  if (credential?.type !== 'oauth' || !credential.access) return undefined
+  const payload = parseJson(Buffer.from(credential.access.split('.')[1] ?? '', 'base64url').toString())
+  if (!payload || typeof payload !== 'object' || !('sub' in payload) || typeof payload.sub !== 'string') return undefined
+  const issuer = 'iss' in payload && typeof payload.iss === 'string' ? payload.iss : ''
+  return `${issuer} ${payload.sub}`
 }
 
 export function blockedUntil({
