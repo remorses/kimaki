@@ -63,6 +63,18 @@ export type Sender = {
   waitUntil?: number
 }
 
+// Long enough for almost every prompt, short enough that a pasted log stays readable.
+const LOGGED_PROMPT_CHARS = 4000
+
+// Logs every input before anything can fail, so a prompt of a session that
+// never started can be copied back from kimaki.log. JSON keeps it on one line.
+export function logPrompt({ route, author, target, files = [] }: { route: Route; author: Author; target: string; files?: readonly PromptFile[] }) {
+  const text = routeText(route)
+  const cut = text.length > LOGGED_PROMPT_CHARS ? `${text.slice(0, LOGGED_PROMPT_CHARS)}... (${text.length - LOGGED_PROMPT_CHARS} more chars)` : text
+  const attached = files.length > 0 ? `, files: ${files.map((file) => file.name).join(', ')}` : ''
+  logger.log(`${route.kind} from ${author.username} in ${target}${attached}: ${JSON.stringify(cut)}`)
+}
+
 // Prompt IDs map a Discord message to its inbox item without stored state (spec 9.2.2).
 export function promptIdForMessage(messageId: string): string {
   return `msg_discord_${messageId}`
@@ -242,13 +254,15 @@ export async function requeueEdited(
   if (cancelled instanceof Error) return cancelled
   const text = route?.kind === 'queue' || route?.kind === 'steer' ? route.text : files.length > 0 ? '' : null
   if (text === null) return
+  const author = { id: message.author.id, username: message.author.username }
+  logPrompt({ route: { kind: 'queue', text }, author, target: `edited message in ${message.channelId}`, files })
   const thread = message.channel.isThread() ? message.channel : null
   return prompt(bot, {
     sessionId,
     threadId: message.channelId,
     threadName: thread?.name ?? '',
     text,
-    author: { id: message.author.id, username: message.author.username },
+    author,
     messageId: message.id,
     delivery: 'queue',
     files,
@@ -412,6 +426,10 @@ export async function dispatch(
     parentSessionId?: string
   },
 ) {
+  // forkBtw and startSession log their own input.
+  if (route.kind !== 'btw' && route.kind !== 'new-session') {
+    logPrompt({ route, author, target: `${conversation.isThread() ? 'thread' : 'coordinator'} ${conversation.id}`, files })
+  }
   const sessionId = rootSession(bot, conversation.id)
   if (sessionId instanceof Error) return sessionId
   // New input supersedes a pending `kimaki sleep` of this session.

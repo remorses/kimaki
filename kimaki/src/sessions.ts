@@ -31,7 +31,7 @@ import { ConfigError, DbError, DiscordError, OpenCodeError, OpenCodeUnavailableE
 import { asSubtext, SILENT_MESSAGE_FLAGS } from './format-parts.ts'
 import { createLogger } from './logger.ts'
 import type { OpenCodeClient, OpencodeEndpoint } from './opencode-server.ts'
-import { prompt, runInSession, type Sender } from './prompt.ts'
+import { logPrompt, prompt, runInSession, type Sender } from './prompt.ts'
 import { formatEcho, formatEchoReply } from './queue.ts'
 import type { Route } from './routes.ts'
 import * as schema from './schema.ts'
@@ -433,6 +433,7 @@ export async function startSession(
     run?: boolean
   },
 ): Promise<Error | { threadId: string; sessionId: string }> {
+  if (run) logPrompt({ route, author, target: `new session in channel ${channelId}`, files })
   const defaults = await bot.db.query.channel_directories
     .findFirst({ where: { channel_id: channelId }, with: { channel_model: true, channel_agent: true, channel_worktree: true } })
     .catch((cause) => new DbError({ operation: 'read channel defaults', cause }))
@@ -562,6 +563,7 @@ export async function startCoordinator(
     files?: readonly PromptFile[]
   },
 ): Promise<Error | { threadId: string; sessionId: string }> {
+  logPrompt({ route, author, target: `new coordinator in channel ${channel.id}`, files })
   const defaults = await bot.db.query.channel_directories
     .findFirst({ where: { channel_id: channel.id }, with: { channel_model: true, channel_agent: true } })
     .catch((cause) => new DbError({ operation: 'read channel defaults', cause }))
@@ -888,6 +890,7 @@ export async function forkBtw(
     sender?: Sender
   },
 ): Promise<ConfigError | OpenCodeUnavailableError | OpenCodeError | DiscordError | DbError | { threadId: string; sessionId: string }> {
+  logPrompt({ route: { kind: 'btw', text }, author, target: `btw fork of ${source.id}`, files })
   const sourceSessionId = rootSession(bot, source.id)
   if (sourceSessionId instanceof Error) return sourceSessionId
   const project = await conversationProject(bot, source)

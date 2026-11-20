@@ -325,9 +325,7 @@ async function handleMessage(bot: Bot, { message, statusMessage = null }: { mess
   if (route instanceof Error) return routeError(route)
   await status?.clear()
   if (!route) return
-  const detail = route.kind === 'command' ? ` /${route.name}` : route.kind === 'skill' ? ` ${route.id}` : ''
-  const attached = files.length > 0 ? `, ${files.length} file(s)` : ''
-  logger.log(`${route.kind}${detail} from ${author.username} in ${thread ? `thread ${thread.id}` : `channel ${channelId}`}${attached}`)
+  // dispatch, startSession and startCoordinator log the prompt (logPrompt).
   // The transcription is not visible anywhere else.
   if (voice && (thread || coordinator) && route.kind !== 'shell' && route.kind !== 'command' && route.kind !== 'skill') {
     // A long transcript continues in more messages after the reply.
