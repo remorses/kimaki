@@ -116,7 +116,9 @@ function uploadBatches(files: readonly UploadFile[]): UploadFile[][] {
   const batches: Array<{ files: UploadFile[]; bytes: number }> = []
   for (const file of files) {
     const last = batches.at(-1)
-    if (last && last.files.length < MAX_FILES_PER_MESSAGE && last.bytes + file.size <= MAX_UPLOAD_REQUEST_BYTES) {
+    // audio goes alone in a plain message, see isAudio
+    const joinable = last && !isAudio(file.name) && !isAudio(last.files[0]!.name)
+    if (joinable && last.files.length < MAX_FILES_PER_MESSAGE && last.bytes + file.size <= MAX_UPLOAD_REQUEST_BYTES) {
       last.files.push(file)
       last.bytes += file.size
     } else {
@@ -124,6 +126,17 @@ function uploadBatches(files: readonly UploadFile[]): UploadFile[][] {
     }
   }
   return batches.map((batch) => batch.files)
+}
+
+// Components V2 have no audio player: Media Gallery takes only images and
+// videos, and a File component shows audio as a download card. Only a plain
+// attachment gets Discord's inline player, so each audio file is sent alone
+// in a message without IS_COMPONENTS_V2.
+// https://docs.discord.com/developers/components/reference#media-gallery
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.oga', '.opus', '.m4a', '.aac', '.flac'])
+
+function isAudio(name: string): boolean {
+  return AUDIO_EXTENSIONS.has(path.extname(name).toLowerCase())
 }
 
 // Media Gallery takes images and videos; everything else is a File component.
@@ -231,11 +244,20 @@ export function createEffectsRunner({ discord, markViewed, footerDefaults }: { d
       if (lifecycle.closed) return new DiscordError({ operation: 'upload (bot stopped)' })
       const channel = await sendableChannel(threadId)
       if (!channel) return new DiscordError({ operation: `upload to thread ${threadId}` })
+      const audio = batch.length === 1 && isAudio(batch[0]!.name) ? batch[0]! : null
+      const message = audio
+        ? {
+            ...(files.length > 1 && { content: `-# ${first}. \`${audio.name}\`` }),
+            files: [{ attachment: audio.path, name: audio.name.replace(/[^\w.-]/g, '_') || 'audio' }],
+            flags: SILENT_MESSAGE_FLAGS,
+          }
+        : uploadMessage({ files: batch, first, numbered: files.length > 1 })
       const sent = await channel
-        .send({ ...uploadMessage({ files: batch, first, numbered: files.length > 1 }), allowedMentions: { parse: [] } })
+        .send({ ...message, allowedMentions: { parse: [] } })
         .catch((cause: Error) => new DiscordError({ operation: `upload of ${batch.map((file) => file.name).join(', ')} (${cause.message})`, cause }))
       if (sent instanceof Error) return sent
-      urls.push(...mediaUrls(sent.components.map((component) => component.toJSON())))
+      if (audio) urls.push(...sent.attachments.map((attachment) => attachment.url))
+      else urls.push(...mediaUrls(sent.components.map((component) => component.toJSON())))
       first += batch.length
     }
     return urls
