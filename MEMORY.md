@@ -192,3 +192,7 @@ the buffer. Append lifecycle events in the SSE listener before queueing
 A pending v2 question form can leave `isSessionBusy` false. Do not drain the
 local queue while `pendingQuestionContexts` has an entry. On dismiss, cancel
 pending forms with `form.list` + `form.cancel` before the next prompt.
+
+## Coordinator preferences (user)
+
+- New questions or tasks from the user go to a new worker session, even when another worker is on a related topic. Do not steer a running worker with them.
