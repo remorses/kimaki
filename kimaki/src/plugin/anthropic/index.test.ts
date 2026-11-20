@@ -1,4 +1,4 @@
-import { gunzipSync, gzipSync } from 'node:zlib'
+import { gunzipSync, gzipSync, zstdCompressSync } from 'node:zlib'
 import { expect, test } from 'vitest'
 import { prepareSubscriptionRequest, rewriteSystem } from './index.ts'
 
@@ -86,7 +86,7 @@ test('subscription requests to api.anthropic.com are gzipped, also when OpenCode
       ],
     }
   `)
-  // A proxy base URL keeps plain JSON; zstd bodies and other paths are left alone.
+  // A proxy base URL keeps plain JSON; other paths are left alone.
   expect(await describe(await send({ url: 'https://proxy.example.com/v1/messages' }))).toMatchInlineSnapshot(`
     {
       "encoding": null,
@@ -97,6 +97,8 @@ test('subscription requests to api.anthropic.com are gzipped, also when OpenCode
       ],
     }
   `)
-  expect(await send({ headers: { 'content-encoding': 'zstd' } })).toBe(null)
+  // Anthropic rejects zstd (`encoding: "zstd"` in OpenCode), so it is sent as gzip; a proxy keeps it.
+  expect((await describe(await send({ headers: { 'content-encoding': 'zstd' }, body: new Uint8Array(zstdCompressSync(json)) })))?.encoding).toBe('gzip')
+  expect(await send({ url: 'https://proxy.example.com/v1/messages', headers: { 'content-encoding': 'zstd' }, body: new Uint8Array(zstdCompressSync(json)) })).toBe(null)
   expect(await send({ url: 'https://api.anthropic.com/v1/messages/count_tokens' })).toBe(null)
 })

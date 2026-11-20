@@ -43,6 +43,8 @@ const HEADLESS_METHOD_ID = Integration.MethodID.make('claude-pro-max-headless')
 export const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
 const gzip = promisify(zlib.gzip)
 const gunzip = promisify(zlib.gunzip)
+// Missing in runtimes without zstd; such a body is then sent unchanged.
+const zstdDecompress = zlib.zstdDecompress ? promisify(zlib.zstdDecompress) : undefined
 
 export class AnthropicOAuthError extends errore.createTaggedError({
   name: 'AnthropicOAuthError',
@@ -191,20 +193,23 @@ const ANTHROPIC_HOST = 'api.anthropic.com'
 export async function prepareSubscriptionRequest({ request, files }: { request: Request; files?: FileCache }): Promise<Request | null> {
   const url = new URL(request.url)
   if (!url.pathname.endsWith('/messages')) return null
+  const official = url.hostname === ANTHROPIC_HOST
   const encoding = request.headers.get('content-encoding')
-  if (encoding !== null && encoding !== 'gzip') return null
+  // Anthropic rejects zstd, which OpenCode sends for `encoding: "zstd"`: decode it and send gzip.
+  const decode = encoding === null ? undefined : encoding === 'gzip' ? gunzip : encoding === 'zstd' && official ? (zstdDecompress ?? null) : null
+  if (decode === null) return null
   const raw = Buffer.from(await request.clone().arrayBuffer())
-  const plain = encoding === 'gzip' ? await gunzip(raw).catch(() => null) : raw
+  const plain = decode ? await decode(raw).catch(() => null) : raw
   if (plain === null) return null
   const text = plain.toString('utf8')
   const payload = errore.try(() => JSON.parse(text) as MessagesBody)
   if (payload instanceof Error) return null
-  const official = url.hostname === ANTHROPIC_HOST
   const rewritten = rewriteSystem(payload)
   const swapped = official && files ? await files.swap({ payload, headers: request.headers }) : false
   // Custom base URLs (proxies) may not decode gzip, so only compress what OpenCode already did.
   const compress = encoding === 'gzip' || official
-  if (!rewritten && !swapped && (encoding === 'gzip' || !compress)) return null
+  const encoded = compress ? encoding === 'gzip' : encoding === null
+  if (!rewritten && !swapped && encoded) return null
   const body = rewritten || swapped ? JSON.stringify(payload) : text
   const headers = new Headers(request.headers)
   headers.delete('content-length')
@@ -246,7 +251,10 @@ export default Plugin.define({
           Effect.gen(function* () {
             const request = event.request
             if (request.headers.has('x-api-key') || !request.headers.get('authorization')?.startsWith('Bearer ')) return
-            const next = yield* Effect.promise(() => prepareSubscriptionRequest({ request, files }))
+            // Only these kinds pass through the retry hook that repairs a deleted file. Others send base64,
+            // which hits the same prompt cache entry.
+            const repairable = event.kind === 'primary' || event.kind === 'compaction'
+            const next = yield* Effect.promise(() => prepareSubscriptionRequest({ request, files: repairable ? files : undefined }))
             if (next !== null) event.request = next
           }),
         { providerID: 'anthropic' },
@@ -258,8 +266,7 @@ export default Plugin.define({
           Effect.gen(function* () {
             const missing = missingFileIds(event.error)
             if (missing.length === 0) return
-            yield* Effect.promise(() => files.forget(missing))
-            event.decision = { retry: true, delay: 0 }
+            if (yield* Effect.promise(() => files.forget(missing))) event.decision = { retry: true, delay: 0 }
           }),
         { providerID: 'anthropic' },
       )

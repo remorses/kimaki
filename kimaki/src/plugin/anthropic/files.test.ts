@@ -98,7 +98,9 @@ test('images and PDFs upload once, are reused until near expiry, and failures ke
   // A 404 for a file makes the next request upload it again.
   const missing = missingFileIds({ status: 404, message: 'Not Found', response: { body: '{"type":"error","error":{"type":"not_found_error","message":"File `file_3` not found."}}' } })
   expect(missing).toEqual(['file_3'])
-  await files.forget(missing)
+  expect(await files.forget(missing)).toBe(true)
+  // Ids this cache never sent (API key or proxy requests) are not repaired by a retry.
+  expect(await files.forget(['file_unknown'])).toBe(false)
   const fourth = payload()
   await files.swap({ payload: fourth, headers })
   expect(sources(fourth)).toEqual(['file_5', 'base64', 'file_5', 'file_4'])
@@ -120,6 +122,28 @@ test('images and PDFs upload once, are reused until near expiry, and failures ke
   now = Date.UTC(2026, 0, 20)
   await files.prune()
   expect(storage.data.size).toBe(0)
+})
+
+test('concurrent misses from two plugin instances upload once, and a broken storage keeps requests working', async () => {
+  const storage = memoryStorage()
+  const headers = new Headers({ authorization: 'Bearer token-2' })
+  const first = { messages: [{ content: [image('d')] }] }
+  const second = { messages: [{ content: [image('d')] }] }
+  const before = uploaded
+  await Promise.all([createFileCache({ storage, apiURL }).swap({ payload: first, headers }), createFileCache({ storage, apiURL }).swap({ payload: second, headers })])
+  expect(uploaded - before).toBe(1)
+  expect(JSON.stringify(first)).toBe(JSON.stringify(second))
+
+  const broken: FileStorage = {
+    get: async () => Promise.reject(new Error('SQLITE_BUSY')),
+    set: async () => Promise.reject(new Error('SQLITE_BUSY')),
+    remove: async () => Promise.reject(new Error('SQLITE_BUSY')),
+    scan: async () => Promise.reject(new Error('SQLITE_BUSY')),
+  }
+  const files = createFileCache({ storage: broken, apiURL })
+  const payload = { messages: [{ content: [image('e')] }] }
+  expect(await files.swap({ payload, headers })).toBe(true)
+  await files.prune()
 })
 
 test('missingFileIds only reads 404 file errors', () => {

@@ -78,12 +78,25 @@ function isStoredFile(value: unknown): value is StoredFile {
 
 export type FileCache = ReturnType<typeof createFileCache>
 
+// OpenCode runs one plugin instance per location, all sharing the plugin storage. Shared storage
+// is the only cache of finished uploads; these process-wide sets coordinate the instances.
+// In-flight lookups, registered before the first storage read, so one image uploads once.
+const lookups = new Map<string, Promise<AnthropicFilesError | string>>()
+// Ids this process put into requests, so a 404 retry only repairs requests it changed.
+const substituted = new Set<string>()
+// Ids reported missing; never reused, even while their storage row is still being removed.
+const forgotten = new Set<string>()
+const MAX_TRACKED_IDS = 10_000
+
 export function createFileCache({ storage, apiURL = API_URL, now = Date.now }: { storage: FileStorage; apiURL?: string; now?: () => number }) {
-  const memory = new Map<string, StoredFile>()
-  const uploads = new Map<string, Promise<AnthropicFilesError | string>>()
   // Files belong to the account's workspace, so stored ids are keyed by organization and account.
   const accounts = new Map<string, Promise<AnthropicFilesError | string>>()
   const failedUntil = new Map<string, number>()
+
+  // Storage is an optimization: a failing read is a miss and a failing write is skipped.
+  const read = (key: string) => storage.get(key).catch(() => undefined)
+  const write = (key: string, value: StoredFile) => storage.set(key, value).catch(() => undefined)
+  const remove = (key: string) => storage.remove(key).catch(() => undefined)
 
   const account = (headers: Record<string, string>) => {
     const cached = accounts.get(headers.authorization!)
@@ -120,31 +133,29 @@ export function createFileCache({ storage, apiURL = API_URL, now = Date.now }: {
     if (!response.ok) return new AnthropicFilesError({ reason: `upload returned ${response.status}: ${text.slice(0, 300)}` })
     const json = errore.try(() => JSON.parse(text) as { id?: string; expires_at?: string | null })
     if (json instanceof Error || !json.id) return new AnthropicFilesError({ reason: 'upload response has no file id' })
-    const expiresAt = json.expires_at ? Date.parse(json.expires_at) : now() + FILE_TTL_SECONDS * 1000
-    const file = { id: json.id, expiresAt: Number.isNaN(expiresAt) ? now() + FILE_TTL_SECONDS * 1000 : expiresAt }
-    memory.set(key, file)
-    await storage.set(key, file)
-    return file.id
+    const expiresAt = json.expires_at ? Date.parse(json.expires_at) : Number.NaN
+    await write(key, { id: json.id, expiresAt: Number.isNaN(expiresAt) ? now() + FILE_TTL_SECONDS * 1000 : expiresAt })
+    return json.id
   }
 
-  const fileId = async ({ owner, source, headers }: { owner: string; source: InlineSource; headers: Record<string, string> }) => {
+  const fileId = ({ owner, source, headers }: { owner: string; source: InlineSource; headers: Record<string, string> }) => {
     const key = `${STORAGE_PREFIX}${owner}/${crypto.createHash('sha256').update(source.data).digest('hex')}`
-    const stored = memory.get(key) ?? (await storage.get(key))
-    if (isStoredFile(stored) && stored.expiresAt - now() > REUSE_MARGIN_MS) {
-      memory.set(key, stored)
-      return stored.id
-    }
-    const pending = uploads.get(key)
+    const pending = lookups.get(key)
     if (pending) return pending
-    const started = upload({ key, source, headers }).finally(() => uploads.delete(key))
-    uploads.set(key, started)
-    return started
+    const lookup = (async () => {
+      const stored = await read(key)
+      if (isStoredFile(stored) && !forgotten.has(stored.id) && stored.expiresAt - now() > REUSE_MARGIN_MS) return stored.id
+      return upload({ key, source, headers })
+    })().finally(() => lookups.delete(key))
+    lookups.set(key, lookup)
+    return lookup
   }
 
   const eachStored = async (visit: (entry: { key: string; value: unknown }) => Promise<void>) => {
     let after: string | undefined
     do {
-      const page = await storage.scan({ prefix: STORAGE_PREFIX, after })
+      const page = await storage.scan({ prefix: STORAGE_PREFIX, after }).catch(() => null)
+      if (!page) return
       for (const entry of page.entries) await visit(entry)
       after = page.next
     } while (after)
@@ -164,26 +175,33 @@ export function createFileCache({ storage, apiURL = API_URL, now = Date.now }: {
       }
       const ids = await Promise.all(blocks.map(({ source }) => fileId({ owner, source, headers: apiHeaders })))
       if (ids.some((id) => id instanceof Error)) failedUntil.set(authorization, now() + FAILURE_BACKOFF_MS)
+      if (substituted.size > MAX_TRACKED_IDS) substituted.clear()
       let changed = false
       blocks.forEach(({ block }, index) => {
         const id = ids[index]
         if (typeof id !== 'string') return
         block.source = { type: 'file', file_id: id }
+        substituted.add(id)
         changed = true
       })
       return changed
     },
-    // Forgets files Anthropic no longer has (deleted by the user, or expired early), so the next request uploads them again.
-    async forget(fileIds: readonly string[]) {
-      for (const [key, file] of memory) if (fileIds.includes(file.id)) memory.delete(key)
+    // Forgets files Anthropic no longer has (deleted, or expired early) so the next request
+    // uploads them again. False when none of them came from this cache: retrying cannot help.
+    async forget(fileIds: readonly string[]): Promise<boolean> {
+      const ours = fileIds.filter((id) => substituted.has(id))
+      if (ours.length === 0) return false
+      if (forgotten.size > MAX_TRACKED_IDS) forgotten.clear()
+      for (const id of ours) forgotten.add(id)
       await eachStored(async ({ key, value }) => {
-        if (isStoredFile(value) && fileIds.includes(value.id)) await storage.remove(key)
+        if (isStoredFile(value) && ours.includes(value.id)) await remove(key)
       })
+      return true
     },
     // Removes stored ids of expired files.
     async prune() {
       await eachStored(async ({ key, value }) => {
-        if (!isStoredFile(value) || value.expiresAt <= now()) await storage.remove(key)
+        if (!isStoredFile(value) || value.expiresAt <= now()) await remove(key)
       })
     },
   }
