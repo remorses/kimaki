@@ -391,3 +391,47 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     ]
   `)
 })
+
+// https://github.com/remorses/kimaki/issues/263
+test('a "retranscribe" reply handles a voice message sent while the bot was down; other replies are plain text', async () => {
+  const thread = await newThread(() => twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'Start order-start' }))
+  await waitForFooter({ discord: twin.discord, threadId: thread.id })
+  const user = twin.discord.thread(thread.id).user(TEST_USER_ID)
+  await bot.stop()
+  const missed = await user.sendVoiceMessage({ url: voiceUrl({ transcription: 'Missed note voice-steer', route: 'steer' }) })
+  bot = await startTestBot({ dataDir, twin, server, geminiBaseUrl: gemini.baseUrl })
+  await user.sendMessage({ content: 'Retranscribe', messageReference: { message_id: missed.id, channel_id: thread.id } })
+  await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 2 })
+  const typed = await user.sendMessage({ content: 'Typed order-text' })
+  await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 3 })
+  await user.sendMessage({ content: 'retranscribe', messageReference: { message_id: typed.id, channel_id: thread.id } })
+  await waitForFooter({ discord: twin.discord, threadId: thread.id, count: 4 })
+  expect(await twin.discord.thread(thread.id).text({ showReplies: true })).toMatchInlineSnapshot(`
+    "--- from: user (tommy)
+    Start order-start
+    --- from: assistant (TestBot)
+    -# *using deterministic-provider/deterministic-v2 ⋅ build*
+    order start ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    --- from: user (tommy)
+    [attachment: voice-message.ogg]
+    [reply to tommy: ]
+    Retranscribe
+    --- from: assistant (TestBot)
+    [reply to tommy: ]
+    -# » **tommy:** Missed note voice-steer
+    voice steer ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    --- from: user (tommy)
+    Typed order-text
+    --- from: assistant (TestBot)
+    order text ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*
+    --- from: user (tommy)
+    [reply to tommy: Typed order-text]
+    retranscribe
+    --- from: assistant (TestBot)
+    order start ok
+    -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
+  `)
+})

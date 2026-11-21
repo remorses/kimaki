@@ -17,6 +17,8 @@
 // A voice message gets one subtext status reply while transcription rounds fail
 // ("retrying in 4s"). It is deleted on success, or becomes the error with a Retry
 // button (custom id voice_retry:<messageId>) that handles the voice message again.
+// A voice message sent while the bot was offline gets no reply: replying
+// `retranscribe` to it (or any voice message) handles it again the same way.
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -226,6 +228,13 @@ async function clickVoiceRetry(bot: Bot, interaction: ButtonInteraction) {
 
 export const voiceRetryRoutes: InteractionRoutes = { buttons: { [VOICE_RETRY_PREFIX]: clickVoiceRetry } }
 
+// The voice message a `retranscribe` reply points at, else null (issue #263).
+async function retranscribeTarget(message: Message): Promise<Message | null> {
+  if (!message.reference?.messageId || message.attachments.size > 0 || message.content.trim().toLowerCase() !== 'retranscribe') return null
+  const replied = await message.fetchReference().catch(() => null)
+  return replied?.attachments.some((attachment) => isVoiceAttachment(attachmentLike(attachment))) ? replied : null
+}
+
 // A remote send envelope another machine's `kimaki send` posted in a channel this bot owns.
 async function handleRemoteEnvelope(bot: Bot, { message, channelId, threadId }: { message: Message; channelId: string; threadId: string | null }) {
   const footer = message.embeds[0]?.footer?.text
@@ -293,6 +302,8 @@ async function handleMessage(bot: Bot, { message, statusMessage = null }: { mess
     logger.log(`ignoring ${message.author.username}: no Kimaki permission`)
     return
   }
+  const replied = await retranscribeTarget(message)
+  if (replied) return handleMessage(bot, { message: replied })
   // A coordinator channel has its root session under the channel ID.
   const coordinator = !thread && isCoordinatorChannel(bot, channelId)
   const sessionId = bot.store.getState().roots[thread?.id ?? (coordinator ? channelId : '')]
