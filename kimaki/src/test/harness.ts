@@ -122,6 +122,12 @@ export type OpencodeTestServer = {
   stop: () => Promise<void>
 }
 
+export const TEST_GIT_ENV = {
+  GIT_CONFIG_COUNT: '1',
+  GIT_CONFIG_KEY_0: 'init.defaultBranch',
+  GIT_CONFIG_VALUE_0: 'main',
+}
+
 export async function startOpencodeTestServer({
   matchers = [],
   permissions = [],

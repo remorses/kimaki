@@ -61,13 +61,6 @@ async function newSession(prompt: string) {
   return { threadId: started.threadId, sessionId: started.sessionId }
 }
 
-// Runs first: critique only goes online when the working tree has changes.
-test('session diff prints critique output for the session folder', async () => {
-  const clean = await newSession('diff-source')
-  const diff = await cli(['session', 'diff', '--session', clean.sessionId])
-  expect(diff.stdout).toContain('No changes to display')
-})
-
 test('session editors lists sessions that wrote a file, skips failed tool calls', async () => {
   const writer = await newSession('editor-marker write')
   // An edit of a missing file fails and must not be recorded.

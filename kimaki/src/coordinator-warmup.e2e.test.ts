@@ -7,9 +7,11 @@ import path from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 
 import type { BotHandle } from './main.ts'
+import { send } from './prompt.ts'
 import {
   TEST_MODEL,
   TEST_USER_ID,
+  isFooter,
   seedProjectChannel,
   startOpencodeTestServer,
   startTestBot,
@@ -18,6 +20,7 @@ import {
   textParts,
   toolParts,
   waitFor,
+  waitForBotMessageContaining,
   waitForFooter,
   warmUp,
   type OpencodeTestServer,
@@ -65,15 +68,18 @@ beforeAll(async () => {
       // OpenCode rejects a summary without the template headings.
       { id: 'compaction-summary', priority: 900, when: { latestUserTextIncludes: 'You MUST use this format for your response' }, then: { parts: textParts('## Objective\n- Keep coordinating') } },
       ...delegate({ marker: 'keepwarm-marker', worker: 'quickjob-marker', channelId: twin.channelId }),
-      ...delegate({ marker: 'capped-marker', worker: 'stuckjob-marker', channelId: twin.channelId }),
+      { id: 'capped', priority: 100, when: { latestUserTextIncludes: 'capped-marker' }, then: { parts: [...bigText('IDLE')] } },
       { id: 'quickjob', priority: 100, when: { latestUserTextIncludes: 'quickjob-marker' }, then: { parts: textParts('Quick job done.'), partDelaysMs: [0, 1_200, 0, 0] } },
-      { id: 'stuckjob', priority: 100, when: { latestUserTextIncludes: 'stuckjob-marker' }, then: { parts: textParts('Stuck job done.'), partDelaysMs: [0, 3_000, 0, 0] } },
-      { id: 'woken', priority: 300, when: { latestUserTextIncludes: '<session-finished' }, then: { parts: [...bigText('The worker finished.')] } },
+      { id: 'stuckjob', priority: 100, when: { latestUserTextIncludes: 'stuckjob-marker' }, then: { parts: textParts('Stuck job done.'), partDelaysMs: [0, 5_000, 0, 0] } },
+      { id: 'woken', priority: 300, when: { latestUserTextRegex: '<session-finished[\\s\\S]*Quick job done\\.' }, then: { parts: [...bigText('The worker finished.')] } },
     ],
   })
   await seedProjectChannel({ dataDir, channelId: twin.channelId, guildId: twin.discord.guildId, directory: server.projectDirectory })
   await warmUp({ server })
   bot = await startTestBot({ dataDir, twin, server, coordinator: true, warmupTimers: { intervalMs: WARM_INTERVAL_MS, maxMs: WARM_MAX_MS } })
+  // Bot startup writes the plugin shim; OpenCode activates it asynchronously.
+  const plugin = await bot.features.waitForPlugin(server.projectDirectory)
+  if (plugin instanceof Error) throw plugin
 }, 60_000)
 
 afterAll(async () => {
@@ -100,6 +106,9 @@ test('the coordinator stays warm while its worker runs, then compacts', async ()
   const { discord, channelId } = twin
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Start keepwarm-marker' })
   const root = await waitFor({ label: 'coordinator session', check: async () => bot.store.getState().roots[channelId] })
+  const worker = await discord.channel(channelId).waitForThread({ predicate: (thread) => thread.name === 'Worker quickjob-marker' })
+  await waitForFooter({ discord, threadId: worker.id })
+  await waitForBotMessageContaining({ discord, threadId: channelId, text: 'The worker finished.' })
   await waitForFooter({ discord, threadId: channelId })
   await waitFor({ label: 'compaction after the wake', check: async () => (await compactions(root)) === 1 || null })
 
@@ -138,21 +147,21 @@ test('the coordinator stays warm while its worker runs, then compacts', async ()
 test('a stuck worker stops the warmup at the cap', async () => {
   const { discord, channelId } = twin
   const root = bot.store.getState().roots[channelId]!
+  // Start the worker outside the coordinator turn so neither a shell follow-up
+  // request nor a worker-finished wake resets the coordinator's cap.
+  const worker = await send(bot, { channelId, prompt: 'stuckjob-marker run' })
+  if (worker instanceof Error) throw worker
+  await waitForBotMessageContaining({ discord, threadId: worker.threadId, text: '*using ' })
   const before = keepAlives(root)
   await discord.channel(channelId).user(TEST_USER_ID).sendMessage({ content: 'Start capped-marker' })
-  const worker = await waitFor({
-    label: 'stuck worker thread',
-    check: async () => (await discord.channel(channelId).getThreads()).find((thread) => thread.name?.includes('stuckjob')),
-  })
   // The cap ends the warmup while the worker still runs: compaction, no footer in the worker yet.
-  await waitFor({ label: 'compaction at the cap', check: async () => (await compactions(root)) === 2 || null })
-  const workerText = await discord.thread(worker.id).text()
+  await waitFor({ label: 'compaction at the cap', check: async () => (await compactions(root)) === 2 })
+  const workerMessagesAtCap = await discord.thread(worker.threadId).getMessages()
   const atCap = keepAlives(root)
-  await waitForFooter({ discord, threadId: worker.id })
+  await waitForFooter({ discord, threadId: worker.threadId })
 
-  expect(workerText).not.toContain('-# *main')
-  // 1.5s cap, one keep-alive every 0.4s: at most 3, none after the cap.
+  expect(workerMessagesAtCap.some(isFooter)).toBe(false)
   expect(atCap - before).toBeGreaterThan(0)
-  expect(atCap - before).toBeLessThanOrEqual(3)
+  expect(atCap - before).toBeLessThanOrEqual(Math.floor(WARM_MAX_MS / WARM_INTERVAL_MS))
   expect(keepAlives(root)).toBe(atCap)
 })

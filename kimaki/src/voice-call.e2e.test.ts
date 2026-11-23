@@ -233,10 +233,7 @@ test('finished threads of any project are announced in the call; the model answe
   // A thread started from Discord, not from the call: silent context for both models, no backend run.
   live.replies.push({ type: 'say', text: 'Should stay quiet.' })
   await twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'other-thread-marker' })
-  await waitFor({
-    label: 'second finished notice',
-    check: async () => (await twin.discord.channel(voiceChannelId).getMessages()).filter((message) => message.content.includes('thread finished')).length === 2,
-  })
+  await waitForChat('-# thread finished: other-thread-marker')
   for (let i = 0; i < 10; i++) {
     expect(live.replies.length).toBe(1)
     await new Promise((resolve) => setTimeout(resolve, 20))

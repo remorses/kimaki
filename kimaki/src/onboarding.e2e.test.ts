@@ -4,18 +4,20 @@
 // agent's shell tool, reading the saved gateway credentials), and the new
 // channel answers without a bot restart.
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { API } from '@discordjs/core/http-only'
 import { ChannelType } from 'discord.js'
-import { afterAll, beforeAll, expect, test } from 'vitest'
+import { afterAll, beforeAll, expect, test, vi } from 'vitest'
 
 import type { BotHandle } from './main.ts'
 import { shellQuote } from './lock-server.ts'
 import { runOnboarding } from './onboarding.ts'
 import {
+  TEST_GIT_ENV,
   TEST_USER_ID,
   scriptedTurn,
   startOpencodeTestServer,
@@ -38,13 +40,14 @@ let kimaki: string
 let otherProject: string
 
 beforeAll(async () => {
+  for (const [key, value] of Object.entries(TEST_GIT_ENV)) vi.stubEnv(key, value)
   dataDir = tempDataDir()
   twin = await startTwin({ gateway: true })
   const require = createRequire(import.meta.url)
   kimaki = [process.execPath, require.resolve('tsx/cli'), path.join(import.meta.dirname, 'cli.ts')].map(shellQuote).join(' ')
   otherProject = path.join(dataDir, 'other-project')
   fs.mkdirSync(otherProject)
-  execFileSync('git', ['init', '-q'], { cwd: otherProject })
+  await promisify(execFile)('git', ['init', '-q'], { cwd: otherProject, timeout: 5_000 })
   server = await startOpencodeTestServer({
     matchers: [
       {
@@ -71,6 +74,7 @@ beforeAll(async () => {
 }, 120_000)
 
 afterAll(async () => {
+  vi.unstubAllEnvs()
   await bot?.stop()
   await twin?.stop()
   await server?.stop()
@@ -83,7 +87,7 @@ async function guildChannels() {
   return channels.map((channel) => {
     const parent = channel.parent_id ? names.get(channel.parent_id) : null
     return `${channel.name}${parent ? ` (in ${parent})` : ''}`
-  })
+  }).sort()
 }
 
 test('onboarding thread adds a project channel through the kimaki CLI, which answers at once', async () => {
@@ -118,12 +122,12 @@ test('onboarding thread adds a project channel through the kimaki CLI, which ans
   `)
   expect(await guildChannels()).toMatchInlineSnapshot(`
     [
-      "project",
-      "random",
-      "quiet",
       "Kimaki test-machine",
       "kimaki (in Kimaki test-machine)",
       "other-project (in Kimaki test-machine)",
+      "project",
+      "quiet",
+      "random",
     ]
   `)
 

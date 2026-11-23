@@ -268,6 +268,7 @@ test('uploaded audio files with odd Discord media types are transcribed', async 
 })
 
 test('voice in a busy thread: queue waits, btw forks, new-session starts a thread', async () => {
+  const before = gemini.requests.length
   const thread = await newThread(() =>
     twin.discord.channel(twin.channelId).user(TEST_USER_ID).sendMessage({ content: 'Long work slow-marker' }),
   )
@@ -340,36 +341,8 @@ test('voice in a busy thread: queue waits, btw forks, new-session starts a threa
     -# *main ⋅ Ns ⋅ N% ⋅ deterministic-v2*"
   `)
   // The transcription request offers btw and queue only inside a session thread.
-  expect(gemini.requests.map((request) => request.routes)).toMatchInlineSnapshot(`
+  expect(gemini.requests.slice(before).map((request) => request.routes)).toMatchInlineSnapshot(`
     [
-      [
-        "steer",
-        "new-session",
-      ],
-      [
-        "steer",
-        "queue",
-        "btw",
-        "new-session",
-      ],
-      [
-        "steer",
-        "new-session",
-      ],
-      [
-        "steer",
-        "queue",
-        "btw",
-        "new-session",
-      ],
-      [
-        "steer",
-        "new-session",
-      ],
-      [
-        "steer",
-        "new-session",
-      ],
       [
         "steer",
         "queue",

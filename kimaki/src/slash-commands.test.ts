@@ -33,44 +33,7 @@ test('catalog names are sanitized, keep their suffix, skip collisions and MCP pr
   expect(reversed.commands).toEqual(commands)
   const names = commands.map((command) => command.name)
   expect(names.length).toBe(100)
-  expect(names.filter((name) => !name.startsWith('skill-'))).toMatchInlineSnapshot(`
-    [
-      "cwd",
-      "new-worktree",
-      "worktrees",
-      "merge-worktree",
-      "login",
-      "transcription-key",
-      "new-session",
-      "resume",
-      "fork",
-      "fork-subagent",
-      "btw",
-      "abort",
-      "reset-coordinator",
-      "queue",
-      "clear-queue",
-      "queue-command",
-      "compact",
-      "undo",
-      "redo",
-      "diff",
-      "context-usage",
-      "session-id",
-      "agent",
-      "model",
-      "model-variant",
-      "verbosity",
-      "toggle-coordinator",
-      "mcp",
-      "routines",
-      "command",
-      "skill",
-      "gpt5-4-agent",
-      "a-very-long-command-name-tha-cmd",
-      "queue-cmd",
-    ]
-  `)
+  expect(names.slice(0, fixed.length)).toEqual(fixed.map((command) => command.name))
   expect(names.every((name) => /^[a-z0-9-]{1,32}$/.test(name))).toBe(true)
   expect(Object.fromEntries([...dynamic].filter(([name]) => !name.startsWith('skill-')))).toMatchInlineSnapshot(`
     {

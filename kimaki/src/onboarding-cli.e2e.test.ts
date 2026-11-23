@@ -18,6 +18,7 @@ import {
   startOpencodeTestServer,
   startTwin,
   tempDataDir,
+  TEST_GIT_ENV,
   TEST_USER_ID,
   textParts,
   waitFor,
@@ -99,6 +100,7 @@ test('kimaki --gateway without a TTY installs, onboards and reports ready on std
     {
       env: {
         ...process.env,
+        ...TEST_GIT_ENV,
         KIMAKI_WEBSITE_URL: websiteUrl,
         KIMAKI_GATEWAY_PROXY_URL: proxy,
         KIMAKI_LOCK_PORT: String(lockPort),
@@ -149,14 +151,14 @@ test('kimaki --gateway without a TTY installs, onboards and reports ready on std
 
   const channels = await createApi({ token: twin.discord.botToken, restUrl: twin.discord.restUrl }).guilds.getChannels(twin.discord.guildId)
   const names = new Map(channels.map((channel) => [channel.id, channel.name]))
-  expect(channels.map((channel) => `${channel.name}${channel.parent_id ? ` (in ${names.get(channel.parent_id)})` : ''}`)).toMatchInlineSnapshot(`
+  expect(channels.map((channel) => `${channel.name}${channel.parent_id ? ` (in ${names.get(channel.parent_id)})` : ''}`).sort()).toMatchInlineSnapshot(`
     [
-      "project",
-      "random",
-      "quiet",
       "Kimaki test-machine",
-      "kimaki (in Kimaki test-machine)",
       "Kimaki voice test-machine",
+      "kimaki (in Kimaki test-machine)",
+      "project",
+      "quiet",
+      "random",
     ]
   `)
 
