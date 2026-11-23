@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.8.0
+
+Kimaki now requires **OpenCode 2.0.29 or later**.
+
+1. **Manage MCP servers from Discord.** Run `/mcp` in a project channel or session thread to connect, disconnect, or retry a server. The change applies to the session's folder, including a worktree, and does not edit `opencode.json`. See [MCP setup](https://kimaki.dev/docs/configuration/mcp).
+
+2. **Set instructions for your Discord sessions.** Put `KIMAKI.md` in your Kimaki data folder to give all Kimaki sessions the same instructions. Put coordinator-only instructions in `KIMAKI_COORDINATOR.md`. Edits reach existing sessions on the next message without clearing the prompt cache.
+
+   ```bash
+   echo 'Always reply in Italian.' > ~/.kimaki/KIMAKI.md
+   ```
+
+3. **Put recently used project channels first.** Start Kimaki with `kimaki --sort-channels`. A message or slash command in a project channel or one of its threads moves that channel to the top of this machine's category. The option is off by default.
+
+4. **See saved logins and sign in from another device.** An owner or administrator can run `/accounts` to see the active login, known email addresses, and expired tokens or fallback blocks. `/login` puts popular providers first. For **Sign in with ChatGPT** on another device, copy the URL of the failed `127.0.0.1` page and choose **Paste redirect URL**.
+
+5. **Retry voice messages without recording them again.** Kimaki retries temporary transcription failures and shows when it will try again. If it gives up, click **Retry**. If the bot was offline and never replied, reply `retranscribe` to the original voice message. Discord now shows its inline player for audio sent with `kimaki upload-to-discord`.
+
+6. **Large idle sessions use less prompt cache.** Kimaki compacts sessions over 500k tokens, including workers, before their prompt cache expires. Coordinators still compact from 100k tokens. If OpenCode's `warming` is on, Kimaki waits for it to end. Active sessions and sessions started in the OpenCode TUI are not compacted by Kimaki.
+
+7. **Claude Pro and Max send less data.** Kimaki compresses requests with gzip and uploads each image or PDF once until the upload expires. Later requests reference the file instead of sending it again. API key connections and custom base URLs are unchanged.
+
+8. **Slash commands survive restarts.** Kimaki waits for OpenCode plugins to load before reading the catalog. It only writes changed commands to Discord, and a Discord rate limit no longer blocks startup.
+
+9. **Discord notices no longer look like agent replies.** Fork notices, status messages, and errors use small subtext. The agent's reply stays full-width.
+
+10. **Diagnose prompts that did not run.** Kimaki reports OpenCode plugin failures even after the plugin was previously active. `kimaki.log` records up to 4,000 characters of each incoming prompt so you can recover it if a session fails to start. Check the log for private prompt text before sharing it.
+
+Thanks @Xipzer for `retranscribe`.
+
+Fixes https://github.com/remorses/kimaki/issues/259
+
+Closes https://github.com/remorses/kimaki/issues/263
+
 ## 1.7.1
 
 1. **New worktrees start much faster.** Kimaki no longer installs dependencies when it creates a worktree (`/new-worktree`, `kimaki send --worktree`, automatic worktrees), so a slow or failed install no longer blocks the session. Submodules are still initialized. Sessions that run in a worktree get a short instruction to install dependencies and build what is needed before they run scripts, builds or tests.
